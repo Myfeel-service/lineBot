@@ -2901,7 +2901,7 @@ try {
   }
 
   // ── 第四十二段（`C-317`，`D-126` 第 3 題）：這一頁所有「新增一條」都打開「補一條知識」——側欄那顆（樣子照舊、不叫小幫手）、
-  //    「⋯ → 手動新增知識」、?q= 深連結（查不到現成的直接開、帶那一句；補好銷監控頁同問題案例）、查到現成的「還是新增一條」；
+  //    （`C-323` 起「⋯」選單裡沒有「手動新增知識」了，這裡改驗選單只剩什麼）、?q= 深連結（查不到現成的直接開、帶那一句；補好銷監控頁同問題案例）、查到現成的「還是新增一條」；
   //    補好了在開著的那一份 → 重讀、那一條亮；在別份 → 左邊那一份亮（不切走）；舊的五格新增框不見了 ──
   if (CHECK_FROM <= 42) {
     const f = fakeSource({ id: 'c317-file', type: 'file', name: 'C317 說明書', chunkCount: 2, refreshIntervalMinutes: 0, summary: ['說明'] })
@@ -2964,20 +2964,22 @@ try {
     else fail('側欄那顆不對', JSON.stringify({ sideBtn, side }))
     await closeAddOne()
 
-    // ⋯ → 手動新增知識（⚠️ 先等上一個視窗的遮罩淡出：淡出的那半秒裡點下去，點到的是遮罩、選單不會開）
+    // 「⋯」選單（`C-323`）：「手動新增知識」拿掉了（跟上面那顆打開同一個視窗＝重複的入口），「產品名稱整理」搬進編輯分組；
+    // 只剩新增分組、回收桶（「重新學習全部知識」只有平台超管看得到，登入的人是不是超管不一定，不判）
+    // ⚠️ 先等上一個視窗的遮罩淡出：淡出的那半秒裡點下去，點到的是遮罩、選單不會開
     await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
     await sleep(300)
     await pg.click('[data-tour="kb-more"]')
-    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '手動新增知識'), null, 8000)
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '新增分組'), null, 8000)
     const moreItems = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
-    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '手動新增知識')?.click())
-    const fromMore = await waitFor(pg, ADD_ONE_SHOWN, null, 8000)
+    // 再按一次「⋯」收起來（⛔ 不點畫面中間：工作台那裡讀的是正式庫的待辦，可能點到某顆按鈕）
+    await pg.click('[data-tour="kb-more"]')
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null), null, 5000)
     const oldCreate = await dialogShown(pg, '新增知識')
-    if (fromMore && !oldCreate) pass(`「⋯ → 手動新增知識」→ 同一個「補一條知識」（不再是五格的「新增知識」框）；選單：${moreItems.join('／')}`)
-    else fail('「⋯ → 手動新增知識」不對', JSON.stringify({ fromMore, oldCreate, moreItems }))
+    if (moreItems.slice(0, 2).join('／') === '新增分組／回收桶' && moreItems.every(t => t === '新增分組' || t === '回收桶' || t.startsWith('重新學習')) && !oldCreate) pass(`「⋯」選單只剩：${moreItems.join('／')}（「手動新增知識」「產品名稱整理」拿掉了）`)
+    else fail('「⋯」選單不對', JSON.stringify({ moreItems, oldCreate }))
 
     // 開著「C317 說明書」補一條、伺服器說放進這一份 → 重讀、那一條亮；⛔ 不帶商品名（小視窗沒有那一格）
-    await closeAddOne()
     await pickSource(pg, f.name)
     await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
     await pg.evaluate(() => document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn')?.click())
@@ -3317,6 +3319,167 @@ try {
     if (v.meta.endsWith('・AI 認的商品：SHARP 乾淨方 MAX KC-P70') && !v.more && !v.ask && !v.addOne) pass(`觀察者：沒有「⋯」、沒有問 AI、沒有補一條；名稱下面那一行照樣看得到「${v.meta}」`)
     else fail('觀察者看不到商品名、或看到了不能用的按鈕', JSON.stringify(v))
     await viewer.close()
+  }
+
+  // ── 第四十五段（`C-323`，`D-126` 第 4 步）：「產品名稱整理」搬進編輯分組的「客人還會怎麼叫它」——
+  //    商品分組列出 AI 認的商品名＋現有的叫法（標籤）；打字按 Enter 加、太短的當場擋、打了沒按 Enter 就按儲存也收；
+  //    挑一個現有的商品名＝當成同一台，存之前先問（按「再想想」什麼都不送）；按儲存才送（先拿掉、再加）；
+  //    通用那一組沒有這一塊；系統抓到的「可能是同一台」從待辦打開，視窗只剩確認那幾組；手機 390 寬不撐破 ──
+  if (CHECK_FROM <= 45) {
+    const REGEN = 'C323 筋牌特務 W1 REGEN'
+    const folders = [
+      { id: 'c323-prod', name: 'C323 紅光儀', order: 0, createdAtMs: NOW, general: false },
+      { id: 'c323-faq', name: 'C323 客服', order: 1, createdAtMs: NOW, general: true },
+    ]
+    const src = fakeSource({ id: 'c323-a', type: 'file', name: 'C323 說明書', folderId: 'c323-prod', chunkCount: 1, productName: REGEN, summary: ['說明'] })
+    const faq = fakeSource({ id: 'c323-b', type: 'file', name: 'C323 常見問題', folderId: 'c323-faq', chunkCount: 1, productName: '', summary: ['問答'] })
+    const pageFake = fakeSourcesPage([src, faq], { 'c323-a': [fakeChunk({ id: 'a1', title: '保固' })], 'c323-b': [fakeChunk({ id: 'b1', title: '運費' })] })
+    const health = { ...emptyHealthFake(), aliasCandidateCount: 1 }
+    const aliasPosts = []
+    const aliasesFake = {
+      // aliasKey＝正規化後的別名（伺服器 normalizeProductName：去空白符號、小寫）
+      pairs: [{ aliasKey: 'w1regen紅光', alias: 'W1 REGEN 紅光', canonical: REGEN }],
+      candidates: [{ key: 'k1', a: 'C323 SHARP 自動調理零水鍋', b: 'C323 零水鍋', reason: '「C323 SHARP 自動調理零水鍋」包含「C323 零水鍋」，可能是同一台的全稱與簡稱', confidence: 'medium', variantRisk: false }],
+      productNames: [REGEN, 'C323 SHARP 自動調理零水鍋', 'C323 零水鍋'],
+    }
+    const fake = async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      if (url.pathname === '/api/ai/folders' && m === 'GET') return json({ items: folders })
+      if (url.pathname === '/api/ai/knowledge/health' && m === 'GET') return json(health)
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'GET') return json(aliasesFake)
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'POST') { aliasPosts.push(JSON.parse(req.postData() || '{}')); return json({ ok: true, changed: true }) }
+      return pageFake(req)
+    }
+    const pg = await openImportDialog(fake, SOURCES_PAGE)
+    await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
+    const openEdit = async (p, name) => {
+      await p.evaluate(n => [...document.querySelectorAll('.src-folder-header')].find(e => e.querySelector('.src-folder-name')?.innerText.trim() === n)?.querySelector('.src-folder-icon-btn')?.click(), name)
+      await waitFor(p, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+      await markShown(p, { title: '編輯分組' })
+    }
+    const aliasState = () => pg.evaluate(s => ({
+      section: document.querySelector(`${s} .src-group-alias`)?.innerText ?? null,
+      product: document.querySelector(`${s} .src-group-alias__product`)?.innerText.trim() ?? '',
+      tags: [...document.querySelectorAll(`${s} .src-group-alias__tags .el-tag`)].map(t => t.innerText.trim()),
+      draft: document.querySelector(`${s} .src-group-alias__input input`)?.value ?? null,
+      saveDisabled: document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.disabled ?? null,
+    }), SHOWN)
+    const clickSave = () => pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.click(), SHOWN)
+    const boxShown = () => waitFor(pg, () => [...document.querySelectorAll('.el-message-box')].some(b => b.offsetParent !== null), null, 5000)
+    const boxText = () => pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
+
+    // 打開商品分組：商品名一行、現有的叫法是標籤、還沒改按不下去儲存
+    await openEdit(pg, 'C323 紅光儀')
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__product`), SHOWN, 10_000)
+    const g0 = await aliasState()
+    await shot(pg, 'group-alias.png', SHOWN)
+    if (g0.section?.includes('客人還會怎麼叫它') && g0.product === `AI 認的商品名：${REGEN}` && g0.tags.join('|') === 'W1 REGEN 紅光' && g0.saveDisabled === true) pass('編輯分組多一塊「客人還會怎麼叫它」：AI 認的商品名一行、現有的叫法是標籤；沒改按不下去儲存')
+    else fail('編輯分組的「客人還會怎麼叫它」不對', JSON.stringify(g0))
+
+    // 打一個叫法按 Enter → 變標籤；太短的（「鍋」）當場講、不收
+    const input = `${SHOWN} .src-group-alias__input input`
+    await typeInto(pg, input, '紅光儀')
+    await pg.keyboard.press('Enter')
+    await waitFor(pg, s => [...document.querySelectorAll(`${s} .src-group-alias__tags .el-tag`)].some(t => t.innerText.trim() === '紅光儀'), SHOWN, 5000)
+    await typeInto(pg, input, '鍋')
+    await pg.keyboard.press('Enter')
+    const shortToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('叫法太短')), null, 5000)
+    const g1 = await aliasState()
+    if (g1.tags.join('|') === 'W1 REGEN 紅光|紅光儀' && shortToast && g1.saveDisabled === false) pass('打「紅光儀」按 Enter → 變標籤、儲存按得下去；打「鍋」（太短）→ 當場講「叫法太短…」、不收')
+    else fail('加叫法不對', JSON.stringify({ g1, shortToast }))
+    await typeInto(pg, input, '')
+
+    // 打字時下拉列出像的現有商品名 → 挑一個＝當成同一台；拿掉舊的那個叫法；最後打一個不按 Enter
+    await typeInto(pg, input, '零水')
+    const sug = await waitFor(pg, () => [...document.querySelectorAll('.el-autocomplete-suggestion li')].filter(li => li.offsetParent !== null).length >= 2, null, 5000)
+    const sugItems = await pg.evaluate(() => [...document.querySelectorAll('.el-autocomplete-suggestion li')].filter(li => li.offsetParent !== null).map(li => li.innerText.trim()))
+    await pg.evaluate(() => [...document.querySelectorAll('.el-autocomplete-suggestion li')].find(li => li.offsetParent !== null && li.innerText.trim() === 'C323 零水鍋')?.click())
+    await waitFor(pg, s => [...document.querySelectorAll(`${s} .src-group-alias__tags .el-tag`)].some(t => t.innerText.trim() === 'C323 零水鍋'), SHOWN, 5000)
+    await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-group-alias__tags .el-tag`)].find(t => t.innerText.trim() === 'W1 REGEN 紅光')?.querySelector('.el-tag__close')?.click(), SHOWN)
+    await sleep(200)
+    await typeInto(pg, input, '小紅燈')
+    // 點標題收掉自動完成的下拉（⛔ 不按 Esc：會連視窗一起關掉）
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__title`)?.click(), SHOWN)
+    await sleep(300)
+    const g2 = await aliasState()
+    if (sug && sugItems.includes('C323 零水鍋') && !sugItems.includes(REGEN) && g2.tags.join('|') === '紅光儀|C323 零水鍋' && g2.draft === '小紅燈') pass(`打「零水」→ 下拉列出像的現有商品名（${sugItems.join('、')}，不列它自己），挑一個變標籤；舊的叫法按 × 拿掉`)
+    else fail('下拉或拿掉叫法不對', JSON.stringify({ sug, sugItems, g2 }))
+
+    // 按儲存：挑了現有的商品名 → 先問「確認是同一台？」；按「再想想」→ 什麼都不送、視窗還開著，沒按 Enter 的那個也收成標籤了
+    await clickSave()
+    const box1 = await boxShown()
+    const box1Text = await boxText()
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button:not(.el-button--primary)')?.click())
+    await sleep(600)
+    const g3 = await aliasState()
+    if (box1 && box1Text.includes('「C323 零水鍋」現在是別的商品名') && box1Text.includes('不要這樣加') && aliasPosts.length === 0 && g3.tags.join('|') === '紅光儀|C323 零水鍋|小紅燈' && g3.draft === '') pass('挑了現有商品名按儲存 → 先問「「C323 零水鍋」現在是別的商品名…不要這樣加」；按「再想想」什麼都不送；框裡沒按 Enter 的「小紅燈」也收成標籤（不會被丟掉）')
+    else fail('儲存前的確認不對', JSON.stringify({ box1, box1Text, aliasPosts, g3 }))
+
+    // 再按儲存、這次說是同一台 → 先拿掉、再照順序加，視窗關掉
+    await markShown(pg, { title: '編輯分組' })
+    await clickSave()
+    await boxShown()
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button--primary')?.click())
+    const saved = await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    const want = [
+      { action: 'remove', alias: 'W1 REGEN 紅光' },
+      { action: 'confirm', canonical: REGEN, alias: '紅光儀' },
+      { action: 'confirm', canonical: REGEN, alias: 'C323 零水鍋' },
+      { action: 'confirm', canonical: REGEN, alias: '小紅燈' },
+    ]
+    // 頁面的 apiFetch 會自己帶上 workspaceId，比對時拿掉
+    const sent = aliasPosts.map(({ workspaceId, ...rest }) => rest)
+    if (saved && JSON.stringify(sent) === JSON.stringify(want)) pass('說是同一台 → 送出：先拿掉「W1 REGEN 紅光」、再加「紅光儀」「C323 零水鍋」「小紅燈」（都指向那一台），視窗關掉')
+    else fail('儲存送出去的不對', JSON.stringify({ saved, aliasPosts }))
+
+    // 通用那一組沒有這一塊；取消勾「通用」才出現，這一組沒有商品名 → 講去哪裡填
+    await sleep(500)
+    await openEdit(pg, 'C323 客服')
+    await sleep(500)
+    const gen = await aliasState()
+    await pg.evaluate(s => document.querySelector(`${s} .src-folder-general-check`)?.click(), SHOWN)
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias`) && !document.querySelector(`${s} .src-group-alias .spinner`), SHOWN, 8000)
+    const genOff = await aliasState()
+    if (gen.section === null && genOff.section?.includes('這一組的資料還沒有商品名') && genOff.section.includes('AI 認的商品名')) pass('通用那一組沒有「客人還會怎麼叫它」；取消勾通用才出現，這一組沒有商品名 → 講「打開其中一份，在「⋯ → AI 認的商品名」填上」')
+    else fail('通用那一組的叫法區塊不對', JSON.stringify({ gen, genOff }))
+    await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button:not(.el-button--primary)`)?.click(), SHOWN)
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
+
+    // 系統抓到的「可能是同一台」：待辦那一列打開，視窗只剩確認那幾組（沒有「自己挑兩個合併」「已確認的對照」）
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('商品名可能是同一台')), null, 15_000)
+    const todo = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('可能是同一台')) ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('可能是同一台'))?.querySelector('.el-button')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '這幾個商品名是同一台嗎？' && d.querySelector('.src-alias-card')), null, 10_000)
+    await markShown(pg, { title: '這幾個商品名是同一台嗎？' })
+    await shot(pg, 'alias-candidates.png', SHOWN)
+    const candText = await pg.$eval(SHOWN, e => e.innerText.replace(/\s+/g, ' '))
+    const before = aliasPosts.length
+    await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-alias-actions .el-button`)].find(b => b.innerText.includes('是同一台'))?.click(), SHOWN)
+    const mergedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('要拿掉：那一組的「編輯分組」')), null, 5000)
+    const last = aliasPosts[before] ?? {}
+    if (todo.includes('有 1 組商品名可能是同一台') && candText.includes('C323 零水鍋') && !candText.includes('自己挑兩個合併') && !candText.includes('已確認的對照') && last.action === 'confirm' && last.canonical === 'C323 SHARP 自動調理零水鍋' && last.alias === 'C323 零水鍋' && mergedToast) pass('待辦「有 1 組商品名可能是同一台」→ 視窗只剩確認那幾組；按「是同一台」送出合併，講「要拿掉：那一組的「編輯分組」」')
+    else fail('「可能是同一台」視窗不對', JSON.stringify({ todo, candText: candText.slice(0, 200), last, mergedToast }))
+    await pg.close()
+
+    // 手機 390 寬：叫法很長（併過來的舊商品名）也換行，不撐破視窗
+    aliasesFake.pairs = [{ aliasKey: 'x', alias: 'C323 非常長的舊商品名稱多波長紅光舒緩儀專業版家用款含配件組合', canonical: REGEN }]
+    const phone = await openImportDialog(fake, { ...SOURCES_PAGE, width: 390, height: 844 })
+    await waitFor(phone, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
+    await openEdit(phone, 'C323 紅光儀')
+    await waitFor(phone, s => !!document.querySelector(`${s} .src-group-alias__tags .el-tag`), SHOWN, 10_000)
+    await sleep(300)
+    if (process.env.SHOT_DIR) await (await phone.$(SHOWN))?.screenshot({ path: join(process.env.SHOT_DIR, 'c315', 'group-alias-phone.png') }).catch(() => {})
+    const fit = await phone.evaluate((s) => {
+      const d = document.querySelector(s)
+      const body = d?.querySelector('.el-dialog__body')
+      const tag = d?.querySelector('.src-group-alias__tags .el-tag')?.getBoundingClientRect()
+      const box = d?.getBoundingClientRect()
+      return { dw: Math.round(box?.width ?? 0), over: (body?.scrollWidth ?? 0) - (body?.clientWidth ?? 0), tagInside: !!tag && !!box && tag.right <= box.right + 0.5, vw: window.innerWidth, pageOver: document.documentElement.scrollWidth - window.innerWidth }
+    }, SHOWN)
+    if (fit.over <= 0 && fit.tagInside && fit.dw <= fit.vw && fit.pageOver <= 0) pass(`手機 390 寬：很長的叫法換行、不撐破編輯分組（視窗 ${fit.dw}px）`)
+    else fail('手機上叫法撐破視窗', JSON.stringify(fit))
+    await phone.close()
   }
 }
 catch (e) {

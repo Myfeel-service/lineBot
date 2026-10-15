@@ -182,11 +182,7 @@
   margin-right: 12px;
 }
 
-/* ── 產品名稱整理(別名確認)────────────────────────── */
-.src-alias-badge {
-  margin-left: 6px;
-}
-
+/* ── 這幾個商品名是同一台嗎？(別名候選確認；`C-323` 前叫「產品名稱整理」)──── */
 .src-alias-card {
   padding: 12px;
   margin-bottom: 10px;
@@ -240,47 +236,41 @@
   flex-wrap: wrap;
 }
 
-.src-alias-manual {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
+/* ── 編輯分組：客人還會怎麼叫它（`C-323`；以前的「自己挑兩個合併」「已確認的對照」搬來這裡）── */
+.src-group-alias__row + .src-group-alias__row {
+  margin-top: 10px;
 }
 
-.src-alias-manual__hint {
-  margin: 4px 0 8px;
-}
-
-.src-alias-manual__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.src-alias-manual__select {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-
-.src-alias-manual__arrow {
-  flex: none;
+.src-group-alias__product {
+  margin: 0 0 4px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 
-.src-alias-confirmed {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-
-.src-alias-row {
+.src-group-alias__tags {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 4px 0;
-  font-size: 13px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+
+  /* 叫法可能很長（併過來的舊商品名）：標籤換行，不撐破 480px 的視窗 */
+  .el-tag {
+    height: auto;
+    min-height: 24px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ⚠️ Element 的輸入元件寬度會蓋掉單一 class：夾父層 */
+.src-group-alias .src-group-alias__input {
+  width: 100%;
+}
+
+.src-group-alias .folder-form-hint {
+  margin-top: 6px;
 }
 
 .src-health-list {

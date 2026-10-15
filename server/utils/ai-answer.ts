@@ -23,7 +23,7 @@ import { pinyin } from 'pinyin-pro'
 import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, searchSimilarChunksWithDrafts, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { contentSimilarity } from './ai-knowledge-resync'
-import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName } from './ai-product-alias'
+import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName, productsByAliasIn } from './ai-product-alias'
 import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
@@ -1266,15 +1266,24 @@ export function activeProductsInContext(
   productNames: string[],
   aliases?: Record<string, string>,
 ): ActiveProductContext | null {
-  if (!productNames.length) return null
+  const hasAliases = !!aliases && Object.keys(aliases).length > 0
+  if (!productNames.length && !hasAliases) return null
   const index = buildProductIdentifierIndex(productNames, aliases)
-  if (!index.size) return null
+  if (!index.size && !hasAliases) return null
 
-  const inQuery = productsMentionedIn(currentText, index)
+  // 別名（`C-323`，分組裡「客人還會怎麼叫它」）整段比：客人的叫法跟正式名常只共用一兩個字（「紅光儀」），
+  // 上面的片段比對抓不到，不補的話客人用叫法問，對話就鎖不到那一台
+  const mentioned = (t: string) => {
+    const hits = productsMentionedIn(t, index)
+    if (hasAliases) for (const p of productsByAliasIn(t, aliases!)) hits.add(normalizeProductName(p))
+    return hits
+  }
+
+  const inQuery = mentioned(currentText)
   if (inQuery.size) return { products: inQuery, from: 'query' }
 
   for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
-    const hits = productsMentionedIn(history![i]!.text, index)
+    const hits = mentioned(history![i]!.text)
     if (hits.size) return { products: hits, from: 'history' }
   }
   return null
@@ -1756,6 +1765,34 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   let chunks = await searchChunks(queryVector, DEFAULT_TOP_K_CHUNKS)
   let topSimilarity = chunks[0]?.similarity ?? 0
 
+  // 已確認的別名對照（上好ㄟ ↔ NWT 威技、客人的叫法 → 正式名）。下面的別名補檢索、同產品分組、產品鎖都吃這一份
+  const { aliases: productAliases } = await getProductAliases(db, workspaceId)
+
+  // 客人用叫法點名（`C-323`：分組裡「客人還會怎麼叫它」）：知識內容多半沒寫這個叫法，單句檢索撈到的常是
+  // 別台的卡，再被產品鎖整批擋掉＝轉真人。補一次「原句＋正式商品名」檢索併進來，同一條取高分。
+  // 只有句子裡真的有叫法、而且客人沒有自己打出正式名時才多花這一次。
+  const normalizedText = normalizeProductName(text)
+  const aliasProducts = productsByAliasIn(text, productAliases)
+    .filter(p => !normalizedText.includes(normalizeProductName(p)))
+    .slice(0, 2)
+  if (aliasProducts.length) {
+    try {
+      const aliasQuery = `${text}（${aliasProducts.join('、')}）`
+      const v = await embedQuery(aliasQuery)
+      embedTokenEstimate += estimateTokens(aliasQuery)
+      const byId = new Map(chunks.map(c => [c.id, c] as const))
+      for (const c of await searchChunks(v, DEFAULT_TOP_K_CHUNKS)) {
+        const cur = byId.get(c.id)
+        if (!cur || c.similarity > cur.similarity) byId.set(c.id, cur ? { ...cur, similarity: c.similarity } : c)
+      }
+      chunks = [...byId.values()].sort((a, b) => b.similarity - a.similarity).slice(0, DEFAULT_TOP_K_CHUNKS + 2)
+      topSimilarity = chunks[0]?.similarity ?? 0
+    }
+    catch (err) {
+      console.warn('[ai-answer] alias retrieval failed, keep single-query result:', err)
+    }
+  }
+
   // 反問 followup：query 是客人點的「選項卡片標題」，原始問題在 followupOf。
   // 只拿標題檢索會撈回該卡本身 → 答非所問（問水箱多大 → 回操作面板）。
   // 改用「標題＋原始問題」合成再檢索一次，與標題檢索結果聯集（保留客人明確選到的卡當錨點），
@@ -1919,8 +1956,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const catalogSourceIds = await getCatalogSourceIds(db, workspaceId)
   const subAnchorIds = subAnchors.length ? new Set(subAnchors.map(a => a.id)) : undefined
   // P1-2 同產品收斂：把「同一台機器的不同面向卡」分到同一組，反問只在『真的不同產品』間發生。
-  // 帶入已確認的別名對照（上好ㄟ ↔ NWT 威技），否則同一台的兩個叫法會被當成兩台。
-  const { aliases: productAliases } = await getProductAliases(db, workspaceId)
+  // 帶入已確認的別名對照（productAliases，檢索那一段讀的），否則同一台的兩個叫法會被當成兩台。
   // 去重＋分組要在「產品鎖」前後各做一次（鎖會把別台的卡踢掉）→ 收成一個函式，兩邊同一套口徑
   const regroup = (cs: SimilarChunk[]) => {
     const deduped = dedupeNearIdentical(dedupeBySource(cs, catalogSourceIds, subAnchorIds))

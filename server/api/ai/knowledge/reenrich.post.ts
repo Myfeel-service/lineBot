@@ -17,8 +17,9 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * 呼叫端帶著 cursor 重複呼叫直到 null。冪等、可中斷重跑。邏輯在 reenrichWorkspaceChunks。
  */
 export default defineEventHandler(async (event) => {
-  // 全工作區的知識維運操作，沿用與 reindex-all 相同的權限
-  const { workspaceId, uid } = await requireCapability(event, 'knowledge.reindexAll')
+  // 全工作區的知識維運操作，沿用與 reindex-all 相同的權限（`C-323` 起只限平台超管，見那一支）
+  const { workspaceId, uid, isSuperAdmin } = await requireCapability(event, 'knowledge.reindexAll')
+  if (!isSuperAdmin) throw createError({ statusCode: 403, statusMessage: '這個只有平台管理員能做' })
   await assertMaintenanceBudget(workspaceId) // C-45：補問法整庫掃描是純維運花費，超額不開跑
   const body = await readBody(event).catch(() => ({}))
   const cursor = String(body?.cursor ?? '').trim()

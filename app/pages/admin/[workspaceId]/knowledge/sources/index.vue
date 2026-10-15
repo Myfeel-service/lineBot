@@ -17,29 +17,27 @@
         <el-tooltip v-if="canEditKb" content="上傳檔案、貼網址或貼一段文字，AI 會自動整理" placement="bottom" :show-after="300">
           <el-button :icon="Upload" size="small" type="primary" plain data-tour="kb-import" @click="goImport">加入知識</el-button>
         </el-tooltip>
-        <el-dropdown v-if="canEditKb || canEditSources || canEditFolders" trigger="click">
+        <el-dropdown v-if="canEditKb || canEditFolders || canReindexAll" trigger="click">
           <!-- `kb-more`（`D-109`）：「新增資料夾」住在這個選單裡，導覽指這顆（指選單裡那一項的話，
                選單沒打開時聚光燈會框在一塊看不見的地方——Element Plus 的選單項目收著也在 DOM 裡） -->
           <el-button size="small" plain data-tour="kb-more">⋯</el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <!-- 選單/按鈕用正式的功能動詞;白話留給說明文字(老闆 8/05:按鈕寫成口語句太過頭) -->
-              <!-- `C-317`：跟側欄「用一句話寫一條知識」、問 AI 的「寫一句正確答案」打開同一個小視窗（以前是五格的編輯框） -->
-              <el-dropdown-item v-if="canEditKb" @click="openAddOne()">
-                手動新增知識
-              </el-dropdown-item>
+              <!--
+                `C-323`（老闆 2026-10-15「這邊的 UIUX 是否都整理過」→ 照建議做）拿掉兩項：
+                「手動新增知識」跟正下方「用一句話寫一條知識」打開同一個視窗＝重複的入口；
+                「產品名稱整理」照 `D-126` 第 4 步改成分組裡的「客人還會怎麼叫它」（編輯分組），系統抓到的「可能是同一台」照舊進「要處理的事」
+              -->
               <!-- `C-320`：這一頁的「資料夾」改叫「分組」（`D-126` 第 1 題：之後分組＝商品） -->
               <el-dropdown-item v-if="canEditFolders" data-tour="kb-folder-new" @click="createFolderPrompt">
                 新增分組
               </el-dropdown-item>
-              <el-dropdown-item v-if="canEditSources" divided @click="openAliasDialog">
-                產品名稱整理{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
-              </el-dropdown-item>
               <el-dropdown-item v-if="canEditKb" @click="openRecycleBin">
                 回收桶
               </el-dropdown-item>
-              <!-- 全庫重新學習是工程維護動作（升級檢索方式後才需要），不該長在主工具列 -->
-              <el-dropdown-item v-if="canReindexAll" :disabled="reindexingAll" @click="reindexAll">
+              <!-- 全庫重新學習是工程維護動作（升級檢索方式後才需要），不該長在主工具列；`C-323` 起只有平台超管看得到（端點也擋） -->
+              <el-dropdown-item v-if="canReindexAll" divided :disabled="reindexingAll" @click="reindexAll">
                 {{ reindexingAll ? '重新學習中⋯' : '重新學習全部知識（維護用）' }}
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -834,7 +832,7 @@
   </el-drawer>
 
   <!--
-    補一條（`C-317`）：這一頁所有「新增一條」的入口都開這一個——側欄「用一句話寫一條知識」、「⋯」→「手動新增知識」、
+    補一條（`C-317`）：這一頁所有「新增一條」的入口都開這一個——側欄「用一句話寫一條知識」（`C-323` 拿掉了重複的「⋯ → 手動新增知識」）、
     問 AI 的「寫一句正確答案」、搜尋不到時的「補進知識庫」、加入視窗的「手寫一條」、從 AI 表現頁／對話帶 ?q= 進來。
     以前是五格的編輯框（標題、內容、問法、產品、進階），補一句答案要面對五個欄位
   -->
@@ -889,22 +887,26 @@
     </template>
   </el-dialog>
 
-  <!-- ── 產品名稱整理:同一台的不同叫法,系統列候選、由人確認 ── -->
+  <!--
+    ── 可能是同一台：系統列候選、由人確認 ──
+    `C-323`：以前叫「產品名稱整理」、住在「⋯」選單，還有「自己挑兩個合併」「已確認的對照」兩塊。
+    那兩塊搬進「編輯分組 → 客人還會怎麼叫它」（D-126 第 4 步：別名跟著商品分組走）；這裡只剩系統抓到、等你判斷的那幾組，
+    入口是「要處理的事」那一列和「疑似重複」的「去合併商品名」
+  -->
   <el-dialog
     v-model="aliasOpen"
-    title="產品名稱整理"
+    title="這幾個商品名是同一台嗎？"
     width="min(680px, 94vw)"
   >
     <p class="text-muted text-sm src-health-list-hint">
-      同一台機器如果有兩種叫法（例：「上好ㄟ抽取式除濕機」和「NWT 威技 16L」），AI 會把它當成兩台，
-      反問時要客人二選一、回答出貨時間還會並列成兩台。在這裡確認之後，AI 就知道它們是同一台。
-      <strong>系統只負責找出可疑的組合，是不是同一台要由你判斷</strong>——同系列的不同型號（W1 REGEN 與 W1 REGEN ULTRA）看起來也很像，但不能合併。
+      同一台有兩種寫法，AI 會當成兩台，反問客人二選一。
+      <strong>是不是同一台由你判斷</strong>——同系列的不同型號（例如 ULTRA 版、12L 與 16L）看起來也很像，不能合併。
     </p>
 
     <div v-if="aliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
     <template v-else>
       <p v-if="!aliasCandidates.length" class="text-muted text-sm">
-        目前沒有需要確認的組合。之後匯入新資料時若偵測到，這裡會再出現。
+        目前沒有需要確認的組合。
       </p>
       <div v-for="c in aliasCandidates" :key="c.key" class="src-alias-card">
         <div class="src-alias-pair">
@@ -923,56 +925,6 @@
             不是，兩台不同
           </el-button>
           <span class="text-muted text-xs">合併後會以「{{ c.a }}」為正式名稱</span>
-        </div>
-      </div>
-
-      <!-- 偵測靠「檔名並列／包含／幾乎同字」三種訊號,總有漏網的(完全不同的講法)——
-           給手動出口,不然只能繞路把掛錯名的資料逐份改名 -->
-      <div v-if="canEditSources && aliasProductNames.length >= 2" class="src-alias-manual">
-        <p class="section-title">自己挑兩個合併</p>
-        <p class="text-muted text-xs src-alias-manual__hint">
-          上面沒列出來、但你知道是同一台的（例如完全不同的講法），在這裡手動指定。
-        </p>
-        <div class="src-alias-manual__row">
-          <el-select
-            v-model="manualMerge"
-            filterable
-            clearable
-            size="small"
-            placeholder="要併走的名字（錯的／舊的）"
-            class="src-alias-manual__select"
-          >
-            <el-option v-for="n in manualMergeOptions" :key="n" :label="n" :value="n" />
-          </el-select>
-          <span class="src-alias-manual__arrow">併入</span>
-          <el-select
-            v-model="manualKeep"
-            filterable
-            clearable
-            size="small"
-            placeholder="要留下的名字（對的）"
-            class="src-alias-manual__select"
-          >
-            <el-option v-for="n in manualKeepOptions" :key="n" :label="n" :value="n" />
-          </el-select>
-          <el-button
-            size="small"
-            type="primary"
-            plain
-            :loading="manualSaving"
-            :disabled="!manualKeep || !manualMerge"
-            @click="manualMergeConfirm"
-          >
-            合併
-          </el-button>
-        </div>
-      </div>
-
-      <div v-if="aliasPairs.length" class="src-alias-confirmed">
-        <p class="section-title">已確認的對照（{{ aliasPairs.length }}）</p>
-        <div v-for="p in aliasPairs" :key="p.aliasKey" class="src-alias-row">
-          <span>「{{ p.alias }}」→ 「{{ p.canonical }}」</span>
-          <el-button v-if="canEditSources" text size="small" :loading="aliasSaving === p.aliasKey" @click="undoAlias(p)">解除</el-button>
         </div>
       </div>
     </template>
@@ -1527,7 +1479,7 @@
   >
     <p class="src-bin-hint">
       系統用「內容相似度＋AI 判斷」找出可能重複的組合，並附上理由。
-      <strong>不會自動合併或刪除</strong><template v-if="canEditSources">——確認後用「產品名稱整理」合併、或把多的那條刪掉（會進回收桶，可還原）。
+      <strong>不會自動合併或刪除</strong><template v-if="canEditSources">——同一台兩個名字的按「去合併商品名」，講同一件事的把多的那條刪掉（會進回收桶，可還原）。
       不是重複的按「忽略」，之後不會再報這一組</template>。
     </p>
     <!--
@@ -1554,8 +1506,8 @@
         </div>
         <!-- `G-102`：去合併／忽略＝sources.write；「看 A／看 B」觀察者也能按，開的是唯讀視窗 -->
         <div class="src-dupe-actions">
-          <el-button v-if="s.kind === 'product_split' && canEditSources" size="small" type="primary" plain @click="dupGoMerge">
-            去合併產品名
+          <el-button v-if="s.kind === 'product_split' && canEditSources" size="small" type="primary" plain @click="dupGoMerge(s)">
+            去合併商品名
           </el-button>
           <template v-else-if="s.kind !== 'product_split'">
             <el-button size="small" plain @click="dupOpenCard(s.a.id)">看 A</el-button>
@@ -1597,6 +1549,47 @@
       <el-checkbox v-model="folderForm.general" class="src-folder-general-check">
         通用（FAQ、公告這種不是講單一商品的）
       </el-checkbox>
+      <!--
+        客人還會怎麼叫它（`C-323`，`D-126` 第 4 步）：以前在「⋯ → 產品名稱整理」，跟分組是兩套。
+        商品分組才有（通用那一組不講單一商品）；這一組每個 AI 認的商品名各一列。
+        標籤＋可提示的輸入框（Element 元件、不手刻）：打字時下拉列出像的現有商品名，挑了＝當成同一台；打新的＝客人的叫法。
+        ⛔ 不用 el-select 多選＋allow-create：沒按 Enter 就按儲存，打的字會被安靜丟掉（addGroupAlias 那段）
+      -->
+      <div v-if="!folderForm.general" class="admin-field-group src-group-alias">
+        <AdminFieldLabel text="客人還會怎麼叫它" tight />
+        <div v-if="groupAliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
+        <p v-else-if="groupAliasFailed" class="folder-form-hint">讀不到，關掉再打開一次試試。</p>
+        <p v-else-if="!groupAliasRows.length" class="folder-form-hint">
+          這一組的資料還沒有商品名。打開其中一份，在右上「⋯ → AI 認的商品名」填上，這裡就能加。
+        </p>
+        <template v-else>
+          <div v-for="row in groupAliasRows" :key="row.product" class="src-group-alias__row">
+            <p class="src-group-alias__product">AI 認的商品名：{{ row.product }}</p>
+            <div v-if="row.current.length" class="src-group-alias__tags">
+              <el-tag
+                v-for="a in row.current"
+                :key="a"
+                :closable="canEditSources"
+                disable-transitions
+                @close="removeGroupAlias(row, a)"
+              >
+                {{ a }}
+              </el-tag>
+            </div>
+            <el-autocomplete
+              v-if="canEditSources"
+              v-model="row.draft"
+              :fetch-suggestions="groupAliasSuggestionsFor(row)"
+              :trigger-on-focus="false"
+              select-when-unmatched
+              placeholder="打一個叫法，按 Enter"
+              class="src-group-alias__input"
+              @select="(item) => addGroupAlias(row, String(item.value ?? ''))"
+            />
+          </div>
+          <p class="folder-form-hint">客人用這些叫法問，AI 就知道是這一台。別寫「除濕機」這種好幾台都通用的。</p>
+        </template>
+      </div>
       <p v-if="folderEditTarget" class="folder-form-hint">
         目前底下 {{ countByFolder[folderEditTarget.id] ?? 0 }} 份資料。
         刪掉這一組，底下的資料會移到「未分類」，<strong>不會</strong>被刪掉。
@@ -1638,6 +1631,7 @@ import { formatFileSize } from '~/utils/knowledge-upload'
 import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 import type { AddOneCreated } from '~/utils/kb-add-one'
+import { ALIAS_TOO_SHORT_TEXT, isUsableAlias, normalizeProductName } from '~~/shared/product-name-similarity'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1752,7 +1746,9 @@ const { apiFetch, workspaceId, can } = useWorkspace()
 const canEditKb = computed(() => can('knowledge.write'))
 const canEditSources = computed(() => can('sources.write'))
 const canEditFolders = computed(() => can('folders.write'))
-const canReindexAll = computed(() => can('knowledge.reindexAll'))
+// `C-323`：只有平台超管（店家用不到、按了要等幾分鐘又花錢）；端點另外擋。claim 在 onMounted 讀一次
+const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
+const canReindexAll = computed(() => isSuperAdmin.value && can('knowledge.reindexAll'))
 // 待辦「AI 客服還沒開啟」要不要給「前往開啟」：AI 設定頁只有管理員存得了（`G-102`）
 const canEditAiSettings = computed(() => can('ai.settings.write'))
 /** 右邊「問 AI」（`C-315`）：問的是測試對話那一支（`playground.use`＝客服級），觀察者整欄不出現 */
@@ -2587,10 +2583,21 @@ const dupSuggestOpen = ref(false)
 const dupDismissing = ref('')
 const dupRescanning = ref(false)
 
-/** 產品名分裂 → 直接把人送進現成的「整理產品名稱」視窗（合錯可解除） */
-function dupGoMerge() {
+/**
+ * 產品名分裂 → 打開「是同一台嗎？」視窗，這一組排第一個（`C-323`）。
+ * 以前打開的視窗有「自己挑兩個合併」，這一組系統沒列成候選也合得了；那一塊搬進編輯分組之後，
+ * 不把這一組帶進去的話，他按了「去合併」只會看到「目前沒有需要確認的組合」
+ */
+function dupGoMerge(s: DupSuggestionRow) {
   dupSuggestOpen.value = false
-  openAliasDialog()
+  const a = String(s.a.productName ?? '').trim()
+  const b = String(s.b.productName ?? '').trim()
+  const pair = a && b && normalizeProductName(a) !== normalizeProductName(b)
+    ? { a: a.length >= b.length ? a : b, b: a.length >= b.length ? b : a }
+    : null
+  void openAliasDialog(pair
+    ? { key: `dup:${s.key}`, ...pair, reason: s.reason, confidence: 'medium', variantRisk: false }
+    : undefined)
 }
 
 /** 重複卡 → 打開那張卡（看完自行決定刪哪張；刪了會進回收桶可還原） */
@@ -2838,11 +2845,14 @@ function ymdLabel(ms: number): string {
 const folderEditOpen = ref(false)
 const folderEditTarget = ref<FolderRow | null>(null)
 const folderForm = ref({ name: '', general: false })
-/** 名字或「通用」有改才能按儲存（只送改了的那一格） */
+/** 名字、「通用」或客人的叫法（`C-323`）有改才能按儲存（只送改了的那幾格） */
 const folderFormDirty = computed(() => {
   const t = folderEditTarget.value
   if (!t) return false
   return folderForm.value.name.trim() !== t.name || folderForm.value.general !== (t.general === true)
+    || groupAliasChanges.value.length > 0
+    // 框裡打了字還沒按 Enter 也算：儲存會把它一起加進去（不然按鈕是灰的，他會以為打的字存不了）
+    || (!folderForm.value.general && groupAliasRows.value.some(r => r.draft.trim()))
 })
 const folderSaving = ref(false)
 const folderDeleting = ref(false)
@@ -3146,11 +3156,12 @@ const todoItems = computed<TodoItem[]>(() => {
   // ⛔「內容較短」刻意不在這裡：它不是待辦，判準見 healthIssueCount 上面那段。
   // 別名候選原本只藏在「⋯」選單展開後的項目文字裡,⋯ 按鈕本身沒有徽章——
   // 等於一個看不見的異常。它會讓 AI 把同一台機器當成兩台,該進待辦。
+  // `C-323` 起選單那一項拿掉了，這一列（和「疑似重複」的「去合併商品名」）是唯一的入口
   if (h.aliasCandidateCount > 0) {
     items.push({
       id: 'alias',
       tone: 'warning',
-      title: `有 ${h.aliasCandidateCount} 組產品名稱可能是同一台`,
+      title: `有 ${h.aliasCandidateCount} 組商品名可能是同一台`,
       why: '同一台機器兩種叫法會被 AI 當成兩台——反問客人二選一、出貨時間並列成兩台。',
       // `G-102`：進去唯一能做的是合併／不是（sources.write），觀察者只留這一列當作知道
       ...(canEditSources.value ? { cta: '前往確認', action: () => { void openAliasDialog() } } : {}),
@@ -3321,9 +3332,10 @@ async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }, op
   }
 }
 
-// ── 產品名稱整理(別名歸一)───────────────────────────
+// ── 可能是同一台（別名候選）＋編輯分組的「客人還會怎麼叫它」───────────────
 // 同一台機器兩種叫法會被 AI 當成兩台(反問二選一、出貨時間並列)。系統偵測候選、由人確認——
 // 不自動合併:「W1 REGEN」與「W1 REGEN ULTRA」字面上也像別名,但那是兩台不同機器。
+// `C-323`：候選視窗只剩「是不是同一台」那幾組；自己加叫法、拿掉別名搬進編輯分組（下方 groupAlias*）。
 interface AliasCandidate {
   key: string
   a: string
@@ -3338,19 +3350,15 @@ const aliasOpen = ref(false)
 const aliasLoading = ref(false)
 const aliasSaving = ref('')
 const aliasCandidates = ref<AliasCandidate[]>([])
+/** 已確認的對照（別名 → 最終正式名）。編輯分組照這份列出「客人還會怎麼叫它」 */
 const aliasPairs = ref<AliasPair[]>([])
-/** 這個帳號目前所有產品名（手動合併的兩個下拉用） */
+/** 這個帳號目前所有產品名（編輯分組加叫法時可以直接挑一個現有的＝當成同一台） */
 const aliasProductNames = ref<string[]>([])
-/**
- * 工具列徽章的數字。**資料是體檢端點**(進頁面就載入),不是這個視窗自己的清單——
- * 只有開過視窗才有數字的話,使用者永遠沒有理由去點它,整個別名功能等於不存在。
- * 開過視窗後改用視窗內的即時清單(按完確認數字要馬上少一)。
- */
-const aliasDialogLoaded = ref(false)
-const aliasCandidateCount = computed(() =>
-  aliasDialogLoaded.value ? aliasCandidates.value.length : health.value.aliasCandidateCount)
+/** 正規化的別名 → 最終正式名 */
+const aliasFinalOf = computed(() => new Map(aliasPairs.value.map(p => [p.aliasKey, p.canonical] as const)))
 
-async function loadAliases() {
+/** 讀別名對照＋候選。讀不到回 false（編輯分組要分得出「讀不到」跟「真的沒有」） */
+async function loadAliases(): Promise<boolean> {
   aliasLoading.value = true
   try {
     const res = await apiFetch<{ candidates: AliasCandidate[]; pairs: AliasPair[]; productNames?: string[] }>(
@@ -3359,19 +3367,28 @@ async function loadAliases() {
     aliasCandidates.value = res.candidates ?? []
     aliasPairs.value = res.pairs ?? []
     aliasProductNames.value = (res.productNames ?? []).slice().sort((a: string, b: string) => a.localeCompare(b, 'zh-TW'))
-    aliasDialogLoaded.value = true
+    return true
   }
   catch (err: any) {
-    showToast(apiErrorText(err, '讀取產品名稱失敗'), 'error')
+    showToast(apiErrorText(err, '讀取商品名失敗'), 'error')
+    return false
   }
   finally {
     aliasLoading.value = false
   }
 }
 
-async function openAliasDialog() {
+/** 同一組名字（不分先後、不分寫法） */
+function sameAliasPair(x: { a: string; b: string }, y: { a: string; b: string }): boolean {
+  const k = (p: { a: string; b: string }) => [normalizeProductName(p.a), normalizeProductName(p.b)].sort().join('|')
+  return k(x) === k(y)
+}
+
+/** extra：「疑似重複」帶過來的那一組（系統沒列成候選也要讓他判斷），排第一個 */
+async function openAliasDialog(extra?: AliasCandidate) {
   aliasOpen.value = true
   await loadAliases()
+  if (extra) aliasCandidates.value = [extra, ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
 }
 
 async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
@@ -3389,7 +3406,8 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
         // 沒異動時要講清楚,否則清單少一列但沒發生任何事,看起來像剛才那次沒生效
         : res?.changed === false
           ? '這兩個名字本來就已經對應到同一台了'
-          : '已合併，AI 之後會把它們當同一台',
+          // 以前這個視窗下面就有「已確認的對照」可以解除；搬走之後要講一次去哪裡拿掉
+          : '已合併，AI 之後會把它們當同一台（要拿掉：那一組的「編輯分組」）',
       'success',
     )
     // 併掉的名字要從「所屬產品」下拉消失(合併會動到收斂後的清單,60 秒快取等不得)
@@ -3405,72 +3423,110 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
   }
 }
 
-// ── 手動合併:偵測漏掉的(打錯字、完全不同的講法)給一個出口 ──
-// 沒有這個入口的話,漏網的組合只能繞路把掛錯名的資料逐份改名。
-const manualKeep = ref('')
-const manualMerge = ref('')
-const manualSaving = ref(false)
-// 兩個下拉互斥:同一個名字不能又留又併
-const manualKeepOptions = computed(() => aliasProductNames.value.filter(n => n !== manualMerge.value))
-const manualMergeOptions = computed(() => aliasProductNames.value.filter(n => n !== manualKeep.value))
+// ── 編輯分組：客人還會怎麼叫它（`C-323`，`D-126` 第 4 步「別名取代產品名稱整理」）──
+// 這一組裡每個 AI 認的商品名（照對照表收斂）各一列，列出現有的別名；可以打新的叫法，也可以挑一個現有的商品名（＝當成同一台）。
+// 舊的「自己挑兩個合併」「已確認的對照→解除」就是這兩件事。⛔ 按「儲存」才寫（跟名字、通用同一顆）：取消要真的取消。
+interface GroupAliasRow {
+  /** 最終正式名（別名指向它） */
+  product: string
+  /** 打開時就有的別名（原樣寫法） */
+  original: string[]
+  /** 現在的（標籤） */
+  current: string[]
+  /** 輸入框裡還沒加進去的字（按儲存時一起收，見 saveFolderName） */
+  draft: string
+}
+const groupAliasRows = ref<GroupAliasRow[]>([])
+const groupAliasLoading = ref(false)
+const groupAliasFailed = ref(false)
 
-async function manualMergeConfirm() {
-  const keep = manualKeep.value
-  const merge = manualMerge.value
-  if (!keep || !merge || keep === merge) return
-  // 手動合併沒有系統證據背書,最常見的誤用是把同系列不同型號併掉——按下去前講清楚後果
-  try {
-    await ElMessageBox.confirm(
-      `合併後，AI 會把「${merge}」一律當成「${keep}」（可以在下面「解除」）。同系列的不同型號（例如 ULTRA 版、12L 與 16L）是兩台不同機器，不要合併。`,
-      '確認是同一台？',
-      { confirmButtonText: '是同一台，合併', cancelButtonText: '再想想', type: 'warning' },
-    )
+function buildGroupAliasRows(folderId: string): GroupAliasRow[] {
+  const products = new Map<string, string>()
+  for (const s of sources.value) {
+    if (s.folderId !== folderId) continue
+    const raw = String(s.productName ?? '').trim()
+    if (!raw) continue
+    const product = aliasFinalOf.value.get(normalizeProductName(raw)) ?? raw
+    const key = normalizeProductName(product)
+    if (key && !products.has(key)) products.set(key, product)
   }
-  catch {
-    return // 使用者取消
+  return [...products].map(([key, product]) => {
+    const aliases = aliasPairs.value.filter(p => normalizeProductName(p.canonical) === key).map(p => p.alias)
+    return { product, original: aliases, current: [...aliases], draft: '' }
+  })
+}
+
+async function loadGroupAliases(folderId: string) {
+  groupAliasRows.value = []
+  groupAliasFailed.value = false
+  groupAliasLoading.value = true
+  const ok = await loadAliases()
+  // 讀的這一兩秒他可能已經關掉、換開另一組
+  if (!folderEditOpen.value || folderEditTarget.value?.id !== folderId) return
+  groupAliasLoading.value = false
+  if (!ok) {
+    groupAliasFailed.value = true
+    return
   }
-  manualSaving.value = true
-  try {
-    const res = await apiFetch<{ changed?: boolean }>('/api/ai/knowledge/product-aliases', {
-      method: 'POST',
-      body: { action: 'confirm', canonical: keep, alias: merge },
-    })
-    showToast(
-      res?.changed === false ? '這兩個名字本來就已經對應到同一台了' : '已合併，AI 之後會把它們當同一台',
-      'success',
-    )
-    manualKeep.value = ''
-    manualMerge.value = ''
-    invalidateProductNamesCache()
-    await loadAliases()
-    void loadHealth(true)
-  }
-  catch (err: any) {
-    showToast(apiErrorText(err, '儲存失敗'), 'error')
-  }
-  finally {
-    manualSaving.value = false
+  groupAliasRows.value = buildGroupAliasRows(folderId)
+}
+
+/** 下拉可以挑的：其他現有商品名（挑了＝當成這一台）；已經是這一台的、已經在框裡的不列 */
+function groupAliasOptions(row: GroupAliasRow): string[] {
+  const rowKey = normalizeProductName(row.product)
+  const taken = new Set(row.current.map(normalizeProductName))
+  return aliasProductNames.value.filter((n) => {
+    const k = normalizeProductName(n)
+    return k !== rowKey && !taken.has(k) && normalizeProductName(aliasFinalOf.value.get(k) ?? n) !== rowKey
+  })
+}
+
+/** 輸入框打字時的下拉：只在打字後出現（一點進去就列一排別的商品，會以為要從裡面挑） */
+function groupAliasSuggestionsFor(row: GroupAliasRow) {
+  return (query: string, cb: (items: Array<{ value: string }>) => void) => {
+    const q = normalizeProductName(query)
+    cb(q ? groupAliasOptions(row).filter(n => normalizeProductName(n).includes(q)).map(value => ({ value })) : [])
   }
 }
 
-async function undoAlias(p: AliasPair) {
-  aliasSaving.value = p.aliasKey
-  try {
-    await apiFetch('/api/ai/knowledge/product-aliases', {
-      method: 'POST',
-      body: { action: 'remove', alias: p.alias },
-    })
-    showToast('已解除', 'success')
-    invalidateProductNamesCache() // 解除後那個名字要重新出現在「所屬產品」下拉
-    await loadAliases()
+/**
+ * 把一個叫法加成標籤（Enter、挑下拉、按儲存時框裡還有字）。回 false＝不收、原因已經講了。
+ * ⛔ 不用 el-select 的「多選＋可自己打」：那個要按 Enter 才算數，打了字直接按儲存會被安靜丟掉（KnowledgeProductNameField 開頭同一個理由）
+ */
+function addGroupAlias(row: GroupAliasRow, value = row.draft): boolean {
+  const s = String(value ?? '').trim()
+  if (!s) return true
+  const k = normalizeProductName(s)
+  // 只檢查新的：舊資料裡可能有過短的別名，拿掉又加回來不該被擋
+  if (!row.original.some(a => normalizeProductName(a) === k)) {
+    if (!isUsableAlias(s)) { showToast(ALIAS_TOO_SHORT_TEXT, 'warning'); return false }
+    if (s.length > 50) { showToast('叫法最多 50 個字', 'warning'); return false }
   }
-  catch (err: any) {
-    showToast(apiErrorText(err, '解除失敗'), 'error')
-  }
-  finally {
-    aliasSaving.value = ''
+  if (k === normalizeProductName(row.product)) showToast('這就是它的商品名，不用另外加', 'info')
+  else if (!row.current.some(a => normalizeProductName(a) === k)) row.current = [...row.current, s]
+  row.draft = ''
+  return true
+}
+
+function removeGroupAlias(row: GroupAliasRow, alias: string) {
+  row.current = row.current.filter(a => a !== alias)
+}
+
+function groupAliasDiff(row: GroupAliasRow) {
+  const before = new Set(row.original.map(normalizeProductName))
+  const after = new Set(row.current.map(normalizeProductName))
+  return {
+    added: row.current.filter(a => !before.has(normalizeProductName(a))),
+    removed: row.original.filter(a => !after.has(normalizeProductName(a))),
   }
 }
+
+/** 通用那一組不講單一商品：勾著通用時這一塊收起來、也不存 */
+const groupAliasChanges = computed(() => folderForm.value.general
+  ? []
+  : groupAliasRows.value
+      .map(row => ({ row, ...groupAliasDiff(row) }))
+      .filter(x => x.added.length || x.removed.length))
 
 // ── 分組 CRUD（`C-320`：資料庫裡叫 folder，畫面上叫「分組」）─────────────────
 async function createFolderPrompt() {
@@ -3505,6 +3561,8 @@ function openFolderEdit(folder: FolderRow) {
   folderEditTarget.value = folder
   folderForm.value = { name: folder.name, general: folder.general === true }
   folderEditOpen.value = true
+  // 通用那一組也讀：他可能當場取消勾「通用」、接著要加叫法
+  void loadGroupAliases(folder.id)
 }
 
 async function saveFolderName() {
@@ -3515,17 +3573,58 @@ async function saveFolderName() {
   const body: { name?: string, general?: boolean } = {}
   if (newName !== target.name) body.name = newName
   if (folderForm.value.general !== (target.general === true)) body.general = folderForm.value.general
+  // 框裡還有字＝他要加的，先收成標籤；收不了（太短）就停在這裡，原因 addGroupAlias 講過了
+  if (!folderForm.value.general) {
+    for (const row of groupAliasRows.value) if (!addGroupAlias(row)) return
+  }
+  const aliasChanges = groupAliasChanges.value
+  // 挑的是另一個現有商品名＝兩台當成同一台。沒有系統證據背書，最常見的誤用是把同系列不同型號併掉——存之前講清楚
+  const existing = new Set(aliasProductNames.value.map(normalizeProductName))
+  const merges = aliasChanges.flatMap(x =>
+    x.added.filter(a => existing.has(normalizeProductName(a))).map(a => `「${a}」`))
+  if (merges.length) {
+    try {
+      await ElMessageBox.confirm(
+        `${merges.join('、')}現在是別的商品名，存了之後 AI 會把它當成這一台。同系列的不同型號（例如 ULTRA 版、12L 與 16L）是兩台不同機器，不要這樣加。`,
+        '確認是同一台？',
+        { confirmButtonText: '是同一台，儲存', cancelButtonText: '再想想', type: 'warning' },
+      )
+    }
+    catch {
+      return // 使用者取消
+    }
+  }
   folderSaving.value = true
   try {
-    const res = await apiFetch<FolderRow>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
-    const idx = folders.value.findIndex(f => f.id === target.id)
-    // 舊伺服器回的沒有 general：照這次送的補上，畫面上的排序才對得上
-    if (idx >= 0) folders.value[idx] = { ...res, general: res.general ?? (body.general ?? target.general === true) }
+    if (body.name !== undefined || body.general !== undefined) {
+      const res = await apiFetch<FolderRow>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
+      const idx = folders.value.findIndex(f => f.id === target.id)
+      // 舊伺服器回的沒有 general：照這次送的補上，畫面上的排序才對得上
+      if (idx >= 0) folders.value[idx] = { ...res, general: res.general ?? (body.general ?? target.general === true) }
+    }
+    // 叫法一個一個存（各自有操作紀錄）。中途失敗就停、前面存好的不回滾，catch 裡重讀一次讓畫面等於真的存進去的
+    for (const x of aliasChanges) {
+      for (const alias of x.removed) {
+        await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'remove', alias } })
+      }
+      for (const alias of x.added) {
+        await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: x.row.product, alias } })
+      }
+    }
+    if (aliasChanges.length) {
+      // 併過來的商品名要從「所屬產品」下拉消失；「可能是同一台」那一列的數字也會跟著變
+      invalidateProductNamesCache()
+      void loadHealth(true)
+    }
     showToast('已儲存', 'success')
     folderEditOpen.value = false
   }
   catch (err: any) {
     showToast(apiErrorText(err, '儲存失敗'), 'error')
+    if (aliasChanges.length) {
+      invalidateProductNamesCache()
+      void loadGroupAliases(target.id)
+    }
   }
   finally {
     folderSaving.value = false
@@ -4874,6 +4973,7 @@ function kindLabel(k: string) {
 onMounted(async () => {
   loadExpandedState()
   void loadAiEnabled() // 不 await:只影響「要處理的事」多一列,不該卡住頁面載入
+  void checkIsSuperAdmin().catch(() => {}) // 「⋯ → 重新學習全部知識」只給平台超管（`C-323`）
   const route = useRoute()
   const router = useRouter()
   // deep-link query 是一次性的指令:處理完就從網址清掉,否則 F5 會再彈一次視窗

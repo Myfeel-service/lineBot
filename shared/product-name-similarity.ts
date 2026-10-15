@@ -1,6 +1,6 @@
 /**
  * 產品名相似度：欄位端（打字當下攔「這會新增產品／是同一台嗎」）與
- * 偵測端（產品名稱整理列「可能是打錯字」候選）共用同一把尺。
+ * 偵測端（「可能是同一台」候選列「可能是打錯字」）共用同一把尺。
  *
  * 兩邊各寫一份的話，欄位說「很像」、整理視窗卻不列（或反過來），
  * 使用者會在兩個畫面得到兩種說法——所以判定只有這一份。
@@ -13,6 +13,23 @@ export function normalizeProductName(s: string): string {
     .replace(/\s+/g, '')
     .toLowerCase()
 }
+
+/** 中文、注音、日文假名：這幾種字 2 個就有鑑別力（「小米」）；純英數要 3 個（「AP」會撞到 app、apple） */
+const CJK_CHAR_RE = /[぀-ヿ㄀-ㄯ㐀-鿿]/
+
+/**
+ * 這個叫法能不能當別名（`C-323`：分組裡「客人還會怎麼叫它」）。
+ * 答題端拿別名在客人整句話裡找子字串（正規化後），太短的會在不相干的句子裡命中、把對話鎖到錯的那一台。
+ * 前後端共用：畫面上當場擋、伺服器再擋一次。
+ */
+export function isUsableAlias(s: string): boolean {
+  const n = normalizeProductName(s)
+  if (!n) return false
+  return CJK_CHAR_RE.test(n) ? n.length >= 2 : n.length >= 3
+}
+
+/** 叫法太短時給人看的那一句（畫面與伺服器 400 共用） */
+export const ALIAS_TOO_SHORT_TEXT = '叫法太短：中文至少 2 個字，英文或數字至少 3 個字'
 
 /**
  * 有上限的編輯距離（Levenshtein）。超過 max 提早回 max + 1：

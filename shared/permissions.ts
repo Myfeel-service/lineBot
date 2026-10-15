@@ -71,7 +71,8 @@ export const CAPABILITIES = {
   // 操作紀錄（誰把什麼改成什麼，含小幫手代辦的每一筆）。放 admin 的理由：
   // 紀錄裡看得到設定的前後值與是誰動的，等級比照「能改設定的人才看得到改了什麼」。
   'audit.read': 'admin',
-  'knowledge.reindexAll': 'admin', // 知識庫全量重建
+  // 知識庫全量重建。`C-323`（2026-10-15）起端點另外只放平台超管（店家用不到、按了花錢），這裡的角色只是最低門檻
+  'knowledge.reindexAll': 'admin',
   'members.manage': 'admin', // 成員 邀請/改角色/移除
   'line.manage': 'admin', // 組織與 LINE 憑證 讀取/儲存
   'billing.manage': 'admin', // 訂閱、付款、發票（2026-09-29 `G-106` 補：`payment/*` 原本寫死 'admin'）

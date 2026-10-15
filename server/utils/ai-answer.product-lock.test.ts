@@ -62,7 +62,8 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
 const { answerWithAi } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { searchSimilarChunks, getWorkspaceProductNames } = await import('./ai-knowledge-chunks')
-const { generateJson } = await import('./gemini')
+const { generateJson, embedQuery } = await import('./gemini')
+const { getProductAliases } = await import('./ai-product-alias')
 const { recordAiUsage } = await import('./ai-usage')
 const { logHandoffEvent } = await import('./ai-handoff-events')
 
@@ -124,6 +125,10 @@ beforeEach(() => {
     shopUrl: '',
   }))
   vi.mocked(getWorkspaceProductNames).mockResolvedValue([REGEN, ZERO_WATER])
+  // clearAllMocks 不清回傳值：別名那組設過一次就會留到後面每一題，這裡每題重設成沒有別名
+  vi.mocked(getProductAliases).mockResolvedValue({ aliases: {}, aliasLabels: {}, dismissedPairs: [] })
+  // 一題排了兩次回傳（mockResolvedValueOnce）卻只用掉一次時，剩下那次會漏到下一題；每題清空再給預設
+  vi.mocked(searchSimilarChunks).mockReset().mockResolvedValue([])
   vi.mocked(generateJson).mockResolvedValue({
     data: { answer: '（不該被呼叫）', hasInfo: true },
     inputTokens: 1,
@@ -194,6 +199,74 @@ describe('answerWithAi 對話級產品鎖', () => {
     ])
 
     expect(res.decision).toBe('answered')
+  })
+})
+
+/**
+ * `C-323`：分組裡「客人還會怎麼叫它」。「紅光儀」跟正式名只共用「紅光」兩個字，片段比對認不出來——
+ * 不另外整段比的話，客人用叫法問等於沒點名，撈到別台的優惠卡照樣答出去。
+ */
+describe('answerWithAi 客人用叫法（別名）點名', () => {
+  const REGEN_CARD = card({ id: 'r1', title: 'W1 REGEN 購買方式', content: '請至商品頁下單。', similarity: 0.8, productName: REGEN })
+  const withAlias = () => vi.mocked(getProductAliases).mockResolvedValue({
+    aliases: { 紅光儀: REGEN },
+    aliasLabels: { 紅光儀: '紅光儀' },
+    dismissedPairs: [],
+  })
+
+  it('叫法鎖得到那一台：撈到的全是別台的卡 → 轉真人，不把別台的折扣碼講出去', async () => {
+    vi.mocked(searchSimilarChunks).mockResolvedValue(ZERO_WATER_CARDS)
+
+    // 對照組：沒登記叫法時，這句等於沒點名 → 拿零水鍋的卡照答（這就是要修的）
+    const before = await ask('紅光儀怎麼買最方便？', [])
+    expect(before.decision).toBe('answered')
+
+    vi.clearAllMocks()
+    withAlias()
+    vi.mocked(searchSimilarChunks).mockResolvedValue(ZERO_WATER_CARDS)
+    const res = await ask('紅光儀怎麼買最方便？', [])
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('product_mismatch')
+    expect(vi.mocked(generateJson)).not.toHaveBeenCalled()
+  })
+
+  it('叫法補一次檢索：帶正式名再撈一次、那一台的卡併進來照答', async () => {
+    withAlias()
+    vi.mocked(searchSimilarChunks)
+      .mockResolvedValueOnce(ZERO_WATER_CARDS) // 原句：撈到別台
+      .mockResolvedValueOnce([REGEN_CARD]) // 原句＋正式名：撈到那一台
+
+    const res = await ask('紅光儀怎麼買最方便？', [])
+
+    expect(res.decision).toBe('answered')
+    const queries = vi.mocked(embedQuery).mock.calls.map(c => String(c[0]))
+    expect(queries.some(q => q.includes('紅光儀') && q.includes(REGEN))).toBe(true)
+    const prompt = String(vi.mocked(generateJson).mock.calls[0]?.[0] ?? '')
+    expect(prompt).toContain('W1 REGEN 購買方式')
+    expect(prompt).not.toContain('NEXT300')
+  })
+
+  it('前面講過叫法、這句沒再提 → 照樣鎖那一台', async () => {
+    withAlias()
+    vi.mocked(searchSimilarChunks).mockResolvedValue(ZERO_WATER_CARDS)
+
+    const res = await ask('怎麼購買最方便？', [
+      { role: 'user' as const, text: '紅光儀有保固嗎' },
+      { role: 'bot' as const, text: '有的，保固一年。' },
+    ])
+
+    expect(res.handoffReason).toBe('product_mismatch')
+  })
+
+  it('句子裡沒有叫法 → 不多花一次轉向量', async () => {
+    withAlias()
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'p1', title: '運費與配送說明', content: '滿千免運。', similarity: 0.8 }),
+    ])
+
+    await ask('運費怎麼算？', [])
+
+    expect(vi.mocked(embedQuery)).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -26,7 +26,10 @@ const BATCH_LIMIT = 300
  * 冪等，可中斷重跑。
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireCapability(event, 'knowledge.reindexAll')
+  const { workspaceId, uid, isSuperAdmin } = await requireCapability(event, 'knowledge.reindexAll')
+  // `C-323`（老闆 2026-10-15）：只有平台超管能按。這是系統升級後才要做的事，店家看不懂該不該按，
+  // 按了要等好幾分鐘、每條都重算一次（花錢）。畫面上也只有超管看得到那一項
+  if (!isSuperAdmin) throw createError({ statusCode: 403, statusMessage: '這個只有平台管理員能做' })
   const body = await readBody(event).catch(() => ({}))
   const cursor = String(body?.cursor ?? '').trim()
 

@@ -6,8 +6,10 @@ import {
   detectAliasCandidates,
   normalizeProductName,
   aliasPairKey,
+  productsByAliasIn,
   type ProductAliasMap,
 } from './ai-product-alias'
+import { isUsableAlias } from '~~/shared/product-name-similarity'
 
 const emptyMap = (): ProductAliasMap => ({ aliases: {}, aliasLabels: {}, dismissedPairs: [] })
 
@@ -310,6 +312,49 @@ describe('confirmAlias', () => {
     })
     expect(await confirmAlias(db, 'ws4', 'SHARP 頂級A咖', 'iBarista 智慧咖啡機')).toBe(false)
     expect(writes).toHaveLength(0)
+  })
+
+  it('全是符號的叫法不寫入（正規化後是空字串＝空的欄位名，Firestore 會整筆拒絕）', async () => {
+    const { db, writes } = fakeDb()
+    expect(await confirmAlias(db, 'ws5', 'SHARP iBarista 智慧咖啡機', '「」・ -')).toBe(false)
+    expect(writes).toHaveLength(0)
+  })
+})
+
+describe('isUsableAlias（`C-323` 分組裡客人的叫法）', () => {
+  it('中文 2 個字可以、1 個字不行', () => {
+    expect(isUsableAlias('小米')).toBe(true)
+    expect(isUsableAlias('鍋')).toBe(false)
+  })
+  it('純英數要 3 個字：AP 會撞到 app、apple', () => {
+    expect(isUsableAlias('AP')).toBe(false)
+    expect(isUsableAlias('W1R')).toBe(true)
+  })
+  it('符號和空白不算字', () => {
+    expect(isUsableAlias('「 鍋 」')).toBe(false)
+    expect(isUsableAlias('')).toBe(false)
+  })
+})
+
+describe('productsByAliasIn', () => {
+  const REGEN = 'MATELASER 筋牌特務 W1 REGEN 多波長紅光舒緩儀'
+  it('客人的叫法整段比（不分大小寫、空白、符號），回正式名', () => {
+    const aliases = { [normalizeProductName('紅光儀')]: REGEN }
+    expect(productsByAliasIn('請問「紅光 儀」怎麼買', aliases)).toEqual([REGEN])
+  })
+  it('解析到最終正式名、同一台只回一次', () => {
+    const aliases = {
+      [normalizeProductName('紅光儀')]: 'W1 REGEN',
+      [normalizeProductName('W1 REGEN')]: REGEN,
+      [normalizeProductName('紅光燈')]: REGEN,
+    }
+    expect(productsByAliasIn('紅光儀跟紅光燈一樣嗎', aliases)).toEqual([REGEN])
+  })
+  it('太短的舊別名跳過（不在不相干的句子裡命中）', () => {
+    expect(productsByAliasIn('這個鍋子怎麼洗', { 鍋: 'SHARP 零水鍋' })).toEqual([])
+  })
+  it('沒提到就是空的', () => {
+    expect(productsByAliasIn('運費怎麼算', { [normalizeProductName('紅光儀')]: REGEN })).toEqual([])
   })
 })
 

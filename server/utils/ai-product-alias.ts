@@ -9,13 +9,17 @@
  * **偵測出候選、由人確認**，不自動合併：字面上「W1 REGEN」與「W1 REGEN ULTRA」也是一個包含另一個，
  * 但它們是不同型號，自動合併會讓客人問 ULTRA 拿到普通版答案——比原本的問題更嚴重。
  *
+ * `C-323`（`D-126` 第 4 步）：入口從「⋯ → 產品名稱整理」搬到分組的「客人還會怎麼叫它」。
+ * 別名從此有兩種：①另一個產品名併過來（舊的合併）②客人的叫法（「紅光儀」），從來不是任何一份資料的產品名。
+ * 兩種存在同一張對照表；②只有答題端整段比對得到（productsByAliasIn），所以答題端兩處都要吃它。
+ *
  * 資料放 knowledgeProductIndex/{workspaceId}（與產品名清單同一份文件）：
  *   names: string[]                     既有的產品名清單
  *   aliases: { [正規化別名]: 正式名 }     確認過的對照
  *   dismissedPairs: string[]            使用者按過「不是同一台」的組合，不再重複詢問
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { likelyTypoDistance, normalizeProductName } from '~~/shared/product-name-similarity'
+import { isUsableAlias, likelyTypoDistance, normalizeProductName } from '~~/shared/product-name-similarity'
 
 /**
  * 正規化搬到 shared/product-name-similarity（「所屬產品」欄位打字當下的相似提示
@@ -309,6 +313,26 @@ export function canonicalProductName(name: string | undefined | null, aliases: R
   return cur
 }
 
+/**
+ * 一段話裡用別名點到了哪幾台（回正式名，依對照表原樣、不重複）。
+ *
+ * 為什麼要另外比：答題端認產品靠「名字切成片段再比」，客人的叫法跟正式名常常只共用一兩個字
+ * （「紅光儀」vs「…多波長紅光舒緩儀」），片段比對抓不到。這裡拿整個別名（正規化後）在整句話裡找子字串。
+ * 太短的別名跳過（isUsableAlias；舊資料可能有）。
+ */
+export function productsByAliasIn(text: string, aliases: Record<string, string>): string[] {
+  const t = normalizeProductName(text)
+  if (!t) return []
+  const out = new Map<string, string>()
+  for (const [key, target] of Object.entries(aliases)) {
+    if (!key || !isUsableAlias(key) || !t.includes(key)) continue
+    const canonical = canonicalProductName(target, aliases)
+    const ck = normalizeProductName(canonical)
+    if (ck && !out.has(ck)) out.set(ck, canonical)
+  }
+  return [...out.values()]
+}
+
 // ── 寫入 ──────────────────────────────────────────────────────
 
 /**
@@ -332,8 +356,10 @@ export async function confirmAlias(
   const a = alias.trim()
   if (!canonical.trim() || !a) return false
 
-  const current = await getProductAliases(db, workspaceId, { fresh: true })
   const aKey = normalizeProductName(a)
+  // 全是符號的（「!!!」）正規化後是空字串：寫下去是一個空的欄位名，Firestore 會整筆拒絕
+  if (!aKey) return false
+  const current = await getProductAliases(db, workspaceId, { fresh: true })
   // 正式名解析到最終那一層(步驟 1)
   const c = canonicalProductName(canonical, current.aliases)
   const cKey = normalizeProductName(c)
