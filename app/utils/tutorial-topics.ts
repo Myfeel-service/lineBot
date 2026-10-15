@@ -567,7 +567,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // ⛔ 2026-09-29（`D-109`）：原本寫「點上方新資料夾按鈕」並指著選單裡那一項——那一項收在「⋯」裡，
         //    選單沒打開時聚光燈框在一塊看不見的地方
         description:
-          '點「<strong>⋯</strong>」→「<strong>新增分組</strong>」，再把資料<strong>拖進去</strong>。講同一個商品的放一組，FAQ、公告這類放「通用」。'
+          // `D-127`：一組就是一台商品，組名就是 AI 認的名字（放進哪一組＝告訴 AI 這份在講哪一台）
+          '點「<strong>⋯</strong>」→「<strong>新增分組</strong>」，再把資料<strong>拖進去</strong>。<strong>一組就是一台商品</strong>，組名就是 AI 認的名字；FAQ、公告這類放「通用」。'
           // `C-323`：「手動新增知識」從選單拿掉了（跟側欄「用一句話寫一條知識」重複）；分組的鉛筆裡多了客人的叫法
           + '按分組旁的鉛筆，可以加客人對這個商品的其他叫法。回收桶也在這個選單裡。',
         placement: 'bottom',

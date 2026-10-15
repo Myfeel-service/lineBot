@@ -1,0 +1,320 @@
+/**
+ * 舊資料搬家：分組就是商品（`D-127`，2026-10-16 老闆拍板；取代 `C-320` 的 migrate-kb-product-groups）。
+ *
+ * 做什麼（一次一個帳號）：
+ *   1. 商品分組裡每一份資料（試算表、型錄除外）的商品名改成**組名**，改到的那幾份重新學習
+ *   2. 原本的商品名（含型號的全名、舊寫法）跟組名不一樣的 → 收成那一組的別名（AI 認得的字只多不少，`C-325` productVocabulary）
+ *   3. 一組裡其實是兩款（只差型號尾巴：W1 REGEN／W1 REGEN ULTRA，shared isVariantPair）→ 拆：份數多的那一款留在原本那一組、
+ *      組名改成它的商品名；其他款各建一組（組名＝它的商品名）。⛔ 拆的時候舊組名（「MATELASER」是兩款共用的品牌）不收成別名
+ *   4. 通用分組、未分類裡還掛著商品名的 → 清掉（未分類＝不是講單一商品；要放進商品分組用 --move）
+ *   5. 商品名清單（knowledgeProductIndex.names）重建成現在的商品分組名（`C-325` 起答題不讀它，留著乾淨）
+ *   6. 名字看起來是同一台的兩組 → 只列建議（合成一組在畫面「這幾個商品名是同一台嗎？」那裡按）
+ * 規則跟伺服器搬組時同一份（shared/knowledge-product-group productNameForGroup），⛔ 不在這裡另寫一套。
+ *
+ * 用法（預設只讀不寫＝dry-run）：
+ *   node --env-file=.env_myfeel scripts/migrate-kb-group-is-product.mjs <workspaceId>
+ * 實際寫入（老闆看過 dry-run 點頭之後才跑；重新學習要打 Gemini，所以要多讀一份有 GEMINI_API_KEY 的 .env）：
+ *   node --env-file=.env --env-file=.env_myfeel scripts/migrate-kb-group-is-product.mjs <workspaceId> --apply
+ * 選項（dry-run 也吃，先看結果再加 --apply）：
+ *   --move=<資料id>:<組名>       這一份改放哪一組（組名可以是現有的、這次要拆出來的新組，或「通用」「未分類」）
+ *   --keep-together=<組名>       這一組照舊一組、不拆（就算看起來是兩款）
+ *   --split=<組名>               這一組拆開（寫法不同、但其實是兩台的時候）
+ *   --rename=<組名>:<新組名>     先改組名（組名＝AI 認的商品名）；舊組名收成別名（同畫面上改組名）
+ *
+ * ⚠️ firebase-admin 會繞過所有安全規則。dry-run 只讀：knowledgeFolders、knowledgeSources、knowledgeChunks（只取 sourceId／status）、
+ *    knowledgeProductIndex。--apply 會寫：knowledgeFolders（建組、改名）、knowledgeSources（productName、folderId）、
+ *    knowledgeChunks（重新學習的向量）、knowledgeProductIndex（別名、商品名清單）、auditLogs、aiUsage（embedding 用量）。
+ * ⚠️ 多租戶：splash 目前不管（2026-08-22 拍板），這支只照傳進來的那一個 workspaceId 做。
+ */
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { initializeApp, cert } from 'firebase-admin/app'
+import { getFirestore } from 'firebase-admin/firestore'
+import { createJiti } from 'jiti'
+
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
+// shared／server 的 TS 用 jiti 讀（`~~` 別名照 Nuxt：專案根）；node 內建的 strip-types 吃不了沒有副檔名的 import
+const jiti = createJiti(import.meta.url, { alias: { '~~': ROOT, '~': join(ROOT, 'app') } })
+
+const args = process.argv.slice(2)
+const workspaceId = args.find(a => !a.startsWith('--'))
+const apply = args.includes('--apply')
+const optValues = name => args.filter(a => a.startsWith(`--${name}=`)).map(a => a.slice(name.length + 3).trim()).filter(Boolean)
+const moves = optValues('move').map((v) => {
+  const i = v.indexOf(':')
+  return { id: (i > 0 ? v.slice(0, i) : '').trim(), group: (i > 0 ? v.slice(i + 1) : '').trim() }
+})
+const keepTogether = optValues('keep-together')
+const forceSplit = optValues('split')
+// 改組名：--rename=<組名>:<新組名>（組名＝AI 認的商品名；組名比商品名短很多時，改成完整名稱 AI 每一條前面加的字比較完整）
+const renames = optValues('rename').map((v) => {
+  const i = v.indexOf(':')
+  return { from: (i > 0 ? v.slice(0, i) : '').trim(), to: (i > 0 ? v.slice(i + 1) : '').trim() }
+})
+if (renames.some(r => !r.from || !r.to)) {
+  console.error('--rename 要寫成 --rename=<組名>:<新組名>')
+  process.exit(1)
+}
+
+if (!workspaceId) {
+  console.error('用法：node --env-file=.env_myfeel scripts/migrate-kb-group-is-product.mjs <workspaceId> [--apply] [--move=資料id:組名] [--keep-together=組名] [--split=組名]')
+  process.exit(1)
+}
+if (moves.some(m => !m.id || !m.group)) {
+  console.error('--move 要寫成 --move=<資料id>:<組名>')
+  process.exit(1)
+}
+
+const { FIREBASE_PROJECT_ID: projectId, FIREBASE_CLIENT_EMAIL: clientEmail, FIREBASE_PRIVATE_KEY: privateKey } = process.env
+if (!projectId || !clientEmail || !privateKey) {
+  console.error('缺少環境變數：FIREBASE_PROJECT_ID、FIREBASE_CLIENT_EMAIL、FIREBASE_PRIVATE_KEY（用 --env-file=.env_myfeel）')
+  process.exit(1)
+}
+initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, '\n') }) })
+const db = getFirestore()
+
+const { distinctGroupProductNames, findLikelyDuplicateGroups, isVariantPair, productNameForGroup, sameProductGroupName } =
+  await jiti.import(join(ROOT, 'shared/knowledge-product-group.ts'))
+const { canonicalProductName } = await jiti.import(join(ROOT, 'server/utils/ai-product-alias.ts'))
+const { isUsableAlias, normalizeProductName } = await jiti.import(join(ROOT, 'shared/product-name-similarity.ts'))
+
+const GENERAL = '通用'
+const NONE = '未分類'
+const q = s => `「${s}」`
+
+async function readState() {
+  const [folderSnap, sourceSnap, chunkSnap, idxSnap] = await Promise.all([
+    db.collection('knowledgeFolders').where('workspaceId', '==', workspaceId).get(),
+    db.collection('knowledgeSources').where('workspaceId', '==', workspaceId)
+      .select('name', 'type', 'folderId', 'productName', 'generateOverview', 'isDeleted', 'deletedAt').get(),
+    // 只拿算條數要用的兩格（⛔ 不要整份拉回來：每一條都帶 768 維向量）
+    db.collection('knowledgeChunks').where('workspaceId', '==', workspaceId).select('sourceId', 'status').get(),
+    db.collection('knowledgeProductIndex').doc(workspaceId).get(),
+  ])
+  const folders = folderSnap.docs
+    .map(d => ({ id: d.id, name: String(d.get('name') ?? ''), order: Number(d.get('order') ?? 0), general: d.get('general') === true }))
+    .sort((a, b) => a.order - b.order)
+  const sources = sourceSnap.docs
+    .filter(d => d.get('isDeleted') !== true && d.get('deletedAt') == null)
+    .map(d => ({
+      id: d.id,
+      name: String(d.get('name') ?? ''),
+      type: String(d.get('type') ?? 'file'),
+      folderId: d.get('folderId') ?? null,
+      productName: String(d.get('productName') ?? '').trim(),
+      isCatalog: d.get('generateOverview') === true,
+    }))
+  // 重新學習會跳過停用的（同 relearnSourceChunks）——條數照那個口徑算
+  const relearnCount = new Map()
+  for (const c of chunkSnap.docs) {
+    if (c.get('status') === 'disabled') continue
+    const sid = String(c.get('sourceId') ?? '')
+    if (sid) relearnCount.set(sid, (relearnCount.get(sid) ?? 0) + 1)
+  }
+  const aliases = idxSnap.get('aliases') && typeof idxSnap.get('aliases') === 'object' ? idxSnap.get('aliases') : {}
+  return { folders, sources, relearnCount, aliases }
+}
+
+/**
+ * 算出搬完之後的樣子（純計算，不寫）。
+ * groups：搬完之後的每一組 { key, folderId（新建的是 null）, name, general, rename? }
+ * placement：每一份放哪一組（group key）；target：每一份搬完的商品名
+ */
+function buildPlan({ folders, sources, relearnCount, aliases }) {
+  const canonical = n => canonicalProductName(n, aliases)
+  const flags = s => ({ isCatalog: s.isCatalog, isSheet: s.type === 'gsheet' })
+  const groups = new Map(folders.map(f => [f.id, { key: f.id, folderId: f.id, name: f.name, general: f.general, oldName: f.name }]))
+  const placement = new Map(sources.map(s => [s.id, s.folderId && groups.has(s.folderId) ? s.folderId : NONE]))
+  const plan = { splits: [], aliases: [], changes: [], cleared: [], moves: [], problems: [], duplicates: [] }
+  const aliasSeen = new Set()
+  const addAlias = (alias, target) => {
+    if (!alias || !target || sameProductGroupName(alias, target)) return
+    const k = `${normalizeProductName(alias)}→${normalizeProductName(target)}`
+    if (aliasSeen.has(k)) return
+    aliasSeen.add(k)
+    const already = normalizeProductName(canonical(alias)) === normalizeProductName(target)
+    plan.aliases.push({ alias, canonical: target, usable: isUsableAlias(alias), already })
+  }
+
+  // ── --rename：先改組名（後面的拆組、換商品名都照新名字）；舊組名收成別名，同畫面上改組名 ──
+  for (const r of renames) {
+    const g = [...groups.values()].find(x => sameProductGroupName(x.name, r.from))
+    if (!g) { plan.problems.push(`--rename 找不到組 ${q(r.from)}`); continue }
+    if ([...groups.values()].some(x => x !== g && !x.general && sameProductGroupName(x.name, r.to))) {
+      plan.problems.push(`--rename ${q(r.to)} 跟另一組同名（同一台只能有一組）`)
+      continue
+    }
+    g.name = r.to
+    if (!g.general) addAlias(g.oldName, r.to)
+  }
+
+  // ── 3. 一組裡是兩款 → 拆 ──
+  for (const f of folders) {
+    if (f.general || keepTogether.some(n => sameProductGroupName(n, f.name))) continue
+    const members = sources.filter(s => placement.get(s.id) === f.id && !s.isCatalog && s.type !== 'gsheet' && s.productName)
+    const names = distinctGroupProductNames(members.map(s => s.productName), canonical)
+    if (names.length < 2) continue
+    const forced = forceSplit.some(n => sameProductGroupName(n, f.name))
+    const variant = names.some((a, i) => names.slice(i + 1).some(b => isVariantPair(a, b)))
+    if (!forced && !variant) continue
+    // 份數多的那一款留在原本那一組（distinctGroupProductNames 已經照份數排），組名改成它的商品名
+    const [keep, ...others] = names
+    const g = groups.get(f.id)
+    g.name = keep
+    g.splitFrom = f.name
+    const created = []
+    for (const n of others) {
+      const key = `new:${n}`
+      groups.set(key, { key, folderId: null, name: n, general: false, oldName: '' })
+      for (const s of members) {
+        if (normalizeProductName(canonical(s.productName)) === normalizeProductName(n)) placement.set(s.id, key)
+      }
+      created.push(n)
+    }
+    plan.splits.push({ from: f.name, keep, created })
+  }
+
+  // ── --move：指定這一份放哪一組 ──
+  const groupByName = (name) => {
+    if (name === NONE) return NONE
+    for (const g of groups.values()) if (sameProductGroupName(g.name, name) || (name === GENERAL && g.general)) return g.key
+    return null
+  }
+  for (const m of moves) {
+    const s = sources.find(x => x.id === m.id)
+    const key = groupByName(m.group)
+    if (!s) { plan.problems.push(`--move 找不到資料 ${m.id}`); continue }
+    if (!key) { plan.problems.push(`--move 找不到組 ${q(m.group)}（可以寫現有的、這次拆出來的、「通用」或「未分類」）`); continue }
+    plan.moves.push({ source: s, from: groups.get(placement.get(s.id))?.name ?? NONE, to: key === NONE ? NONE : groups.get(key).name })
+    placement.set(s.id, key)
+  }
+
+  // ── 1／2／4. 每一份的商品名＝它所在那一組的組名；舊名字收成別名 ──
+  for (const s of sources) {
+    const key = placement.get(s.id)
+    const g = key === NONE ? null : groups.get(key)
+    const target = productNameForGroup(g, flags(s))
+    const movedTo = key !== (s.folderId && groups.has(s.folderId) ? s.folderId : NONE)
+    if (target !== s.productName || movedTo) {
+      plan.changes.push({ source: s, from: s.productName, to: target, group: g?.name ?? NONE, relearn: target !== s.productName ? (relearnCount.get(s.id) ?? 0) : 0, movedTo })
+    }
+    if (!target && s.productName && (!g || g.general)) plan.cleared.push({ source: s, group: g?.name ?? NONE })
+    // 舊名字收成這一台的別名（拆出來的兩款各自歸各自的組，不會互收）
+    if (target && s.productName) addAlias(s.productName, target)
+  }
+  // 改了名的組（沒拆的不會改名；拆的那一組改成份數多的那一款）
+  plan.renames = [...groups.values()].filter(g => g.folderId && g.name !== g.oldName).map(g => ({ id: g.folderId, from: g.oldName, to: g.name }))
+  plan.newGroups = [...groups.values()].filter(g => !g.folderId).map(g => g.name)
+  plan.productGroupNames = [...groups.values()].filter(g => !g.general).map(g => g.name)
+  plan.duplicates = findLikelyDuplicateGroups([...groups.values()].map(g => ({
+    id: g.key, name: g.name, general: g.general,
+    productNames: sources.filter(s => placement.get(s.id) === g.key).map(s => s.productName),
+  }))).map(d => ({ a: groups.get(d.a).name, b: groups.get(d.b).name, why: d.why }))
+  plan.groups = groups
+  plan.placement = placement
+  return plan
+}
+
+function printPlan(plan, state) {
+  console.log(`\n帳號 ${workspaceId}：${state.folders.length} 組、${state.sources.length} 份資料${apply ? '（--apply：會照下面寫入）' : '（只讀，沒有寫任何東西）'}\n`)
+  const plainRenames = plan.renames.filter(r => !plan.splits.some(s => s.from === r.from))
+  console.log(`⓪ 改組名（--rename）：${plainRenames.length}`)
+  for (const r of plainRenames) console.log(`   ${q(r.from)} → ${q(r.to)}`)
+  console.log(`\n① 拆成兩組（一組裡是兩款）：${plan.splits.length}`)
+  for (const s of plan.splits) console.log(`   ${q(s.from)} → 留下的改名 ${q(s.keep)}；另建 ${s.created.map(q).join('、')}`)
+  console.log(`\n② 指定改放（--move）：${plan.moves.length}`)
+  for (const m of plan.moves) console.log(`   ${q(m.source.name)}：${q(m.from)} → ${q(m.to)}`)
+  const willRelearn = plan.changes.filter(c => c.relearn > 0)
+  console.log(`\n③ 商品名改成組名：${plan.changes.filter(c => c.to !== c.from).length} 份（重新學習 ${willRelearn.reduce((n, c) => n + c.relearn, 0)} 條）`)
+  for (const c of plan.changes) {
+    if (c.to === c.from && !c.movedTo) continue
+    if (c.to === c.from) {
+      console.log(`   ${q(c.source.name)}：搬到 ${q(c.group)}（商品名不變）`)
+      continue
+    }
+    console.log(`   ${q(c.source.name)}［${c.group}］：${c.from ? q(c.from) : '（空）'} → ${c.to ? q(c.to) : '（空，不是講單一商品）'}${c.relearn ? `，重新學 ${c.relearn} 條` : ''}`)
+  }
+  const add = plan.aliases.filter(a => a.usable && !a.already)
+  console.log(`\n④ 舊名字收成別名：${add.length}`)
+  for (const a of add) console.log(`   ${q(a.alias)} → ${q(a.canonical)}`)
+  for (const a of plan.aliases.filter(x => x.already)) console.log(`   （已經是別名）${q(a.alias)} → ${q(a.canonical)}`)
+  for (const a of plan.aliases.filter(x => !x.usable)) console.log(`   ⚠️ 太短不收：${q(a.alias)}`)
+  console.log(`\n⑤ 通用／未分類裡清掉商品名：${plan.cleared.length}`)
+  for (const c of plan.cleared) console.log(`   ${q(c.source.name)}［${c.group}］：${q(c.source.productName)}`)
+  console.log(`\n⑥ 商品名清單重建成 ${plan.productGroupNames.length} 個商品分組名`)
+  console.log(`\n建議（不會自動做）：名字看起來是同一台的兩組 ${plan.duplicates.length}`)
+  for (const d of plan.duplicates) console.log(`   ${q(d.a)} ／ ${q(d.b)}（${d.why === 'name' ? '名字一個包含另一個' : '兩組有同一個商品名'}）`)
+  if (plan.problems.length) {
+    console.log('\n⚠️ 沒辦法照做的：')
+    for (const p of plan.problems) console.log(`   ${p}`)
+  }
+}
+
+async function applyPlan(plan) {
+  const { createFolder, updateFolder } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-folders.ts'))
+  const { updateSourceSettings } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-sources.ts'))
+  const { syncSourceProductWithGroup } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-product-group.ts'))
+  const { confirmAlias } = await jiti.import(join(ROOT, 'server/utils/ai-product-alias.ts'))
+  const { writeAuditLog } = await jiti.import(join(ROOT, 'server/utils/audit-log.ts'))
+  if (!process.env.GEMINI_API_KEY) {
+    console.error('\n⛔ 重新學習要 GEMINI_API_KEY：用 --env-file=.env --env-file=.env_myfeel')
+    process.exit(1)
+  }
+  const audit = (note, extra = {}) => writeAuditLog({ workspaceId, uid: '', actor: 'system', action: 'knowledgeFolder.put', note, ...extra }, db)
+
+  // 1. 拆出來的新組先建（createFolder 同名的商品分組會回現有那一組，不會重複建）
+  const keyToFolder = new Map()
+  for (const g of plan.groups.values()) {
+    if (g.folderId) { keyToFolder.set(g.key, g.folderId); continue }
+    const f = await createFolder(db, workspaceId, g.name)
+    keyToFolder.set(g.key, f.id)
+    await audit(`搬家（D-127）：拆出新的一組 ${q(g.name)}`, { targetId: f.id, after: { name: g.name } })
+    console.log(`  建了 ${q(g.name)}`)
+  }
+  // 2. 改組名（拆的那一組改成份數多的那一款）。⛔ 先搬走別款再改名：不然改名那一下兩款還在同一組
+  for (const c of plan.changes) {
+    if (!c.movedTo) continue
+    const key = plan.placement.get(c.source.id)
+    await updateSourceSettings(db, workspaceId, c.source.id, { folderId: key === NONE ? null : keyToFolder.get(key) })
+    console.log(`  搬 ${q(c.source.name)} → ${q(c.group)}`)
+  }
+  for (const r of plan.renames) {
+    await updateFolder(db, workspaceId, r.id, { name: r.to })
+    const split = plan.splits.some(s => s.from === r.from)
+    await audit(`搬家（D-127）：${q(r.from)}${split ? ' 是兩款，留下的這一組' : ''}改名 ${q(r.to)}`, { targetId: r.id, after: { name: r.to } })
+    console.log(`  改名 ${q(r.from)} → ${q(r.to)}`)
+  }
+  // 3. 舊名字收成別名（在換商品名之前：學完之前卡片上還是舊名字，有別名就照樣認得）
+  for (const a of plan.aliases) {
+    if (!a.usable || a.already) continue
+    const changed = await confirmAlias(db, workspaceId, a.canonical, a.alias)
+    console.log(`  別名 ${q(a.alias)} → ${q(a.canonical)}${changed ? '' : '（本來就是）'}`)
+  }
+  // 4. 每一份照它現在所在那一組換商品名、重新學習（同伺服器搬組那一支，稽核記成系統）
+  let indexed = 0
+  let failed = 0
+  for (const c of plan.changes) {
+    if (c.to === c.from) continue
+    const r = await syncSourceProductWithGroup(db, workspaceId, c.source.id, { uid: '', actor: 'system' })
+    if (r.changed) {
+      indexed += r.relearned.indexed
+      failed += r.relearned.failed
+      console.log(`  ${q(c.source.name)}：${q(r.previous)} → ${q(r.productName)}，學 ${r.relearned.indexed} 條${r.relearned.failed ? `、失敗 ${r.relearned.failed}` : ''}`)
+    }
+  }
+  // 5. 商品名清單重建成現在的商品分組名
+  await db.collection('knowledgeProductIndex').doc(workspaceId).set({ names: plan.productGroupNames }, { merge: true })
+  await audit(`搬家（D-127 分組就是商品）做完：商品名改成組名 ${plan.changes.filter(c => c.to !== c.from).length} 份、重新學習 ${indexed} 條${failed ? `（失敗 ${failed} 條）` : ''}`)
+  console.log(`\n做完：重新學習 ${indexed} 條${failed ? `、失敗 ${failed} 條（點開那一份按「⋯ → 重新學習這一份」）` : '、0 失敗'}`)
+}
+
+const state = await readState()
+const plan = buildPlan(state)
+printPlan(plan, state)
+if (plan.problems.length && apply) {
+  console.error('\n⛔ 有沒辦法照做的，先修好參數再 --apply')
+  process.exit(1)
+}
+if (apply) await applyPlan(plan)
+else console.log('\n（只讀。老闆看過、點頭之後加 --apply 才會寫）')
+process.exit(0)

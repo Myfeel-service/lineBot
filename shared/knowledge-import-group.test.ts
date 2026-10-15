@@ -5,10 +5,9 @@ import {
   createImportGroupRegistry,
   groupChoiceFromKey,
   groupChoiceKey,
-  groupFillFilledText,
-  groupFillNoteText,
+  groupSyncNoteText,
   moveSurelyRejected,
-  parseGroupFill,
+  parseGroupSync,
   newGroupName,
   orderedGroups,
   writeMayHaveLanded,
@@ -81,27 +80,28 @@ describe('closestGroups（「這份在講哪個商品？」列的最像的幾組
   })
 })
 
-describe('parseGroupFill（搬進商品分組之後伺服器補了什麼，`/code-review` ②⑬）', () => {
-  it('補好了：商品名、學會幾條、幾條沒學會；那一句照實講沒學會的', () => {
-    const f = parseGroupFill({ id: 's', groupFill: { productName: 'SHARP 乾淨方MAX', indexed: 8, failed: 2 } })
-    expect(f).toEqual({ kind: 'filled', productName: 'SHARP 乾淨方MAX', indexed: 8, failed: 2 })
-    expect(groupFillFilledText(f as any)).toBe('AI 認的商品名補成「SHARP 乾淨方MAX」；有 2 條還沒學會，點開那一份按「重新學習」')
-    expect(groupFillFilledText({ productName: 'X', failed: 0 })).toBe('AI 認的商品名補成「X」')
+describe('parseGroupSync（換分組之後 AI 把它當成哪一台，`D-127`）', () => {
+  it('放進商品分組：AI 現在把它當成那一台；沒學會的條數照實講', () => {
+    const f = parseGroupSync({ id: 's', groupSync: { productName: 'SHARP 乾淨方MAX', previous: '', indexed: 8, failed: 2 } })
+    expect(f).toEqual({ kind: 'synced', productName: 'SHARP 乾淨方MAX', previous: '', indexed: 8, failed: 2 })
+    expect(groupSyncNoteText(f)).toBe('AI 現在把它當成「SHARP 乾淨方MAX」的資料；有 2 條還沒學會，點開那一份按右上「⋯ → 重新學習這一份」')
   })
 
-  it('同組好幾種名字＝要問；只有一個、或沒有 groupFill＝什麼都不講', () => {
-    expect(parseGroupFill({ groupFill: { names: ['W1 REGEN', 'W1 REGEN ULTRA', 'W1 REGEN'] } })).toEqual({ kind: 'ask', names: ['W1 REGEN', 'W1 REGEN ULTRA'] })
-    expect(parseGroupFill({ groupFill: { names: ['W1'] } })).toBeNull()
-    expect(parseGroupFill({ id: 's' })).toBeNull()
-    expect(parseGroupFill(null)).toBeNull()
-    expect(groupFillNoteText(null)).toBe('')
-    expect(groupFillNoteText({ kind: 'ask', names: ['a', 'b'] })).toContain('「⋯ → AI 認的商品名」')
+  it('搬到通用、不放分組：AI 不再把它當成原本那一台', () => {
+    const f = parseGroupSync({ groupSync: { productName: '', previous: 'BOYA mini2', indexed: 3, failed: 0 } })
+    expect(groupSyncNoteText(f)).toBe('AI 不再把它當成「BOYA mini2」的資料')
   })
 
-  it('搬過去了、補商品名沒成（{ error: true }）＝講一句，⛔ 不講成搬失敗', () => {
-    const f = parseGroupFill({ folderId: 'g', groupFill: { error: true } })
+  it('沒有 groupSync（商品名沒變）＝什麼都不講', () => {
+    expect(parseGroupSync({ id: 's' })).toBeNull()
+    expect(parseGroupSync(null)).toBeNull()
+    expect(groupSyncNoteText(null)).toBe('')
+  })
+
+  it('搬過去了、重新學習沒成（{ error: true }）＝講一句，⛔ 不講成搬失敗', () => {
+    const f = parseGroupSync({ folderId: 'g', groupSync: { error: true } })
     expect(f).toEqual({ kind: 'failed' })
-    expect(groupFillNoteText(f)).toMatch(/^搬過去了，但 AI 認的商品名沒補成/)
+    expect(groupSyncNoteText(f)).toMatch(/^搬過去了，但 AI 還沒重新學會/)
   })
 })
 
@@ -182,6 +182,19 @@ describe('createImportGroupRegistry（一次開窗裡建過的分組）', () => 
 
     const failing = createImportGroupRegistry({ create, remove: async () => ({}), markGeneral: async () => { throw new Error('403') } })
     await expect(failing.ensure('通用', handMade, { general: true })).rejects.toThrow()
+  })
+
+  it('`D-127` 伺服器說「已經有同一台的那一組」（existed）→ 用那一組，⛔ 不當成這次建的（沒用到也不刪）', async () => {
+    const remove = vi.fn(async () => ({}))
+    const reg = createImportGroupRegistry({
+      create: async name => ({ id: 'g_old', name: `${name}（原本就有）`, existed: true }) as any,
+      remove,
+      markGeneral: async () => ({}),
+    })
+    const g = await reg.ensure('SHARP 自動調理零水鍋!', [])
+    expect(g.id).toBe('g_old')
+    await reg.discardIfUnused(g.id)
+    expect(remove).not.toHaveBeenCalled()
   })
 
   it('建不成（回來沒有編號）要丟錯，不可以當成建好了', async () => {

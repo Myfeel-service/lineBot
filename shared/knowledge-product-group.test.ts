@@ -1,83 +1,60 @@
 /**
- * 資料夾當「商品」分組：該不該補產品名、補成什麼（`C-320`）。
- * 例子都是 MYFEEL 正式站的資料夾與產品名（2026-10-15 唯讀試算）。
+ * 分組就是商品（`D-127`）：每份資料的商品名＝組名；還有搬家腳本用的幾個判斷。
+ * 例子都是 MYFEEL 正式站的分組與產品名（2026-10-15／16 唯讀試算）。
  */
 import { describe, expect, it } from 'vitest'
 import {
-  decideGroupProductName,
   distinctGroupProductNames,
   findLikelyDuplicateGroups,
+  isVariantPair,
   looksLikeGeneralGroupName,
+  productNameForGroup,
+  sameProductGroupName,
 } from './knowledge-product-group'
 
-const group = { general: false }
-
-describe('decideGroupProductName', () => {
-  it('同組其他資料只有一種產品名 → 補成那一個', () => {
-    expect(decideGroupProductName({
-      productName: '',
-      group,
-      siblingProductNames: ['珈樂堤 小滑手全自動義式咖啡機', '珈樂堤 小滑手全自動義式咖啡機', ''],
-    })).toEqual({ action: 'fill', productName: '珈樂堤 小滑手全自動義式咖啡機' })
+describe('productNameForGroup（`D-127`）', () => {
+  it('商品分組＝組名（就算這份原本寫的是含型號的全名，也照組名走）', () => {
+    expect(productNameForGroup({ name: '上好ㄟ抽取式除濕機' })).toBe('上好ㄟ抽取式除濕機')
+    expect(productNameForGroup({ name: '  SHARP   自動調理零水鍋 ', general: false })).toBe('SHARP 自動調理零水鍋')
   })
 
-  it('⛔ 已經填好的不覆蓋（就算跟同組其他的不一樣）', () => {
-    expect(decideGroupProductName({ productName: '小滑手', group, siblingProductNames: ['珈樂堤 小滑手全自動義式咖啡機'] }))
-      .toEqual({ action: 'keep', reason: 'has-name' })
+  it('通用、未分類＝不是講單一商品（空的）', () => {
+    expect(productNameForGroup({ name: '客服', general: true })).toBe('')
+    expect(productNameForGroup(null)).toBe('')
   })
 
-  it('⛔ 同組兩款（MATELASER 資料夾裡是 W1 REGEN 與 W1 REGEN ULTRA）→ 不補、列出來問', () => {
-    expect(decideGroupProductName({
-      productName: '',
-      group,
-      siblingProductNames: ['MATELASER W1 REGEN', 'MATELASER W1 REGEN ULTRA', 'MATELASER W1 REGEN'],
-    })).toEqual({ action: 'ask', reason: 'ambiguous', names: ['MATELASER W1 REGEN', 'MATELASER W1 REGEN ULTRA'] })
+  it('⛔ 型錄、Google 試算表放在哪一組都不當成那一台（一份講很多台；/code-review 第 1 條）', () => {
+    expect(productNameForGroup({ name: 'SHARP 乾淨方MAX' }, { isCatalog: true })).toBe('')
+    expect(productNameForGroup({ name: 'SHARP 乾淨方MAX' }, { isSheet: true })).toBe('')
   })
+})
 
-  it('同組沒有人填過 → 不補（⛔ 不拿資料夾名頂替）', () => {
-    expect(decideGroupProductName({ productName: '', group, siblingProductNames: ['', null, undefined] }))
-      .toEqual({ action: 'ask', reason: 'no-names', names: [] })
+describe('sameProductGroupName', () => {
+  it('只差空白、符號、大小寫＝同一組', () => {
+    expect(sameProductGroupName('SHARP 自動調理零水鍋', 'sharp自動調理零水鍋')).toBe(true)
+    expect(sameProductGroupName('MATELASER W1 REGEN', 'MATELASER W1 REGEN ULTRA')).toBe(false)
+    expect(sameProductGroupName('', '')).toBe(false)
   })
+})
 
-  it('通用分組、未分類、型錄 → 不補', () => {
-    const siblings = ['SHARP 乾淨方MAX']
-    expect(decideGroupProductName({ productName: '', group: { general: true }, siblingProductNames: siblings })).toEqual({ action: 'keep', reason: 'general' })
-    expect(decideGroupProductName({ productName: '', group: null, siblingProductNames: siblings })).toEqual({ action: 'keep', reason: 'no-group' })
-    expect(decideGroupProductName({ productName: '', group, isCatalog: true, siblingProductNames: siblings })).toEqual({ action: 'keep', reason: 'catalog' })
+describe('isVariantPair（`D-127` 搬家：一組裡是兩款就拆）', () => {
+  it('只差型號尾巴＝兩款', () => {
+    expect(isVariantPair('MATELASER 筋牌特務 W1 REGEN', 'MATELASER 筋牌特務 W1 REGEN ULTRA')).toBe(true)
   })
-
-  it('⛔ Google 試算表 → 不補（多商品價目表拖進某一組，補了整張表會被標成那一台；/code-review 第 1 條）', () => {
-    expect(decideGroupProductName({ productName: '', group, isSheet: true, siblingProductNames: ['SHARP 乾淨方MAX'] })).toEqual({ action: 'keep', reason: 'sheet' })
-  })
-
-  it('只差空白／大小寫／標點算同一種，補成最多份用的寫法', () => {
-    expect(decideGroupProductName({
-      productName: '  ',
-      group,
-      siblingProductNames: ['Sharp 乾淨方 MAX', 'SHARP 乾淨方MAX', 'SHARP 乾淨方MAX'],
-    })).toEqual({ action: 'fill', productName: 'SHARP 乾淨方MAX' })
-  })
-
-  it('別名確認過是同一台的算一種（伺服器傳 canonicalProductName 進來）', () => {
-    const canonical = (n: string) => (n === '上好ㄟ抽取式除濕機' ? 'NWT 威技 新一級能效 16L' : n)
-    expect(decideGroupProductName({
-      productName: '',
-      group,
-      siblingProductNames: ['上好ㄟ抽取式除濕機', 'NWT 威技 新一級能效 16L'],
-      canonical,
-    })).toEqual({ action: 'fill', productName: 'NWT 威技 新一級能效 16L' })
-    // 沒給別名就是兩種 → 不補
-    expect(decideGroupProductName({
-      productName: '',
-      group,
-      siblingProductNames: ['上好ㄟ抽取式除濕機', 'NWT 威技 新一級能效 16L'],
-    }).action).toBe('ask')
+  it('寫法不同、互不包含＝同一台的不同寫法（MYFEEL 奇美、上好ㄟ那兩組）', () => {
+    expect(isVariantPair('CHIMEI 靜電集塵空氣清淨機 AP-08SPFG (電淨艙)', '奇美 靜電集塵空氣清淨機 AP-08SPFG')).toBe(false)
+    expect(isVariantPair('NWT 威技 新一級能效 16L 高效抽取型除濕機', 'NWT 威技 除濕機')).toBe(false)
+    expect(isVariantPair('BOYA mini2', 'BOYA mini2')).toBe(false)
   })
 })
 
 describe('distinctGroupProductNames', () => {
   it('照份數多到少排', () => {
     expect(distinctGroupProductNames(['B', 'A', 'B', '', 'C', 'B', 'A'])).toEqual(['B', 'A', 'C'])
+  })
+  it('別名確認過是同一台的算一種', () => {
+    const canonical = (n: string) => (n === '上好ㄟ抽取式除濕機' ? 'NWT 威技 新一級能效 16L' : n)
+    expect(distinctGroupProductNames(['上好ㄟ抽取式除濕機', 'NWT 威技 新一級能效 16L'], canonical)).toEqual(['NWT 威技 新一級能效 16L'])
   })
 })
 

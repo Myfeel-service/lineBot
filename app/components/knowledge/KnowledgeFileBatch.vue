@@ -60,7 +60,7 @@
             :moving="r.groupMoving"
             @update:model-value="moveRow(r, $event)"
           />
-          <!-- 搬進商品分組之後伺服器補了什麼（`/code-review` ②⑬）：一行講完，好幾個名字的指去那一份「⋯ → AI 認的商品名」 -->
+          <!-- 換了分組之後 AI 把它當成哪一台（`D-127` groupSync）：一行講完 -->
           <div v-if="r.groupNote" class="kb-file-batch__info">{{ r.groupNote }}</div>
           <div v-if="r.error" class="kb-site-error">✕ {{ r.error }}</div>
           <!-- 同名：等他決定（`C-135` 單份那條路會問，一次好幾份也要問，⛔ 不默默多建一份重複的）。
@@ -137,13 +137,13 @@
 import { ElMessageBox } from 'element-plus'
 import {
   autoImportGroup,
-  groupFillNoteText,
+  groupSyncNoteText,
   type ImportGroup,
   type ImportGroupChoice,
   type ImportGroupRegistry,
   moveSurelyRejected,
   newGroupName,
-  parseGroupFill,
+  parseGroupSync,
   writeMayHaveLanded,
 } from '~~/shared/knowledge-import-group'
 import { KNOWLEDGE_FILE_KIND_LABEL, knowledgeFileKind } from '~~/shared/knowledge-file-types'
@@ -531,14 +531,9 @@ async function importRow(r: Row, jobId: string, res: PreviewDone, replaceSourceI
         type: 'file',
         name: file.name,
         fileName: file.name,
-        // 「更新原本那一份」只換內容：所屬產品、分組都留原本那一份的設定（⛔ 帶了伺服器就照收，
-        // 舊資料會被默默搬到照檔名猜的分組、產品名換成 AI 這次猜的，2026-10-12 code review）
-        ...(replaceSourceId
-          ? {}
-          : {
-              productName: res.suggestedProductName ?? '',
-              folderId: folderId ?? null,
-            }),
+        // 「更新原本那一份」只換內容：分組留原本那一份的（⛔ 帶了伺服器就照收，舊資料會被默默搬到照檔名猜的分組，
+        // 2026-10-12 code review）。商品名不送：伺服器照分組決定（`D-127`）
+        ...(replaceSourceId ? {} : { folderId: folderId ?? null }),
         contentHash: res.contentHash ?? '',
         ...(replaceSourceId && keep?.ids.length ? { keepEditedChunkIds: keep.ids } : {}),
       },
@@ -758,11 +753,11 @@ async function moveRow(r: Row, c: ImportGroupChoice) {
     }
     else if (c.kind === 'folder') target = c.id
     if (target === prevId) return
-    // 搬進商品分組時伺服器可能要補商品名、當場重新學這一份（最久約 9 秒）：那一列一直顯示「搬過去中⋯」（groupMoving）
+    // 換分組＝換商品名（`D-127`），伺服器當場重新學這一份（最久約 9 秒）：那一列一直顯示「搬過去中⋯」（groupMoving）
     if (target) props.groupRegistry?.hold(target)
-    let res: { folderId?: string | null, groupFill?: unknown } | null
+    let res: { folderId?: string | null, groupSync?: unknown } | null
     try {
-      res = await apiFetch<{ folderId?: string | null, groupFill?: unknown }>(
+      res = await apiFetch<{ folderId?: string | null, groupSync?: unknown }>(
         `/api/ai/sources/${encodeURIComponent(r.sourceId)}`,
         { method: 'PUT', body: { folderId: target } },
       )
@@ -780,8 +775,8 @@ async function moveRow(r: Row, c: ImportGroupChoice) {
       void props.groupRegistry?.release(prevId, others)
     }
     r.group = actual ? { kind: 'folder', id: actual } : { kind: 'none' }
-    // 補了商品名／好幾個名字不猜／沒補成（`/code-review` ②⑬）：那一列講一句
-    r.groupNote = groupFillNoteText(parseGroupFill(res))
+    // AI 現在把它當成哪一台／沒重新學成（`D-127`）：那一列講一句
+    r.groupNote = groupSyncNoteText(parseGroupSync(res))
     r.error = ''
   }
   catch (err) {

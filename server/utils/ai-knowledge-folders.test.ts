@@ -17,6 +17,12 @@ type Doc = Record<string, any>
 const STORE: Record<string, Doc> = {}
 const db: any = {
   collection: () => ({
+    // `D-127`：建組、改名前找「已經有同一台的商品分組」（只用 workspaceId 一個條件）
+    where: (f: string, _op: string, v: unknown) => ({
+      get: async () => ({
+        docs: Object.keys(STORE).filter(id => STORE[id]![f] === v).map(id => ({ id, data: () => ({ ...STORE[id] }) })),
+      }),
+    }),
     doc: (id: string) => ({
       get: async () => ({ exists: !!STORE[id], data: () => (STORE[id] ? { ...STORE[id] } : undefined) }),
       update: async (patch: Doc) => {
@@ -29,7 +35,7 @@ const db: any = {
   }),
 }
 
-const { docToFolderSummary, updateFolder, renameFolder } = await import('./ai-knowledge-folders')
+const { createFolder, docToFolderSummary, updateFolder, renameFolder } = await import('./ai-knowledge-folders')
 
 beforeEach(() => {
   for (const k of Object.keys(STORE)) delete STORE[k]
@@ -56,6 +62,25 @@ describe('資料夾的「通用」（C-320）', () => {
     STORE.f1!.general = true
     expect((await renameFolder(db, 'ws1', 'f1', '  客服與總覽  '))?.name).toBe('客服與總覽')
     expect(STORE.f1!.general).toBe(true)
+  })
+
+  it('`D-127` 同一台只能有一組：改成跟別的商品分組同名＝400（只差空白大小寫也算）；通用那幾組不算', async () => {
+    STORE.f2 = { workspaceId: 'ws1', name: 'SHARP 自動調理零水鍋', order: 1 }
+    STORE.f3 = { workspaceId: 'ws1', name: '常見問題', order: 2, general: true }
+    STORE.f4 = { workspaceId: 'ws2', name: '零水鍋', order: 0 }
+    await expect(updateFolder(db, 'ws1', 'f1', { name: 'sharp 自動調理零水鍋' })).rejects.toMatchObject({ statusCode: 400 })
+    expect(STORE.f1!.name).toBe('客服')
+    // 通用的同名、別家的同名都不擋；改自己的大小寫也不擋
+    expect((await updateFolder(db, 'ws1', 'f1', { name: '常見問題' }))?.after.name).toBe('常見問題')
+    expect((await updateFolder(db, 'ws1', 'f1', { name: '零水鍋' }))?.after.name).toBe('零水鍋')
+    expect((await updateFolder(db, 'ws1', 'f2', { name: 'sharp 自動調理零水鍋' }))?.after.name).toBe('sharp 自動調理零水鍋')
+  })
+
+  it('`D-127` 建商品分組時已經有同一台 → 回那一組（existed），不另建', async () => {
+    STORE.f2 = { workspaceId: 'ws1', name: 'SHARP 自動調理零水鍋', order: 1 }
+    const res = await createFolder(db, 'ws1', 'SHARP  自動調理零水鍋')
+    expect(res).toMatchObject({ id: 'f2', existed: true })
+    expect(Object.keys(STORE)).toEqual(['f1', 'f2'])
   })
 
   it('什麼都沒帶、名字是空的 400；別家的 403；找不到回 null', async () => {

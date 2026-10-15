@@ -8,6 +8,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  * Body: { name: string, general?: boolean }
  *
  * `general: true`（`C-320`）：建成「通用」分組（不是講單一商品的資料放這裡）。沒帶＝商品分組，跟以前一樣。
+ * `D-127`：商品分組已經有同名的（只差空白、符號、大小寫）＝不另建，回那一組並帶 `existed: true`。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'folders.write')
@@ -17,6 +18,8 @@ export default defineEventHandler(async (event) => {
 
   const db = getDb()
   const folder = await createFolder(db, workspaceId, name, { general: body?.general === true })
+  // `D-127`：已經有同一台的商品分組＝回那一組（existed: true），沒有新建、不記「建了一組」
+  if (folder.existed) return folder
   await writeAuditLog({
     workspaceId,
     uid,

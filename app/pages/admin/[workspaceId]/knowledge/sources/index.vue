@@ -448,13 +448,15 @@
         <el-button v-if="askMode === 'drawer'" :icon="ChatDotRound" data-tour="kb-ask-open" @click="askDrawerOpen = true">問 AI</el-button>
         <!--
           刪除收在「⋯」（全站同一顆）。知識來源不給複製：同一份內容學兩次，AI 會被重複的卡片搞混。
-          「AI 認的商品名」（`C-320`）：以前是資料頁上常駐的一整張「所屬產品」卡，九成的人不用動它——收進這裡，點了開小視窗。
-          試算表一列可能是不同商品，不適用（同以前那張卡）
+          `D-127` 分組就是商品：以前這裡是「AI 認的商品名」（每份自己一個名字）——拿掉了，要改成別台就換分組。
+          「移到哪一組」：拖曳之外的第二條路（手機上拖不動；「要處理的事」的「放進分組」也開這一個）。
+          「重新學習這一份」：換組、改組名之後重新學習沒成（網路、AI 服務忙）時的補救——以前沒有整份重學的按鈕
         -->
         <AdminMoreMenu
           v-if="canEditSources"
           :items="[
-            { command: 'product', label: 'AI 認的商品名', show: selectedSource?.type !== 'gsheet' },
+            { command: 'move', label: '移到哪一組' },
+            { command: 'relearn', label: relearningSource ? '重新學習中⋯' : '重新學習這一份', disabled: relearningSource },
             { command: 'delete', label: '刪除', icon: Delete, danger: true, disabled: deleting },
           ]"
           @command="onSourceMoreCommand"
@@ -594,7 +596,7 @@
         </div>
 
         <!--
-          「所屬產品」那張卡拿掉了（`C-320`）：搬進右上「⋯」→「AI 認的商品名」（小視窗，見檔尾 productDialogOpen）。
+          「所屬產品」那張卡拿掉了（`C-320`）；`D-127` 起商品名跟著分組走，要換就「⋯ → 移到哪一組」（見 moveDialogOpen）。
           九成的資料不用動它，常駐一整張表單是讓每個人每次都看一遍
         -->
 
@@ -844,45 +846,32 @@
   <!-- ⛔ 不帶 product-name：以前的五格框預設沿用「正開著的那一份」的產品名、而且看得到改得掉；
        小視窗沒有那一格，帶了就是偷偷把「營業時間」標成某一台的（客人問別台時這條就被擋掉、或被拿去答錯台） -->
 
-  <!-- AI 認的商品名（`C-320`）：從右上「⋯」打開；存了會讓 AI 重新學這一份（同以前那張「所屬產品」卡、同一支） -->
+  <!--
+    移到哪一組（`D-127` 分組就是商品）：從右上「⋯」或「要處理的事」的「放進分組」打開。
+    跟拖進分組同一支（moveSourceToFolder）：換組＝換商品名，伺服器當場重新學這一份（最久約 9 秒）。
+    底下那一行講「放過去之後 AI 把它當成哪一台」——這是換組真正的後果，選之前就看得到
+  -->
   <el-dialog
-    v-model="productDialogOpen"
-    title="AI 認的商品名"
+    v-model="moveDialogOpen"
+    title="移到哪一組"
     width="min(440px, 92vw)"
-    :close-on-click-modal="!savingProductName"
+    :close-on-click-modal="!movingToFolder"
     destroy-on-close
   >
-    <!-- 剛搬進一個有好幾個商品名的分組（`C-320`）：⛔ 不替他猜，那幾個名字排在這裡點一個就好 -->
-    <div v-if="productChoices.length" class="src-product-choices">
-      <p class="src-product-choices__ask">{{ productChoicesGroup ? `「${productChoicesGroup}」裡有這幾個，這份是哪一個？` : '這份是哪一個？' }}</p>
-      <div class="src-product-choices__row">
-        <el-button
-          v-for="n in productChoices"
-          :key="n"
-          size="small"
-          :type="productNameForm.trim() === n ? 'primary' : 'default'"
-          plain
-          @click="productNameForm = n"
-        >
-          {{ n }}
-        </el-button>
-      </div>
-    </div>
-    <KnowledgeProductNameField
-      v-model="productNameForm"
-      placeholder="這份都在講同一個商品時才填"
-      :show-hint="false"
-    />
-    <p v-if="savingProductName" class="text-muted text-xs src-product-saving">正在讓 AI 重新學習這份資料的知識，約需幾十秒⋯</p>
+    <el-select v-model="moveTarget" filterable class="src-move-select" placeholder="選一組">
+      <el-option-group v-if="generalFolders.length" label="通用（不是講單一商品）">
+        <el-option v-for="f in generalFolders" :key="f.id" :label="f.name" :value="f.id" />
+      </el-option-group>
+      <el-option-group v-if="productFolders.length" label="商品">
+        <el-option v-for="f in productFolders" :key="f.id" :label="f.name" :value="f.id" />
+      </el-option-group>
+      <el-option label="不放分組" :value="MOVE_NONE" />
+    </el-select>
+    <p class="text-muted text-xs src-move-hint">{{ moveHint }}</p>
     <template #footer>
-      <el-button :disabled="savingProductName" @click="productDialogOpen = false">取消</el-button>
-      <el-button
-        type="primary"
-        :loading="savingProductName"
-        :disabled="productNameForm.trim() === productNameBaseline"
-        @click="saveProductName"
-      >
-        儲存
+      <el-button :disabled="movingToFolder" @click="moveDialogOpen = false">取消</el-button>
+      <el-button type="primary" :loading="movingToFolder" :disabled="!moveTargetChanged" @click="confirmMove">
+        移過去
       </el-button>
     </template>
   </el-dialog>
@@ -924,7 +913,8 @@
           <el-button size="small" :loading="aliasSaving === c.key" @click="decideAlias(c, 'dismiss')">
             不是，兩台不同
           </el-button>
-          <span class="text-muted text-xs">合併後會以「{{ c.a }}」為正式名稱</span>
+          <!-- `D-127`：兩個都是商品分組＝合成一組（資料搬過去、另一組刪掉），講清楚留哪一組 -->
+          <span class="text-muted text-xs">{{ productGroupNamed(c.a) && productGroupNamed(c.b) ? `合成一組，留「${c.a}」這一組` : `合併後會以「${c.a}」為正式名稱` }}</span>
         </div>
       </div>
     </template>
@@ -943,7 +933,7 @@
         :key="item.id"
         type="button"
         class="src-health-list-item"
-        @click="gotoHealthItem(item, { productName: healthListCategory === 'noProductSources' })"
+        @click="gotoHealthItem(item, { move: healthListCategory === 'noProductSources' })"
       >
         <span class="src-health-item-title">{{ item.title }}</span>
         <span v-if="item.meta" class="text-muted text-xs">{{ item.meta }}</span>
@@ -1283,7 +1273,7 @@
           別放電話、姓名這類個資
         </p>
       </div>
-      <!-- 商品名不在這裡問：一條跟著它所在的那一份走（那一份右上「⋯」→「AI 認的商品名」），兩邊都能改會對不起來 -->
+      <!-- 商品名不在這裡問：一條跟著它所在的那一份走、那一份跟著它所在的分組走（`D-127`），兩邊都能改會對不起來 -->
 
       <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用)。
            `C-314`：標籤改成講結果的一句話，開關旁那一行說明拿掉（開關本身就是答案） -->
@@ -1536,22 +1526,27 @@
     destroy-on-close
   >
     <div class="folder-form">
+      <!--
+        `D-127` 分組就是商品：商品分組的名字就是 AI 認的商品名（底下每份資料都掛這個名字），所以標籤直接叫「商品名」；
+        通用那一組不講單一商品，照舊叫「名稱」。改商品名＝底下每份換名字、舊名字收成客人的叫法（伺服器 folders PUT）
+      -->
       <div class="admin-field-group">
-        <AdminFieldLabel text="名稱" tight />
+        <AdminFieldLabel :text="folderForm.general ? '名稱' : '商品名'" tight />
         <el-input
           v-model="folderForm.name"
           maxlength="50"
           show-word-limit
-          placeholder="例：客服 FAQ"
+          :placeholder="folderForm.general ? '例：客服 FAQ' : '例：SHARP 自動調理零水鍋'"
         />
       </div>
-      <!-- 「通用」那一組（`C-320`）：勾了排到最上面；商品分組裡沒填商品名的那份，伺服器會照同組其他份補上，通用的不補 -->
+      <!-- 「通用」那一組（`C-320`）：勾了排到最上面；底下的資料不當成任何一台（`D-127`） -->
       <el-checkbox v-model="folderForm.general" class="src-folder-general-check">
         通用（FAQ、公告這種不是講單一商品的）
       </el-checkbox>
       <!--
         客人還會怎麼叫它（`C-323`，`D-126` 第 4 步）：以前在「⋯ → 產品名稱整理」，跟分組是兩套。
-        商品分組才有（通用那一組不講單一商品）；這一組每個 AI 認的商品名各一列。
+        商品分組才有（通用那一組不講單一商品）。`D-127` 起一組只有一個商品名（上面那一格），這裡是它的其他叫法：
+        全名、型號、舊名字、客人的暱稱。
         標籤＋可提示的輸入框（Element 元件、不手刻）：打字時下拉列出像的現有商品名，挑了＝當成同一台；打新的＝客人的叫法。
         ⛔ 不用 el-select 多選＋allow-create：沒按 Enter 就按儲存，打的字會被安靜丟掉（addGroupAlias 那段）
       -->
@@ -1559,12 +1554,8 @@
         <AdminFieldLabel text="客人還會怎麼叫它" tight />
         <div v-if="groupAliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
         <p v-else-if="groupAliasFailed" class="folder-form-hint">讀不到，關掉再打開一次試試。</p>
-        <p v-else-if="!groupAliasRows.length" class="folder-form-hint">
-          這一組的資料還沒有商品名。打開其中一份，在右上「⋯ → AI 認的商品名」填上，這裡就能加。
-        </p>
         <template v-else>
           <div v-for="row in groupAliasRows" :key="row.product" class="src-group-alias__row">
-            <p class="src-group-alias__product">AI 認的商品名：{{ row.product }}</p>
             <div v-if="row.current.length" class="src-group-alias__tags">
               <el-tag
                 v-for="a in row.current"
@@ -1632,6 +1623,8 @@ import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 import type { AddOneCreated } from '~/utils/kb-add-one'
 import { ALIAS_TOO_SHORT_TEXT, isUsableAlias, normalizeProductName } from '~~/shared/product-name-similarity'
+import { groupSyncNoteText, parseGroupSync } from '~~/shared/knowledge-import-group'
+import { sameProductGroupName } from '~~/shared/knowledge-product-group'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1957,34 +1950,43 @@ async function onFolderDrop(folderId: string | null) {
   dragOverFolderId.value = null
   draggedSourceId.value = null
   if (!srcId) return
+  await moveSourceToFolder(srcId, folderId)
+}
+
+/** 正在搬（伺服器換商品名＋重新學）、或改組名之後正在重新學的那幾份（左邊那一列標「搬移中」） */
+const movingSourceIds = ref<Set<string>>(new Set())
+
+/**
+ * 把一份資料搬到另一組（拖進分組、「⋯ → 移到哪一組」都走這裡）。回 true＝搬成了。
+ * `D-127` 分組就是商品：換組＝換商品名，伺服器當場重新學這一份（最久約 9 秒）——那一列標「搬移中」。
+ * AI 現在把它當成哪一台照伺服器回的 groupSync 講一句（商品名沒變就不講；announce＝沒變也講搬到哪）。
+ */
+async function moveSourceToFolder(srcId: string, folderId: string | null, opts: { announce?: boolean } = {}): Promise<boolean> {
   const src = sources.value.find(s => s.id === srcId)
-  if (!src) return
-  if ((src.folderId ?? null) === folderId) return // 沒換位置
+  if (!src || (src.folderId ?? null) === folderId) return false
   // 樂觀更新
   src.folderId = folderId
-  /*
-   * 搬進商品分組、這一份還沒有商品名：伺服器照同組其他份補上、重新學這一份（`C-320`，groupFill），最久約 9 秒——
-   * 那一列標「搬移中」讓他知道還在做。⚠️ 等 0.6 秒才標：一般的搬移一下就好，馬上標會閃一下
-   */
+  // ⚠️ 等 0.6 秒才標：商品名沒變的搬移一下就好，馬上標會閃一下
   const busyTimer = setTimeout(() => { movingSourceIds.value = new Set([...movingSourceIds.value, srcId]) }, 600)
-  const keptName = String(src.productName ?? '').trim()
   try {
-    const res = await apiFetch<{ groupFill?: GroupFill }>(`/api/ai/sources/${srcId}`, {
-      method: 'PUT',
-      body: { folderId },
-    })
-    if (res?.groupFill) await onGroupFill(srcId, folderId, res.groupFill)
-    /*
-     * 搬出商品分組（到「未分類」或「通用」）：伺服器⛔不會清掉商品名（那是他的決定，`C-320` 紅線 2）——
-     * 不講的話他以為搬出來就不算那一台了，AI 卻照樣把它當那一台。講一句、指路
-     */
-    else if (keptName && (folderId === null || folders.value.find(f => f.id === folderId)?.general === true)) {
-      showToast(`AI 認的商品名照舊是「${keptName}」，要改在那一份右上的「⋯」→「AI 認的商品名」`, 'info')
+    const res = await apiFetch<{ groupSync?: unknown }>(`/api/ai/sources/${srcId}`, { method: 'PUT', body: { folderId } })
+    const sync = parseGroupSync(res)
+    if (sync?.kind === 'synced') {
+      // 商品名換了＝那一份重新學過：清單（「還沒放進商品分組」跟著變）、開著的那一份都要重讀
+      await loadSources(true)
+      if (selectedId.value === srcId) await loadSourceDetail(srcId)
+      void loadHealth(true)
     }
+    const note = groupSyncNoteText(sync)
+    const warn = sync?.kind === 'failed' || (sync?.kind === 'synced' && sync.failed > 0)
+    if (note) showToast(note, warn ? 'warning' : 'success')
+    else if (opts.announce) showToast(`已移到「${folders.value.find(f => f.id === folderId)?.name ?? '未分類'}」`, 'success')
+    return true
   }
   catch (err: any) {
     showToast(apiErrorText(err, '移動失敗'), 'error')
     await loadSources()
+    return false
   }
   finally {
     clearTimeout(busyTimer)
@@ -1994,42 +1996,6 @@ async function onFolderDrop(folderId: string | null) {
       movingSourceIds.value = next
     }
   }
-}
-
-/** 搬組時伺服器順手做的商品名（`C-320`）：補好了一個名字，或同組有好幾個名字不替他猜 */
-interface GroupFill {
-  productName?: string
-  indexed?: number
-  failed?: number
-  names?: string[]
-}
-/** 正在搬、伺服器還在補商品名的那幾份（左邊那一列標「搬移中」） */
-const movingSourceIds = ref<Set<string>>(new Set())
-
-async function onGroupFill(srcId: string, folderId: string | null, fill: GroupFill) {
-  if (fill.productName) {
-    // 補了名字＝那一份的條目重新學過了：清單（體檢「沒說是哪個商品」跟著少一份）、開著的那一份都要重讀
-    await loadSources(true)
-    if (selectedId.value === srcId) await loadSourceDetail(srcId)
-    const indexed = Number(fill.indexed ?? 0)
-    const failed = Number(fill.failed ?? 0)
-    const learned = indexed > 0 ? `，重新學了 ${indexed} 條` : ''
-    showToast(failed > 0
-      ? `AI 認的商品名補成「${fill.productName}」${learned}；有 ${failed} 條還沒學會，點開那一份按「重新學習」`
-      : `AI 認的商品名補成「${fill.productName}」${learned}`, failed > 0 ? 'warning' : 'success')
-    return
-  }
-  const names = [...new Set((fill.names ?? []).map(n => String(n ?? '').trim()).filter(Boolean))]
-  if (names.length < 2) return
-  /*
-   * 同一組裡有好幾個商品名：⛔ 不替他猜。直接打開那一份的「AI 認的商品名」、把那幾個名字排在上面讓他點一個
-   * （打開的就是在問「是哪一個」，不先多跳一個確認框）；不想選就按取消，名字維持空的
-   */
-  const src = sources.value.find(s => s.id === srcId)
-  if (!src) return
-  if (selectedId.value !== srcId) await selectSource(src)
-  if (selectedId.value !== srcId) return
-  openProductDialog({ choices: names, group: folders.value.find(f => f.id === folderId)?.name ?? '' })
 }
 
 const chunks = ref<ChunkRow[]>([])
@@ -3009,7 +2975,7 @@ interface TodoItem {
 function singleOrList(single: Array<{ id: string }>, kind: 'source' | 'chunk', cat: HealthCategory): () => void {
   if (single.length === 1) {
     const id = single[0]!.id
-    return () => { void gotoHealthItem({ id, kind }, { productName: cat === 'noProductSources' }) }
+    return () => { void gotoHealthItem({ id, kind }, { move: cat === 'noProductSources' }) }
   }
   return () => openHealthList(cat)
 }
@@ -3145,11 +3111,12 @@ const todoItems = computed<TodoItem[]>(() => {
     items.push({
       id: 'noProductSources',
       tone: 'warning',
-      title: `有 ${h.noProductSources.length} 份文件沒說是哪個商品`,
+      // `D-127` 分組就是商品：說明書沒說是哪個商品＝沒放進商品分組（判斷同一支 needsProductName）
+      title: `有 ${h.noProductSources.length} 份檔案還沒放進商品分組`,
       why: '客人指名問某一台時，AI 可能拿別台產品的內容回答。',
-      // `C-320`：商品名收進那一份右上的「⋯」，這顆直接打開那個小視窗（一份時）；改不了商品名的人（`G-102`）只留這一列當作知道
+      // 這顆直接打開那一份的「移到哪一組」（一份時）；搬不了的人（`G-102`）只留這一列當作知道
       ...(canEditSources.value
-        ? { cta: '補上商品名', action: singleOrList(h.noProductSources, 'source', 'noProductSources') }
+        ? { cta: '放進分組', action: singleOrList(h.noProductSources, 'source', 'noProductSources') }
         : {}),
     })
   }
@@ -3242,8 +3209,8 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「立即更新」看差異,決定要不要更新知識。' },
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「立即更新」,或改用內容固定的頁面當資料來源。' },
-  // `C-320`：點一份直接打開「AI 認的商品名」那個小視窗（gotoHealthItem），所以只講「點一份補上」
-  noProductSources: { title: '文件沒說是哪個商品', hint: '若是單一商品的說明書，客人指名問的時候 AI 可能拿別的商品回答。點一份補上商品名。' },
+  // `D-127`：點一份直接打開「移到哪一組」那個小視窗（gotoHealthItem），所以只講「點一份放進去」
+  noProductSources: { title: '檔案還沒放進商品分組', hint: '單一商品的說明書要放進那一台的分組，AI 才知道在講哪一台。點一份放進去。' },
   quotaSkippedSheets: { title: '試算表還有列沒收', hint: '知識空間滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
   failedChunks: { title: '知識學習失敗', hint: '這幾條 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
   // ⛔ 字數不要寫死：門檻是 SHORT_CHUNK_CONTENT_CHARS，前後端共用同一把尺。
@@ -3316,14 +3283,14 @@ function openHealthList(cat: HealthCategory) {
   healthListOpen.value = true
 }
 
-async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }, opts: { productName?: boolean } = {}) {
+async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }, opts: { move?: boolean } = {}) {
   healthListOpen.value = false
   if (item.kind === 'source') {
     const src = sources.value.find(s => s.id === item.id)
     if (src) {
       await selectSource(src)
-      // 「沒說是哪個商品」：商品名收在右上「⋯」裡（`C-320`），帶到那一份還要他自己找——直接打開那個小視窗
-      if (opts.productName && selectedId.value === src.id) openProductDialog()
+      // 「還沒放進商品分組」（`D-127`）：「移到哪一組」收在右上「⋯」裡，帶到那一份還要他自己找——直接打開那個小視窗
+      if (opts.move && selectedId.value === src.id) openMoveDialog()
     }
     else showToast('找不到這份資料(可能剛被刪除),請重新整理', 'error')
   }
@@ -3391,9 +3358,41 @@ async function openAliasDialog(extra?: AliasCandidate) {
   if (extra) aliasCandidates.value = [extra, ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
 }
 
+/** 名字就是這個的商品分組（`D-127`：組名＝商品名） */
+function productGroupNamed(name: string): FolderRow | null {
+  return folders.value.find(f => !f.general && sameProductGroupName(f.name, name)) ?? null
+}
+
+/**
+ * 兩組其實是同一台 → 合成一組（`D-127` 分組就是商品：同一台只能有一組）。
+ * 把 from 那一組的每一份搬進 keep（伺服器換商品名、當場重新學，一份一份來）、舊組名收成 keep 的別名（客人照舊那樣叫也認得）、
+ * 刪掉變空的 from。搬到一半失敗就停：已經搬過去的留在 keep，from 不刪（還有東西），講一句讓他再按一次
+ */
+async function mergeProductGroups(keep: FolderRow, from: FolderRow): Promise<void> {
+  const ids = sources.value.filter(s => s.folderId === from.id).map(s => s.id)
+  for (const id of ids) {
+    if (!(await moveSourceToFolder(id, keep.id))) throw new Error(`搬到一半沒成（${keep.name}）`)
+  }
+  // 太短的舊名（「鍋」）伺服器不收成別名（400）——合成一組照樣算成功
+  await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: keep.name, alias: from.name } })
+    .catch(() => {})
+  await apiFetch(`/api/ai/folders/${from.id}`, { method: 'DELETE' })
+  folders.value = folders.value.filter(f => f.id !== from.id)
+  showToast(`已合成一組「${keep.name}」${ids.length ? `（搬了 ${ids.length} 份）` : ''}，AI 把它們當成同一台；舊名字留成客人的叫法`, 'success')
+}
+
 async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
   aliasSaving.value = c.key
   try {
+    // 兩個名字都是商品分組（`D-127`）：是同一台＝合成一組，不只是記一條別名（不然左邊照樣是兩組、資料分兩處）
+    const keepGroup = action === 'confirm' ? productGroupNamed(c.a) : null
+    const fromGroup = action === 'confirm' ? productGroupNamed(c.b) : null
+    if (keepGroup && fromGroup && keepGroup.id !== fromGroup.id) {
+      await mergeProductGroups(keepGroup, fromGroup)
+      await loadAliases()
+      void loadHealth(true)
+      return
+    }
     const res = await apiFetch<{ changed?: boolean }>('/api/ai/knowledge/product-aliases', {
       method: 'POST',
       body: action === 'confirm'
@@ -3410,8 +3409,6 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
           : '已合併，AI 之後會把它們當同一台（要拿掉：那一組的「編輯分組」）',
       'success',
     )
-    // 併掉的名字要從「所屬產品」下拉消失(合併會動到收斂後的清單,60 秒快取等不得)
-    if (action === 'confirm') invalidateProductNamesCache()
     await loadAliases()
     void loadHealth(true)
   }
@@ -3424,7 +3421,7 @@ async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
 }
 
 // ── 編輯分組：客人還會怎麼叫它（`C-323`，`D-126` 第 4 步「別名取代產品名稱整理」）──
-// 這一組裡每個 AI 認的商品名（照對照表收斂）各一列，列出現有的別名；可以打新的叫法，也可以挑一個現有的商品名（＝當成同一台）。
+// `D-127` 起一組一列（商品名＝組名），列出現有的別名；可以打新的叫法，也可以挑一個現有的商品名（＝當成同一台）。
 // 舊的「自己挑兩個合併」「已確認的對照→解除」就是這兩件事。⛔ 按「儲存」才寫（跟名字、通用同一顆）：取消要真的取消。
 interface GroupAliasRow {
   /** 最終正式名（別名指向它） */
@@ -3440,20 +3437,15 @@ const groupAliasRows = ref<GroupAliasRow[]>([])
 const groupAliasLoading = ref(false)
 const groupAliasFailed = ref(false)
 
-function buildGroupAliasRows(folderId: string): GroupAliasRow[] {
-  const products = new Map<string, string>()
-  for (const s of sources.value) {
-    if (s.folderId !== folderId) continue
-    const raw = String(s.productName ?? '').trim()
-    if (!raw) continue
-    const product = aliasFinalOf.value.get(normalizeProductName(raw)) ?? raw
-    const key = normalizeProductName(product)
-    if (key && !products.has(key)) products.set(key, product)
-  }
-  return [...products].map(([key, product]) => {
-    const aliases = aliasPairs.value.filter(p => normalizeProductName(p.canonical) === key).map(p => p.alias)
-    return { product, original: aliases, current: [...aliases], draft: '' }
-  })
+/**
+ * `D-127` 分組就是商品：一組一列，商品名＝組名（伺服器照組名掛在底下每一份上），列出指向它的別名。
+ * （`C-323` 那時是「這一組裡每個商品名各一列」——一組裡可能有好幾種寫法；現在只有組名一種）
+ */
+function buildGroupAliasRows(folder: FolderRow): GroupAliasRow[] {
+  const key = normalizeProductName(folder.name)
+  if (!key) return []
+  const aliases = aliasPairs.value.filter(p => normalizeProductName(p.canonical) === key).map(p => p.alias)
+  return [{ product: folder.name, original: aliases, current: [...aliases], draft: '' }]
 }
 
 async function loadGroupAliases(folderId: string) {
@@ -3468,7 +3460,7 @@ async function loadGroupAliases(folderId: string) {
     groupAliasFailed.value = true
     return
   }
-  groupAliasRows.value = buildGroupAliasRows(folderId)
+  groupAliasRows.value = buildGroupAliasRows(folderEditTarget.value)
 }
 
 /** 下拉可以挑的：其他現有商品名（挑了＝當成這一台）；已經是這一台的、已經在框裡的不列 */
@@ -3491,7 +3483,7 @@ function groupAliasSuggestionsFor(row: GroupAliasRow) {
 
 /**
  * 把一個叫法加成標籤（Enter、挑下拉、按儲存時框裡還有字）。回 false＝不收、原因已經講了。
- * ⛔ 不用 el-select 的「多選＋可自己打」：那個要按 Enter 才算數，打了字直接按儲存會被安靜丟掉（KnowledgeProductNameField 開頭同一個理由）
+ * ⛔ 不用 el-select 的「多選＋可自己打」：那個要按 Enter 才算數，打了字直接按儲存會被安靜丟掉（以前「所屬產品」欄位踩過同一個坑）
  */
 function addGroupAlias(row: GroupAliasRow, value = row.draft): boolean {
   const s = String(value ?? '').trim()
@@ -3532,10 +3524,11 @@ const groupAliasChanges = computed(() => folderForm.value.general
 async function createFolderPrompt() {
   let name = ''
   try {
-    const { value } = await ElMessageBox.prompt('分組的名字（例：商品名、客服 FAQ）', '新增分組', {
+    // `D-127` 分組就是商品：名字就是 AI 認的商品名（不是講單一商品的，建好之後在編輯分組勾「通用」）
+    const { value } = await ElMessageBox.prompt('商品名就是分組的名字（不是講單一商品的，建好之後勾「通用」）', '新增分組', {
       confirmButtonText: '建立',
       cancelButtonText: '取消',
-      inputPlaceholder: '例：乾淨方 MAX',
+      inputPlaceholder: '例：SHARP 自動調理零水鍋',
       inputPattern: /^.{1,50}$/,
       inputErrorMessage: '名稱長度需 1–50 字',
     })
@@ -3545,7 +3538,14 @@ async function createFolderPrompt() {
   if (!name) return
   // ⛔ 建不成要講（以前跟「按取消」接在同一個 catch 裡，伺服器拒絕時畫面什麼都沒發生）
   try {
-    const folder = await apiFetch<FolderRow>('/api/ai/folders', { method: 'POST', body: { name } })
+    const folder = await apiFetch<FolderRow & { existed?: boolean }>('/api/ai/folders', { method: 'POST', body: { name } })
+    // 已經有同一台的那一組（名字只差空白、符號、大小寫）：伺服器不另建、回那一組——打開它、講一句，⛔ 不在清單上多一列
+    if (folder.existed) {
+      expandedFolders.value = new Set([...expandedFolders.value, folder.id])
+      saveExpandedState()
+      showToast(`已經有「${folder.name}」這一組了`, 'info')
+      return
+    }
     folders.value = [...folders.value, folder]
     expandedFolders.value = new Set([...expandedFolders.value, folder.id])
     saveExpandedState()
@@ -3595,36 +3595,40 @@ async function saveFolderName() {
     }
   }
   folderSaving.value = true
+  let relearnIds: string[] = []
+  let aliasFrom = ''
   try {
     if (body.name !== undefined || body.general !== undefined) {
-      const res = await apiFetch<FolderRow>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
+      // `D-127`：改組名、改成／取消通用＝底下每份換商品名；回要重新學的那幾份、舊組名收成了哪個別名。同名的商品分組＝400（講原因）
+      const res = await apiFetch<FolderRow & { relearnSourceIds?: string[], aliasFrom?: string }>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
       const idx = folders.value.findIndex(f => f.id === target.id)
       // 舊伺服器回的沒有 general：照這次送的補上，畫面上的排序才對得上
-      if (idx >= 0) folders.value[idx] = { ...res, general: res.general ?? (body.general ?? target.general === true) }
+      if (idx >= 0) folders.value[idx] = { id: res.id, name: res.name, order: res.order, createdAtMs: res.createdAtMs, general: res.general ?? (body.general ?? target.general === true) }
+      relearnIds = res.relearnSourceIds ?? []
+      aliasFrom = res.aliasFrom ?? ''
     }
-    // 叫法一個一個存（各自有操作紀錄）。中途失敗就停、前面存好的不回滾，catch 裡重讀一次讓畫面等於真的存進去的
+    // 叫法一個一個存（各自有操作紀錄）。中途失敗就停、前面存好的不回滾，catch 裡重讀一次讓畫面等於真的存進去的。
+    // 指向的是**改完之後**的組名（同一個視窗裡又改名又加叫法時，加的要跟著新名字）
     for (const x of aliasChanges) {
       for (const alias of x.removed) {
         await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'remove', alias } })
       }
       for (const alias of x.added) {
-        await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: x.row.product, alias } })
+        await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: newName, alias } })
       }
     }
-    if (aliasChanges.length) {
-      // 併過來的商品名要從「所屬產品」下拉消失；「可能是同一台」那一列的數字也會跟著變
-      invalidateProductNamesCache()
-      void loadHealth(true)
-    }
-    showToast('已儲存', 'success')
+    // 「可能是同一台」那一列的數字可能跟著變
+    if (aliasChanges.length || relearnIds.length || aliasFrom) void loadHealth(true)
+    showToast(aliasFrom ? `已儲存；舊名字「${aliasFrom}」留成客人的叫法` : '已儲存', 'success')
     folderEditOpen.value = false
+    // 底下每份換了商品名：一份份重新學（不等；左邊那幾列標「搬移中」，學完講一句）
+    void relearnSourcesAfterGroupChange(relearnIds)
   }
   catch (err: any) {
     showToast(apiErrorText(err, '儲存失敗'), 'error')
-    if (aliasChanges.length) {
-      invalidateProductNamesCache()
-      void loadGroupAliases(target.id)
-    }
+    if (aliasChanges.length) void loadGroupAliases(target.id)
+    // 組名改成了、後面叫法那一步才失敗：底下每份的商品名已經換了，照樣要重新學
+    void relearnSourcesAfterGroupChange(relearnIds)
   }
   finally {
     folderSaving.value = false
@@ -3649,7 +3653,7 @@ async function deleteFolderFromModal() {
   catch { return }
   folderDeleting.value = true
   try {
-    await apiFetch(`/api/ai/folders/${target.id}`, { method: 'DELETE' })
+    const res = await apiFetch<{ relearnSourceIds?: string[] }>(`/api/ai/folders/${target.id}`, { method: 'DELETE' })
     folders.value = folders.value.filter(f => f.id !== target.id)
     // 把底下的 source 顯示在「未分類」
     for (const s of sources.value) {
@@ -3657,6 +3661,8 @@ async function deleteFolderFromModal() {
     }
     showToast(count ? `已刪除分組，${count} 份資料移到了未分類` : '已刪除分組', 'success')
     folderEditOpen.value = false
+    // `D-127`：未分類＝不是講單一商品，伺服器把它們的商品名清掉了——一份份重新學，AI 才不會繼續當成那一台
+    void relearnSourcesAfterGroupChange(res?.relearnSourceIds ?? [])
   }
   catch (err: any) {
     showToast(apiErrorText(err, '刪除失敗'), 'error')
@@ -3802,7 +3808,6 @@ async function loadSourceDetail(sourceId: string) {
       }
     }
     seedSettingsForm(res.source)
-    // 商品名那一格只在小視窗打開那一下填（openProductDialog）：⛔ 不在這裡填——輪詢重讀明細會把他正在打的字洗掉
     urlForm.value = res.source.url ?? ''
     // 抓取失敗的 Sheet:把要分享的帳號先撈好，商家一眼就看到要加誰（不必再去開匯入視窗找）
     if (res.source.failureReason && res.source.type === 'gsheet') void loadServiceAccountEmail()
@@ -3812,35 +3817,106 @@ async function loadSourceDetail(sourceId: string) {
   }
 }
 
-// ── AI 認的商品名（資料庫裡叫 productName，P1-1；`C-320` 收進右上「⋯」）─────────────────
-// 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這份資料的索引才生效。
-// 候選清單與匯入視窗共用同一份快取（存了新名字要讓兩邊都看得到）。
-const { addLocal: addProductNameLocal, invalidate: invalidateProductNamesCache } = useProductNames()
-const productNameForm = ref('')
-const productNameBaseline = ref('')
-const savingProductName = ref(false)
-const productDialogOpen = ref(false)
-/**
- * 搬進一個有好幾個商品名的分組時（groupFill.names，`C-320`）：那幾個名字排在框上面讓他點一個，上面一句講是哪一組。
- * 從「⋯」打開的沒有（框點一下就會列出全部現成的名字）
- */
-const productChoices = ref<string[]>([])
-const productChoicesGroup = ref('')
+// ── 移到哪一組（`D-127` 分組就是商品；取代 `C-320` 的「⋯ → AI 認的商品名」）─────────────────
+/** 「不放分組」那個選項的值（el-select 收不了 null） */
+const MOVE_NONE = '__none__'
+const moveDialogOpen = ref(false)
+const moveTarget = ref('')
+const moveFrom = ref('')
+const movingToFolder = ref(false)
+const generalFolders = computed(() => folders.value.filter(f => f.general))
+const productFolders = computed(() => folders.value.filter(f => !f.general))
+const moveTargetChanged = computed(() => !!moveTarget.value && moveTarget.value !== moveFrom.value)
+/** 選了之後 AI 會怎麼看這一份——換組真正的後果，選之前就講（規則同 shared productNameForGroup） */
+const moveHint = computed(() => {
+  const s = selectedSource.value
+  if (!s || !moveTarget.value) return ''
+  const f = folders.value.find(x => x.id === moveTarget.value)
+  if (!f || f.general) return 'AI 不會把這份當成任何一台的資料。'
+  if (s.type === 'gsheet' || s.generateOverview === true) return '試算表、型錄一份常講好幾台，放在哪一組都不會整份當成那一台。'
+  return `AI 會把這份當成「${f.name}」的資料。`
+})
 
 /** 右上「⋯」 */
 function onSourceMoreCommand(cmd: string) {
   if (cmd === 'delete') void deleteSource()
-  else if (cmd === 'product') openProductDialog()
+  else if (cmd === 'move') openMoveDialog()
+  else if (cmd === 'relearn') void relearnSelectedSource()
 }
-/** 每次打開都從這一份現在的值開始（上次打開沒存的不帶過來） */
-function openProductDialog(opts: { choices?: string[], group?: string } = {}) {
+/** 每次打開都從這一份現在放的那一組開始 */
+function openMoveDialog() {
   const s = selectedSource.value
-  if (!s || s.type === 'gsheet' || !canEditSources.value) return
-  productNameForm.value = s.productName ?? ''
-  productNameBaseline.value = s.productName ?? ''
-  productChoices.value = opts.choices ?? []
-  productChoicesGroup.value = opts.group ?? ''
-  productDialogOpen.value = true
+  if (!s || !canEditSources.value) return
+  moveFrom.value = s.folderId ?? MOVE_NONE
+  moveTarget.value = moveFrom.value
+  moveDialogOpen.value = true
+}
+async function confirmMove() {
+  const s = selectedSource.value
+  if (!s || !moveTargetChanged.value) return
+  movingToFolder.value = true
+  try {
+    if (await moveSourceToFolder(s.id, moveTarget.value === MOVE_NONE ? null : moveTarget.value, { announce: true })) {
+      moveDialogOpen.value = false
+    }
+  }
+  finally {
+    movingToFolder.value = false
+  }
+}
+
+/**
+ * 重新學習這一份（右上「⋯」）：換組、改組名之後重新學習沒成時的補救（網路斷、AI 服務忙）。
+ * 冪等，可以一直按；停用的不偷偷打開（伺服器那支跳過停用的）
+ */
+const relearningSource = ref(false)
+async function relearnSelectedSource() {
+  const id = selectedId.value
+  if (!id || relearningSource.value) return
+  relearningSource.value = true
+  try {
+    const res = await apiFetch<{ indexed: number; failed: number }>(`/api/ai/sources/${id}/reindex`, { method: 'POST' })
+    showToast(res.failed > 0
+      ? `學會 ${res.indexed} 條、${res.failed} 條還沒學會，可以再按一次`
+      : `AI 重新學會了這一份的 ${res.indexed} 條`, res.failed > 0 ? 'warning' : 'success')
+    if (selectedId.value === id) await loadSourceDetail(id)
+    void loadHealth(true)
+  }
+  catch (err: any) {
+    showToast(apiErrorText(err, '重新學習沒有完成') + (isRetryableError(err) ? '，可以再試一次' : ''), 'error')
+  }
+  finally {
+    relearningSource.value = false
+  }
+}
+
+/**
+ * 改組名、改成／取消通用、刪分組之後（`D-127`）：底下商品名換掉的那幾份，一份份重新學（一個請求學不完一整組）。
+ * 不等它：視窗先關，左邊那幾列標「搬移中」、學完講一句。中途離開頁面的話沒學到的那幾份 AI 暫時還用舊名字——
+ * 改組名時舊名字收成了別名，照樣認得是這一台；沒學成的點開那一份按「⋯ → 重新學習這一份」
+ */
+async function relearnSourcesAfterGroupChange(ids: string[]) {
+  if (!ids.length) return
+  movingSourceIds.value = new Set([...movingSourceIds.value, ...ids])
+  let failed = 0
+  for (const id of ids) {
+    try {
+      const r = await apiFetch<{ failed: number }>(`/api/ai/sources/${id}/reindex`, { method: 'POST' })
+      if (r.failed > 0) failed++
+    }
+    catch {
+      failed++
+    }
+    const next = new Set(movingSourceIds.value)
+    next.delete(id)
+    movingSourceIds.value = next
+  }
+  showToast(failed
+    ? `AI 重新學好了 ${ids.length - failed} 份，${failed} 份沒學成：點開那一份，按右上「⋯ → 重新學習這一份」`
+    : `AI 重新學好了這一組的 ${ids.length} 份資料`, failed ? 'warning' : 'success')
+  await loadSources(true)
+  if (selectedId.value && ids.includes(selectedId.value)) await loadSourceDetail(selectedId.value)
+  void loadHealth(true)
 }
 
 // ── 抓取失敗:就地修 ──────────────────────────────────
@@ -3958,40 +4034,6 @@ async function saveSourceUrl() {
   }
   finally {
     savingUrl.value = false
-  }
-}
-
-async function saveProductName() {
-  if (!selectedId.value) return
-  const next = productNameForm.value.trim()
-  savingProductName.value = true
-  try {
-    await apiFetch(`/api/ai/sources/${selectedId.value}`, {
-      method: 'PUT',
-      body: { productName: next },
-    })
-    const res = await apiFetch<{ indexed: number; failed: number }>(
-      `/api/ai/sources/${selectedId.value}/reindex`,
-      { method: 'POST' },
-    )
-    productNameBaseline.value = next
-    productDialogOpen.value = false
-    void addProductNameLocal(next) // 剛設的名字要立刻出現在下拉裡(下一份資料才選得到同一個)
-    await loadSources(true) // 體檢「沒說是哪個商品」要跟著變
-    if (res.failed > 0) {
-      showToast(`已儲存；${res.indexed} 條學習成功 / ${res.failed} 條失敗，可再按一次重試`, 'error')
-    }
-    else {
-      showToast(`已儲存，AI 已重新學會這份資料的 ${res.indexed} 條`, 'success')
-    }
-    await loadSourceDetail(selectedId.value)
-    void loadHealth(true) // 「未設產品名」的計數要立刻反映
-  }
-  catch (err: any) {
-    showToast(apiErrorText(err, '儲存失敗'), 'error')
-  }
-  finally {
-    savingProductName.value = false
   }
 }
 
@@ -4930,7 +4972,7 @@ function statusChipTone(src: SourceSummary): 'success' | 'warning' | 'error' | '
  * 左邊每一份底下那一行：只剩「N 條」（`C-314`）。
  * 以前還接產品名、「同步：46 分鐘前」——240px 寬的側欄裡每一列都被截成「…」，看不完也用不到。
  * 「沒設產品」改由「要處理的事」那一條講（noProductSources，跟這裡以前用的是同一個判斷）；
- * 更新時間點進那一份就看得到（名稱下面那一行）；商品名在那一份右上「⋯」→「AI 認的商品名」（`C-320`）。
+ * 更新時間、AI 認的商品點進那一份就看得到（名稱下面那一行；`D-127` 起商品＝它所在的那一組）。
  */
 function metaText(src: SourceSummary) {
   return `${src.chunkCount} 條`
@@ -4950,10 +4992,10 @@ const headerMeta = computed(() => {
   if (when) parts.push(/\d$/.test(when) ? `${when} 更新` : `${when}更新`)
   else if (isSyncingType(s.type)) parts.push('還沒同步過')
   /*
-   * 改不了商品名的人（觀察者、客服，`G-107`：存不了的照樣看得到）：「⋯ → AI 認的商品名」他們看不到，
-   * 這一份被 AI 當成哪個商品就接在這一行後面講（`C-320`）。改得了的人在「⋯」裡看，這一行不多擺
+   * 這一份被 AI 當成哪個商品（`C-320` 只給改不了的人看；`D-127` 起「⋯ → AI 認的商品名」拿掉了，大家都在這一行看）。
+   * 商品名＝它所在那一組的組名；要換就換分組（「⋯ → 移到哪一組」）
    */
-  if (!canEditSources.value && s.type !== 'gsheet' && String(s.productName ?? '').trim()) parts.push(`AI 認的商品：${s.productName.trim()}`)
+  if (s.type !== 'gsheet' && String(s.productName ?? '').trim()) parts.push(`AI 認的商品：${s.productName.trim()}`)
   return parts.join('・')
 })
 /**
@@ -5017,7 +5059,7 @@ onMounted(async () => {
     // 只有一份／一條就直接帶過去（`C-309`：「前往比對」打開一張只有一列的清單，還要再點一次）——同 singleOrList
     healthListCategory.value = healthParam as HealthCategory
     const only = healthListItems.value
-    if (only.length === 1) await gotoHealthItem(only[0]!, { productName: healthParam === 'noProductSources' })
+    if (only.length === 1) await gotoHealthItem(only[0]!, { move: healthParam === 'noProductSources' })
     else openHealthList(healthParam as HealthCategory)
     return
   }

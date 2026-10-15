@@ -37,6 +37,11 @@ vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
   buildChunkSoftDeletePatch: vi.fn(),
   invalidateSourceProductCache: vi.fn(),
   invalidateTagIndexCache: vi.fn(),
+  // `C-325`／`D-127`：在用的商品名快取（新建一份、商品名跟著分組時會作廢）
+  invalidateWorkspaceProductNames: vi.fn(),
+  getWorkspaceSourceScan: vi.fn(async () => ({ catalogIds: new Set<string>(), productNames: [] })),
+  buildEmbeddingText: (t: string, c: string) => `${t}\n${c}`,
+  runIndexOnChunk: vi.fn(),
 }))
 vi.mock('~~/server/utils/ai-knowledge-quota', () => ({
   assertKnowledgeChunkQuota: vi.fn(async () => {}),
@@ -138,10 +143,12 @@ describe('POST /api/ai/knowledge/create', () => {
     expect(createKnowledgeChunk).not.toHaveBeenCalled()
   })
 
-  it('放進自己的資料夾 → 新來源帶著那個資料夾', async () => {
-    body = { title: 't', content: 'c', folderId: 'fMine' }
+  it('放進自己的資料夾 → 新來源帶著那個資料夾，商品名＝組名（`D-127`：不收 body 送的）', async () => {
+    body = { title: 't', content: 'c', folderId: 'fMine', productName: '畫面送的別的名字' }
     await call(createHandler)
-    expect(sets.find(s => s.col === 'knowledgeSources')!.data.folderId).toBe('fMine')
+    const src = sets.find(s => s.col === 'knowledgeSources')!.data
+    expect(src.folderId).toBe('fMine')
+    expect(src.productName).toBe('產品說明')
   })
 })
 
@@ -153,10 +160,18 @@ describe('POST /api/ai/knowledge/bulk-create', () => {
     expect(createKnowledgeChunk).not.toHaveBeenCalled()
   })
 
-  it('放進自己的資料夾 → 照建', async () => {
-    body = { source: { type: 'file', name: 'x', folderId: 'fMine' }, chunks: [{ title: 't', content: 'c' }] }
+  it('放進自己的資料夾 → 照建，商品名＝組名（`D-127`：AI 猜的名字不收）', async () => {
+    body = { source: { type: 'file', name: 'x', folderId: 'fMine', productName: 'AI 猜的另一種寫法' }, chunks: [{ title: 't', content: 'c' }] }
     await call(bulkCreateHandler)
-    expect(sets.find(s => s.col === 'knowledgeSources')!.data.folderId).toBe('fMine')
+    const src = sets.find(s => s.col === 'knowledgeSources')!.data
+    expect(src.folderId).toBe('fMine')
+    expect(src.productName).toBe('產品說明')
+  })
+
+  it('沒放分組 → 不掛商品名（`D-127`：未分類＝不是講單一商品）', async () => {
+    body = { source: { type: 'file', name: 'x', productName: 'AI 猜的商品' }, chunks: [{ title: 't', content: 'c' }] }
+    await call(bulkCreateHandler)
+    expect(sets.find(s => s.col === 'knowledgeSources')!.data.productName).toBeUndefined()
   })
 })
 

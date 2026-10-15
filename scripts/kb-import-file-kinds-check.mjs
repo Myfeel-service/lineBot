@@ -3087,9 +3087,10 @@ try {
     await pg.close()
   }
 
-  // ── 第四十四段（`C-320`，`D-126` 第 1 題）：「資料夾」改叫「分組」；通用的那幾組排最上面、標「通用」；
-  //    編輯分組可以改成通用（只送那一格）；資料頁沒有「所屬產品」卡、改在「⋯ → AI 認的商品名」（試算表沒有）；
-  //    「沒說是哪個商品」的待辦直接打開那個小視窗；拖曳搬組照舊 ──
+  // ── 第四十四段（`C-320`／`D-127` 分組就是商品）：「資料夾」改叫「分組」；通用的那幾組排最上面、標「通用」；
+  //    編輯分組可以改成通用（只送那一格），商品名跟著清掉、底下那幾份一份份重新學；拖曳搬組＝換商品名、講 AI 現在當成哪一台；
+  //    資料頁「⋯」是「移到哪一組／重新學習這一份／刪除」（沒有「AI 認的商品名」了）；
+  //    「還沒放進商品分組」的待辦直接打開「移到哪一組」 ──
   if (CHECK_FROM <= 44) {
     const folders = [
       { id: 'c320-prod', name: '乾淨方MAX', order: 0, createdAtMs: NOW, general: false },
@@ -3111,6 +3112,12 @@ try {
     const folderPuts = []
     const sourcePuts = []
     const reindexes = []
+    const all = [inProd, loose, sheet, noName]
+    /** 同伺服器 productNameForGroup（`D-127`）：商品分組＝組名；通用、未分類、試算表＝空的 */
+    const productOf = (s) => {
+      const f = folders.find(x => x.id === s.folderId)
+      return !f || f.general || s.type === 'gsheet' || s.generateOverview ? '' : f.name
+    }
     const pg = await openImportDialog(async (req) => {
       const url = new URL(req.url())
       const m = req.method()
@@ -3123,22 +3130,32 @@ try {
         const target = folders.find(x => x.id === fp[1])
         if (target && typeof b.general === 'boolean') target.general = b.general
         if (target && b.name) target.name = b.name
-        return json(target)
+        // 改成通用／改名＝底下每一份換商品名（同伺服器 syncGroupSourcesProduct），回要重新學的那幾份
+        const relearnSourceIds = []
+        for (const s of all) {
+          if (s.folderId !== fp[1] || productOf(s) === s.productName) continue
+          s.productName = productOf(s)
+          relearnSourceIds.push(s.id)
+        }
+        return json({ ...target, relearnSourceIds, aliasFrom: '' })
       }
       const sp = url.pathname.match(/^\/api\/ai\/sources\/(c320-[a-e])$/)
       if (sp && m === 'PUT') {
         const b = JSON.parse(req.postData() || '{}')
         sourcePuts.push({ id: sp[1], body: b })
-        const s = [inProd, loose, sheet, noName].find(x => x.id === sp[1])
-        if (s && 'folderId' in b) s.folderId = b.folderId
-        if (s && typeof b.productName === 'string') { s.productName = b.productName; health.noProductSources = [] }
-        // 搬進「C320 除濕機」（商品分組）：沒名字的那份伺服器照同組補上（要幾秒）；另一份那時同組有兩個名字 → 只回名單
-        if (s && b.folderId === 'c320-dry' && s.id === 'c320-e') {
-          await sleep(2000)
-          s.productName = 'GPLUS 除濕機 12L'
-          return json({ ...s, groupFill: { productName: 'GPLUS 除濕機 12L', indexed: 2, failed: 0 } })
+        const s = all.find(x => x.id === sp[1])
+        if (s && 'folderId' in b) {
+          s.folderId = b.folderId
+          // 換組＝換商品名（同伺服器 syncSourceProductWithGroup）：有變就重新學（快上手那份故意慢 2 秒，驗「搬移中」）、回 groupSync
+          const target = productOf(s)
+          if (target !== s.productName) {
+            if (s.id === 'c320-e' && target) await sleep(2000)
+            const previous = s.productName
+            s.productName = target
+            if (target) health.noProductSources = health.noProductSources.filter(x => x.id !== s.id)
+            return json({ ...s, groupSync: { productName: target, previous, indexed: 2, failed: 0 } })
+          }
         }
-        if (s && b.folderId === 'c320-dry' && s.id === 'c320-c') return json({ ...s, groupFill: { names: ['GPLUS 除濕機 12L', 'GPLUS 除濕機 16L'] } })
         return json(s)
       }
       const ri = url.pathname.match(/^\/api\/ai\/sources\/(c320-[a-e])\/reindex$/)
@@ -3187,6 +3204,10 @@ try {
     const fput = folderPuts[0]?.body ?? {}
     if (folderPuts.length === 1 && folderPuts[0].id === 'c320-prod' && fput.general === true && !('name' in fput) && JSON.stringify(h2.map(h => h.name)) === '["乾淨方MAX","客服 FAQ","通用","C320 除濕機"]' && h2[0].general && editText.includes('刪除分組') && !editText.includes('資料夾')) pass('編輯分組勾「通用」→ 只送 general:true（名字沒改不送）、那一組排進最上面那一段；視窗講「分組」不講資料夾')
     else fail('編輯分組改成通用不對', JSON.stringify({ folderPuts, h2, editText: editText.replace(/\s+/g, ' ').slice(0, 160) }))
+    // `D-127`：商品分組的名字那一格叫「商品名」；改成通用＝底下那一份不再是那一台 → 畫面一份份打重新學習、學完講一句
+    const relearnedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了這一組的 1 份資料')), null, 10_000)
+    if (/商品名/.test(editText) && reindexes.includes('c320-a') && relearnedToast) pass('`D-127` 商品分組的名字叫「商品名」；改成通用 → 伺服器回要重新學的那一份，畫面接著打重新學習、講「AI 重新學好了這一組的 1 份資料」')
+    else fail('改成通用之後沒有重新學', JSON.stringify({ label: /商品名/.test(editText), reindexes, relearnedToast, toasts: await toastsOf(pg) }))
 
     // 拖曳搬組照舊：沒分組的那一份拖到「客服 FAQ」→ PUT folderId；拖分組裡的那份時講「拖到這裡 = 移出分組」
     const dragTo = async (srcName, folderName) => pg.evaluate(async (s, fname) => {
@@ -3207,90 +3228,92 @@ try {
     const d1 = await dragTo(loose.name, '客服 FAQ')
     await sleep(800)
     const d2 = await dragTo(inProd.name, '通用')
-    // 有商品名的那份搬進「通用」：伺服器不清掉商品名 → 要講一句、指路（⛔ 不默默留著）
-    const keptToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 認的商品名照舊是「SHARP 乾淨方MAX」') && t.innerText.includes('「⋯」→「AI 認的商品名」')), null, 5000)
     await sleep(800)
     const moves = sourcePuts.filter(p => 'folderId' in p.body)
     if (d1.ok && moves[0]?.id === 'c320-c' && moves[0].body.folderId === 'c320-faq' && d2.zone === '拖到這裡 = 移出分組' && moves[1]?.id === 'c320-a' && moves[1].body.folderId === 'c320-gen') pass('拖曳搬組照舊：拖到哪一組就送那一組（folderId）；拖分組裡的那份時講「拖到這裡 = 移出分組」')
     else fail('拖曳搬組不對', JSON.stringify({ d1, d2, moves }))
-    if (keptToast) pass('有商品名的那份搬進「通用」→ 講「AI 認的商品名照舊是「SHARP 乾淨方MAX」，要改在…「⋯」→「AI 認的商品名」」（伺服器不會清掉，不默默留著）')
-    else fail('搬出商品分組時沒講商品名照舊', (await toastsOf(pg)).join('｜'))
 
-    // 搬進商品分組、這一份沒有商品名 → 伺服器照同組補上（groupFill.productName，慢）：那一列標「搬移中」、好了講補成什麼
+    // `D-127`：拖進商品分組＝換成那一組的商品名，伺服器當場重新學（慢）→ 那一列先標「搬移中」，好了講 AI 現在當成哪一台
     await dragTo(noName.name, 'C320 除濕機')
     const busy = await waitFor(pg, n => [...document.querySelectorAll('.flow-sidebar-row')].some(r => r.innerText.includes(n) && r.innerText.includes('搬移中')), noName.name, 5000)
-    const filled = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 認的商品名補成「GPLUS 除濕機 12L」，重新學了 2 條')), null, 10_000)
+    const synced = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 現在把它當成「C320 除濕機」的資料')), null, 10_000)
     const busyGone = await waitFor(pg, n => ![...document.querySelectorAll('.flow-sidebar-row')].some(r => r.innerText.includes(n) && r.innerText.includes('搬移中')), noName.name, 5000)
-    if (busy && filled && busyGone) pass('搬進商品分組、伺服器替它補商品名（要幾秒）→ 那一列先標「搬移中」，好了講「AI 認的商品名補成「GPLUS 除濕機 12L」，重新學了 2 條」')
-    else fail('搬組補商品名的過程沒講', JSON.stringify({ busy, filled, busyGone }))
-    // 同組有好幾個名字 → ⛔ 不猜：直接打開那一份的「AI 認的商品名」，那幾個名字排在上面點一個
+    if (busy && synced && busyGone) pass('拖進商品分組（伺服器換商品名、重新學要幾秒）→ 那一列先標「搬移中」，好了講「AI 現在把它當成「C320 除濕機」的資料」')
+    else fail('拖進商品分組的過程沒講', JSON.stringify({ busy, synced, busyGone, toasts: await toastsOf(pg) }))
+    // 再拖到「通用」＝不是講單一商品：講 AI 不再把它當成那一台（⛔ 不默默留著舊商品名，`C-320` 那時是留著、要他自己去改）
     await sleep(3800)
-    await dragTo(loose.name, 'C320 除濕機')
-    const pickOpened = await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 沒分組的檔案' && [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名' && d.querySelector('.src-product-choices')), null, 10_000)
-    await markShown(pg, { title: 'AI 認的商品名' })
-    const choice = await pg.evaluate(s => ({
-      ask: document.querySelector(`${s} .src-product-choices__ask`)?.innerText.trim() ?? '',
-      names: [...document.querySelectorAll(`${s} .src-product-choices .el-button`)].map(b => b.innerText.trim()),
-      before: document.querySelector(`${s} input`)?.value ?? '',
-    }), SHOWN)
-    await shot(pg, 'product-name-choices.png', SHOWN)
-    await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-product-choices .el-button`)].find(b => b.innerText.includes('16L'))?.click(), SHOWN)
-    await sleep(300)
-    const afterPick = await pg.$eval(`${SHOWN} input`, e => e.value).catch(() => '')
-    if (pickOpened && choice.ask === '「C320 除濕機」裡有這幾個，這份是哪一個？' && choice.names.join('|') === 'GPLUS 除濕機 12L|GPLUS 除濕機 16L' && choice.before === '' && afterPick === 'GPLUS 除濕機 16L') pass('搬進的那一組有兩個商品名 → 不替他猜：打開「AI 認的商品名」、問「「C320 除濕機」裡有這幾個，這份是哪一個？」，點一個就填進去')
-    else fail('同組有好幾個名字時的處理不對', JSON.stringify({ pickOpened, choice, afterPick }))
-    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button:not(.el-button--primary)`)?.click(), SHOWN)
-    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
-    await sleep(300)
+    await dragTo(noName.name, '通用')
+    const cleared = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 不再把它當成「C320 除濕機」的資料')), null, 10_000)
+    if (cleared && noName.productName === '') pass('拖到「通用」→ 伺服器清掉商品名，講「AI 不再把它當成「C320 除濕機」的資料」')
+    else fail('拖到通用時沒講不再當成那一台', JSON.stringify({ cleared, productName: noName.productName, toasts: await toastsOf(pg) }))
+    await sleep(3800)
 
-    // 資料頁：沒有「所屬產品」卡；「⋯」→「AI 認的商品名」小視窗 → 存了重新學；試算表的「⋯」沒有這一項
+    // 資料頁「⋯」（`D-127`）：移到哪一組／重新學習這一份／刪除，試算表也一樣（⛔ 沒有「AI 認的商品名」了）
+    const MOVE_TITLE = '移到哪一組'
+    const openMore = async (item) => {
+      await pg.click('.admin-header-actions .admin-more-btn')
+      await waitFor(pg, t => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === t), item, 8000)
+      await pg.evaluate(t => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === t)?.click(), item)
+    }
+    /** 「移到哪一組」選一組（el-select 的下拉掛在 body 上）→ 回那一行說明 */
+    const pickMoveTarget = async (name) => {
+      await pg.click(`${SHOWN} .src-move-select .el-select__wrapper`)
+      await waitFor(pg, n => [...document.querySelectorAll('.el-select-dropdown__item')].some(e => e.offsetParent !== null && e.innerText.trim() === n), name, 5000)
+      await pg.evaluate(n => [...document.querySelectorAll('.el-select-dropdown__item')].find(e => e.offsetParent !== null && e.innerText.trim() === n)?.click(), name)
+      await sleep(300)
+      return pg.$eval(`${SHOWN} .src-move-hint`, e => e.innerText.trim()).catch(() => '')
+    }
     await pickSource(pg, sheet.name)
     await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 價目表（試算表）', null, 15_000)
     await pg.click('.admin-header-actions .admin-more-btn')
     await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '刪除'), null, 8000)
     const sheetMenu = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
-    await pg.keyboard.press('Escape')
-    await pg.mouse.click(700, 600)
-    await sleep(400)
-    await pickSource(pg, inProd.name)
-    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 乾淨方說明書' && document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
-    const editorText = await pg.$eval('.split-editor', e => e.innerText).catch(() => '')
-    await pg.click('.admin-header-actions .admin-more-btn')
-    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === 'AI 認的商品名'), null, 8000)
-    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === 'AI 認的商品名')?.click())
-    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 8000)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '移到哪一組')?.click())
+    await waitFor(pg, t => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === t), MOVE_TITLE, 8000)
+    await markShown(pg, { title: MOVE_TITLE })
+    const sheetHint = await pickMoveTarget('C320 除濕機')
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button:not(.el-button--primary)`)?.click(), SHOWN)
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
     await sleep(300)
-    const pdBefore = await pg.evaluate(() => {
-      const d = [...document.querySelectorAll('.el-dialog')].find(x => x.offsetParent !== null && x.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名')
-      return { value: d?.querySelector('input')?.value ?? '', placeholder: d?.querySelector('input')?.getAttribute('placeholder') ?? '', saveDisabled: d?.querySelector('.el-dialog__footer .el-button--primary')?.disabled ?? null }
-    })
-    await markShown(pg, { title: 'AI 認的商品名' })
-    await shot(pg, 'product-name-dialog.png', SHOWN)
-    await typeInto(pg, `${SHOWN} input`, 'SHARP 乾淨方 MAX KC-P70')
-    await sleep(300)
-    // 點標題收掉自動完成的下拉（⛔ 不按 Esc：會連視窗一起關掉）
-    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__title`)?.click(), SHOWN)
-    await sleep(300)
-    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button--primary`)?.click(), SHOWN)
-    const savedT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 已重新學會')), null, 10_000)
-    // 關的時候有半秒淡出（那半秒裡還量得到）：等它真的收起來
-    const pdClosed = await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 3000)
-    const pPut = sourcePuts.find(p => p.id === 'c320-a' && 'productName' in p.body)
-    if (!sheetMenu.includes('AI 認的商品名') && !editorText.includes('所屬產品') && pdBefore.value === 'SHARP 乾淨方MAX' && pdBefore.placeholder === '這份都在講同一個商品時才填' && pdBefore.saveDisabled === true
-      && pPut?.body.productName === 'SHARP 乾淨方 MAX KC-P70' && reindexes.includes('c320-a') && savedT && pdClosed) {
-      pass('資料頁沒有「所屬產品」卡；「⋯ → AI 認的商品名」小視窗帶著現在的名字（沒改按不下去）→ 存了送 productName、接著重新學、視窗關掉；試算表的「⋯」沒有這一項')
-    }
-    else fail('AI 認的商品名不對', JSON.stringify({ sheetMenu, card: editorText.includes('所屬產品'), pdBefore, pPut, reindexes, savedT, pdClosed }))
+    if (sheetMenu.join('／') === '移到哪一組／重新學習這一份／刪除' && sheetHint.startsWith('試算表、型錄一份常講好幾台')) pass(`資料頁「⋯」＝${sheetMenu.join('／')}（沒有「AI 認的商品名」）；試算表選商品分組時講「試算表、型錄一份常講好幾台，放在哪一組都不會整份當成那一台」`)
+    else fail('資料頁「⋯」或試算表的說明不對', JSON.stringify({ sheetMenu, sheetHint }))
 
-    // 待辦「沒說是哪個商品」→「補上商品名」直接打開那個小視窗（上面存商品名時假伺服器把這一類清空了，這裡放回來、重新整理）
-    health.noProductSources = [{ id: 'c320-c', name: loose.name, chunkCount: 2 }]
+    // 「移到哪一組」：選商品分組 → 先講 AI 會把它當成哪一台 → 移過去＝送 folderId、講 AI 現在當成哪一台；資料頁沒有「所屬產品」卡
+    await pickSource(pg, loose.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 沒分組的檔案' && document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    const editorText = await pg.$eval('.split-editor', e => e.innerText).catch(() => '')
+    await openMore('移到哪一組')
+    await waitFor(pg, t => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === t), MOVE_TITLE, 8000)
+    await markShown(pg, { title: MOVE_TITLE })
+    const moveDisabledBefore = await pg.$eval(`${SHOWN} .el-dialog__footer .el-button--primary`, e => e.disabled).catch(() => null)
+    const moveHint = await pickMoveTarget('C320 除濕機')
+    await shot(pg, 'move-to-group.png', SHOWN)
+    const putsBefore = sourcePuts.length
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button--primary`)?.click(), SHOWN)
+    const movedT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 現在把它當成「C320 除濕機」的資料')), null, 10_000)
+    const moveClosed = await waitFor(pg, t => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === t), MOVE_TITLE, 5000)
+    const mPut = sourcePuts.slice(putsBefore).find(p => p.id === 'c320-c')
+    if (!editorText.includes('所屬產品') && moveDisabledBefore === true && moveHint === 'AI 會把這份當成「C320 除濕機」的資料。' && mPut?.body.folderId === 'c320-dry' && !('productName' in mPut.body) && movedT && moveClosed) {
+      pass('「⋯ → 移到哪一組」：沒換組按不下去；選商品分組先講「AI 會把這份當成「C320 除濕機」的資料。」→ 移過去只送 folderId（不送商品名）、講 AI 現在當成哪一台、視窗關掉；資料頁沒有「所屬產品」卡')
+    }
+    else fail('移到哪一組不對', JSON.stringify({ card: editorText.includes('所屬產品'), moveDisabledBefore, moveHint, mPut, movedT, moveClosed }))
+
+    // 「⋯ → 重新學習這一份」：打這一份的重新學習、講學會幾條
+    await sleep(800)
+    await openMore('重新學習這一份')
+    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學會了這一份的 2 條')), null, 10_000)
+    if (relearnT && reindexes.includes('c320-c')) pass('「⋯ → 重新學習這一份」→ 打這一份的重新學習、講「AI 重新學會了這一份的 2 條」')
+    else fail('重新學習這一份不對', JSON.stringify({ relearnT, reindexes }))
+
+    // 待辦「還沒放進商品分組」（`D-127`）→「放進分組」直接打開那一份的「移到哪一組」（快上手那份剛被拖到通用、沒有商品名）
+    health.noProductSources = [{ id: 'c320-e', name: noName.name, chunkCount: 2 }]
     await gotoAgain(pg, `${BASE}/admin/${WORKSPACE_ID}/knowledge/sources`)
-    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('沒說是哪個商品')), null, 30_000)
-    const todo = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('沒說是哪個商品')) ?? '')
-    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('沒說是哪個商品'))?.querySelector('.el-button')?.click())
-    const todoOpened = await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 沒分組的檔案' && [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 15_000)
-    if (todo.includes('有 1 份文件沒說是哪個商品') && todo.includes('補上商品名') && todoOpened) pass('待辦「有 1 份文件沒說是哪個商品」→「補上商品名」：打開那一份、直接跳出「AI 認的商品名」（不用自己去「⋯」找）')
-    else fail('「沒說是哪個商品」的待辦沒有直接打開小視窗', JSON.stringify({ todo, todoOpened }))
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('還沒放進商品分組')), null, 30_000)
+    const todo = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('還沒放進商品分組')) ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('還沒放進商品分組'))?.querySelector('.el-button')?.click())
+    const todoOpened = await waitFor(pg, t => document.querySelector('.src-header-main input')?.value === 'C320 除濕機快速上手' && [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === t), MOVE_TITLE, 15_000)
+    if (todo.includes('有 1 份檔案還沒放進商品分組') && todo.includes('放進分組') && todoOpened) pass('待辦「有 1 份檔案還沒放進商品分組」→「放進分組」：打開那一份、直接跳出「移到哪一組」（不用自己去「⋯」找）')
+    else fail('「還沒放進商品分組」的待辦沒有直接打開小視窗', JSON.stringify({ todo, todoOpened }))
     await pg.close()
 
     // 觀察者（`G-107`：存不了的照樣看得到）：「⋯」整顆沒有，那一份被認成哪個商品接在名稱下面那一行；
@@ -3306,7 +3329,8 @@ try {
       return pageFake(req)
     }, SOURCES_PAGE)
     await waitFor(viewer, () => !document.querySelector('.split-sidebar .agent-ask-row') && !!document.querySelector('.admin-viewer-banner'), null, 30_000)
-    await pickSource(viewer, inProd.name)
+    // 沒分組的那份上面已經移進「C320 除濕機」＝商品名就是組名
+    await pickSource(viewer, loose.name)
     await waitFor(viewer, () => document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
     await sleep(500)
     await shot(viewer, 'viewer-product-line.png', '.split-editor-header')
@@ -3316,19 +3340,20 @@ try {
       ask: !!document.querySelector('[data-tour="kb-ask"]') || [...document.querySelectorAll('[data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null),
       addOne: !!document.querySelector('.split-sidebar .agent-ask-row'),
     }))
-    if (v.meta.endsWith('・AI 認的商品：SHARP 乾淨方 MAX KC-P70') && !v.more && !v.ask && !v.addOne) pass(`觀察者：沒有「⋯」、沒有問 AI、沒有補一條；名稱下面那一行照樣看得到「${v.meta}」`)
+    if (v.meta.endsWith('・AI 認的商品：C320 除濕機') && !v.more && !v.ask && !v.addOne) pass(`觀察者：沒有「⋯」、沒有問 AI、沒有補一條；名稱下面那一行照樣看得到「${v.meta}」`)
     else fail('觀察者看不到商品名、或看到了不能用的按鈕', JSON.stringify(v))
     await viewer.close()
   }
 
   // ── 第四十五段（`C-323`，`D-126` 第 4 步）：「產品名稱整理」搬進編輯分組的「客人還會怎麼叫它」——
-  //    商品分組列出 AI 認的商品名＋現有的叫法（標籤）；打字按 Enter 加、太短的當場擋、打了沒按 Enter 就按儲存也收；
+  //    商品分組的名字那一格叫「商品名」（`D-127` 組名＝商品名）＋現有的叫法（標籤）；打字按 Enter 加、太短的當場擋、打了沒按 Enter 就按儲存也收；
   //    挑一個現有的商品名＝當成同一台，存之前先問（按「再想想」什麼都不送）；按儲存才送（先拿掉、再加）；
   //    通用那一組沒有這一塊；系統抓到的「可能是同一台」從待辦打開，視窗只剩確認那幾組；手機 390 寬不撐破 ──
   if (CHECK_FROM <= 45) {
     const REGEN = 'C323 筋牌特務 W1 REGEN'
     const folders = [
-      { id: 'c323-prod', name: 'C323 紅光儀', order: 0, createdAtMs: NOW, general: false },
+      // `D-127`：組名就是商品名（別名都指向它）
+      { id: 'c323-prod', name: REGEN, order: 0, createdAtMs: NOW, general: false },
       { id: 'c323-faq', name: 'C323 客服', order: 1, createdAtMs: NOW, general: true },
     ]
     const src = fakeSource({ id: 'c323-a', type: 'file', name: 'C323 說明書', folderId: 'c323-prod', chunkCount: 1, productName: REGEN, summary: ['說明'] })
@@ -3360,7 +3385,9 @@ try {
     }
     const aliasState = () => pg.evaluate(s => ({
       section: document.querySelector(`${s} .src-group-alias`)?.innerText ?? null,
-      product: document.querySelector(`${s} .src-group-alias__product`)?.innerText.trim() ?? '',
+      // `D-127`：名字那一格的標籤（商品分組＝「商品名」）和值
+      label: document.querySelector(`${s} .folder-form .admin-field-group`)?.innerText.trim().split('\n')[0] ?? '',
+      product: document.querySelector(`${s} .folder-form .admin-field-group input`)?.value ?? '',
       tags: [...document.querySelectorAll(`${s} .src-group-alias__tags .el-tag`)].map(t => t.innerText.trim()),
       draft: document.querySelector(`${s} .src-group-alias__input input`)?.value ?? null,
       saveDisabled: document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.disabled ?? null,
@@ -3369,12 +3396,12 @@ try {
     const boxShown = () => waitFor(pg, () => [...document.querySelectorAll('.el-message-box')].some(b => b.offsetParent !== null), null, 5000)
     const boxText = () => pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
 
-    // 打開商品分組：商品名一行、現有的叫法是標籤、還沒改按不下去儲存
-    await openEdit(pg, 'C323 紅光儀')
-    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__product`), SHOWN, 10_000)
+    // 打開商品分組：名字那一格叫「商品名」、現有的叫法是標籤、還沒改按不下去儲存
+    await openEdit(pg, REGEN)
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__input`), SHOWN, 10_000)
     const g0 = await aliasState()
     await shot(pg, 'group-alias.png', SHOWN)
-    if (g0.section?.includes('客人還會怎麼叫它') && g0.product === `AI 認的商品名：${REGEN}` && g0.tags.join('|') === 'W1 REGEN 紅光' && g0.saveDisabled === true) pass('編輯分組多一塊「客人還會怎麼叫它」：AI 認的商品名一行、現有的叫法是標籤；沒改按不下去儲存')
+    if (g0.section?.includes('客人還會怎麼叫它') && g0.label.startsWith('商品名') && g0.product === REGEN && !g0.section.includes('AI 認的商品名：') && g0.tags.join('|') === 'W1 REGEN 紅光' && g0.saveDisabled === true) pass('編輯分組：名字那一格叫「商品名」（`D-127` 組名＝商品名，不再另一行「AI 認的商品名」）、「客人還會怎麼叫它」現有的叫法是標籤；沒改按不下去儲存')
     else fail('編輯分組的「客人還會怎麼叫它」不對', JSON.stringify(g0))
 
     // 打一個叫法按 Enter → 變標籤；太短的（「鍋」）當場講、不收
@@ -3433,15 +3460,15 @@ try {
     if (saved && JSON.stringify(sent) === JSON.stringify(want)) pass('說是同一台 → 送出：先拿掉「W1 REGEN 紅光」、再加「紅光儀」「C323 零水鍋」「小紅燈」（都指向那一台），視窗關掉')
     else fail('儲存送出去的不對', JSON.stringify({ saved, aliasPosts }))
 
-    // 通用那一組沒有這一塊；取消勾「通用」才出現，這一組沒有商品名 → 講去哪裡填
+    // 通用那一組沒有這一塊、名字那一格叫「名稱」；取消勾「通用」＝變成商品分組（`D-127` 組名就是商品名）→ 叫「商品名」、可以加叫法
     await sleep(500)
     await openEdit(pg, 'C323 客服')
     await sleep(500)
     const gen = await aliasState()
     await pg.evaluate(s => document.querySelector(`${s} .src-folder-general-check`)?.click(), SHOWN)
-    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias`) && !document.querySelector(`${s} .src-group-alias .spinner`), SHOWN, 8000)
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__input`), SHOWN, 8000)
     const genOff = await aliasState()
-    if (gen.section === null && genOff.section?.includes('這一組的資料還沒有商品名') && genOff.section.includes('AI 認的商品名')) pass('通用那一組沒有「客人還會怎麼叫它」；取消勾通用才出現，這一組沒有商品名 → 講「打開其中一份，在「⋯ → AI 認的商品名」填上」')
+    if (gen.section === null && gen.label.startsWith('名稱') && genOff.label.startsWith('商品名') && genOff.section?.includes('客人還會怎麼叫它') && genOff.draft === '') pass('通用那一組沒有「客人還會怎麼叫它」、名字那一格叫「名稱」；取消勾通用＝商品分組 → 叫「商品名」、可以加叫法')
     else fail('通用那一組的叫法區塊不對', JSON.stringify({ gen, genOff }))
     await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button:not(.el-button--primary)`)?.click(), SHOWN)
     await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
@@ -3466,7 +3493,7 @@ try {
     aliasesFake.pairs = [{ aliasKey: 'x', alias: 'C323 非常長的舊商品名稱多波長紅光舒緩儀專業版家用款含配件組合', canonical: REGEN }]
     const phone = await openImportDialog(fake, { ...SOURCES_PAGE, width: 390, height: 844 })
     await waitFor(phone, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
-    await openEdit(phone, 'C323 紅光儀')
+    await openEdit(phone, REGEN)
     await waitFor(phone, s => !!document.querySelector(`${s} .src-group-alias__tags .el-tag`), SHOWN, 10_000)
     await sleep(300)
     if (process.env.SHOT_DIR) await (await phone.$(SHOWN))?.screenshot({ path: join(process.env.SHOT_DIR, 'c315', 'group-alias-phone.png') }).catch(() => {})
@@ -3480,6 +3507,125 @@ try {
     if (fit.over <= 0 && fit.tagInside && fit.dw <= fit.vw && fit.pageOver <= 0) pass(`手機 390 寬：很長的叫法換行、不撐破編輯分組（視窗 ${fit.dw}px）`)
     else fail('手機上叫法撐破視窗', JSON.stringify(fit))
     await phone.close()
+  }
+
+  // ── 第四十六段（`D-127` 分組就是商品）：系統抓到的兩組其實是同一台 → 「是同一台」＝合成一組（資料搬過去、舊組名收成別名、刪掉空的那組）；
+  //    改組名 → 伺服器回要重新學的那幾份＋舊名字收成別名，畫面一份份重新學、講一句；新增分組打了已經有的名字 → 不另建、講一句 ──
+  if (CHECK_FROM <= 46) {
+    const KEEP = 'C327 SHARP 自動調理零水鍋'
+    const FROM = 'C327 零水鍋'
+    const folders = [
+      { id: 'c327-keep', name: KEEP, order: 0, createdAtMs: NOW, general: false },
+      { id: 'c327-from', name: FROM, order: 1, createdAtMs: NOW, general: false },
+    ]
+    const s1 = fakeSource({ id: 'c327-a', type: 'file', name: 'C327 零水鍋說明書', folderId: 'c327-keep', chunkCount: 1, productName: KEEP, summary: ['說明'] })
+    const s2 = fakeSource({ id: 'c327-b', type: 'file', name: 'C327 零水鍋食譜', folderId: 'c327-from', chunkCount: 1, productName: FROM, summary: ['食譜'] })
+    const all = [s1, s2]
+    const pageFake = fakeSourcesPage(all, { 'c327-a': [fakeChunk({ id: 'a1', title: '保固' })], 'c327-b': [fakeChunk({ id: 'b1', title: '燉牛肉' })] })
+    const health = { ...emptyHealthFake(), aliasCandidateCount: 1 }
+    const calls = []
+    const aliasesFake = {
+      pairs: [],
+      candidates: [{ key: 'k1', a: KEEP, b: FROM, reason: `「${KEEP}」包含「${FROM}」，可能是同一台的全稱與簡稱`, confidence: 'medium', variantRisk: false }],
+      productNames: [KEEP, FROM],
+    }
+    const fake = async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      const body = () => { const b = JSON.parse(req.postData() || '{}'); delete b.workspaceId; return b }
+      if (url.pathname === '/api/ai/folders' && m === 'GET') return json({ items: folders })
+      if (url.pathname === '/api/ai/folders' && m === 'POST') {
+        const b = body()
+        calls.push(`POST folders ${b.name}`)
+        // 已經有同一台的那一組（只差空白大小寫）：伺服器回那一組、existed
+        const same = folders.find(f => f.name.replace(/\s+/g, '').toLowerCase() === String(b.name).replace(/\s+/g, '').toLowerCase())
+        return json(same ? { ...same, existed: true } : { id: 'c327-new', name: b.name, order: 9, createdAtMs: NOW, general: false })
+      }
+      if (url.pathname === '/api/ai/knowledge/health' && m === 'GET') return json(health)
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'GET') return json(aliasesFake)
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'POST') { const b = body(); calls.push(`alias ${b.alias}→${b.canonical}`); return json({ ok: true, changed: true }) }
+      const sp = url.pathname.match(/^\/api\/ai\/sources\/(c327-[ab])$/)
+      if (sp && m === 'PUT') {
+        const b = body()
+        const s = all.find(x => x.id === sp[1])
+        calls.push(`move ${sp[1]}→${b.folderId}`)
+        const previous = s.productName
+        s.folderId = b.folderId
+        s.productName = folders.find(f => f.id === b.folderId)?.name ?? ''
+        return json({ ...s, groupSync: { productName: s.productName, previous, indexed: 1, failed: 0 } })
+      }
+      const ri = url.pathname.match(/^\/api\/ai\/sources\/(c327-[ab])\/reindex$/)
+      if (ri && m === 'POST') { calls.push(`relearn ${ri[1]}`); return json({ indexed: 1, failed: 0 }) }
+      const fp = url.pathname.match(/^\/api\/ai\/folders\/(c327-[a-z]+)$/)
+      if (fp && m === 'DELETE') {
+        calls.push(`delete ${fp[1]}`)
+        const i = folders.findIndex(f => f.id === fp[1])
+        if (i >= 0) folders.splice(i, 1)
+        return json({ movedSources: 0, relearnSourceIds: [] })
+      }
+      if (fp && m === 'PUT') {
+        const b = body()
+        const f = folders.find(x => x.id === fp[1])
+        const old = f.name
+        if (b.name) f.name = b.name
+        calls.push(`rename ${old}→${f.name}`)
+        // 改組名＝底下每一份換商品名、舊組名收成別名（同伺服器 folders PUT）
+        const relearnSourceIds = all.filter(s => s.folderId === f.id).map((s) => { s.productName = f.name; return s.id })
+        return json({ ...f, relearnSourceIds, aliasFrom: old })
+      }
+      return pageFake(req)
+    }
+    const pg = await openImportDialog(fake, SOURCES_PAGE)
+    await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
+
+    // 兩組是同一台 → 合成一組
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('商品名可能是同一台')), null, 15_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('可能是同一台'))?.querySelector('.el-button')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '這幾個商品名是同一台嗎？' && d.querySelector('.src-alias-card')), null, 10_000)
+    await markShown(pg, { title: '這幾個商品名是同一台嗎？' })
+    const candText = await pg.$eval(SHOWN, e => e.innerText.replace(/\s+/g, ' '))
+    await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-alias-actions .el-button`)].find(b => b.innerText.includes('是同一台'))?.click(), SHOWN)
+    const mergedT = await waitFor(pg, k => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${k}」（搬了 1 份）`)), KEEP, 10_000)
+    await sleep(500)
+    const groupsAfter = await pg.$$eval('.src-folder-header .src-folder-name', els => els.map(e => e.innerText.trim()))
+    const mergeCalls = calls.join('｜')
+    if (candText.includes(`合成一組，留「${KEEP}」這一組`) && mergedT && mergeCalls === `move c327-b→c327-keep｜alias ${FROM}→${KEEP}｜delete c327-from` && groupsAfter.join('|') === KEEP) pass(`兩組是同一台 →「是同一台」＝合成一組：先講「合成一組，留「${KEEP}」這一組」，資料搬過去（伺服器換商品名）→ 舊組名收成別名 → 刪掉空的那組（${mergeCalls}）`)
+    else fail('合成一組不對', JSON.stringify({ candText: candText.slice(0, 200), mergedT, calls, groupsAfter, toasts: await toastsOf(pg) }))
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000).catch(() => {})
+    await pg.keyboard.press('Escape')
+    await sleep(600)
+
+    // 改組名 → 舊名字收成別名、底下兩份一份份重新學、講一句
+    calls.length = 0
+    await pg.evaluate(n => [...document.querySelectorAll('.src-folder-header')].find(e => e.querySelector('.src-folder-name')?.innerText.trim() === n)?.querySelector('.src-folder-icon-btn')?.click(), KEEP)
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    await markShown(pg, { title: '編輯分組' })
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__input`), SHOWN, 10_000)
+    await typeInto(pg, `${SHOWN} .folder-form .admin-field-group input`, 'C327 SHARP HEALSIO 2.4L 自動調理零水鍋')
+    await sleep(200)
+    await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.click(), SHOWN)
+    const savedAlias = await waitFor(pg, k => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已儲存；舊名字「${k}」留成客人的叫法`)), KEEP, 8000)
+    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了這一組的 2 份資料')), null, 10_000)
+    const renameCalls = calls.join('｜')
+    if (savedAlias && relearnT && renameCalls === `rename ${KEEP}→C327 SHARP HEALSIO 2.4L 自動調理零水鍋｜relearn c327-a｜relearn c327-b`) pass(`改組名 → 講「舊名字「${KEEP}」留成客人的叫法」，底下兩份一份份重新學、學完講「AI 重新學好了這一組的 2 份資料」（${renameCalls}）`)
+    else fail('改組名之後沒有重新學或沒講舊名字', JSON.stringify({ savedAlias, relearnT, calls, toasts: await toastsOf(pg) }))
+
+    // 新增分組打了已經有的名字（只差空白大小寫）→ 伺服器回那一組（existed）：講一句、⛔ 清單上不多一列
+    calls.length = 0
+    await sleep(600)
+    await pg.click('[data-tour="kb-more"]')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '新增分組'), null, 8000)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '新增分組')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-message-box')].some(b => b.offsetParent !== null), null, 5000)
+    const promptText = await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
+    await typeInto(pg, '.el-message-box input', 'c327 sharp healsio 2.4l 自動調理零水鍋')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button--primary')?.click())
+    const existedT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('已經有「C327 SHARP HEALSIO 2.4L 自動調理零水鍋」這一組了')), null, 8000)
+    await sleep(400)
+    const rows = await pg.$$eval('.src-folder-header', els => els.length)
+    if (promptText.includes('商品名就是分組的名字') && existedT && rows === 1) pass('新增分組講「商品名就是分組的名字」；打了已經有的名字 → 不另建、講「已經有「…」這一組了」，清單上不多一列')
+    else fail('新增分組同名的處理不對', JSON.stringify({ promptText, existedT, rows, calls }))
+    await pg.close()
   }
 }
 catch (e) {

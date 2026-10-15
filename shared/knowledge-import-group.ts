@@ -10,7 +10,8 @@
  *  ③ 比不到、AI 又認出一個商品 → 預設「新分組『商品名』」，**並且要問一題**「這份在講哪個商品？」（ask）；
  *  ④ AI 沒認出商品（FAQ、公告、價目表、講好幾樣的）→ 放「通用」（有這一組的話）；
  *  ⑤ 都不是 → 不放分組。
- * ⛔ 商品名只拿來挑分組，**不會被分組名字換掉**：AI 答題看的是商品名（bulk-create 的 productName），分組只是放的位置。
+ * `D-127`（2026-10-16）起分組就是商品：放進哪一組，伺服器就把那一組的名字當成這份的商品名（bulk-create 不收畫面送的 productName）。
+ * AI 認的商品名在這裡只用來挑分組、或當新分組的名字；加入時 AI 看得到現有的分組名，講的是其中一台就照抄，①比得到的機會大很多。
  */
 import { pickFolderForSource } from './knowledge-folder-match'
 
@@ -161,44 +162,41 @@ export function groupChoiceFromKey(key: string, newName: string): ImportGroupCho
 }
 
 /**
- * 搬進商品分組之後伺服器做了什麼（`PUT /api/ai/sources/:id` 回的 `groupFill`，`C-320` `/code-review` ②⑬）：
- *  · 這份沒有商品名、同組其他份只有一種 → 伺服器補上、當場重新學過（filled）；
- *  · 同組有好幾種 → 不猜，回那幾個名字（ask）——畫面要講清楚、給他挑；
- *  · `{ error: true }` → 搬是搬過去了，補商品名那一步沒成（failed）——簡短講一句，⛔ 不講成搬失敗；
- *  · 沒有 groupFill ＝什麼都沒補（這份本來就有名字、通用分組、不放分組⋯）。
+ * 換分組之後伺服器做了什麼（`PUT /api/ai/sources/:id` 回的 `groupSync`，`D-127` 分組就是商品）：
+ *  · 商品名改成新組的組名（或搬到通用、不放分組＝清掉），當場重新學過（synced）；
+ *  · `{ error: true }` → 搬是搬過去了，重新學習那一步沒成（failed）——簡短講一句，⛔ 不講成搬失敗；
+ *  · 沒有 groupSync ＝商品名沒變（本來就是那一台、試算表／型錄⋯）。
+ * `C-320` 時代的「同組好幾個名字要你挑」沒有了：一組只有一個名字（組名）。
  */
-export type GroupFillOutcome =
-  | { kind: 'filled', productName: string, indexed: number, failed: number }
-  | { kind: 'ask', names: string[] }
+export type GroupSyncOutcome =
+  | { kind: 'synced', productName: string, previous: string, indexed: number, failed: number }
   | { kind: 'failed' }
 
-export function parseGroupFill(raw: unknown): GroupFillOutcome | null {
-  const f = (raw as { groupFill?: { productName?: unknown, indexed?: unknown, failed?: unknown, names?: unknown, error?: unknown } } | null)?.groupFill
+export function parseGroupSync(raw: unknown): GroupSyncOutcome | null {
+  const f = (raw as { groupSync?: { productName?: unknown, previous?: unknown, indexed?: unknown, failed?: unknown, error?: unknown } } | null)?.groupSync
   if (!f || typeof f !== 'object') return null
-  const productName = String(f.productName ?? '').trim()
-  if (productName) return { kind: 'filled', productName, indexed: Number(f.indexed ?? 0) || 0, failed: Number(f.failed ?? 0) || 0 }
   if (f.error === true) return { kind: 'failed' }
-  const names = Array.isArray(f.names) ? [...new Set(f.names.map(n => String(n ?? '').trim()).filter(Boolean))] : []
-  return names.length >= 2 ? { kind: 'ask', names } : null
+  return {
+    kind: 'synced',
+    productName: String(f.productName ?? '').trim(),
+    previous: String(f.previous ?? '').trim(),
+    indexed: Number(f.indexed ?? 0) || 0,
+    failed: Number(f.failed ?? 0) || 0,
+  }
 }
 
-/** 補好了那一句（失敗的條數照實講，⛔ 不講成全都學會了） */
-export function groupFillFilledText(f: { productName: string, failed: number }): string {
-  return f.failed > 0
-    ? `AI 認的商品名補成「${f.productName}」；有 ${f.failed} 條還沒學會，點開那一份按「重新學習」`
-    : `AI 認的商品名補成「${f.productName}」`
-}
+/** 搬過去了、重新學習沒成（資料頁右上「⋯」有「重新學習這一份」） */
+export const GROUP_SYNC_FAILED_TEXT = '搬過去了，但 AI 還沒重新學會：點開那一份，按右上「⋯ → 重新學習這一份」'
 
-/** 好幾個名字、不猜（`/code-review` ②）：指去那一份的「⋯ → AI 認的商品名」 */
-export const GROUP_FILL_ASK_TEXT = '這一組裡有好幾個商品名，這份是哪一個要你選：點開那一份，按「⋯ → AI 認的商品名」'
-/** 搬過去了、補商品名沒成 */
-export const GROUP_FILL_FAILED_TEXT = '搬過去了，但 AI 認的商品名沒補成：點開那一份，按「⋯ → AI 認的商品名」補上'
-
-/** 一行講完（一次好幾份那一列用；單份的結果頁「好幾個名字」那種另外給按鈕挑） */
-export function groupFillNoteText(f: GroupFillOutcome | null): string {
+/** 一行講完 AI 現在把它當成哪一台（失敗的條數照實講，⛔ 不講成全都學會了） */
+export function groupSyncNoteText(f: GroupSyncOutcome | null): string {
   if (!f) return ''
-  if (f.kind === 'filled') return groupFillFilledText(f)
-  return f.kind === 'ask' ? GROUP_FILL_ASK_TEXT : GROUP_FILL_FAILED_TEXT
+  if (f.kind === 'failed') return GROUP_SYNC_FAILED_TEXT
+  const head = f.productName
+    ? `AI 現在把它當成「${f.productName}」的資料`
+    : f.previous ? `AI 不再把它當成「${f.previous}」的資料` : ''
+  if (!head) return ''
+  return f.failed > 0 ? `${head}；有 ${f.failed} 條還沒學會，點開那一份按右上「⋯ → 重新學習這一份」` : head
 }
 
 /**
@@ -298,6 +296,9 @@ export function createImportGroupRegistry(
             // 回來的沒有編號＝沒建成（填一個不存在的分組，那一份會從清單上整份消失，見 G-98）
             if (!g?.id) throw new Error('分組沒建成')
             const group = { id: g.id, name: g.name || clean, general: g.general === true || general }
+            // `D-127`：伺服器說「已經有同一台的那一組」（名字只差符號，上面 findGroupByName 沒比到）＝不是這次建的。
+            // ⛔ 不記進 created：記了的話這一份加入失敗時會被當成「這次多建的空分組」刪掉——刪到的是他原本就有的那一組
+            if ((g as { existed?: boolean }).existed) return group
             created.set(group.id, { group, uses: 0, holds: 0 })
             hooks.onCreated?.(group)
             return group

@@ -10,12 +10,13 @@ import {
 } from '~~/server/utils/ai-knowledge-chunks'
 import { getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
+import { productNameForFolderId } from '~~/server/utils/ai-knowledge-product-group'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
  * POST /api/ai/knowledge/create
- * Body: { title, content, tags[], questions[], sourceId?, productName?, draft? }
+ * Body: { title, content, tags[], questions[], sourceId?, folderId?, draft? }
  *
  * `draft: true`（`D-109`，小幫手「補一張知識卡」用）：建成「等你看過」的卡——照樣算向量（試答讀得到），
  * 但**不對客人講話**，要店家在知識庫按「採用」才上線（`adoptDrafts`）。
@@ -26,9 +27,8 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  *   - 若 body.sourceId 空：**自動建立 type='manual' 的新 source**，名稱用 title。
  *     這樣手寫單張條目也是「一個 source = 一張卡」，跟 PDF / URL 統一在來源層管理。
  *
- * productName 只在「自動建 source」那條路吃：產品名是來源層欄位（索引時繼承），
+ * 商品名照 folderId 那一組決定（`D-127`，只在「自動建 source」那條路）：產品名是來源層欄位（索引時繼承），
  * 掛進既有 source 的卡跟著那個 source 走，不該被單張卡覆蓋。
- * 沒有它的話，手寫的「濾網怎麼洗」不屬於任何產品，客人指名問**另一台**時照樣可能被拿去回答。
  *
  * 同步建立並索引：回傳時 status 已是 indexed（成功）或 failed（embed 出錯）。
  */
@@ -63,12 +63,10 @@ export default defineEventHandler(async (event) => {
   // 若沒指定 sourceId → 自動建一個 type='manual' 的 source
   let sourceId = input.sourceId
   /**
-   * 掛進既有 source 的卡**一律忽略** productName：產品名是來源層欄位，
-   * 這張卡的產品跟著它所屬那份資料走。收下來卻只寫進全域產品清單的話：
-   * 那個名字會永遠留在清單裡（清單只增不刪）並在每次重建索引時拿去比對每張卡的標題，
-   * 而回應又會把它照原樣回傳、看起來像存好了。
+   * 商品名（`D-127` 分組就是商品）：自動建的那一份放進哪一組就是哪一台，**照分組決定**，⛔ 不收 body.productName。
+   * 掛進既有 source 的卡跟著它所屬那份資料走（產品名是來源層欄位）。
    */
-  const productName = input.sourceId ? '' : String(rawBody?.productName ?? '').trim().slice(0, 60)
+  const productName = input.sourceId ? '' : await productNameForFolderId(db, workspaceId, folderId)
   if (!sourceId) {
     sourceId = uuidv4()
     const now = FieldValue.serverTimestamp()

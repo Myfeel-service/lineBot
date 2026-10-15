@@ -1,50 +1,40 @@
 /**
- * 資料夾當「商品」分組用（`C-320`，2026-10-15 拍板 `D-126`①）：放進哪一組＝告訴 AI 這份在講哪個商品。
+ * 分組就是商品（`D-127`，2026-10-16 老闆拍板，取代 `C-320` 的「只補空的」）：
+ * 資料放在哪一組＝在講哪一台，每份資料的商品名就是組名；通用、未分類＝不是講單一商品（空的）。
  *
- * 為什麼：AI 只看每份資料的「所屬產品」、不看資料夾。MYFEEL 18 個資料夾裡 16 個就是商品名，
- * 卻有幾份放在商品資料夾裡、產品名是空的——客人問「小滑手…」時，AI 不知道那幾條是講小滑手的（張冠李戴的來源之一）。
+ * 為什麼改：`C-320` 讓一台商品的名字散在三處（分組、每份資料自己的商品名、別名），AI 用的是店家最少看到的那一處，
+ * 而且每加一份資料 AI 都自己想一個名字＝寫法分裂（MYFEEL 同組兩種寫法 3 組、歷來手動合併 6 組）。
+ * `C-320` 當時「不用分組名蓋產品名」的兩個擔心，`D-127` 這樣處理：
+ *   · 組名比產品名短、AI 少認得字 → 舊的全名、型號收成那一組的別名（產品鎖照樣認得，`C-325` productVocabulary）
+ *   · 一組裡有兩款（MATELASER W1 REGEN／ULTRA）會被併成一款 → 搬家時拆成兩組
  *
- * 這支只做「該不該補、補成什麼」的判斷，純函式：伺服器搬資料夾時（server/utils/ai-knowledge-product-group）
- * 和舊資料搬家腳本（scripts/migrate-kb-product-groups.mjs）用同一份，兩邊才不會一個補、一個不補。
- *
- * ⛔ 三條紅線（2026-10-15 唯讀試算後定的）：
- *   1. **不用資料夾名當產品名**：資料夾名常比產品名短——「MATELASER」資料夾裡是 W1 REGEN 與 W1 REGEN ULTRA 兩款，
- *      蓋成「MATELASER」AI 就分不出兩台。只拿**同一組其他資料已經填好的**產品名。
- *   2. **不覆蓋已經填好的**：店家填過的是他的決定。
- *   3. **拿不準就不補**：同一組有兩種以上的產品名（或一個都沒有）、通用分組、型錄——一律不動，交給人。
+ * 純函式：伺服器搬組、改組名（server/utils/ai-knowledge-product-group）、加入資料（bulk-create／create）
+ * 和搬家腳本（scripts/migrate-kb-group-is-product.mjs）用同一份。
  */
 import { normalizeProductName } from './product-name-similarity'
 
-export interface GroupProductNameInput {
-  /** 這份資料自己的產品名（空的才有可能補） */
-  productName: string | null | undefined
-  /** 型錄／列表來源（旗下本來就很多商品，見 KnowledgeSourceDoc.generateOverview）：不補 */
-  isCatalog?: boolean
-  /**
-   * 這份是 Google 試算表：不補（`/code-review` 2026-10-15 第 1 條）。試算表常是一張多商品價目表，
-   * 補上產品名之後，沒寫品名的那幾列學習時會退回用來源產品名（runIndexOnChunk）→ 整張表被標成那一台、AI 答錯台。
-   */
-  isSheet?: boolean
-  /** 放進的分組；null＝未分類 */
-  group: { general?: boolean } | null
-  /** 同一組**其他**資料的產品名（空的會被略過） */
-  siblingProductNames: readonly (string | null | undefined)[]
-  /**
-   * 別名歸一（伺服器傳 canonicalProductName）：「上好ㄟ除濕機」「NWT 威技 16L」確認過是同一台的話算一種。
-   * 沒給就只比去空白、去標點、不分大小寫後的字。
-   */
-  canonical?: (name: string) => string
+/**
+ * 這份資料該掛哪個商品名（`D-127`）。商品分組＝組名；通用、未分類＝''。
+ * 型錄（generateOverview）、Google 試算表＝''：一份講很多台，放在哪一組都不能整份當成那一台
+ * （`C-320` /code-review 第 1 條：多商品價目表被整張標成一台、AI 答錯台；試算表的每一列照標題自己認領，pickCardProduct）。
+ */
+export function productNameForGroup(
+  group: { name?: string | null; general?: boolean | null } | null | undefined,
+  flags: { isCatalog?: boolean; isSheet?: boolean } = {},
+): string {
+  if (!group || group.general === true || flags.isCatalog || flags.isSheet) return ''
+  return String(group.name ?? '').trim().replace(/\s+/g, ' ').slice(0, 60)
 }
 
-export type GroupProductNameDecision =
-  | { action: 'fill'; productName: string }
-  | { action: 'keep'; reason: 'has-name' | 'no-group' | 'general' | 'catalog' | 'sheet' }
-  /** 判斷不出來，交給人：no-names＝同組沒有人填過、ambiguous＝同組有好幾種（names 列出來給人挑） */
-  | { action: 'ask'; reason: 'no-names' | 'ambiguous'; names: string[] }
+/** 兩個組名是不是同一台（只差空白、符號、大小寫）。建組時拿來找「已經有這一組了」 */
+export function sameProductGroupName(a: string, b: string): boolean {
+  const ka = normalizeProductName(a)
+  return !!ka && ka === normalizeProductName(b)
+}
 
 /**
  * 同一組資料的產品名有幾種（別名歸一＋正規化後）。每一種取組裡最多份用的那個寫法（同票取先出現的）。
- * 回傳照份數多到少排。
+ * 回傳照份數多到少排。搬家腳本拿它看「這一組是不是其實有兩款」。
  */
 export function distinctGroupProductNames(
   names: readonly (string | null | undefined)[],
@@ -75,17 +65,6 @@ export function distinctGroupProductNames(
     })
     .sort((a, b) => b.total - a.total)
     .map(x => x.best)
-}
-
-export function decideGroupProductName(input: GroupProductNameInput): GroupProductNameDecision {
-  if (String(input.productName ?? '').trim()) return { action: 'keep', reason: 'has-name' }
-  if (!input.group) return { action: 'keep', reason: 'no-group' }
-  if (input.group.general === true) return { action: 'keep', reason: 'general' }
-  if (input.isCatalog) return { action: 'keep', reason: 'catalog' }
-  if (input.isSheet) return { action: 'keep', reason: 'sheet' }
-  const names = distinctGroupProductNames(input.siblingProductNames, input.canonical)
-  if (names.length === 1) return { action: 'fill', productName: names[0]! }
-  return { action: 'ask', reason: names.length ? 'ambiguous' : 'no-names', names }
 }
 
 // ── 哪些資料夾看起來是「通用」（舊資料搬家用的建議，不自動套用在新建的資料夾上）──────
@@ -123,6 +102,19 @@ export interface LikelyDuplicateGroups {
  * 「乾淨方」跟「乾淨方MAX」、「W1 REGEN」跟「W1 REGEN ULTRA」都是兩台。
  */
 const VARIANT_ONLY_RE = /^(max|pro|plus|ultra|mini|lite|se|air|neo|s|x|\+|\d+|代|第\d+代|新版|升級版|旗艦版|旗艦|豪華版|標準版|二代|三代)+$/
+
+/**
+ * 兩個商品名是不是「同系列的兩款」（`D-127` 搬家：一組裡是兩款就拆成兩組，不收成別名）：
+ * 一個包含另一個、多出來的只有型號尾巴（ULTRA／MAX／數字…）——「W1 REGEN」與「W1 REGEN ULTRA」。
+ * 其他寫法不同（「CHIMEI…(電淨艙)」與「奇美…」、「NWT 威技 除濕機」與「NWT 威技 新一級能效 16L…」）不算，當成同一台的不同寫法。
+ */
+export function isVariantPair(a: string, b: string): boolean {
+  const na = normalizeProductName(a)
+  const nb = normalizeProductName(b)
+  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
+  if (!short || long === short || !long.includes(short)) return false
+  return VARIANT_ONLY_RE.test(long.replace(short, ''))
+}
 
 /**
  * 找「可能是同一個商品、卻分成兩個資料夾」的組合（MYFEEL 實例：「零水鍋」與「SHARP 自動調理零水鍋」）。

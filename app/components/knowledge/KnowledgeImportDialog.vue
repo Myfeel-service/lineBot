@@ -526,14 +526,14 @@
       </div>
 
       <!--
-        這批 AI 標了哪些產品名。整站匯入不逐頁預覽,產品名全由 AI 自己填了就進庫——
-        同一台在不同頁被標成兩種寫法,客人指名問時就會被反問「您指的是哪一台」,
+        這批放進了哪幾個商品分組（`D-127` 分組就是商品：放哪一組＝AI 當成哪一台）。整站匯入不逐頁預覽，
+        同一台在不同頁被認成兩種寫法就會分成兩組、客人指名問時被反問「您指的是哪一台」，
         而且要等到有人發現才修得掉。至少讓人在這裡看一眼、知道去哪改。
       -->
       <div v-if="siteFinished && siteProductNames.length" class="kb-site-products">
         <p class="kb-site-products__head">
-          AI 幫這批標了 {{ siteProductNames.length }} 個產品名
-          <span class="text-xs text-muted">（標錯的話，到左邊那份資料的「所屬產品」改）</span>
+          這批放進了 {{ siteProductNames.length }} 個商品分組
+          <span class="text-xs text-muted">（放錯的話，到左邊把那幾頁拖到對的那一組）</span>
         </p>
         <div class="kb-site-products__list">
           <span v-for="p in siteProductNames" :key="p.name" class="kb-site-product">
@@ -543,8 +543,7 @@
           </span>
         </div>
         <p v-if="siteProductNames.some(p => p.isNew)" class="kb-site-products__note">
-          標「新」的是這個帳號第一次出現的名字。<strong>如果其中有跟現有產品是同一台、只是寫法不同</strong>，
-          AI 會把它們當成兩台——到那台所在分組按鉛筆，在「客人還會怎麼叫它」挑這個名字加進去。
+          標「新」的是這次新建的分組。<strong>其中有跟原本的是同一台</strong>的話，把那幾頁拖進原本那一組，再刪掉空的這一組。
         </p>
         <!-- `C-320` 減字：以前還有一行「另有 N 頁沒認出產品（…就是正常的）」——沒有要他做的事 -->
       </div>
@@ -1084,30 +1083,10 @@
         />
       </div>
       <!--
-        搬進商品分組之後伺服器補了什麼（`/code-review` ②⑬）：補好了講一句；同組有好幾個商品名＝⛔ 不替他猜，
-        列出那幾個給他點（點了＝存商品名＋重新學這一份）。都不是的話指去那一份的「⋯ → AI 認的商品名」自己填
+        按「改」換了一組之後（`D-127` 分組就是商品）：AI 現在把它當成哪一台講一句；
+        搬是搬過去了、重新學習那一步沒成（groupSync.error）：⛔ 不講成搬失敗
       -->
-      <p v-if="groupFill?.kind === 'filled'" class="kb-group-fill">{{ groupFillFilledText(groupFill) }}</p>
-      <div v-else-if="groupFill?.kind === 'ask'" class="kb-group-fill is-ask">
-        <p class="kb-group-fill__q">這一組裡有好幾個商品名，這份是哪一個？</p>
-        <div class="kb-group-fill__names">
-          <el-button
-            v-for="n in groupFill.names"
-            :key="n"
-            size="small"
-            plain
-            :loading="productPicking === n"
-            :disabled="!!productPicking && productPicking !== n"
-            @click="pickGroupProductName(n)"
-          >
-            {{ n }}
-          </el-button>
-        </div>
-        <p class="kb-group-fill__more">都不是的話，打開這一份，按「⋯ → AI 認的商品名」自己填。</p>
-      </div>
-      <!-- 搬是搬過去了、補商品名那一步沒成（groupFill.error）：⛔ 不講成搬失敗 -->
-      <p v-else-if="groupFill?.kind === 'failed'" class="kb-group-fill is-warn">{{ GROUP_FILL_FAILED_TEXT.replace('那一份', '這一份') }}</p>
-      <p v-if="productPicked" class="kb-group-fill">{{ productPicked }}</p>
+      <p v-if="groupSyncNote" class="kb-group-fill" :class="{ 'is-warn': groupSync?.kind === 'failed' }">{{ groupSyncNote }}</p>
 
       <!--
         AI 整理成哪幾條（`D-124` 新手走查）：以前這裡只有「3／3／0」三個數字，要再按「打開這一份」才看得到那 3 條是什麼——
@@ -1293,14 +1272,13 @@ import {
 import {
   autoImportGroup,
   createImportGroupRegistry,
-  GROUP_FILL_FAILED_TEXT,
-  type GroupFillOutcome,
-  groupFillFilledText,
+  type GroupSyncOutcome,
+  groupSyncNoteText,
   type ImportGroup,
   type ImportGroupChoice,
   moveSurelyRejected,
   newGroupName,
-  parseGroupFill,
+  parseGroupSync,
   writeMayHaveLanded,
 } from '~~/shared/knowledge-import-group'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
@@ -1363,13 +1341,6 @@ function startDialogTour() {
   void startAdHocTour(KB_IMPORT_DIALOG_STEPS.map(s => ({ ...s, clickBefore: undefined, requiresPresent: s.requiresPresent ?? s.target })))
 }
 const { showToast } = useAdminToast()
-// 產品名候選(與「所屬產品」欄位共用同一份快取):整站匯入結束要分辨哪些名字是這批新增的
-const {
-  known: knownProductNamesPool,
-  ready: productNamesReady,
-  load: loadProductNames,
-  invalidate: invalidateProductNames,
-} = useProductNames()
 
 type ImportMode = 'file' | 'url' | 'text' | 'gsheet'
 type Step = 'input' | 'sitePages' | 'fileBatch' | 'preview' | 'result'
@@ -1663,7 +1634,6 @@ function onFileBatchFinished(summary: FileBatchSummary) {
   }
   if (!summary.sources) return
   result.value = { sourceId: null, total: summary.cards, indexed: summary.cards, failed: 0, items: [] }
-  invalidateProductNames()
 }
 
 function onFileChosen(e: Event) {
@@ -1942,13 +1912,9 @@ const groupHints = computed(() => ({ sourceName: sourceMeta.value.name, productN
  */
 const savedGroup = ref<ImportGroupChoice | null | undefined>(undefined)
 const groupMoving = ref(false)
-/**
- * 搬進商品分組之後伺服器補了什麼（`PUT` 回的 groupFill，`/code-review` ②⑬）：補好了講一句；
- * 同組有好幾個商品名＝不猜，列出來給他點（點了＝存商品名＋重新學這一份，同資料頁「AI 認的商品名」那一格）
- */
-const groupFill = ref<GroupFillOutcome | null>(null)
-const productPicking = ref('')
-const productPicked = ref('')
+/** 按「改」換組之後伺服器做了什麼（`PUT` 回的 groupSync，`D-127`）：AI 現在把它當成哪一台、或沒重新學成 */
+const groupSync = ref<GroupSyncOutcome | null>(null)
+const groupSyncNote = computed(() => groupSyncNoteText(groupSync.value).replace('點開那一份', '打開這一份'))
 
 /**
  * 「更新既有那一份」的目標（`C-135`）。
@@ -2030,7 +1996,7 @@ async function moveSavedTo(c: ImportGroupChoice) {
   if (!sourceId || groupMoving.value) return
   const prev = savedGroup.value
   const prevId = prev && prev.kind === 'folder' ? prev.id : null
-  // 搬進商品分組時伺服器可能要補商品名、當場重新學這一份（最久約 9 秒）：那一行一直顯示「搬過去中⋯」
+  // 換分組＝換商品名（`D-127`），伺服器當場重新學這一份（最久約 9 秒）：那一行一直顯示「搬過去中⋯」
   groupMoving.value = true
   let target: string | null = null
   let created = false
@@ -2047,9 +2013,9 @@ async function moveSavedTo(c: ImportGroupChoice) {
       return
     }
     if (target) groupRegistry.hold(target)
-    let res: { folderId?: string | null, groupFill?: unknown } | null
+    let res: { folderId?: string | null, groupSync?: unknown } | null
     try {
-      res = await apiFetch<{ folderId?: string | null, groupFill?: unknown }>(
+      res = await apiFetch<{ folderId?: string | null, groupSync?: unknown }>(
         `/api/ai/sources/${encodeURIComponent(sourceId)}`,
         { method: 'PUT', body: { folderId: target } },
       )
@@ -2064,8 +2030,7 @@ async function moveSavedTo(c: ImportGroupChoice) {
     if (prevId && prevId !== actual) void groupRegistry.release(prevId, groupUsedByOthers(prevId, sourceId))
     savedGroup.value = actual ? { kind: 'folder', id: actual } : { kind: 'none' }
     groupAsk.value = false
-    groupFill.value = parseGroupFill(res)
-    productPicked.value = ''
+    groupSync.value = parseGroupSync(res)
   }
   catch (err) {
     // 剛替他建好、卻沒搬成：只有**確定沒搬進去**（伺服器 4xx 拒絕）才收掉那一組（`/code-review` ③）——
@@ -2075,29 +2040,6 @@ async function moveSavedTo(c: ImportGroupChoice) {
   }
   finally {
     groupMoving.value = false
-  }
-}
-
-/**
- * 同組有好幾個商品名、他點了其中一個（`/code-review` ②⑬）：存商品名＋重新學這一份——跟資料頁「⋯ → AI 認的商品名」
- * 同兩支（`PUT /api/ai/sources/:id { productName }`、`POST /api/ai/sources/:id/reindex`），商品名要進到每一條才生效。
- */
-async function pickGroupProductName(name: string) {
-  const sourceId = result.value?.sourceId
-  if (!sourceId || productPicking.value) return
-  productPicking.value = name
-  try {
-    await apiFetch(`/api/ai/sources/${encodeURIComponent(sourceId)}`, { method: 'PUT', body: { productName: name } })
-    const res = await apiFetch<{ indexed: number, failed: number }>(`/api/ai/sources/${encodeURIComponent(sourceId)}/reindex`, { method: 'POST' })
-    productPicked.value = groupFillFilledText({ productName: name, failed: Number(res?.failed ?? 0) }).replace('補成', '改成')
-    groupFill.value = null
-    invalidateProductNames()
-  }
-  catch (err) {
-    showToast(apiErrorText(err, '商品名沒有存成，請再試一次'), 'error')
-  }
-  finally {
-    productPicking.value = ''
   }
 }
 
@@ -2201,8 +2143,13 @@ interface SitePageRow {
   error: string
   /** 這個網址已經有對應的資料(再匯一次會產生重複) */
   imported: boolean
-  /** AI 幫這一頁標的產品名(整站匯入不逐頁預覽,結束後要列出來讓人看過) */
-  productName: string
+  /**
+   * 這一頁放進哪一組（`D-127` 分組就是商品：放哪一組＝AI 當成哪一台）。整站匯入不逐頁預覽，結束後要列出來讓人看過。
+   * ''＝沒放分組；groupNew＝這一頁才建的；groupGeneral＝放進「通用」（不是講單一商品）
+   */
+  groupName: string
+  groupNew: boolean
+  groupGeneral: boolean
   /** 路徑第一段(分組用);探索時算一次,避免每次篩選/勾選都重新解析上千個網址 */
   group: string
 }
@@ -2280,33 +2227,22 @@ const siteSummary = computed(() => {
 const importedSiteCount = computed(() => sitePages.value.filter(p => p.imported).length)
 
 /**
- * 這批 AI 各自標了哪些產品名。
+ * 這批放進了哪幾個商品分組（`D-127` 分組就是商品：放哪一組＝AI 當成哪一台）。
  *
- * 整站匯入是一次幾十頁、**不經逐頁預覽直接建庫**——也就是變體產品名最大的入口:
- * 同一台被 AI 在不同頁標成兩種寫法,之後客人指名問就會被反問「您指的是哪一台」。
- * 單頁匯入的欄位改成可挑現成的擋不到這條路,所以結束後至少要把結果攤開來讓人看過。
- * 「新」= 這次之前這個帳號沒有用過的名字(要多看一眼的就是這些)。
+ * 整站匯入是一次幾十頁、**不經逐頁預覽直接建庫**——也就是同一台被分成兩組最大的入口
+ * （AI 在不同頁認成兩種寫法、又比不到現有的組）。結束後至少要把結果攤開來讓人看過。
+ * 「新」＝這一批才建的分組（要多看一眼的就是這些）。通用那一組不列：不是講單一商品。
  */
-const knownProductNames = ref<Set<string>>(new Set())
-/**
- * 開始匯入前「現有產品清單」有沒有真的讀到。
- * 讀不到卻照樣標「新」的話，畫面會把每一個產品都說成第一次出現、還請人去合併——
- * 「查不到就等於沒有」是本專案踩過的假綠燈。
- */
-const knownProductNamesReady = ref(false)
 const siteProductNames = computed(() => {
-  const m = new Map<string, number>()
+  const m = new Map<string, { pages: number, isNew: boolean }>()
   for (const p of sitePages.value) {
-    if (p.status !== 'done' || !p.productName) continue
-    m.set(p.productName, (m.get(p.productName) ?? 0) + 1)
+    if (p.status !== 'done' || !p.groupName || p.groupGeneral) continue
+    const cur = m.get(p.groupName) ?? { pages: 0, isNew: false }
+    m.set(p.groupName, { pages: cur.pages + 1, isNew: cur.isNew || p.groupNew })
   }
   return [...m.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, pages]) => ({
-      name,
-      pages,
-      isNew: knownProductNamesReady.value && !knownProductNames.value.has(name),
-    }))
+    .sort((a, b) => b[1].pages - a[1].pages)
+    .map(([name, v]) => ({ name, pages: v.pages, isNew: v.isNew }))
 })
 /**
  * 可勾的頁 = **目前顯示中**且未匯入過、本輪未完成的。全選作用在顯示中的頁——
@@ -2370,7 +2306,9 @@ async function loadSitePages(url: string): Promise<number> {
     warningTexts: [],
     error: '',
     imported: p.imported === true,
-    productName: '',
+    groupName: '',
+    groupNew: false,
+    groupGeneral: false,
     group: pageGroupKey(p.url),
   }))
   siteFrom.value = res.from
@@ -2429,7 +2367,9 @@ async function runUrlList() {
     warningTexts: [],
     error: '',
     imported: imported.has(url),
-    productName: '',
+    groupName: '',
+    groupNew: false,
+    groupGeneral: false,
     group: pageGroupKey(url),
   }))
   siteFrom.value = 'pasted'
@@ -2537,21 +2477,6 @@ async function runSiteImport() {
   // 不先清掉,這批每一頁都會在第一次輪詢就被當成已取消而全部標失敗
   resetJobPoll()
 
-  // 記下「這次之前已經有哪些產品名」,結束才分得出哪些是這批新冒出來的。
-  // ⚠️ 兩件事:
-  //  · 要在 siteImporting 立起來之後才 await——這中間關窗的話,收尾那條路(onDialogClose)
-  //    會以為沒有批次在跑而不做收拾,已經建好的資料就不會出現在列表上。
-  //  · 同一次開窗跑第二批時**不重抓**:重抓的話第一批剛加進去的名字會變成「本來就有」,
-  //    第二批的面板就不會標它們是新的——同一段說明在兩批之間自相矛盾。
-  if (!knownProductNamesReady.value) {
-    await loadProductNames()
-    // 用 known（含已經合併掉的舊叫法）而不是下拉那份收斂清單:
-    // 拿收斂清單比對的話,AI 標出一個「已經確認過是同一台」的舊叫法會被說成新的,
-    // 又叫使用者去合併一次他早就處理過的東西
-    knownProductNames.value = new Set(knownProductNamesPool.value)
-    knownProductNamesReady.value = productNamesReady.value
-  }
-
   let cursor = 0
   const worker = async () => {
     while (cursor < targets.length) {
@@ -2562,6 +2487,9 @@ async function runSiteImport() {
       // 這一頁自己的工作編號。⛔ 不可以借用 lastPreviewJobId：兩個 worker 同時跑，
       // 一頁逾時去停「最後一個」工作，停到的常常是另一個 worker 正在跑的那一頁（2026-10-11 審查）
       let jobId = ''
+      /** 這一頁放進的分組、以及它是不是這一頁才建的（加入失敗時收掉這一頁建的空分組，同單份的 `/code-review` ⑥） */
+      let heldPageGroupId: string | null = null
+      let createdPageGroupId = ''
       try {
         const created = await apiFetch<{ jobId?: string; duplicate?: DuplicateHit }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',
@@ -2586,6 +2514,29 @@ async function runSiteImport() {
         jobId = created.jobId // 逾時要停掉它（見下面的 catch）
         const res = await pollPreviewJob<PreviewResult & { status: 'done' }>(jobId)
         if (!res.chunks.length) throw new Error('沒有整理出知識（頁面可能沒有實質內容）')
+        /*
+         * 放哪一組（`D-127` 分組就是商品）：跟單份同一套規則（`C-320`，含沒認出商品的放「通用」）。
+         * 認出一台現有分組裡沒有的商品＝**建那一組**（同一台的幾頁共用一組，registry 同名只建一次）。
+         * 以前這條路⛔不開新分組、留在未分類，但商品名照 AI 猜的存著；現在商品名跟著分組走，不放分組＝AI 不知道這頁在講哪一台。
+         * 建不成（沒有權限、網路）：這一頁照樣加、先不放分組——⛔ 不為了分組擋住知識
+         */
+        const choice = autoImportGroup(allGroups.value, {
+          sourceName: page.title || res.sourceName || page.url,
+          productName: res.suggestedProductName ?? '',
+        }).choice
+        let pageFolderId: string | null = choice.kind === 'folder' ? choice.id : null
+        if (choice.kind === 'new') {
+          try {
+            const before = new Set(allGroups.value.map(g => g.id))
+            const g = await groupRegistry.ensure(choice.name, allGroups.value, { general: choice.general })
+            pageFolderId = g.id
+            if (!before.has(g.id)) createdPageGroupId = g.id
+          }
+          catch { pageFolderId = null }
+        }
+        // 請求在路上的這段時間，別頁不可以把這一組當空的刪掉（見 registry.hold）
+        if (pageFolderId) groupRegistry.hold(pageFolderId)
+        heldPageGroupId = pageFolderId
         const bulk = await apiFetch<{ total: number; indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
           body: {
@@ -2593,17 +2544,8 @@ async function runSiteImport() {
               type: 'url',
               name: page.title || res.sourceName || page.url,
               url: page.url,
-              productName: res.suggestedProductName ?? '',
               contentHash: res.contentHash ?? '',
-              // 整站匯入沒有逐頁預覽＝更沒有人會事後去拖資料夾（`C-134`）。跟單份同一套規則（`C-320`，含沒認出商品的放「通用」），
-              // 只差⛔ 不開新分組：一次幾十頁、沒有人逐頁看，自己開幾十個分組比留著不放更難收拾
-              folderId: (() => {
-                const c = autoImportGroup(allGroups.value, {
-                  sourceName: page.title || res.sourceName || page.url,
-                  productName: res.suggestedProductName ?? '',
-                }, { allowNew: false }).choice
-                return c.kind === 'folder' ? c.id : null
-              })(),
+              folderId: pageFolderId,
             },
             // 冪等鍵（C-46）:單頁逾時重試不會生第二個來源
             importId: created.jobId,
@@ -2619,7 +2561,15 @@ async function runSiteImport() {
         // 實際建立的條數（不是「學會的條數」）：失敗的那幾條也已經在知識庫裡了
         page.cards = bulk.total ?? bulk.indexed
         page.notLearned = bulk.failed ?? 0
-        page.productName = res.suggestedProductName ?? ''
+        if (heldPageGroupId) {
+          groupRegistry.unhold(heldPageGroupId)
+          groupRegistry.use(heldPageGroupId)
+          heldPageGroupId = null
+        }
+        const placed = pageFolderId ? allGroups.value.find(g => g.id === pageFolderId) : null
+        page.groupName = placed?.name ?? ''
+        page.groupGeneral = placed?.general === true
+        page.groupNew = !!createdPageGroupId
         page.warningTexts = res.warnings ?? []
         page.status = 'done'
         page.checked = false
@@ -2627,6 +2577,9 @@ async function runSiteImport() {
       }
       catch (err: any) {
         page.status = 'failed'
+        // 這一頁沒加成：放的那一組不再「在路上」；是這一頁才建的、又沒有別頁在用 → 收掉（不留空分組）
+        if (heldPageGroupId) groupRegistry.unhold(heldPageGroupId)
+        if (createdPageGroupId) void groupRegistry.discardIfUnused(createdPageGroupId)
         /**
          * ⚠️ 逾時要單獨講（2026-09-03 code review 抓到）：整站這條路的 `bulk-create`
          * **只在這個 worker 裡呼叫**，所以這一頁的工作即使被排程做完，切好的知識也沒有人收
@@ -2665,7 +2618,6 @@ async function runSiteImport() {
   }
   siteFinished.value = true
   siteImporting.value = false
-  invalidateProductNames() // 這批標的產品名已經進了後端清單,下次開欄位要挑得到
   // 整站這條路不會走到結果頁（結論列就長在頁面清單上），但「客人聽不聽得到」
   // 這句話兩條路都要講——D-40 的交棒卡在這裡是結論列下面那一行
   if (ok.length) void loadAiEnabled()
@@ -3350,8 +3302,7 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode, replacing: 
   groupAsk.value = autoGroup.value.ask
   groupTouched.value = false
   savedGroup.value = undefined
-  groupFill.value = null
-  productPicked.value = ''
+  groupSync.value = null
   sourceMeta.value = {
     type: srcMode,
     name: res.sourceName,
@@ -3902,10 +3853,7 @@ async function runImport() {
           type: sourceMeta.value.type,
           name: sourceMeta.value.name.trim() || '未命名資料',
           url: sourceMeta.value.url,
-          // 換掉原本那一份：產品名不帶＝伺服器不改，舊的那份原本標的留著。
-          // ⛔ 帶了 AI 猜的名字，伺服器照收——沒人看過就把舊資料的產品改掉（同一次好幾份那條，2026-10-12 code review）。
-          //    `C-320` 起畫面上已經沒有「所屬產品」那一格，停下來那頁按的也一樣沒人看過，所以不分是不是自動加入
-          productName: replaceTarget.value ? '' : sourceMeta.value.productName.trim(),
+          // 商品名不送（`D-127`）：伺服器照放進的那一組決定（換掉原本那一份又沒動分組＝照它原本那一組）
           contentHash: sourceMeta.value.contentHash,
           ...(sentFolderId === undefined ? {} : { folderId: sentFolderId }),
           // 原檔留著時「下載原檔」存成這個名字（`C-296`③）；接回背景整理時沒有檔名就退用資料名稱
@@ -3938,11 +3886,9 @@ async function runImport() {
     savedGroup.value = keepOldGroup && !replied
       ? currentGroupOf(replaceTarget.value!.id)
       : actualFolderId === undefined ? null : (actualFolderId ? { kind: 'folder', id: actualFolderId } : { kind: 'none' })
-    groupFill.value = null
-    productPicked.value = ''
+    groupSync.value = null
     if (!autoImporting.value) groupAsk.value = false
     clearJobMarker() // 卡已經進庫了,這份整理工作到此為止
-    invalidateProductNames() // 這份資料的產品名已經進後端清單,下次填欄位要挑得到
     void loadQuota() // 「繼續匯入」下一份時，剩幾條要是新的數字
     // 一律停在結果頁（D-40）。以前全成功是「跳 toast 就關窗」——那是使用者最想問
     // 「然後呢」的一刻，卻是整段流程唯一沉默的地方；而正確答案常常是「AI 還關著，
@@ -4035,8 +3981,7 @@ function resetAll() {
   groupAsk.value = false
   groupTouched.value = false
   savedGroup.value = undefined
-  groupFill.value = null
-  productPicked.value = ''
+  groupSync.value = null
   replaceTarget.value = null
   quotaSkipped.value = 0
   batchFiles.value = []
@@ -4052,9 +3997,6 @@ function resetAll() {
   siteFinished.value = false
   siteBatchTotal.value = 0
   siteDoneCount.value = 0
-  // 下一次開窗要重新抓一次「原本有哪些產品名」當基準
-  knownProductNames.value = new Set()
-  knownProductNamesReady.value = false
   if (fileInputEl.value) fileInputEl.value.value = ''
 }
 

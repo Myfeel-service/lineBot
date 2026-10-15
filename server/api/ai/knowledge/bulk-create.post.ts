@@ -13,6 +13,7 @@ import {
   recycleSourceChunks,
 } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
+import { productNameForFolderId } from '~~/server/utils/ai-knowledge-product-group'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
 import { assertKnowledgeChunkQuota, chunkCountsTowardQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
@@ -92,6 +93,10 @@ interface KeptEdited {
 interface ExistingSource {
   workspaceId?: string
   type?: string
+  /** 更新既有那一份、又沒帶分組時，商品名照它原本那一組（`D-127`） */
+  folderId?: string | null
+  /** 原本的商品名：新的分組不是商品分組時要清掉（`D-127`） */
+  productName?: string
   name?: string
   isDeleted?: boolean
   deletedAt?: unknown
@@ -115,7 +120,8 @@ function isRecycled(s: ExistingSource | undefined): boolean {
 /**
  * POST /api/ai/knowledge/bulk-create
  * Body: {
- *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash?, productName?, keepEditedChunkIds?: string[] },
+ *   source: { type: 'file' | 'url' | 'text', name, url?, contentHash?, folderId?, keepEditedChunkIds?: string[] },
+ *   （`D-127` 起 source.productName 不收：商品名照 folderId 那一組決定）
  *   chunks: [{ title, content, tags[] }]
  * }
  * `keepEditedChunkIds` 只在帶 `replaceSourceId`（換新版）時有用：他改過、選了沿用的那幾條（`D-125`①）。
@@ -328,15 +334,22 @@ export default defineEventHandler(async (event) => {
     // 自動同步頻率（分鐘）：gsheet 每小時、url 每天、檔案不自動
     const refreshIntervalMinutes = sourceType === 'gsheet' ? 60 : sourceType === 'url' ? 1440 : 0
 
-    // 產品名（P1-1）：匯入預覽自動偵測、使用者確認後帶進來。先寫進 source doc 再建卡，
-    // 底下 createKnowledgeChunk → runIndexOnChunk 會即時繼承（embedding 前綴 + 卡片欄位）。
-    const productName = String(body?.source?.productName ?? '').trim().slice(0, 60)
-
     /**
      * G-98：資料夾要是這個帳號的（填了不存在的，這份資料會從側欄整份消失）。
      * ⛔ 一定要在下面「舊卡進回收桶」之前驗：驗到一半才 404，舊卡已經被搬走、新卡卻沒建。
      */
     const folderId = await resolveKnowledgeFolderId(db, workspaceId, body?.source?.folderId)
+
+    /**
+     * 商品名（`D-127` 分組就是商品）：放進哪一組就是哪一台，**伺服器照分組決定**，⛔ 不收畫面送的 productName
+     * （那是 AI 猜的，可能跟放進的組不一樣）。更新既有那一份、又沒帶分組＝照它原本那一組。
+     * 先寫進 source doc 再建卡，底下 createKnowledgeChunk → runIndexOnChunk 會即時繼承（embedding 前綴 + 卡片欄位）。
+     */
+    const keepsOldFolder = (replaceSourceId || resuming) && typeof body?.source?.folderId !== 'string' && body?.source?.folderId !== null
+    const productName = await productNameForFolderId(db, workspaceId, keepsOldFolder ? (target?.folderId ?? null) : folderId, {
+      isCatalog: Boolean(overviewInput),
+      isSheet: sourceType === 'gsheet',
+    })
 
     // ── 「更新既有那一份」：接管既有 source id，舊卡先進回收桶 ──────────
     if (replaceSourceId && !resuming) {
@@ -405,14 +418,16 @@ export default defineEventHandler(async (event) => {
       if (typeof body?.source?.folderId !== 'string' && body?.source?.folderId !== null) delete sourcePayload.folderId
       // 重跑：上一次可能已經把原檔留好了。⛔ 不重置成空的——重置了，那份原檔就變成沒人指得到的孤兒
       if (resuming) delete sourcePayload.filePath
-      // 產品名沒帶＝不改（`...(productName ? …)` 本來就不會塞進去，這裡只是把話講明）
+      // 商品名照分組（`D-127`）：原本有、現在不是講單一商品的要真的清掉，merge 不寫這一格的話舊的會留著
+      if (!productName && String(target?.productName ?? '').trim()) sourcePayload.productName = FieldValue.delete()
       await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set(sourcePayload, { merge: true })
     }
     else {
       await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).set(sourcePayload)
     }
-    // 新型錄來源要讓答題端的 dedupeBySource 豁免立刻生效（不必等 60s 快取過期）
-    if (overviewInput) invalidateCatalogSourceCache(workspaceId)
+    // 新型錄來源要讓答題端的 dedupeBySource 豁免立刻生效（不必等 60s 快取過期）；
+    // `C-325` 起同一份快取也是「在用的商品名」，這份的商品名可能剛換掉或清掉，一律作廢
+    invalidateCatalogSourceCache(workspaceId)
     // 產品索引自動維護（只增不刪）；建卡前先併入，讓 pickCardProduct 這批就吃得到
     if (productName) await addWorkspaceProductName(db, workspaceId, productName)
     // 原檔留著（`C-296`③）：跟下面建卡**同時**進行——這個請求本來就逼近閘道逾時，不能再串一段上去

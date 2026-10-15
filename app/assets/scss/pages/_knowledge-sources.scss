@@ -141,24 +141,13 @@
   .el-checkbox__label { line-height: 1.6; overflow-wrap: anywhere; }
 }
 
-/* 「AI 認的商品名」小視窗：存的時候那一句（約需幾十秒） */
-.src-product-saving { margin: 8px 0 0; }
-/* 搬進有好幾個商品名的分組時，那幾個名字排在框上面點一個（`C-320`）；名字長就換行 */
-.src-product-choices {
-  margin: 0 0 10px;
-
-  &__ask {
-    margin: 0 0 6px;
-    font-size: 13px;
-    color: var(--text-primary);
-  }
-  &__row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-
-    .el-button { margin: 0; white-space: normal; height: auto; min-height: 24px; text-align: left; }
-  }
+/* 「移到哪一組」小視窗（`D-127`）。⚠️ el-select 的寬度 Element 會蓋掉單一 class：夾父層 */
+.el-dialog .src-move-select { width: 100%; }
+/* 選了之後 AI 會怎麼看這一份（換組真正的後果） */
+.src-move-hint {
+  margin: 8px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 

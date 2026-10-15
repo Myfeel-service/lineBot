@@ -74,7 +74,6 @@ const PROBES: Probe[] = [
   { name: '孤兒卡計數', where: 'sources/list.get.ts', run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).where('sourceId', '==', null).count().get()).data().count },
   { name: '重複偵測（內容指紋）', where: 'ai-knowledge-sources.ts findSourceByContentHash', run: async w => (await db.collection('knowledgeSources').where('workspaceId', '==', w).where('appliedContentHash', '==', '__none__').limit(10).get()).size },
   { name: '同名偵測', where: 'ai-preview-jobs.ts findExistingSources', run: async w => (await db.collection('knowledgeSources').where('workspaceId', '==', w).where('name', '==', '__none__').limit(5).get()).size },
-  { name: '產品名「幾張卡在用」', where: 'knowledge/product-names.get.ts', run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).where('productName', '==', '__none__').where('isDeleted', '==', true).count().get()).data().count },
   { name: '重試學失敗的卡（排程）', where: 'ai-knowledge-chunks.ts', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'failed').where('retryCount', '<', 3).limit(20).get()).size },
   { name: '撿回卡住的卡（排程）', where: 'ai-knowledge-chunks.ts', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'pending').where('updatedAt', '<', cutoff).limit(20).get()).size },
   { name: '體檢：全庫掃描', where: 'knowledge/health.get.ts', expectNonEmpty: true, run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).select('title', 'status').limit(1500).get()).size },

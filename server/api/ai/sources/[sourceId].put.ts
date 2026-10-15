@@ -10,18 +10,18 @@ import {
   updateSourceSettings,
 } from '~~/server/utils/ai-knowledge-sources'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
-import { fillProductNameFromGroup } from '~~/server/utils/ai-knowledge-product-group'
+import { syncSourceProductWithGroup } from '~~/server/utils/ai-knowledge-product-group'
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 
 /**
  * PUT /api/ai/sources/:sourceId
- * Body: { refreshIntervalMinutes?, onChangeBehavior?, name?, productName?, url?, clearExcludedRows? }
+ * Body: { refreshIntervalMinutes?, onChangeBehavior?, name?, folderId?, url?, clearExcludedRows? }
  *   或  { generateSummary: true, force? }（`C-316`，見最下面）
  *
  * 只動使用者可配置欄位；hash / etag / lastFetchedAt 等系統欄位不在這支處理
  * （例外：改 url 會一併重設比對基準、clearExcludedRows 會清掉試算表的內容指紋，見 updateSourceSettings）。
- * productName 改動後前端要接著打 POST /api/ai/sources/:id/reindex 重建該來源索引才生效。
+ * 商品名不在這裡改（`D-127`）：跟著分組走，換分組時這支自己同步並重新學習。
  *
  * `clearExcludedRows: true`（`D-125`②，只有 Google 試算表）：在後台刪掉、之後不再收的那幾列重新收回來，
  * 下一次同步（每小時，或按「立即同步」）加回知識庫。不是試算表＝400。
@@ -54,7 +54,8 @@ export default defineEventHandler(async (event) => {
     onChangeBehavior: body?.onChangeBehavior,
     name: body?.name,
     folderId: body?.folderId === null ? null : (typeof body?.folderId === 'string' ? body.folderId : undefined),
-    productName: typeof body?.productName === 'string' ? body.productName : undefined,
+    // ⛔ 不收 productName（`D-127`）：商品名跟著分組走，要改成別台就換分組（下面 syncSourceProductWithGroup）。
+    // 收了的話一份資料的商品名可以跟它所在的組不一樣，又回到一台商品的名字散在好幾處
     urlAutoApply: typeof body?.urlAutoApply === 'boolean' ? body.urlAutoApply : undefined,
     url: typeof body?.url === 'string' ? body.url : undefined,
     clearExcludedRows: body?.clearExcludedRows === true,
@@ -87,25 +88,27 @@ export default defineEventHandler(async (event) => {
   }
 
   /*
-   * 搬進商品分組（`C-320`）：這份沒填產品名、同組其他資料只有一種產品名 → 補上並當場重新學習
-   *（規則與操作紀錄都在 fillProductNameFromGroup）。⛔ 不拿分組名當產品名、不蓋掉已經填好的。
-   * ⛔ 一定要 await：Lambda 回應之後背景工作會被截斷。補到時最多約 9 秒（一份最多約 150 條）。
-   * 同組有兩種以上產品名＝不補，回 names 讓畫面可以問「這份是哪一個」。
+   * 換了分組（`D-127` 分組就是商品）：這份的商品名改成新組的組名（通用、未分類＝空的），有變就當場重新學習
+   *（規則與操作紀錄都在 syncSourceProductWithGroup）。
+   * ⛔ 一定要 await：Lambda 回應之後背景工作會被截斷。一份最多約 150 條、約 9 秒。
+   * 回 groupSync：{ productName, previous, indexed, failed }，畫面照這個講「AI 把它當成哪一台」。
    */
   const movedFolder = body?.folderId !== undefined && (before?.data.folderId ?? null) !== (result.folderId ?? null)
   if (movedFolder) {
-    // ⛔ 補名失敗不可以讓整支回 500（/code-review 第 3 條）：分組已經換好、操作紀錄已經寫了，
-    // 回 500 的話畫面以為搬移失敗——加入視窗還會把剛建好、資料已經搬進去的分組當成空的刪掉。搬移照算成功，帶一句沒補成
+    // ⛔ 同步失敗不可以讓整支回 500（`C-320` /code-review 第 3 條）：分組已經換好、操作紀錄已經寫了，
+    // 回 500 的話畫面以為搬移失敗——加入視窗還會把剛建好、資料已經搬進去的分組當成空的刪掉。搬移照算成功，帶一句沒學成
     try {
-      const fill = await fillProductNameFromGroup(db, workspaceId, sourceId, { uid })
-      if (fill.filled) {
-        return { ...fill.source, groupFill: { productName: fill.productName, indexed: fill.relearned.indexed, failed: fill.relearned.failed } }
+      const sync = await syncSourceProductWithGroup(db, workspaceId, sourceId, { uid })
+      if (sync.changed) {
+        return {
+          ...sync.source,
+          groupSync: { productName: sync.productName, previous: sync.previous, indexed: sync.relearned.indexed, failed: sync.relearned.failed },
+        }
       }
-      if (fill.reason === 'ambiguous' && fill.names?.length) return { ...result, groupFill: { names: fill.names } }
     }
     catch (e) {
-      console.warn(`[sources] ${sourceId} group product-name fill failed:`, (e as Error)?.message)
-      return { ...result, groupFill: { error: true } }
+      console.warn(`[sources] ${sourceId} group product sync failed:`, (e as Error)?.message)
+      return { ...result, groupSync: { error: true } }
     }
   }
 
