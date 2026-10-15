@@ -133,35 +133,42 @@ describe('knowledge-sync 劇本', () => {
   /**
    * `C-309`（2026-10-13）：以前一律叫人按「重新同步」——Google 試算表那一份畫面上那顆叫「立即同步」，
    * 照著找會走丟。按鈕名照失敗的那幾份是什麼種類講。
+   * `C-319`（2026-10-15）：網址、試算表統一叫「立即更新」；檔案那一份叫「上傳新版」。
    */
-  it('按鈕名照資料種類講：試算表叫「立即同步」、網址叫「重新同步」', async () => {
+  it('按鈕名照資料種類講：網址、試算表叫「立即更新」，檔案叫「上傳新版」；⛔ 舊名字不再出現', async () => {
     const intro = async (items: Parameters<typeof sources>[0]) => {
       const { r, ctx } = makeCtx([sources(items)])
       r.runSteps(guide.steps, ctx)
       await waitChoices(r)
       return htmlOf(r)
     }
+    const OLD = /重新同步|立即同步|換新版/
     const sheetOnly = await intro([{ name: '價目表', status: 'failed', type: 'gsheet' }])
-    expect(sheetOnly).toContain('「立即同步」')
-    expect(sheetOnly).not.toContain('重新同步')
+    expect(sheetOnly).toContain('「立即更新」')
+    expect(sheetOnly).not.toMatch(OLD)
 
     const urlOnly = await intro([{ name: '官網', status: 'failed', type: 'url' }])
-    expect(urlOnly).toContain('「重新同步」')
-    expect(urlOnly).not.toContain('立即同步')
+    expect(urlOnly).toContain('「立即更新」')
+    expect(urlOnly).not.toMatch(OLD)
 
-    // 正常的那份是試算表、壞的只有網址：只講網址那顆
+    // 正常的那份是檔案、壞的只有網址：只講網址那顆
     const mixedButOnlyUrlFailed = await intro([
       { name: '官網', status: 'failed', type: 'url' },
-      { name: '價目表', status: 'ready', type: 'gsheet' },
+      { name: '說明書.pdf', status: 'ready', type: 'file' },
     ])
-    expect(mixedButOnlyUrlFailed).not.toContain('立即同步')
+    expect(mixedButOnlyUrlFailed).not.toContain('上傳新版')
+
+    const fileOnly = await intro([{ name: '說明書.pdf', status: 'failed', type: 'file' }])
+    expect(fileOnly).toContain('「上傳新版」')
+    expect(fileOnly).not.toContain('立即更新')
 
     const both = await intro([
       { name: '官網', status: 'failed', type: 'url' },
-      { name: '價目表', status: 'failed', type: 'gsheet' },
+      { name: '說明書.pdf', status: 'failed', type: 'file' },
     ])
-    expect(both).toContain('網址按')
-    expect(both).toContain('試算表按')
+    expect(both).toContain('「立即更新」')
+    expect(both).toContain('檔案按')
+    expect(both).not.toMatch(OLD)
   })
 
   it('來源名稱照使用者取的原字顯示，但一律當純文字（不會變成畫面上的標籤）', async () => {

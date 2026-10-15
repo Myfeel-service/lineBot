@@ -50,10 +50,12 @@ describe('一鍵修的字', () => {
   const code = src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')
   const strings = [...code.matchAll(/(['`])((?:(?!\1)[^\\]|\\.)*)\1/g)].map(m => m[2]!)
 
-  it('知識講「條」，⛔ 不講「張／知識卡／卡片」；檔案教「換新版」，⛔ 不教「重新匯入」', () => {
+  /** `C-319`（2026-10-15）：按鈕統一叫法——檔案「上傳新版」、試算表與網址「立即更新」；舊名字畫面上已經沒有了 */
+  it('知識講「條」，⛔ 不講「張／知識卡／卡片」；檔案教「上傳新版」，⛔ 不教「重新匯入」、不用舊按鈕名', () => {
     expect(strings.length, '對照組：網要撈得到字串').toBeGreaterThan(50)
-    const bad = strings.filter(s => /張|知識卡|卡片|重新匯入/.test(s))
+    const bad = strings.filter(s => /張|知識卡|卡片|重新匯入|換新版|立即同步|重新同步/.test(s))
     expect(bad).toEqual([])
-    expect(strings.some(s => s.includes('換新版'))).toBe(true)
+    expect(strings.some(s => s.includes('上傳新版'))).toBe(true)
+    expect(strings.some(s => s.includes('立即更新'))).toBe(true)
   })
 })

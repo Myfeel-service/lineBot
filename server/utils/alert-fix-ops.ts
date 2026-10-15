@@ -214,9 +214,10 @@ const knowledgeRefetchSources: AlertFixOpDef = {
         note: s.type === 'url'
           ? '會現在去抓一次網頁'
           : s.type === 'gsheet'
-            ? '會立即同步一次試算表'
-            // `C-309`：檔案那一份現在有「換新版」——叫人「重新匯入」會多出一份、壞的那份還在
-            : '檔案沒辦法自動重抓：到知識庫點開這一份，按「換新版」放進新的檔案',
+            // `C-319`：「立即同步」這個說法拿掉了（按鈕改叫「立即更新」），這裡講做什麼就好
+            ? '會現在去讀一次試算表'
+            // `C-309`：檔案那一份有自己的按鈕——叫人「重新匯入」會多出一份、壞的那份還在。`C-319` 改名「上傳新版」
+            : '檔案沒辦法自動重抓：到知識庫點開這一份，按「上傳新版」放進新的檔案',
       })),
       confirmLabel: '確定再試一次',
     }
@@ -240,7 +241,7 @@ const knowledgeRefetchSources: AlertFixOpDef = {
           const r = await $fetch<{ outcome?: string }>(`/api/ai/sources/${s.id}/gsheet-sync`, forwardOpts(ctx, {}))
           if (r.outcome === 'blocked_mass_deletion') {
             // 大量刪除的確認要留給人（刪除紅線）：這裡不代按同意
-            details.push(`「${s.name}」同步會刪掉很多條知識，需要你確認——請到知識庫按「立即同步」走確認流程`)
+            details.push(`「${s.name}」同步會刪掉很多條知識，需要你確認——請到知識庫點開這一份，按「立即更新」走確認流程`)
           }
           else {
             healed++
@@ -248,7 +249,7 @@ const knowledgeRefetchSources: AlertFixOpDef = {
           }
         }
         else {
-          details.push(`「${s.name}」是檔案，沒辦法自動重抓——請到知識庫點開這一份，按「換新版」放進新的檔案`)
+          details.push(`「${s.name}」是檔案，沒辦法自動重抓——請到知識庫點開這一份，按「上傳新版」放進新的檔案`)
         }
       }
       catch (e) {

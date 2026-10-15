@@ -261,13 +261,13 @@ describe('knowledge-first 掛在開通清單上', () => {
     await done
   })
 
-  it('`C-309`：檔案改了教「換新版」（⛔ 不教重新放＝多出一份）；網址也會自己更新', async () => {
+  it('`C-309`／`C-319`：檔案改了教「上傳新版」（⛔ 不教重新放＝多出一份、⛔ 不用舊名「換新版」）；網址也會自己更新', async () => {
     const { r, ctx } = makeCtx({ sources: [kb(0)] })
     const done = r.runSteps(guide.steps, ctx)
     await waitChoices(r)
     const html = htmlOf(r)
-    expect(html).toContain('換新版')
-    expect(html).not.toMatch(/重新放|重新匯入/)
+    expect(html).toContain('上傳新版')
+    expect(html).not.toMatch(/重新放|重新匯入|換新版/)
     expect(html).toContain('網址會定期自動跟著更新')
     r.onChoice('skip')
     await done

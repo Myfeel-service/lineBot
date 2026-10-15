@@ -471,7 +471,8 @@ const ALERTS: AlertDefinition[] = [
     id: 'knowledgeOutdated',
     icon: Refresh,
     impact: '原始網頁或試算表被改過，但 AI 還在用舊版本回答。',
-    cta: '去重新同步',
+    // `C-319`（2026-10-15）：資料頁那顆統一叫「立即更新」，這裡不再講「重新同步」
+    cta: '去更新',
     // 重新同步來源＝`sources.write`
     requires: 'sources.write',
     route: wid => `/admin/${wid}/knowledge/sources`,

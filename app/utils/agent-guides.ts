@@ -402,16 +402,18 @@ interface SourceListRes {
 }
 
 /**
- * 同步那顆按鈕照資料種類叫（`C-309`，2026-10-13）：網址那顆叫「重新同步」、Google 試算表那顆叫「立即同步」。
- * ⛔ 以前一律叫人按「重新同步」——試算表那一份畫面上沒有這顆，照著找會走丟。
+ * 那顆按鈕照資料種類叫（`C-309` 起；`C-319`，2026-10-15 統一叫法）：
+ * 網址、Google 試算表都叫「立即更新」；檔案沒得重抓，那一份的按鈕叫「上傳新版」（放一份新的檔案）。
+ * ⛔ 以前網址叫「重新同步」、試算表叫「立即同步」，一律叫人按「重新同步」時試算表那一份找不到這顆；
+ *    檔案也被教成按「重新同步」，畫面上根本沒有。
  */
 export function syncButtonPhrase(items: SourceListRes['items']): string {
   const types = new Set(items.map(i => i.type))
-  const sheet = types.has('gsheet')
-  const other = [...types].some(t => t !== 'gsheet')
-  if (sheet && other) return '網址按<b>「重新同步」</b>、Google 試算表按<b>「立即同步」</b>'
-  if (sheet) return '按<b>「立即同步」</b>'
-  return '按<b>「重新同步」</b>'
+  const file = types.has('file')
+  const other = [...types].some(t => t !== 'file')
+  if (file && other) return '網址和試算表按<b>「立即更新」</b>、檔案按<b>「上傳新版」</b>放一份新的'
+  if (file) return '按<b>「上傳新版」</b>放一份新的檔案'
+  return '按<b>「立即更新」</b>'
 }
 
 function failedSourceLines(items: SourceListRes['items']): string {
@@ -568,7 +570,8 @@ const knowledgeFirstGuide: AgentGuideDef = {
         // `C-309`（2026-10-13）：以前寫「檔案改了要重新放」「只有試算表會更新」——
         //   檔案那一份現在有「換新版」（重新放會多出一份、舊的還在）；用「加入知識」加的網址也會定期檢查。
         //   ⛔ 不寫死「每小時／每天」：頻率是每一份自己設的（`C-308`④ 就是寫死的頻率對不上實際）
-        await r.say('小提醒：<b>Google 試算表、網址會定期自動跟著更新</b>；<b>檔案和貼上的文字是「當下固定」</b>，檔案改了就在那一份按「換新版」。常常要改的價目表、商品清單，用試算表最省事。')
+        //   `C-319`（2026-10-15）：那顆改名「上傳新版」
+        await r.say('小提醒：<b>Google 試算表、網址會定期自動跟著更新</b>；<b>檔案和貼上的文字是「當下固定」</b>，檔案改了就在那一份按「上傳新版」。常常要改的價目表、商品清單，用試算表最省事。')
       },
     },
     {
