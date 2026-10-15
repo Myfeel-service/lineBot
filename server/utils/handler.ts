@@ -1060,7 +1060,8 @@ function normalizePublicBase(raw: string): string {
   return cleaned
 }
 
-function resolveLineImagemapPublicBase(fallbackOrigin = ''): string {
+/** 貼標連結（`/api/t/`）與圖文訊息圖片網址的網域。`C-322`：點擊追蹤要認得自己網域的貼標連結，所以匯出 */
+export function resolveLineImagemapPublicBase(fallbackOrigin = ''): string {
   try {
     const c = useRuntimeConfig()
     const configured = normalizePublicBase(String((c as { lineImagemapBaseUrl?: string }).lineImagemapBaseUrl || ''))
@@ -1922,7 +1923,7 @@ export async function renderModuleToLineMessages(
   flow: FlowDoc
   lineMessages: messagingApi.Message[]
   hydratedMessages: any[]
-  renderFor: (attributes: Record<string, string>) => messagingApi.Message[]
+  renderFor: (attributes: Record<string, string>, userId?: string) => messagingApi.Message[]
 } | null> {
   const wid = requireWorkspaceId(options.workspaceId, 'renderModuleToLineMessages')
   // 🔴 `C-266`：推播按鈕的模組 id 店家自己填得到——歸屬由 getFlowByModuleId 比對，對不上＝當模組不存在
@@ -1935,13 +1936,14 @@ export async function renderModuleToLineMessages(
    * `D-118` A：推播一人一則送時，模組只抓一次、每一位用自己的 `attributes` 重組一次（不再讀資料庫）。
    * ⚠️ 名字換進去之後才截斷（`buildLineMessages` 本來就這樣做），⛔ 不要先組好再換字——
    *    換完可能超過 LINE 的字數上限，那一位就整則被退回。
-   * ⛔ `userId` 照呼叫端給的：推播一律不給（網址按鈕的貼標連結會被點擊追蹤再包一層、轉址時對不上，`C-238`）。
+   * `C-322`：帶了 `userId` 的話，開了貼標的網址按鈕會換成那一位專屬的貼標連結（`/api/t/`）。
+   *   推播一人一則送時每一位帶自己的；試發不帶（⛔ 看稿的同事點了不該被貼上標籤）。
    */
-  const renderFor = (attributes: Record<string, string>) => buildLineMessages(
+  const renderFor = (attributes: Record<string, string>, userId?: string) => buildLineMessages(
     hydratedMessages,
     attributes,
     options.requestOrigin || '',
-    options.userId || '',
+    userId ?? options.userId ?? '',
     channelSecret,
   )
   const lineMessages = renderFor(options.attributes ?? {})

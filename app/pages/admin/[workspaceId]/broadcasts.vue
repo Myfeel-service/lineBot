@@ -256,16 +256,11 @@
               </el-radio-group>
             </div>
 
-            <!--
-              `C-238`：`flow-picker-context="broadcast"` 讓選模組那一格多講一句
-              「網址按鈕的貼標在推播裡不會生效」——⛔ 只有這一頁該講，別處那條路是有效的。
-            -->
             <AdminAreaActionEditor
               :model-value="form.contentAction"
               :module-options="flowOptions"
               :enable-card-copy="true"
               :disabled="isLocked"
-              flow-picker-context="broadcast"
               @update:model-value="onContentActionUpdate"
             />
             <!--
@@ -804,8 +799,6 @@ const flows = ref<{
   name: string
   isActive?: boolean
   messageCount?: number
-  /** `C-238`：有幾顆「開了貼標的網址按鈕」——推播送出時那個貼標不會生效，要講出來 */
-  taggedUriButtons?: number
 }[]>([])
 const { tags: allTags, loadTags: loadTagOptions } = useAdminTagList()
 // C-208：這一頁不給就地建標籤（受眾是拿標籤篩人），但別頁建了之後切回來要看得到
@@ -825,7 +818,6 @@ useAdminFlowRefresh().onAdminFlowListChanged(async () => {
     name: f.name || f.id,
     isActive: f.isActive,
     messageCount: f.messageCount,
-    taggedUriButtons: f.taggedUriButtons,
   }))
 })
 // 「只看草稿」篩選（D-43④）：list 端點本來就吃 ?status=，這裡只是把它接到畫面上
@@ -909,7 +901,6 @@ const flowOptions = computed(() =>
     name: f.name || f.id,
     isActive: f.isActive,
     messageCount: f.messageCount,
-    taggedUriButtons: f.taggedUriButtons,
   })),
 )
 
@@ -1387,7 +1378,6 @@ async function loadData() {
       name: f.name || f.id,
       isActive: f.isActive,
       messageCount: f.messageCount,
-      taggedUriButtons: f.taggedUriButtons,
     }))
     if (!tagOk) showToast('載入標籤失敗', 'error')
     syncDuePollTimer()

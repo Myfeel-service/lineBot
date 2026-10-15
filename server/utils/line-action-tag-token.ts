@@ -25,12 +25,24 @@ export function createUriTagToken(input: { targetUrl: string; userId: string; ta
   return Buffer.from(JSON.stringify({ ...body, sig }), 'utf8').toString('base64url')
 }
 
-export function verifyUriTagToken(token: string, secret: string): { targetUrl: string; userId: string; tagIds: string[] } | null {
+/**
+ * 驗簽章。過期的預設當無效；`allowExpired` 時照樣回來、標 `expired: true`。
+ *
+ * `C-322`（2026-10-15）：推播一人一則送後，貼標連結會躺在客人的聊天紀錄裡好幾週。
+ * 過期的連結**簽章仍是我們簽的**＝目標網址不是別人塞的，所以可以帶他去原網址、只是不貼標；
+ * ⛔ 以前過期一律回首頁＝兩週前的推播按鈕點了就壞掉。
+ */
+export function verifyUriTagToken(
+  token: string,
+  secret: string,
+  opts: { allowExpired?: boolean } = {},
+): { targetUrl: string; userId: string; tagIds: string[]; expired: boolean } | null {
   if (!token || !secret) return null
   try {
     const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as UriTagPayload & { sig: string }
     if (!parsed?.u || !parsed?.uid || typeof parsed.exp !== 'number' || typeof parsed.sig !== 'string') return null
-    if (Date.now() > parsed.exp) return null
+    const expired = Date.now() > parsed.exp
+    if (expired && !opts.allowExpired) return null
     if (!/^https?:\/\//i.test(parsed.u)) return null
 
     const payload = JSON.stringify({
@@ -48,6 +60,7 @@ export function verifyUriTagToken(token: string, secret: string): { targetUrl: s
       targetUrl: parsed.u,
       userId: parsed.uid,
       tagIds: Array.isArray(parsed.tags) ? parsed.tags.map((v) => String(v || '').trim()).filter(Boolean) : [],
+      expired,
     }
   }
   catch {

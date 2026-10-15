@@ -1,4 +1,3 @@
-import { countTaggedUriButtons } from '~~/shared/flow-uri-tagging'
 import { getDb, listDocs } from '~~/server/utils/firebase'
 import { sortRegularFlows } from '~~/server/utils/flow-sort'
 import { ACTIVE_SYSTEM_MODULE_TYPES, seedWorkspaceSystemModules, systemModuleId } from '~~/server/utils/workspace-system-modules'
@@ -54,16 +53,15 @@ const PICKER_FIELDS = [
 ] as const
 
 /**
- * picker 模式回給前端的形狀：把 `messages` 換成兩個數字。
+ * picker 模式回給前端的形狀：把 `messages` 換成「有幾則」。
  * - `messageCount`：有沒有內容（`D-86`，空模組＝客人走到這裡什麼都收不到）
- * - `taggedUriButtons`：有幾顆「開了貼標的網址按鈕」（`C-238`，推播送出時那個貼標不會生效）
+ * （以前還回 `taggedUriButtons` 給推播講「貼標不會生效」（`C-238`）；`C-322` 起推播貼標有效了，那句拿掉、這格也不回了）
  */
 function toPickerRow(flow: Record<string, unknown>) {
   const { messages, ...rest } = flow
   return {
     ...rest,
     messageCount: Array.isArray(messages) ? messages.length : 0,
-    taggedUriButtons: countTaggedUriButtons(messages),
   }
 }
 

@@ -53,7 +53,6 @@
             :options="moduleOptions"
             :placeholder="modulePlaceholder"
             :disabled="disabled"
-            :context="flowPickerContext"
             @update:model-value="(v) => patchAction({ moduleId: v })"
           />
           <!--
@@ -169,13 +168,12 @@ import {
 } from '~~/shared/line-card-copy'
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX } from '~~/shared/line-text-limits'
 
-/** 模組選項：後三個由 `/api/flow/list?fields=picker` 帶回來，選模組那一格靠它們示警 */
+/** 模組選項：後兩個由 `/api/flow/list?fields=picker` 帶回來，選模組那一格靠它們示警 */
 type EditorOption = {
   id: string
   name: string
   isActive?: boolean
   messageCount?: number
-  taggedUriButtons?: number
 }
 type TagOption = { id: string; name: string; color?: string }
 
@@ -209,15 +207,9 @@ const props = withDefaults(defineProps<{
    * 圖文選單是直接點圖上的格子，沒有卡片。
    */
   enableCardCopy?: boolean
-  /**
-   * `C-238`：傳給選模組那一格。`broadcast` 時它會多講一句
-   * 「網址按鈕的貼標在推播裡不會生效」——⛔ 只有推播該傳，別處那條路是有效的。
-   */
-  flowPickerContext?: 'default' | 'broadcast'
   /** 唯讀（例如已發送推播僅檢視） */
   disabled?: boolean
 }>(), {
-  flowPickerContext: 'default',
   tagOptions: () => [],
   taggableActionTypes: () => ['module', 'message', 'uri'],
   menuOptions: () => [],

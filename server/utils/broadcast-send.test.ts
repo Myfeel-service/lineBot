@@ -527,6 +527,57 @@ describe('executeBroadcastSend — 用了客人名字的推播一人一則送', 
     expect(received.get('U2')![0].text).toBe('陳小華 倒數')
   })
 
+  /**
+   * `C-322`：模組裡有開了貼標的網址按鈕時，就算沒用名字也要一人一則——貼標連結每個人一條，
+   * 群發只能放大家共用的那一條（以前推播裡這種按鈕開關是開的、標籤就是沒貼，`C-238`）。
+   */
+  it('⭐ 模組裡有開了貼標的網址按鈕（沒用名字）也一人一則，每一位帶自己的 LINE id 去組', async () => {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: [{ type: 'template', altText: 'x', template: { type: 'buttons', text: '點下面', actions: [{ type: 'postback', label: '開始', data: 'triggerModule=mod_tag' }] } }],
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1', 'w1_U2'] },
+    } as any)
+    const renderFor = vi.fn((_attrs: Record<string, string>, uid?: string) => [{ type: 'text', text: `貼標連結給 ${uid ?? '（沒有人）'}` }])
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue({
+      flow: { name: '新品試用報名' },
+      lineMessages: [{ type: 'text', text: '貼標連結給 （沒有人）' }],
+      hydratedMessages: [{ type: 'text', text: '報名看這裡', buttons: [{ type: 'uri', uri: 'https://form.example.com', tagging: { enabled: true, addTagIds: ['t-interested'] } }] }],
+      renderFor,
+    } as any)
+    const { updates } = makeDb()
+    const { received } = pushRecords()
+
+    await executeBroadcastSend('bc1')
+
+    expect(mockMulticast).not.toHaveBeenCalled()
+    expect(updates.find(u => 'sendMode' in u)!.sendMode).toBe('perRecipient')
+    expect(received.get('U1')![0].text).toBe('貼標連結給 U1')
+    expect(received.get('U2')![0].text).toBe('貼標連結給 U2')
+  })
+
+  it('⛔ 模組裡只有「沒開貼標」的網址按鈕、也沒用名字 → 照舊群發', async () => {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: [{ type: 'template', altText: 'x', template: { type: 'buttons', text: '點下面', actions: [{ type: 'postback', label: '開始', data: 'triggerModule=mod_plain' }] } }],
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1'] },
+    } as any)
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue({
+      flow: { name: '一般' },
+      lineMessages: [{ type: 'text', text: '看這裡' }],
+      hydratedMessages: [{ type: 'text', text: '看這裡', buttons: [{ type: 'uri', uri: 'https://a.example.com', tagging: { enabled: false, addTagIds: ['t1'] } }] }],
+      renderFor: vi.fn(),
+    } as any)
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    makeDb()
+
+    await executeBroadcastSend('bc1')
+
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockMulticast).toHaveBeenCalledTimes(1)
+  })
+
   it('一人一則拿得到每一位沒送到的原因，寫進沒收到的名單；上一輪已收到的算送達', async () => {
     claimText('嗨 {{displayName}}', ['w1_U1', 'w1_U2', 'w1_U3'])
     const { deliveries } = makeDb()

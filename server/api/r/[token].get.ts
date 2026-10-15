@@ -7,7 +7,9 @@ import {
   clickTargetInBroadcast,
   collectClickTrackableUris,
 } from '~~/server/utils/broadcast-click-track'
-import { renderModuleToLineMessages } from '~~/server/utils/handler'
+import { renderModuleToLineMessages, resolveLineImagemapPublicBase } from '~~/server/utils/handler'
+import { verifyUriTagToken } from '~~/server/utils/line-action-tag-token'
+import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import type { BroadcastClickLogDoc } from '~~/shared/types/tag-broadcast'
 
@@ -70,6 +72,39 @@ async function urisFromCurrentModule(
   return uris
 }
 
+/**
+ * `C-322`：推播一人一則送時，開了貼標的網址按鈕是那位客人**專屬的貼標連結**（我們自己網域的
+ * `/api/t/<token>`），點擊追蹤再包一層——所以這裡拿到的目標是那條貼標連結，不是店家放的原網址，
+ * 拿去跟推播內容比一定對不上（以前會被導回首頁＝按鈕壞掉，所以那時推播一律不貼標，`C-238`）。
+ *
+ * 三關都過才算這則推播的連結：
+ *   ① 是**我們自己網域**的 `/api/t/`（跟送出端產生貼標連結用同一個網域）
+ *   ② 簽章是**這則推播那個帳號**的 channel secret 簽的（過期也算：簽章還是我們的，只是不貼標）
+ *   ③ 裡面包的原網址是這則推播送出時真的有的（跟一般連結同一個比法）
+ * ⛔ 只看網域不驗簽章＝誰都能塞一條假的貼標連結；只驗簽章不看網域＝把簽好的那段接在別人的網域後面就能轉走。
+ * 回傳原網址（記點擊用，成效頁照原網址分）與那一位的 LINE id（簽章擔保，記點擊的人）。
+ */
+async function tagLinkInBroadcast(
+  targetUrl: string,
+  campaignId: string,
+  campaign: Record<string, unknown>,
+): Promise<{ innerUrl: string, userId: string } | null> {
+  const base = resolveLineImagemapPublicBase(String(useRuntimeConfig().clickTrackingBaseUrl || '').trim().replace(/\/$/, ''))
+  const prefix = `${base}/api/t/`
+  if (!base || !targetUrl.startsWith(prefix)) return null
+  const workspaceId = String(campaign.workspaceId || '').trim()
+  if (!workspaceId) return null
+  let tagToken = ''
+  try { tagToken = decodeURIComponent(targetUrl.slice(prefix.length).split(/[?#]/)[0] ?? '') } catch { return null }
+  const secret = String((await getLineWorkspaceCredentials(workspaceId).catch(() => null))?.channelSecret || '').trim()
+  const parsed = secret ? verifyUriTagToken(tagToken, secret, { allowExpired: true }) : null
+  if (!parsed) return null
+  const inner = parsed.targetUrl.trim()
+  const known = clickTargetInBroadcast(inner, campaign)
+    || (await urisFromCurrentModule(campaignId, campaign)).has(inner)
+  return known ? { innerUrl: inner, userId: parsed.userId } : null
+}
+
 export default defineEventHandler(async (event) => {
   const token = getRouterParam(event, 'token')
 
@@ -114,11 +149,13 @@ export default defineEventHandler(async (event) => {
     }
   })()
 
-  const allowed = campaign !== null
-    && broadcastEverHandedToSender(campaign)
+  const everSent = campaign !== null && broadcastEverHandedToSender(campaign)
+  const allowed = everSent
     && (clickTargetInBroadcast(targetUrl, campaign)
       || (await urisFromCurrentModule(campaignId, campaign)).has(targetUrl.trim()))
-  if (!campaign || !allowed) {
+  // 對不上的話，看是不是那一位專屬的貼標連結（`C-322`）：記點擊記原網址與那一位，轉址轉去貼標連結（由它貼標再轉原網址）
+  const tagLink = everSent && !allowed ? await tagLinkInBroadcast(targetUrl, campaignId, campaign) : null
+  if (!campaign || (!allowed && !tagLink)) {
     // ⛔ 對不上就不記、不轉：記了就是讓人灌點擊數；轉了就是開放轉址。丟了什麼留一行
     let host = ''
     try { host = new URL(targetUrl).host } catch { /* 網址本身壞掉，host 留空 */ }
@@ -135,9 +172,10 @@ export default defineEventHandler(async (event) => {
       workspaceId,
       campaignId,
       deliveryId: deliveryId || null,
-      userId: userId || null,
+      userId: tagLink?.userId || userId || null,
       linkKey,
-      targetUrl,
+      // 貼標連結記**原網址**：成效頁照網址分，記成每人一條的貼標連結就變成每次點擊各算一個網址
+      targetUrl: tagLink?.innerUrl ?? targetUrl,
       clickedAt: FieldValue.serverTimestamp(),
     }
     await db.collection('broadcastClickLogs').doc(uuidv4()).set(logDoc)

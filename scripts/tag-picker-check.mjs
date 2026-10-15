@@ -113,10 +113,20 @@ async function openLoggedInPage(opts = {}) {
    *   所以把那四支 POST 攔下來回假的成功／失敗——這樣才驗得到「建到一半失敗」那條路，
    *   而那正是整個精靈最重要的一段。
    */
-  if (opts.emptyTagList || opts.fakeWrites || opts.flowPickerList) {
+  /**
+   * ⛔ 攔截**一律開**（2026-10-15 補）：推播列表頁有「排程」或「發送中」的推播時會自己打
+   * `POST /api/broadcast/process-due`，那支會把**到期的排程推播真的送出去**——本機 dev 連的是正式庫，
+   * 等於從這台電腦發推播給客人（`broadcast-preview-check.mjs` 那次一跑就打了 10 次）。
+   * 以前這裡只有帶了上面三種選項才攔，打開推播頁的那幾關沒擋到。
+   */
+  {
     await page.setRequestInterception(true)
     page.on('request', (req) => {
       const url = req.url()
+      if (req.method() === 'POST' && url.includes('/api/broadcast/process-due')) {
+        req.respond({ status: 200, contentType: 'application/json', body: '{"triggered":0,"reaped":0,"results":[]}' })
+        return
+      }
       if (opts.emptyTagList && url.includes('/api/tag/list')) {
         req.respond({ status: 200, contentType: 'application/json', body: '[]' })
         return
@@ -1583,15 +1593,18 @@ async function checkOtherPagesDeepLink() {
   })
 }
 
-// ── 關卡 15：推播選到「網址按鈕開了貼標」的模組要示警（`C-238`）───────────────
+// ── 關卡 15：推播選到「網址按鈕開了貼標」的模組**不再**示警（`C-238` → `C-322`）───────────────
 /**
- * ⛔ 這一關的重點是**只有推播該講**：同一個模組在圖文選單那邊貼標是**有效**的，
- *    在那裡也跳警告等於叫人關掉能用的功能。所以有正反兩半。
+ * 以前推播群發放不進每個人專屬的貼標連結，所以推播選到這種模組要講「貼標不會生效」（`C-238`）。
+ * `C-322`（2026-10-15）起這種推播改成一人一則送、每位帶自己的貼標連結＝貼標有效了，那句話變成假話。
+ * 這一關改成釘「哪裡都不可以再講那句」。
+ * ⛔ 光量「沒看到那句」是假綠燈（選擇器抓錯、模組沒選上也會沒看到），所以帶一個對照組：
+ *    空模組那句「還沒有任何內容」要照樣出現＝示警那一格確實讀得到。
  */
 async function checkBroadcastUriTagWarning() {
   const FAKE = [
     { id: 'fake-uritag', name: 'ZZ 測試-網址按鈕有貼標', isActive: true, messageCount: 1, taggedUriButtons: 2 },
-    { id: 'fake-plain', name: 'ZZ 測試-一般模組', isActive: true, messageCount: 1, taggedUriButtons: 0 },
+    { id: 'fake-empty', name: 'ZZ 測試-空模組', isActive: true, messageCount: 0 },
   ]
   const pick = async (page, name) => {
     await page.evaluate(() => {
@@ -1630,8 +1643,8 @@ async function checkBroadcastUriTagWarning() {
    * 底下的反面對照組一行都沒跑、螢幕上一個字都沒印，人看到一個 ❌ 會以為對照組是過的。
    * ⛔ 沒驗到就是沒驗到，不可以安靜跳過。
    */
-  // 正面：推播頁要講
-  await runStep('推播（正面）', async () => {
+  // 推播頁：不可以再講「貼標不會生效」
+  await runStep('推播', async () => {
     const { page, ctx } = await openLoggedInPage({ flowPickerList: FAKE })
     try {
       await gotoPage(page, 'broadcasts', '.split-list-name')
@@ -1643,14 +1656,14 @@ async function checkBroadcastUriTagWarning() {
       await toModuleAction(page)
       if (!await pick(page, 'ZZ 測試-網址按鈕有貼標')) { fail('推播：下拉裡找不到假造的模組（攔截沒生效？這一關這次沒驗到）'); return }
       const warn = await warnOf(page)
-      if (!warn.includes('不會生效')) fail(`推播：選到「網址按鈕開了貼標」的模組沒有示警（拿到「${warn}」）`)
-      else pass(`推播：選到「網址按鈕開了貼標」的模組會示警（「${warn.slice(0, 34)}…」）`)
-      // ⛔ 對照組：沒有那種按鈕的模組不可以也跳——否則警告會被當成雜訊
-      if (!await pick(page, 'ZZ 測試-一般模組')) fail('推播：下拉裡找不到假造的一般模組')
+      if (warn.includes('不會生效')) fail(`推播：還在講「貼標不會生效」——C-322 起推播貼標有效了，這是假話（「${warn.slice(0, 40)}」）`)
+      else pass('推播：選到「網址按鈕開了貼標」的模組，⛔ 不再講「貼標不會生效」')
+      // ⛔ 對照組：示警那一格要讀得到（空模組那句照樣出現），上面的「沒看到」才算數
+      if (!await pick(page, 'ZZ 測試-空模組')) fail('推播：下拉裡找不到假造的空模組（對照組這次沒驗到）')
       else {
         const w2 = await warnOf(page)
-        if (w2.includes('不會生效')) fail(`推播：一般模組也跳了那句警告（「${w2.slice(0, 40)}」）——警告會變雜訊`)
-        else pass('推播：⛔ 一般模組不跳那句警告（對照組成立）')
+        if (!w2.includes('還沒有任何內容')) fail(`推播：對照組失敗——空模組沒跳「還沒有任何內容」（「${w2.slice(0, 40)}」），上面那關可能是選擇器抓錯才沒看到`)
+        else pass('推播：對照組成立（空模組照樣跳「還沒有任何內容」）')
       }
     }
     finally { await ctx.close() }
@@ -1737,7 +1750,7 @@ try {
     ['── 「客人加好友時」那一列（D-23）──────────', checkFollowWelcomeRow],
     ['── 選模組那一格＋?id= 深連結（D-86）────────', checkFlowPicker],
     ['── 另外五頁也吃 ?id=（C-237）──────────────', checkOtherPagesDeepLink],
-    ['── 推播的「貼標不會生效」示警（C-238）──────', checkBroadcastUriTagWarning],
+    ['── 推播不再講「貼標不會生效」（C-238 → C-322）──────', checkBroadcastUriTagWarning],
     ['── 空的「歡迎模組」已經拿掉（D-23）────────', checkWelcomeModuleGone],
     ['── 推播「發完貼記號」那一格（C-213）────────', checkBroadcastCompletionTag],
     ['── 回覆文字插得到客人名字（D-23 D）────────', checkBuiltinVariable],

@@ -6,6 +6,7 @@ import { multicastMessage, pushMessagesPerRecipient } from './line'
 import { renderModuleToLineMessages } from './handler'
 import { attributeContextForUser, renderBroadcastMessagesForSend } from './render-attributes'
 import { findSendVariables } from '~~/shared/preview-variables'
+import { countTaggedUriButtons } from '~~/shared/flow-uri-tagging'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 import { lineStatsNextDueAt } from '~~/shared/broadcast-line-stats'
 /**
@@ -190,10 +191,16 @@ export async function executeBroadcastSend(
     const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
     // 純文字／開網址：群發時變數換成空白再送（發模組那條路下面會整份換掉，規則相同）
     let outboundMessages = renderBroadcastMessagesForSend(data.messages)
-    /** 一人一則送時，每一位用自己的資料重組（`D-118` A）。模組型下面換成模組的那一支 */
-    let renderFor = (attributes: Record<string, string>) => renderBroadcastMessagesForSend(data.messages, attributes)
+    /**
+     * 一人一則送時，每一位用自己的資料重組（`D-118` A）。模組型下面換成模組的那一支，
+     * 還會帶上那一位的 LINE id，讓開了貼標的網址按鈕換成他專屬的貼標連結（`C-322`）。
+     */
+    let renderFor = (attributes: Record<string, string>, _lineUserId: string) =>
+      renderBroadcastMessagesForSend(data.messages, attributes)
     /** 拿來看「有沒有用到變數」的那一份：送出去的是什麼就看什麼 */
     let contentForVariables: unknown = data.messages
+    /** 開了貼標的網址按鈕有幾顆（`C-322`）：只有模組型會有（純文字／開網址推播沒有貼標開關） */
+    let taggedUriButtons = 0
     /**
      * `C-246`：把**真的送出去的那幾則**留下來。
      *
@@ -212,8 +219,9 @@ export async function executeBroadcastSend(
         throw new Error(`Broadcast module not found or empty: ${triggerModuleId}`)
       }
       outboundMessages = rendered.lineMessages as any[]
-      renderFor = rendered.renderFor as (attributes: Record<string, string>) => any[]
+      renderFor = (attributes, lineUserId) => rendered.renderFor(attributes, lineUserId) as any[]
       contentForVariables = rendered.hydratedMessages
+      taggedUriButtons = countTaggedUriButtons(rendered.hydratedMessages)
       sentContent = {
         kind: 'module',
         moduleId: triggerModuleId,
@@ -230,13 +238,17 @@ export async function executeBroadcastSend(
     }
 
     /**
-     * `D-118` A（2026-10-15 老闆「要看得到名字」）：**內容用了 {{變數}} 才一人一則送**，沒用的照舊群發。
-     * ⛔ 不要全部改成一人一則：沒有變數的推播一人一則送不會多得到任何東西，只會更慢、多打幾千次 LINE。
-     * 以前群發時變數一律是空白——9/29 起 MYFEEL 7 則上市／倒數推播、約 8,500 人次收到開頭空一格的句子。
+     * `D-118` A（2026-10-15 老闆「要看得到名字」）：**每個人要收到不一樣的東西才一人一則送**，其他照舊群發。
+     *   ① 內容用了 {{變數}}（名字）——以前群發時一律是空白：9/29 起 MYFEEL 7 則上市／倒數推播、約 8,500 人次
+     *      收到開頭空一格的句子
+     *   ② 模組裡有開了貼標的網址按鈕（`C-322`）——貼標連結每個人一條，群發只能放大家共用的那一條，
+     *      以前推播裡這種按鈕的開關是開的、標籤就是沒貼（`C-238`）
+     * ⛔ 不要全部改成一人一則：每人內容都一樣的推播一人一則送不會多得到任何東西，只會更慢、多打幾千次 LINE。
      */
-    const sendMode: 'perRecipient' | 'multicast' = findSendVariables(contentForVariables).length > 0
-      ? 'perRecipient'
-      : 'multicast'
+    const sendMode: 'perRecipient' | 'multicast' =
+      findSendVariables(contentForVariables).length > 0 || taggedUriButtons > 0
+        ? 'perRecipient'
+        : 'multicast'
 
     // ── 寫入受眾快照（status 已在 claim 時改為 processing）────────────
     const snapshotAt = FieldValue.serverTimestamp()
@@ -297,7 +309,7 @@ export async function executeBroadcastSend(
       const contextByLineUserId = new Map(recipients.map(r => [r.lineUserId, contexts.get(r.docId) ?? {}]))
       const pushed = await pushMessagesPerRecipient(
         recipients.map(r => ({ lineUserId: r.lineUserId, retryKey: broadcastRetryKey(id, r.lineUserId) })),
-        lineUserId => wrapForLine(renderFor(contextByLineUserId.get(lineUserId) ?? {})) as any,
+        lineUserId => wrapForLine(renderFor(contextByLineUserId.get(lineUserId) ?? {}, lineUserId)) as any,
         workspaceId,
         { customAggregationUnits: [lineUnit] },
       )

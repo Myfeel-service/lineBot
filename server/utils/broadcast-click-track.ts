@@ -188,8 +188,11 @@ export function collectClickTrackableUris(messages: unknown): Set<string> {
  *
  * 給 `sentContent.messages` 用：那一份是**編輯器格式**（`C-246`，後台預覽看得懂的那種），
  * 按鈕的網址放在哪一格跟 LINE 格式不一樣，⛔ 不能用上面那條 LINE 格式的走法。
- * 送出時網址會經過 `renderWithAttributes`（`{{變數}}` 在推播時一律換成空字串），
+ * 送出時網址會經過 `renderWithAttributes`（群發時 `{{變數}}` 換成空字串），
  * 所以同一個網址把變數拿掉的版本也一起收。
+ * ⚠️ 一人一則送（`D-118` A）時變數換成**那一位的值**，這裡比不到＝點了回首頁；2026-10-15 唯讀查過正式庫
+ *    網址裡放變數的模組與推播都是 0，待辦 `C-323`。
+ * （開了貼標的網址按鈕是另一件事：目標是那一位的貼標連結，由 `/api/r/` 驗簽章後拿裡面的原網址比，`C-322`）
  * 有深度與數量上限：這是公開端點每點一次就要跑的東西，⛔ 不可以被一份怪資料拖住。
  */
 export function collectHttpsStringsDeep(value: unknown, maxDepth = 12, maxCount = 500): Set<string> {
