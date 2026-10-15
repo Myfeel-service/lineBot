@@ -51,9 +51,9 @@
     >
       <!-- 步驟名稱是「這一步叫什麼」不是狀態句：1 把資料交給 AI → 2 AI 整理（整理中畫面還在這一頁，見 kb-import-step 的 processing）→ 3 加好了 -->
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>{{ previewing ? 'AI 整理' : '把資料交給 AI 整理' }}</p>
-      <!-- 從資料頁「換新版」進來的（`D-124`）：一進來就在整理，要講清楚這一份會換掉哪一份 -->
+      <!-- 從資料頁「上傳新版」進來的（`D-124`；`C-319` 起叫「上傳新版」，以前叫「換新版」）：一進來就在整理，要講清楚會更新哪一份 -->
       <p v-if="replaceIntentName" class="kb-replace-intent">
-        換新版：整理好會直接換掉「<strong>{{ replaceIntentName }}</strong>」（舊的移到回收桶，30 天內救得回來）
+        上傳新版：整理好會直接更新「<strong>{{ replaceIntentName }}</strong>」（舊的移到回收桶，30 天內救得回來）
       </p>
 
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
@@ -417,9 +417,9 @@
              關掉視窗沒關係（元件還在），**離開知識庫這一頁**就要等回來才接著加——所以那半句要照實講。
           ⛔ 別把「好了會通知你」寫成「馬上」:排程約十分鐘一輪,人真的走開時完成會慢一點。
         -->
+        <!-- `C-320` 減字：「不會從頭重來」拿掉（沒人問），「離開這一頁要回來才接著加」留著——那句會改變他走不走開 -->
         <p class="kb-waiting__note">
-          內容長的話要幾分鐘。<strong>可以關掉視窗去忙別的</strong>，整理好會自己加進知識庫；
-          離開知識庫這一頁的話，回來時才會接著加（不會從頭重來）。
+          內容長的話要幾分鐘。<strong>可以關掉視窗</strong>，整理好會自己加進知識庫（離開這一頁的話，回來才接著加）。
         </p>
         <!-- 加進去那一下停不了（卡片正在建），只有整理階段給取消 -->
         <el-button v-if="!autoImporting" size="small" text @click="cancelPreview">取消</el-button>
@@ -436,8 +436,9 @@
         style="margin-top: 12px"
         @close="previewError = ''"
       >
+        <!-- 標題已經講「還在背景整理，好了會自己加進知識庫」：這裡只留會改變他下一步的那一句（別重傳） -->
         <div v-if="previewStillRunning">
-          可以關掉視窗去忙別的；有要你先看的會停在這裡等你。這期間不用重傳，<strong>重傳會變成兩份同時在跑</strong>。
+          這期間不用重傳，<strong>重傳會變成兩份同時在跑</strong>。
         </div>
         <!-- 「分段貼」只對貼文字有用：以前每一種錯都附這句，檔案讀不到也叫人分段貼（2026-10-12 文字審視） -->
         <div v-else-if="mode === 'text'">內容很長的話，分成幾段分批貼進來。</div>
@@ -463,14 +464,15 @@
              那句不成立；而結果頁「原檔沒留成／空間不夠沒收齊」都是叫人再傳一次這份，會先被這張卡擋下來
              （2026-10-12 文字審視）。真正會再傳一次的人要的是**重做那一份**，所以直接換掉它，不多一份。
         -->
+        <!-- `C-319`：同一件事只有一種說法——「更新原本那一份」（以前這顆叫「重新整理，換掉那一份」）。
+             `C-320` 減字：「再整理一次會多一份」拿掉——畫面上已經沒有「另外再加一份」這條路，那句是在解釋一個不存在的選項 -->
         <div class="kb-dedup-body">
           <p class="text-xs">
-            跟「<strong>{{ duplicateHit.name }}</strong>」（{{ duplicateHit.chunkCount }} 條，{{ relativeTime(duplicateHit.updatedAtMs) || '未更新' }}）
-            一字不差。再整理一次會多一份一樣的，AI 答題時會撈到兩份。
+            跟「<strong>{{ duplicateHit.name }}</strong>」（{{ duplicateHit.chunkCount }} 條，{{ relativeTime(duplicateHit.updatedAtMs) || '未更新' }}）一字不差。
           </p>
           <div class="flex gap-1">
             <el-button size="small" type="primary" plain @click="openDuplicateSource">看那一份</el-button>
-            <el-button size="small" text @click="redoReplacingDuplicate">重新整理，換掉那一份</el-button>
+            <el-button size="small" text @click="redoReplacingDuplicate">重新整理，更新原本那一份</el-button>
           </div>
         </div>
       </el-alert>
@@ -486,7 +488,8 @@
           在 <strong>{{ siteHost }}</strong> 找到 <strong>{{ sitePages.length }}</strong> 頁
           （{{ siteFrom === 'sitemap' ? '網站自己列的頁面清單' : '這一頁上的連結' }}<span v-if="siteTruncated">，已達 {{ sitePages.length }} 頁上限</span>）<template v-if="checkedSiteCount && !siteImporting && !siteFinished">，先幫你勾了常被問的頁（運送、退換貨、常見問題、商品），要加減自己勾</template>。
         </template>
-        勾選的每一頁會<strong>各自成為一份資料</strong>：AI 自動整理、自動辨識產品名，完成後可到資料列表逐一檢查。
+        <!-- `C-320` 減字：「AI 自動整理、自動辨識產品名、完成後可到資料列表檢查」拿掉——跑完的結論框與每一列自己會講 -->
+        勾的每一頁<strong>各自成為一份資料</strong>。
       </p>
 
       <!-- 整站完成後的結論列:全卡直入沒有逐頁預覽,結束一定要給「做了什麼、還要看什麼」 -->
@@ -508,7 +511,8 @@
           </template>
           <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
           <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
-          <template v-if="!siteSummary.failed && !siteSummary.warned && !siteSummary.notLearned">這些知識沒有經過逐條預覽，建議到知識庫抽幾條看看內容是否合用。</template>
+          <!-- 跟一次好幾份的結論列同一句（`C-320` 減字：以前多講一次「沒有經過逐條預覽」） -->
+          <template v-if="!siteSummary.failed && !siteSummary.warned && !siteSummary.notLearned">建議點開幾條看看內容對不對。</template>
         </div>
       </el-alert>
 
@@ -516,7 +520,8 @@
       <div v-if="siteFinished && siteSummary.ok && aiEnabled === false" class="kb-handoff is-off">
         <div class="kb-handoff__main">
           <p class="kb-handoff__title">知識進庫了，但客人現在還聽不到</p>
-          <p class="kb-handoff__why"><strong>AI 客服還沒開啟</strong>，所以這些內容目前不會用在回覆客人上。開啟之後才會生效。</p>
+          <!-- `C-320` 減字：「不會用在回覆客人上、開啟之後才會生效」是標題與「前往開啟」那顆按鈕已經在講的 -->
+          <p class="kb-handoff__why"><strong>AI 客服還沒開啟</strong>。</p>
         </div>
         <el-button size="small" type="primary" @click="goEnableAi">前往開啟</el-button>
       </div>
@@ -542,9 +547,7 @@
           標「新」的是這個帳號第一次出現的名字。<strong>如果其中有跟現有產品是同一台、只是寫法不同</strong>，
           AI 會把它們當成兩台——請到「⋯ → 產品名稱整理」把它們併起來。
         </p>
-        <p v-if="siteProductsUnnamed" class="kb-site-products__note">
-          另有 {{ siteProductsUnnamed }} 頁沒認出產品（多產品或非產品頁面就是正常的）。
-        </p>
+        <!-- `C-320` 減字：以前還有一行「另有 N 頁沒認出產品（…就是正常的）」——沒有要他做的事 -->
       </div>
 
       <!-- 路徑分組導覽:一眼看懂網站組成,點分組縮小範圍(大站挑商品頁的主要動線) -->
@@ -583,8 +586,9 @@
         <span class="text-muted text-xs">已勾選 {{ checkedSiteCount }} 頁</span>
         <!-- 空間先講（`D-124`）：一頁大約 5 條，勾太多後面幾頁會因為空間不夠加不進去——整理的錢那時已經花了 -->
         <span v-if="siteRoomHint" class="text-xs" :class="siteRoomHint.tight ? 'kb-site-room is-tight' : 'text-muted'">· {{ siteRoomHint.text }}</span>
+        <!-- `C-319`：資料頁那顆叫「立即更新」（以前叫「重新同步」） -->
         <span v-if="importedSiteCount" class="text-muted text-xs">
-          · {{ importedSiteCount }} 頁以前加過了（不重複加入，要更新請到資料頁「重新同步」）
+          · {{ importedSiteCount }} 頁以前加過了（不重複加入，要更新請到那一份按「立即更新」）
         </span>
         <!-- 上百頁清單靠捲的找不到商品頁,給一個關鍵字篩選 -->
         <el-input
@@ -640,7 +644,10 @@
       v-if="step === 'fileBatch'"
       ref="fileBatchRef"
       :files="batchFiles"
-      :folders="folders"
+      :folders="allGroups"
+      :group-registry="groupRegistry"
+      :created-group-ids="createdGroupIds"
+      :sources-in-groups="existingSources"
       :quota="quota"
       @back="leaveFileBatch"
       @close="close"
@@ -655,24 +662,36 @@
         停在這裡的理由（`D-123`②）：一份本來會直接加入，停下來一定是因為下面有要他看的提醒。
         ⛔ 這一行不重講是哪幾件——每一件下面都有自己那句（截斷、空間、認字、同名），再列一次就是同一頁講兩遍。
       -->
-      <p v-if="stoppedFor.length" class="kb-preview-stopped">還沒加進去——先看下面的提醒，確定沒問題再按加入。</p>
+      <p v-if="stoppedFor.length" class="kb-preview-stopped">還沒加進去，先看下面的提醒。</p>
       <!--
         ── 結論先行（2026-09-03 `D-50` 簡化 2）────────────────────────────
-        整理完的第一眼必須是「AI 整理出幾條」，不是兩個要填的欄位。
-        名稱與所屬產品 **AI 都已經自動填好了**，所以收進這張卡的一行字、按「改」才展開；
-        原本它們排在最上面、還各帶一行說明，第一次匯入的人看到的是「還有作業要交」。
+        整理完的第一眼必須是「AI 整理出幾條」，不是要填的欄位。
         ⛔ 摘要卡從清單下方搬到這裡，順序就是它存在的理由——別再把任何欄位插到它前面。
+        `C-320`（2026-10-15 老闆拍板 `D-126`）：「所屬產品」「放進資料夾」兩格拿掉——上傳時不用選。
+        AI 認的商品名照舊送出去（AI 答題看的是它）；分組照檔名＋商品名自動挑，這裡只剩一行「放在『X』・改」。
+        什麼都比不到、AI 又認出一個商品時，那一行換成一題「這份在講哪個商品？」（見 KnowledgeImportGroupPick）。
       -->
       <div class="kb-preview-summary">
         <p class="kb-preview-summary__head">
           AI 整理出 <strong>{{ chunks.length }}</strong> 條知識<template v-if="includedCount !== chunks.length">，目前選了 {{ includedCount }} 條</template>
         </p>
         <p class="kb-preview-summary__meta">
-          名稱：{{ sourceMeta.name || '未命名資料' }}<template v-if="sourceMeta.type !== 'gsheet'"> ・ 所屬產品：{{ sourceMeta.productName || '（無）' }}</template>
+          名稱：{{ sourceMeta.name || '未命名資料' }}
           <button type="button" class="kb-preview-summary__edit" @click="metaOpen = !metaOpen">
             {{ metaOpen ? '收起' : '改' }}
           </button>
         </p>
+        <KnowledgeImportGroupPick
+          class="kb-preview-summary__meta"
+          :groups="allGroups"
+          :model-value="groupShown"
+          :new-name="groupNewName"
+          :new-ids="createdGroupIds"
+          :hints="groupHints"
+          :ask="groupAsk"
+          :busy="importing"
+          @update:model-value="pickGroupBeforeImport"
+        />
         <p v-if="truncated" class="kb-preview-summary__warn">
           原文超過 10 萬字已截斷，可能漏掉後半部。
         </p>
@@ -686,7 +705,7 @@
           class="kb-preview-summary__warn kb-preview-summary__warn--action"
           @click="showNumericOnly"
         >
-          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字（價格、期限最容易看錯）——
+          其中 <strong>{{ numericChunkCount }}</strong> 條含金額或數字——
           <span class="kb-preview-summary__warn-cta">只看這幾條 →</span>
         </button>
         <!-- 放不下時收到滿為止（`C-296`）：按之前就講會收幾條、幾條不收，按鈕跟著改口 -->
@@ -718,8 +737,10 @@
       </div>
 
       <!--
-        名稱／所屬產品：預設收起（見上面那張卡的說明）。
+        名稱：預設收起（見上面那張卡的說明）。
         ⚠️ 有同名警告時**強制展開**——那句提醒叫人「改個名字」，收起來的話畫面上沒有東西可按。
+        `C-320`：「所屬產品」「放進資料夾」兩格搬走了（見上面摘要卡那段註解）；
+        `C-134` 那個災情（東西都落在未分類、沒人記得拖）改由自動挑分組＋結果頁那一行「放在『X』・改」接住。
       -->
       <div v-if="metaEditorOpen" class="kb-meta-editor">
         <div class="kb-source-name-row">
@@ -732,47 +753,6 @@
             class="kb-source-name-input"
           />
         </div>
-
-        <!-- 產品名（P1-1）：AI 自動偵測預填、使用者可改。空 = 非單一產品資料（FAQ、公告等）。
-             欄位改成「可挑現成的」：手打是同一台被當成兩台的源頭（見 ProductNameField）。 -->
-        <div v-if="sourceMeta.type !== 'gsheet'" class="kb-source-name-row">
-          <span class="kb-source-name-label">所屬產品</span>
-          <KnowledgeProductNameField
-            v-model="sourceMeta.productName"
-            size="small"
-            placeholder="這份內容都在講同一個產品時才填（含品牌與型號）"
-            :show-hint="false"
-            class="kb-source-name-input"
-          />
-        </div>
-        <p v-if="sourceMeta.type !== 'gsheet'" class="kb-section-hint">
-          {{ sourceMeta.productName ? 'AI 判斷這份內容屬於這個產品，知識會自動標上產品名，客人指名問時才不會答錯台。不對可以直接改——同一台請從下拉挑現成的名字，自己重打一次容易被當成兩台。' : '點一下可以挑已經在用的產品；內容涵蓋多個產品或非產品內容（FAQ、公告）時留空即可。' }}
-        </p>
-
-        <!--
-          放進哪個資料夾（`C-134`）。以前沒有這個欄位，所有匯進來的東西一律落在
-          「未分類」，要靠人事後拖——實況是沒人記得拖，於是店家打開產品資料夾找說明書
-          看到「沒有」，就再傳一次。這個欄位是那個災情的根治。
-        -->
-        <div v-if="folders?.length" class="kb-source-name-row">
-          <span class="kb-source-name-label">放進資料夾</span>
-          <el-select
-            v-model="sourceMeta.folderId"
-            size="small"
-            clearable
-            placeholder="未分類"
-            class="kb-source-name-input"
-            @change="folderAutoPicked = false"
-          >
-            <el-option v-for="f in folders" :key="f.id" :label="f.name" :value="f.id" />
-          </el-select>
-        </div>
-        <p v-if="folders?.length" class="kb-section-hint">
-          <!-- 猜的一定要講出來：不講的話「東西被放進某個資料夾」等於沒有人同意過 -->
-          {{ folderAutoPicked
-            ? '依名稱幫你選好了資料夾，不對可以直接改。'
-            : '選了就直接歸到那個資料夾底下；留空會放在最上面的「未分類」，之後要自己拖進去。' }}
-        </p>
       </div>
 
       <el-alert
@@ -818,10 +798,11 @@
           ⛔ 這裡原本唯一的建議是「改個名字」——照做的人就製造出第三份重複
           （2026-09-04 MYFEEL 同一本說明書並存三份、45 張重複卡，就是這樣長出來的）。
           人真正想做的事幾乎都是「我重傳了，用新的蓋掉舊的」，所以主要出口改成
-          「更新這一份」；改名字降級成次要選項。
+          「更新原本那一份」；改名字降級成次要選項。
+          `C-319`：這顆、按鈕、一次好幾份那一列都叫「更新原本那一份」（以前「更新這一份」「更新既有資料」「換掉舊的」三種講法）。
+          `C-320` 減字：「你是要更新原本那一份，還是另外建一份？」拿掉——兩條路就是下面那顆按鈕和最後一行，再問一次是同一件事講兩遍。
         -->
         <div class="kb-dedup-body">
-          <p class="text-xs">你是要更新原本那一份，還是另外建一份？</p>
           <ul class="kb-dedup-list">
             <li v-for="m in dupMatches" :key="m.id" class="kb-dedup-row">
               <span>「{{ m.name }}」（{{ m.chunkCount }} 條，{{ relativeTime(m.updatedAtMs) || '未更新' }}）</span>
@@ -833,7 +814,7 @@
                 :disabled="replaceTarget?.id === m.id"
                 @click="chooseReplaceTarget(m)"
               >
-                {{ replaceTarget?.id === m.id ? '已選這份來更新' : '更新這一份' }}
+                {{ replaceTarget?.id === m.id ? '已選這一份' : '更新原本那一份' }}
               </el-button>
               <!-- 型別不同不給覆蓋（`C-139`）：講出「為什麼不能」，不要只是把按鈕藏起來 -->
               <span v-else class="text-xs text-muted">
@@ -842,7 +823,7 @@
             </li>
           </ul>
           <p class="text-xs">
-            或者在上方「資料名稱」改個名字，另外建一份新的資料（這個提醒就會消失）。
+            或在上面「資料名稱」改個名字，另外建一份。
           </p>
         </div>
       </el-alert>
@@ -862,12 +843,13 @@
           會更新「{{ replaceTarget.name }}」，不會多一份
         </template>
         <div class="kb-dedup-body">
-          <!-- 帶過去的那幾條不進回收桶（`D-125`①）：數字要扣掉，⛔ 不另外再講一句（下面那一塊就在講它們） -->
+          <!-- 帶過去的那幾條不進回收桶（`D-125`①）：數字要扣掉，⛔ 不另外再講一句（下面那一塊就在講它們）。
+               `C-320` 減字：「換成這次整理好的內容。同步設定留著；資料夾沒改就留在原地」拿掉——標題已經說「會更新」，
+               放哪一組上面那一行看得到 -->
           <p class="text-xs">
-            這份資料原本的 {{ Math.max(0, replaceTarget.chunkCount - keptItems.length) }} 條知識會移到回收桶（30 天內都救得回來），
-            換成這次整理好的內容。同步設定留著；資料夾沒改就留在原地。
+            這份資料原本的 {{ Math.max(0, replaceTarget.chunkCount - keptItems.length) }} 條知識會移到回收桶（30 天內都救得回來）。
           </p>
-          <el-button size="small" text @click="replaceTarget = null">改成另外建一份新的</el-button>
+          <el-button size="small" text @click="cancelReplace">改成另外建一份新的</el-button>
         </div>
       </el-alert>
 
@@ -1081,13 +1063,52 @@
       </div>
 
       <!--
-        存成哪一份（`D-123`②）：直接加入的話，名稱、產品、資料夾都沒有人看過——以前這些在預覽頁講，
-        「猜的一定要講出來」（見 folderAutoPicked）。⛔ 不加一顆「去看」：右下那顆就是打開這一份（關窗時父層會選中它）。
+        存成哪一份、放在哪一組（`D-123`②、`C-320`）：直接加入的話沒有人看過——「猜的一定要講出來」，而且要改得掉：
+        一行「放在『X』・改」，按「改」就地換一組（已經加進去了，換＝搬過去，跟資料頁拖進分組同一支）。
+        什麼都比不到、AI 又認出一個商品：這一行換成一題「這份在講哪個商品？」——預設的新分組已經替他建好放進去了，
+        點別的就搬過去（⛔ 不為這一題停下來：關著視窗等它自己加完的那種，停下來＝知識一直沒加進去）。
+        ⛔ 不再講「產品：○○」：分組就是商品，兩個名字並排只會讓人以為要對兩次。
+        ⛔ 不加一顆「去看」：右下那顆就是打開這一份（關窗時父層會選中它）。
       -->
-      <p v-if="result.sourceId" class="kb-result-saved">
-        存成「<strong>{{ sourceMeta.name.trim() || '未命名資料' }}</strong>」<template v-if="savedProductName">・產品：{{ savedProductName }}</template><template v-if="savedFolderName">・資料夾：{{ savedFolderName }}</template>
-        <span v-if="autoImported && (savedProductName || (folderAutoPicked && savedFolderName))" class="text-muted">（產品、資料夾是 AI 猜的，打開這一份就能改）</span>
-      </p>
+      <div v-if="result.sourceId" class="kb-result-saved">
+        <span>存成「<strong>{{ sourceMeta.name.trim() || '未命名資料' }}</strong>」{{ savedGroup !== undefined && !groupAsk ? '，' : '' }}</span>
+        <KnowledgeImportGroupPick
+          v-if="savedGroup !== undefined"
+          :groups="allGroups"
+          :model-value="savedGroup"
+          :new-name="groupNewName"
+          :new-ids="createdGroupIds"
+          :hints="groupHints"
+          :ask="groupAsk"
+          :moving="groupMoving"
+          @update:model-value="moveSavedTo"
+        />
+      </div>
+      <!--
+        搬進商品分組之後伺服器補了什麼（`/code-review` ②⑬）：補好了講一句；同組有好幾個商品名＝⛔ 不替他猜，
+        列出那幾個給他點（點了＝存商品名＋重新學這一份）。都不是的話指去那一份的「⋯ → AI 認的商品名」自己填
+      -->
+      <p v-if="groupFill?.kind === 'filled'" class="kb-group-fill">{{ groupFillFilledText(groupFill) }}</p>
+      <div v-else-if="groupFill?.kind === 'ask'" class="kb-group-fill is-ask">
+        <p class="kb-group-fill__q">這一組裡有好幾個商品名，這份是哪一個？</p>
+        <div class="kb-group-fill__names">
+          <el-button
+            v-for="n in groupFill.names"
+            :key="n"
+            size="small"
+            plain
+            :loading="productPicking === n"
+            :disabled="!!productPicking && productPicking !== n"
+            @click="pickGroupProductName(n)"
+          >
+            {{ n }}
+          </el-button>
+        </div>
+        <p class="kb-group-fill__more">都不是的話，打開這一份，按「⋯ → AI 認的商品名」自己填。</p>
+      </div>
+      <!-- 搬是搬過去了、補商品名那一步沒成（groupFill.error）：⛔ 不講成搬失敗 -->
+      <p v-else-if="groupFill?.kind === 'failed'" class="kb-group-fill is-warn">{{ GROUP_FILL_FAILED_TEXT.replace('那一份', '這一份') }}</p>
+      <p v-if="productPicked" class="kb-group-fill">{{ productPicked }}</p>
 
       <!--
         AI 整理成哪幾條（`D-124` 新手走查）：以前這裡只有「3／3／0」三個數字，要再按「打開這一份」才看得到那 3 條是什麼——
@@ -1099,7 +1120,8 @@
         <ul class="kb-result-titles__list">
           <li v-for="(t, i) in resultTitles.slice(0, 5)" :key="i">{{ t }}</li>
         </ul>
-        <p v-if="resultTitles.length > 5" class="kb-result-titles__more">還有 {{ resultTitles.length - 5 }} 條，按「打開這一份」看全部、逐條改</p>
+        <!-- `C-320` 減字：「按『打開這一份』看全部、逐條改」拿掉——那顆按鈕就在右下角 -->
+        <p v-if="resultTitles.length > 5" class="kb-result-titles__more">還有 {{ resultTitles.length - 5 }} 條</p>
       </div>
 
       <!--
@@ -1117,8 +1139,9 @@
 
       <!-- 原檔沒留成要講（`C-296`③）：不講的話，之後找「下載原檔」才發現沒有，還以為是系統壞了 -->
       <!-- ⛔ 不猜原因：沒留成的路不只一條（放太久暫存被清、存檔那一下失敗），講錯原因比不講還誤導 -->
+      <!-- `C-319`：補原檔的路改講資料頁那顆「上傳新版」（以前叫人「再傳一次、選擇換掉原本那一份」，要先撞一次同名才問得到） -->
       <p v-if="result.originalKept === false" class="kb-quota-line is-full">
-        這份的原檔這次沒有留下來；知識照常可以用。要能「下載原檔」，再傳一次這份、選擇換掉原本那一份。
+        這份的原檔這次沒有留下來；知識照常可以用。要能「下載原檔」，在那一份按「上傳新版」再傳一次。
       </p>
 
       <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
@@ -1142,10 +1165,9 @@
             <template v-if="aiEnabled">這 {{ result.indexed }} 條，客人問到就會用上</template>
             <template v-else>知識進庫了，但客人現在還聽不到</template>
           </p>
-          <p class="kb-handoff__why">
-            <template v-if="aiEnabled">AI 客服是開啟的。想確認 AI 真的學會了，在下面問它一題試試。</template>
-            <template v-else><strong>AI 客服還沒開啟</strong>，所以這些內容目前不會用在回覆客人上。開啟之後才會生效。</template>
-          </p>
+          <!-- `C-320` 減字：開著的時候不再補一句「在下面問它一題試試」（那顆按鈕就在下面）；
+               關著的時候只講原因，「不會用在回覆客人上、開了才生效」是標題與「前往開啟」已經在講的 -->
+          <p v-if="!aiEnabled" class="kb-handoff__why"><strong>AI 客服還沒開啟</strong>。</p>
         </div>
         <el-button v-if="!aiEnabled" size="small" type="primary" @click="goEnableAi">前往開啟</el-button>
       </div>
@@ -1211,9 +1233,9 @@
 
       <div v-if="result.failed > 0" class="kb-result-failed-list">
         <div class="kb-failed-head">
+          <!-- `C-320` 減字：「大多是暫時性問題，就在這裡按重試即可」拿掉——每一列自己講原因、重試鈕就在旁邊 -->
           <p class="kb-section-hint">
-            以下知識已經建立，但 AI 沒有學成功（客人問到相關問題時會找不到它們）。
-            大多是暫時性問題，<strong>就在這裡按重試即可</strong>。
+            這幾條 AI 還沒學起來（客人問到會找不到）。
           </p>
           <el-button
             v-if="failedItems.some(i => plainFailure(i.failureReason).retryable)"
@@ -1269,7 +1291,19 @@ import {
   knowledgeFileKind,
   unsupportedFileHint,
 } from '~~/shared/knowledge-file-types'
-import { pickFolderForSource } from '~~/shared/knowledge-folder-match'
+import {
+  autoImportGroup,
+  createImportGroupRegistry,
+  GROUP_FILL_FAILED_TEXT,
+  type GroupFillOutcome,
+  groupFillFilledText,
+  type ImportGroup,
+  type ImportGroupChoice,
+  moveSurelyRejected,
+  newGroupName,
+  parseGroupFill,
+  writeMayHaveLanded,
+} from '~~/shared/knowledge-import-group'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
@@ -1285,14 +1319,15 @@ const props = defineProps<{
   /**
    * 父層的完整資料清單:同名警告要比對「全部」既有名稱——
    * 只比對 preview 回傳的(原始名稱的)同名清單,會漏掉「改名撞進另一個既有資料」的情況。
+   * folderId（`C-320`）：「更新原本那一份」時那一份現在放哪一組（畫面照實講）；改放別組時也拿來看那一組還有沒有別份。
    */
-  existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string }>
+  existingSources?: Array<{ id: string; name: string; chunkCount: number; updatedAtMs: number; type?: string; folderId?: string | null }>
   /**
-   * 父層的資料夾清單：匯入時要能選「放進哪個資料夾」。
-   * 沒有這個欄位的話，每一份匯進來的東西都掉在「未分類」，要靠人事後拖——
+   * 父層的分組清單（`C-320` 起畫面上叫「分組」，資料裡還是 folders；general＝「通用」那一組）：
+   * 加入時照檔名＋AI 認的商品自動挑一組。沒有這個的話，每一份匯進來的東西都掉在「未分類」，要靠人事後拖——
    * 而人不會記得（`C-134`：MYFEEL 的說明書因此躺在未分類，店家去產品資料夾找說「沒有」）。
    */
-  folders?: Array<{ id: string; name: string }>
+  folders?: Array<{ id: string; name: string; general?: boolean }>
   /**
    * 開窗時要先填進去的東西（`D-85` / `C-221`）：開通精靈那顆「把網站整理成知識卡」
    * 會帶著商家的官網網址過來，⛔ 落在一個空白的貼上框等於叫他再打一次字。
@@ -1847,20 +1882,76 @@ const sourceMeta = ref({
   type: '' as ImportMode | '',
   name: '',
   url: '',
-  /** 所屬產品名：AI 偵測預填、使用者可改；'' = 非單一產品資料 */
+  /**
+   * AI 認的商品名；'' = 非單一產品資料。`C-320` 起畫面上不再給改（「所屬產品」那一格拿掉了），照原樣送出去——
+   * ⛔ 不可以換成分組的名字：AI 答題看的是它，分組只是放在哪裡
+   */
   productName: '',
   /** 網址來源的內容指紋（存成 source.appliedContentHash＝重新同步的比對基準） */
   contentHash: '',
-  /** 放進哪個資料夾；null = 未分類。依名稱自動預選（`C-134`），使用者可改 */
-  folderId: null as string | null,
 })
 
+// ── 放在哪一組（`C-320`，2026-10-15 老闆拍板 `D-126`：上傳時不用選）──────────────
 /**
- * 資料夾是「照名字猜的」還是使用者自己選的。
- * 猜的要在畫面上講出來——沒講的話，東西被放進某個資料夾這件事等於沒人同意過
- * （而放錯資料夾比留在未分類更難查）。使用者一動手就不再是猜的。
+ * 這次開窗替他建的分組（「新分組『X』」）：頁面的分組清單要等關窗才重讀，在那之前第二份要比得到它、
+ * 選單上要看得到它；他改放別組、又沒有別份在用時，替他刪掉（規則在 shared/knowledge-import-group 的 registry）。
  */
-const folderAutoPicked = ref(false)
+const localGroups = ref<ImportGroup[]>([])
+const removedGroupIds = ref<string[]>([])
+/** 這次標成「通用」的既有分組（手建的「通用」沒標，見 registry.ensure 的 general；`/code-review` ⑫） */
+const markedGeneralIds = ref<string[]>([])
+const groupRegistry = createImportGroupRegistry(
+  {
+    // general：選了「通用」、還沒有那一組（伺服器 `C-320` 起收這一格）
+    create: (name, { general }) => apiFetch<ImportGroup>('/api/ai/folders', { method: 'POST', body: { name, ...(general ? { general: true } : {}) } }),
+    remove: id => apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    markGeneral: id => apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'PUT', body: { general: true } }),
+  },
+  {
+    onCreated: (g) => { localGroups.value = [...localGroups.value, g] },
+    onRemoved: (id) => {
+      localGroups.value = localGroups.value.filter(g => g.id !== id)
+      removedGroupIds.value = [...removedGroupIds.value, id]
+    },
+    onMarkedGeneral: (g) => { markedGeneralIds.value = [...markedGeneralIds.value, g.id] },
+  },
+)
+/** 頁面的分組＋這次建的（同一組只算一次），扣掉這次刪掉的、補上這次標成通用的（頁面清單關窗才重讀） */
+const allGroups = computed<ImportGroup[]>(() => {
+  const removed = new Set(removedGroupIds.value)
+  const marked = new Set(markedGeneralIds.value)
+  const fromPage = (props.folders ?? []).filter(f => !removed.has(f.id)).map(f => (marked.has(f.id) ? { ...f, general: true } : f))
+  const seen = new Set(fromPage.map(f => f.id))
+  return [...fromPage, ...localGroups.value.filter(g => !seen.has(g.id))]
+})
+const createdGroupIds = computed(() => localGroups.value.map(g => g.id))
+/** 系統自動挑的那一組（applyPreviewResult 算一次；「改成另外建一份」時退回這一組） */
+const autoGroup = ref<{ choice: ImportGroupChoice, ask: boolean }>({ choice: { kind: 'none' }, ask: false })
+/** 送出去要放哪一組 */
+const groupChoice = ref<ImportGroupChoice>({ kind: 'none' })
+/**
+ * 要不要問「這份在講哪個商品？」：什麼都比不到、AI 又認出一個商品才問（停下來的那一頁問；直接加入的在結果頁問）。
+ * 他選過一次就收成一行「放在『X』・改」。
+ */
+const groupAsk = ref(false)
+/** 他自己選過（不是系統挑的）：「更新原本那一份」時，只有他動過才把分組帶過去（沒動＝那一份原本放哪就在哪） */
+const groupTouched = ref(false)
+/** 「新分組」那個選項用的名字＝AI 認的商品名 */
+const groupNewName = computed(() => newGroupName(sourceMeta.value.productName))
+const groupHints = computed(() => ({ sourceName: sourceMeta.value.name, productName: sourceMeta.value.productName }))
+/**
+ * 真的存進去的那一組（結果頁那一行講這個；按「改」搬過去之後跟著換）。
+ * undefined＝還沒加；null＝「更新原本那一份」而他沒動分組、又不知道那一份現在放哪（那一行講「分組不變」）
+ */
+const savedGroup = ref<ImportGroupChoice | null | undefined>(undefined)
+const groupMoving = ref(false)
+/**
+ * 搬進商品分組之後伺服器補了什麼（`PUT` 回的 groupFill，`/code-review` ②⑬）：補好了講一句；
+ * 同組有好幾個商品名＝不猜，列出來給他點（點了＝存商品名＋重新學這一份，同資料頁「AI 認的商品名」那一格）
+ */
+const groupFill = ref<GroupFillOutcome | null>(null)
+const productPicking = ref('')
+const productPicked = ref('')
 
 /**
  * 「更新既有那一份」的目標（`C-135`）。
@@ -1871,10 +1962,153 @@ const folderAutoPicked = ref(false)
 const replaceTarget = ref<{ id: string; name: string; chunkCount: number; quotaChunkCount?: number } | null>(null)
 
 /**
+ * 某一份資料現在放在哪一組（從頁面的資料清單看）：「更新原本那一份」而他沒動分組時，畫面照實講「放在『X』」。
+ * 清單上找不到那一份＝不知道（null，畫面講「分組不變」）——⛔ 不猜。
+ */
+function currentGroupOf(sourceId: string): ImportGroupChoice | null {
+  const s = (props.existingSources ?? []).find(x => x.id === sourceId)
+  if (!s || s.folderId === undefined) return null
+  if (!s.folderId) return { kind: 'none' }
+  return allGroups.value.some(g => g.id === s.folderId) ? { kind: 'folder', id: s.folderId } : null
+}
+/**
+ * 停下來那一頁「放在『X』」講哪一組：「更新原本那一份」而他沒動 → 那一份原本放哪（分組不帶過去，見 runImport）；
+ * 其餘＝這次要送的那一組。
+ */
+const groupShown = computed<ImportGroupChoice | null>(() =>
+  replaceTarget.value && !groupTouched.value ? currentGroupOf(replaceTarget.value.id) : groupChoice.value)
+
+/** 加入之前改（停下來那一頁）：只改要送的值，還沒有東西要搬 */
+function pickGroupBeforeImport(c: ImportGroupChoice) {
+  groupChoice.value = c
+  groupTouched.value = true
+  groupAsk.value = false
+}
+
+/**
+ * 決定要送哪一組（runImport 用）：新分組這時才建——同一個名字這次開窗只建一次（見 registry）。
+ * 建不成（沒有建分組的權限、網路）：這一份照樣加進去、先不放分組，結果頁那一題還在，他可以再點一次。
+ */
+async function folderIdForImport(): Promise<{ folderId: string | null, createdNow: boolean }> {
+  const c = groupChoice.value
+  if (c.kind === 'folder') return { folderId: allGroups.value.some(g => g.id === c.id) ? c.id : null, createdNow: false }
+  if (c.kind !== 'new') return { folderId: null, createdNow: false }
+  try {
+    const known = new Set(allGroups.value.map(g => g.id))
+    const g = await groupRegistry.ensure(c.name, allGroups.value, { general: c.general })
+    return { folderId: g.id, createdNow: !known.has(g.id) }
+  }
+  catch (err) {
+    const why = apiErrorText(err, '')
+    showToast(`沒建成分組「${c.name}」${why ? `：${why}` : ''}，這份先不放分組`, 'warning')
+    return { folderId: null, createdNow: false }
+  }
+}
+
+/**
+ * 那一份現在真的放在哪一組（讀一次伺服器）：「更新原本那一份」改了分組、加入的回應又沒講時用（`/code-review` ⑨）。
+ * 讀不到回 undefined＝不知道（畫面講「分組不變」，⛔ 不照送出去的值猜）
+ */
+async function readSourceFolderId(sourceId: string): Promise<string | null | undefined> {
+  try {
+    const r = await apiFetch<{ source?: { folderId?: string | null } }>(`/api/ai/sources/${encodeURIComponent(sourceId)}`)
+    return r?.source && 'folderId' in r.source ? (r.source.folderId ?? null) : undefined
+  }
+  catch {
+    return undefined
+  }
+}
+
+/** 那一組裡除了這一份，清單上還看得到別份嗎（替他刪掉一個「這次建的」分組之前要先看） */
+function groupUsedByOthers(folderId: string, exceptSourceId: string): boolean {
+  return (props.existingSources ?? []).some(s => s.folderId === folderId && s.id !== exceptSourceId)
+}
+
+/**
+ * 結果頁按「改」／點那一題的選項：已經加進去了，換＝搬過去（跟資料頁把一份拖進分組同一支 `PUT /api/ai/sources/:id`）。
+ * 原本那一組要是這次替他建的、又空了，順手刪掉（見 registry.release）——⛔ 不留一個他沒要過的空分組。
+ */
+async function moveSavedTo(c: ImportGroupChoice) {
+  const sourceId = result.value?.sourceId
+  if (!sourceId || groupMoving.value) return
+  const prev = savedGroup.value
+  const prevId = prev && prev.kind === 'folder' ? prev.id : null
+  // 搬進商品分組時伺服器可能要補商品名、當場重新學這一份（最久約 9 秒）：那一行一直顯示「搬過去中⋯」
+  groupMoving.value = true
+  let target: string | null = null
+  let created = false
+  try {
+    if (c.kind === 'new') {
+      const known = new Set(allGroups.value.map(g => g.id))
+      const g = await groupRegistry.ensure(c.name, allGroups.value, { general: c.general })
+      target = g.id
+      created = !known.has(g.id) // 這一下才建的（先前就有、別份在用的不算）
+    }
+    else if (c.kind === 'folder') target = c.id
+    if (target === prevId && prev) {
+      groupAsk.value = false
+      return
+    }
+    if (target) groupRegistry.hold(target)
+    let res: { folderId?: string | null, groupFill?: unknown } | null
+    try {
+      res = await apiFetch<{ folderId?: string | null, groupFill?: unknown }>(
+        `/api/ai/sources/${encodeURIComponent(sourceId)}`,
+        { method: 'PUT', body: { folderId: target } },
+      )
+    }
+    finally {
+      if (target) groupRegistry.unhold(target)
+    }
+    // 那一行照伺服器回的那一份講（回的就是改好的資料）；舊伺服器沒回 folderId 才用送出去的
+    const actual = res && 'folderId' in res ? (res.folderId ?? null) : target
+    if (actual) groupRegistry.use(actual)
+    if (created && target && actual !== target) void groupRegistry.discardIfUnused(target)
+    if (prevId && prevId !== actual) void groupRegistry.release(prevId, groupUsedByOthers(prevId, sourceId))
+    savedGroup.value = actual ? { kind: 'folder', id: actual } : { kind: 'none' }
+    groupAsk.value = false
+    groupFill.value = parseGroupFill(res)
+    productPicked.value = ''
+  }
+  catch (err) {
+    // 剛替他建好、卻沒搬成：只有**確定沒搬進去**（伺服器 4xx 拒絕）才收掉那一組（`/code-review` ③）——
+    // 5xx／逾時可能已經搬了、是後面補商品名才出錯，刪了那一組會把他這一份又移出分組
+    if (created && target && moveSurelyRejected(apiErrorStatus(err))) void groupRegistry.discardIfUnused(target)
+    showToast(apiErrorText(err, '沒有改成，請再試一次'), 'error')
+  }
+  finally {
+    groupMoving.value = false
+  }
+}
+
+/**
+ * 同組有好幾個商品名、他點了其中一個（`/code-review` ②⑬）：存商品名＋重新學這一份——跟資料頁「⋯ → AI 認的商品名」
+ * 同兩支（`PUT /api/ai/sources/:id { productName }`、`POST /api/ai/sources/:id/reindex`），商品名要進到每一條才生效。
+ */
+async function pickGroupProductName(name: string) {
+  const sourceId = result.value?.sourceId
+  if (!sourceId || productPicking.value) return
+  productPicking.value = name
+  try {
+    await apiFetch(`/api/ai/sources/${encodeURIComponent(sourceId)}`, { method: 'PUT', body: { productName: name } })
+    const res = await apiFetch<{ indexed: number, failed: number }>(`/api/ai/sources/${encodeURIComponent(sourceId)}/reindex`, { method: 'POST' })
+    productPicked.value = groupFillFilledText({ productName: name, failed: Number(res?.failed ?? 0) }).replace('補成', '改成')
+    groupFill.value = null
+    invalidateProductNames()
+  }
+  catch (err) {
+    showToast(apiErrorText(err, '商品名沒有存成，請再試一次'), 'error')
+  }
+  finally {
+    productPicking.value = ''
+  }
+}
+
+/**
  * 換掉的那一份裡**他親手改過的**那幾條（`D-125`① 拍板 A）。
  *
  * 為什麼要有：以前換新版會把他改過的那幾條跟著舊的一起丟進回收桶、一句話都沒講——說明裡卻一再寫
- * 「你親手改過的一律保留」。現在只要選了要換哪一份（「換新版」、「重新整理，換掉那一份」、「更新這一份」、
+ * 「你親手改過的一律保留」。現在只要選了要換哪一份（「上傳新版」、「重新整理，更新原本那一份」、「更新原本那一份」、
  * 接回這樣的一份整理），就去讀那一份、挑出改過的（不算總表），**一律停在預覽問他**（見 previewStopReasons 的 edited），
  * 預設全勾＝帶到新版；沒勾的照新版、舊的那條進回收桶。勾的送 `source.keepEditedChunkIds`。
  * ⚠️ 讀不到（網路、伺服器）也要停：不知道有沒有改過的，就不能替他決定把它們丟掉。那一份已經不在（404）＝沒東西可帶。
@@ -2077,9 +2311,6 @@ const siteProductNames = computed(() => {
       isNew: knownProductNamesReady.value && !knownProductNames.value.has(name),
     }))
 })
-/** 有頁面成功、卻一個產品名都沒認出來時不顯示這一區(FAQ、公告類的網站本來就沒有) */
-const siteProductsUnnamed = computed(() =>
-  sitePages.value.filter(p => p.status === 'done' && !p.productName).length)
 /**
  * 可勾的頁 = **目前顯示中**且未匯入過、本輪未完成的。全選作用在顯示中的頁——
  * 「點 /projects 分組再全選」正是大站挑商品頁的主要動線;已勾但被篩掉的頁不會被取消。
@@ -2367,12 +2598,15 @@ async function runSiteImport() {
               url: page.url,
               productName: res.suggestedProductName ?? '',
               contentHash: res.contentHash ?? '',
-              // 整站匯入沒有逐頁預覽＝更沒有人會事後去拖資料夾（`C-134`）。
-              // 猜不到就是 null（未分類），跟單筆匯入同一把尺。
-              folderId: pickFolderForSource(props.folders ?? [], {
-                sourceName: page.title || res.sourceName || page.url,
-                productName: res.suggestedProductName ?? '',
-              })?.folderId ?? null,
+              // 整站匯入沒有逐頁預覽＝更沒有人會事後去拖資料夾（`C-134`）。跟單份同一套規則（`C-320`，含沒認出商品的放「通用」），
+              // 只差⛔ 不開新分組：一次幾十頁、沒有人逐頁看，自己開幾十個分組比留著不放更難收拾
+              folderId: (() => {
+                const c = autoImportGroup(allGroups.value, {
+                  sourceName: page.title || res.sourceName || page.url,
+                  productName: res.suggestedProductName ?? '',
+                }, { allowNew: false }).choice
+                return c.kind === 'folder' ? c.id : null
+              })(),
             },
             // 冪等鍵（C-46）:單頁逾時重試不會生第二個來源
             importId: created.jobId,
@@ -2556,12 +2790,13 @@ const quotaSkipped = ref(0)
 /** 沒收的那幾條怎麼補：照這一份是什麼來源講（結果頁那一句的後半） */
 const quotaRefillHint = computed(() => {
   switch (sourceMeta.value.type) {
-    // ⚠️ 不寫死按鈕名：內容一模一樣時出現的是「重新整理，換掉那一份」，網頁改過了出現的是同名的「更新這一份」，兩條都是換掉原本那一份
+    // `C-319`：內容一模一樣時出現的是「重新整理，更新原本那一份」，改過了出現的是同名的「更新原本那一份」——兩條同一句話。
+    // 檔案改講資料頁那顆「上傳新版」：不用先撞一次同名才問得到
     // ⛔ 不寫「每小時」（`C-308`④）：換掉的是既有那一份的話，同步頻率照那一份原本的設定
     case 'gsheet': return '表格同步時會自動補上，不用重新加入。'
-    case 'url': return '再貼一次這個網址、選擇換掉原本那一份，就能補齊。'
-    case 'text': return '再貼一次這段文字、選擇換掉原本那一份，就能補齊。'
-    default: return '再傳一次這份、選擇換掉原本那一份，就能補齊。'
+    case 'url': return '再貼一次這個網址、選「更新原本那一份」，就能補齊。'
+    case 'text': return '再貼一次這段文字、選「更新原本那一份」，就能補齊。'
+    default: return '在那一份按「上傳新版」再傳一次，就能補齊。'
   }
 })
 /** 只有看得到方案的人（管理員，`G-103`）才給「看方案」那條路 */
@@ -2575,15 +2810,28 @@ const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceI
 const importButtonLabel = computed(() => {
   if (overQuotaBy.value > 0) {
     if (fitChunkCount.value === 0) return '空間已經滿了'
-    return replaceTarget.value ? `更新既有資料（先收前 ${fitChunkCount.value} 條）` : `先收前 ${fitChunkCount.value} 條`
+    // `C-319`：跟同名提醒那顆、一次好幾份那一列同一句「更新原本那一份」（以前叫「更新既有資料」）
+    return replaceTarget.value ? `更新原本那一份（先收前 ${fitChunkCount.value} 條）` : `先收前 ${fitChunkCount.value} 條`
   }
-  return replaceTarget.value ? `更新既有資料（${importTotalLabel.value}）` : `加入 ${importTotalLabel.value}`
+  return replaceTarget.value ? `更新原本那一份（${importTotalLabel.value}）` : `加入 ${importTotalLabel.value}`
 })
 
-/** 選定要覆蓋的既有資料；名稱同步過去，免得更新完列表上出現兩個不同名字指同一份東西 */
+/**
+ * 選定要覆蓋的既有資料；名稱同步過去，免得更新完列表上出現兩個不同名字指同一份東西。
+ * 分組（`C-320`）：更新＝那一份原本放哪就在哪，不問「這份在講哪個商品」、不替他開新分組；他自己改了才帶過去
+ */
 function chooseReplaceTarget(m: { id: string; name: string; chunkCount: number; quotaChunkCount?: number }) {
   replaceTarget.value = { id: m.id, name: m.name, chunkCount: m.chunkCount, quotaChunkCount: m.quotaChunkCount }
   sourceMeta.value.name = m.name
+  groupAsk.value = false
+  groupTouched.value = false
+}
+/** 「改成另外建一份新的」：分組退回系統照這一份自動挑的那一組（連同要不要問那一題） */
+function cancelReplace() {
+  replaceTarget.value = null
+  groupChoice.value = autoGroup.value.choice
+  groupAsk.value = autoGroup.value.ask
+  groupTouched.value = false
 }
 
 /** 「這份已經匯過了」→ 關窗並跳去那一份（沿用 imported 訊號，父層會刷新列表並選中它） */
@@ -2607,7 +2855,7 @@ function redoReplacingDuplicate() {
   void runPreview()
 }
 
-/** 名稱／所屬產品欄位的展開（`D-50` 簡化 2：預設收起，結論先行）。判斷見 metaEditorOpen */
+/** 名稱欄位的展開（`D-50` 簡化 2：預設收起，結論先行；`C-320` 起只剩名稱）。判斷見 metaEditorOpen */
 const metaOpen = ref(false)
 
 /**
@@ -2682,7 +2930,7 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 }
 
 /**
- * 名稱／所屬產品欄位要不要展開。
+ * 名稱欄位要不要展開。
  * ⚠️ 宣告在 dupMatches **之後**：這個檔案有過 TDZ 事故（watch 註冊當下就會讀一次 getter，
  *    整個元件 setup 直接炸掉、知識庫變全站錯誤頁），所以凡是讀別人 ref 的衍生值一律排在後面。
  * 有同名警告時強制展開——那句提醒叫人「改個名字」，收起來的話畫面上沒有東西可按。
@@ -3092,23 +3340,27 @@ function applyPreviewResult(res: PreviewResult, srcMode: ImportMode, replacing: 
   existingMatches.value = res.existingMatches ?? []
   replaceTarget.value = null // 新的一份＝回到「建立新資料」，別把上一輪選的覆蓋目標帶過來
   /**
-   * 資料夾預選（`C-134`）：拿檔名＋AI 判出來的產品名去比現有資料夾。
+   * 分組自動挑（`C-134` 起、`C-320` 改成「上傳時不用選」）：拿檔名＋AI 判出來的產品名去比現有分組。
    * ⛔ 比對必須帶產品名——實測「KIESLECT 小耳記 說明書.pdf」單靠檔名比不到
    * 「Kieselect 小耳記 AI NotePods 10S」這個資料夾（資料夾名字本身還打錯字）。
-   * 猜不出來就是 null（未分類），不硬塞：放錯資料夾比留在未分類更難查。
+   * 比不到、又認出商品＝預設新分組並問一題；沒認出商品＝放「通用」（規則在 shared/knowledge-import-group）。
    */
-  const guessed = pickFolderForSource(props.folders ?? [], {
+  autoGroup.value = autoImportGroup(allGroups.value, {
     sourceName: res.sourceName,
     productName: res.suggestedProductName ?? '',
   })
-  folderAutoPicked.value = Boolean(guessed)
+  groupChoice.value = autoGroup.value.choice
+  groupAsk.value = autoGroup.value.ask
+  groupTouched.value = false
+  savedGroup.value = undefined
+  groupFill.value = null
+  productPicked.value = ''
   sourceMeta.value = {
     type: srcMode,
     name: res.sourceName,
     url: res.sourceUrl,
     productName: res.suggestedProductName ?? '',
     contentHash: res.contentHash ?? '',
-    folderId: guessed?.folderId ?? null,
   }
   // 「重新整理，換掉那一份」：直接選定要更新的那一份（名稱跟著換成它的，見 chooseReplaceTarget）。
   // 不含草稿的張數只有同名清單裡有（伺服器算好的）；名字對不上時退用總張數——多算一點騰出的空間，最壞是伺服器擋下來
@@ -3296,13 +3548,13 @@ function replaceWithFile(file: File, target: { id: string, name: string, chunkCo
   // ⚠️ 守門要連「畫面不等了、背景還在跑」的那一份一起看（2026-10-13 `/code-review`）：
   //    以前只看 previewing，背景那份的記號會被新的這份蓋掉——整理完（錢已經花了）卻沒人把它加進去
   if (previewing.value || batchRunning.value || siteImporting.value || previewStillRunning.value) {
-    showToast('「加入知識」裡還有一份正在整理（好了會自己加進去），等它好了再換新版', 'warning')
+    showToast('「加入知識」裡還有一份正在整理（好了會自己加進去），等它好了再上傳新版', 'warning')
     return
   }
   // 整理好、停在「加入之前先看一下」等他核對的那一份（照片認字、沒讀完、空間不夠、同名）：
   // ⛔ 不可以直接清掉——那是付過錢、還沒人看過的結果，以前按了換新版就默默不見。視窗已經開著，他看得到是哪一份
   if (step.value === 'preview' && chunks.value.length > 0) {
-    showToast('「加入知識」裡有一份整理好、還在等你看，先決定要不要加入，再換新版', 'warning')
+    showToast('「加入知識」裡有一份整理好、還在等你看，先決定要不要加入，再上傳新版', 'warning')
     return
   }
   resetAll()
@@ -3466,15 +3718,7 @@ async function runVerify() {
   }
 }
 
-/** 結果頁「存成哪一份」的產品名。自動換掉原本那一份時沒有帶過去（見 runImport），舊的標什麼就是什麼，不講 */
-const savedProductName = computed(() =>
-  sourceMeta.value.type === 'gsheet' || (replaceTarget.value && autoImported.value) ? '' : sourceMeta.value.productName.trim())
-/** 結果頁「存成哪一份」的資料夾。更新既有那一份、資料夾又是猜的：沒有帶過去（舊的放哪就在哪），不講 */
-const savedFolderName = computed(() => {
-  if (replaceTarget.value && folderAutoPicked.value) return ''
-  const id = sourceMeta.value.folderId
-  return id ? (props.folders ?? []).find(f => f.id === id)?.name ?? '' : ''
-})
+// 結果頁以前還講「產品：○○・資料夾：○○（是 AI 猜的）」——`C-320` 起只剩「放在『X』・改」（見結果頁那段註解）
 
 // ── 「我們有賣什麼」總表：加完才問（`D-123`②） ─────────────────
 /**
@@ -3623,7 +3867,7 @@ async function runImport() {
     return showToast(
       overQuotaBy.value > 0
         ? '知識空間已經滿了：先刪掉用不到的知識，或升級方案'
-        : includedCount.value > 0 ? '新版的每一條都跟你改過、要帶過去的同名——原本那一份不用換' : '請至少選一條',
+        : includedCount.value > 0 ? '新版的每一條都跟你改過、要帶過去的同名——原本那一份不用更新' : '請至少選一條',
       'error',
     )
   }
@@ -3633,11 +3877,26 @@ async function runImport() {
 
   importing.value = true
   const skippedNow = overQuotaBy.value
+  /** 這一下才替他建的新分組（加入失敗時要收掉，`/code-review` ⑥） */
+  let createdGroupId: string | null = null
+  let heldGroupId: string | null = null
   try {
     const ov = overviewCard.value
     const overviewPayload = ov && overviewFits.value
       ? { title: ov.title.trim(), content: ov.content.trim(), tags: ov.tags, questions: ov.questions ?? [] }
       : null
+    // 「更新原本那一份」而他沒動分組：不帶，那一份原本放哪就留在哪。
+    // ⛔ 帶了的話伺服器照收，舊資料會被默默搬到猜的那一組（2026-10-12 code review）
+    const keepOldGroup = !!replaceTarget.value && !groupTouched.value
+    // 新分組這時才建（`C-320`）：建不成就先不放分組，照樣加進去（見 folderIdForImport）
+    const picked = keepOldGroup ? undefined : await folderIdForImport()
+    const sentFolderId = picked?.folderId
+    if (picked?.createdNow) createdGroupId = picked.folderId
+    // 請求在路上的這段時間，別人（一次好幾份那幾列）不可以把這一組當空的刪掉（見 registry.hold）
+    if (sentFolderId) {
+      heldGroupId = sentFolderId
+      groupRegistry.hold(sentFolderId)
+    }
 
     const res = await apiFetch<typeof result.value>('/api/ai/knowledge/bulk-create', {
       method: 'POST',
@@ -3646,13 +3905,12 @@ async function runImport() {
           type: sourceMeta.value.type,
           name: sourceMeta.value.name.trim() || '未命名資料',
           url: sourceMeta.value.url,
-          // 自動加入（沒經過預覽）又是換掉原本那一份：產品名不帶＝伺服器不改，舊的那份原本標的留著。
-          // ⛔ 帶了 AI 猜的名字，伺服器照收——沒人看過就把舊資料的產品改掉（同一次好幾份「換掉舊的」那條，2026-10-12 code review）
-          productName: replaceTarget.value && autoImporting.value ? '' : sourceMeta.value.productName.trim(),
+          // 換掉原本那一份：產品名不帶＝伺服器不改，舊的那份原本標的留著。
+          // ⛔ 帶了 AI 猜的名字，伺服器照收——沒人看過就把舊資料的產品改掉（同一次好幾份那條，2026-10-12 code review）。
+          //    `C-320` 起畫面上已經沒有「所屬產品」那一格，停下來那頁按的也一樣沒人看過，所以不分是不是自動加入
+          productName: replaceTarget.value ? '' : sourceMeta.value.productName.trim(),
           contentHash: sourceMeta.value.contentHash,
-          // 「更新這一份」而且資料夾是系統照檔名猜的（他沒動過）：不帶，舊的那份原本放哪就留在哪。
-          // ⛔ 帶了的話伺服器照收，舊資料會被默默搬到猜的那個資料夾（2026-10-12 code review）
-          ...(replaceTarget.value && folderAutoPicked.value ? {} : { folderId: sourceMeta.value.folderId }),
+          ...(sentFolderId === undefined ? {} : { folderId: sentFolderId }),
           // 原檔留著時「下載原檔」存成這個名字（`C-296`③）；接回背景整理時沒有檔名就退用資料名稱
           ...(sourceMeta.value.type === 'file' ? { fileName: fileName.value || sourceMeta.value.name } : {}),
           // 換新版時勾了要帶過去的那幾條（`D-125`①）：留在原地、不進回收桶
@@ -3668,6 +3926,24 @@ async function runImport() {
     })
     result.value = res
     quotaSkipped.value = skippedNow
+    // 結果頁那一行「放在『X』」（`C-320`）：講**伺服器真的放的**那一組，不是送出去的（`/code-review` ⑨：
+    // 「更新原本那一份」改選「不放分組」送 null，舊版伺服器會不理、那一份還在原本那組，畫面卻說不放分組）。
+    // 回應有 folderId 就照它；沒有、又是更新原本那一份而他改了分組，就讀一次那一份（讀不到＝不知道，講「分組不變」）
+    const replied = res && 'folderId' in res
+    let actualFolderId: string | null | undefined = sentFolderId
+    if (replied) actualFolderId = (res as { folderId?: string | null }).folderId ?? null
+    else if (replaceTarget.value && !keepOldGroup && res?.sourceId) actualFolderId = await readSourceFolderId(res.sourceId)
+    if (heldGroupId) groupRegistry.unhold(heldGroupId)
+    heldGroupId = null
+    if (actualFolderId) groupRegistry.use(actualFolderId)
+    // 剛建的那一組結果確定沒用上（伺服器沒放進去）：空的，收掉；不知道放了沒（讀不到）就留著
+    if (createdGroupId && actualFolderId !== undefined && actualFolderId !== createdGroupId) void groupRegistry.discardIfUnused(createdGroupId)
+    savedGroup.value = keepOldGroup && !replied
+      ? currentGroupOf(replaceTarget.value!.id)
+      : actualFolderId === undefined ? null : (actualFolderId ? { kind: 'folder', id: actualFolderId } : { kind: 'none' })
+    groupFill.value = null
+    productPicked.value = ''
+    if (!autoImporting.value) groupAsk.value = false
     clearJobMarker() // 卡已經進庫了,這份整理工作到此為止
     invalidateProductNames() // 這份資料的產品名已經進後端清單,下次填欄位要挑得到
     void loadQuota() // 「繼續匯入」下一份時，剩幾條要是新的數字
@@ -3695,6 +3971,11 @@ async function runImport() {
     }
   }
   catch (err: any) {
+    // 剛替他建的新分組、加入卻沒成（403 空間滿、500⋯）：空的，收掉（`/code-review` ⑥）。
+    // ⛔ 斷線、逾時、閘道錯不收：伺服器可能其實放進去了，刪了那一組會把這一份又移出分組（見 writeMayHaveLanded）
+    if (heldGroupId) groupRegistry.unhold(heldGroupId)
+    heldGroupId = null
+    if (createdGroupId && !writeMayHaveLanded(apiErrorStatus(err))) void groupRegistry.discardIfUnused(createdGroupId)
     // ⚠️ 中文的原因在 data.statusMessage：err.statusMessage 是 HTTP 狀態那一行（HTTP/2 下是空的），
     //    只看它的話空間不夠、舊的那份已經被刪掉這些 403／404 會變成一串「[POST] …: 403」（審查實測）
     // 自動加入失敗時畫面會停在預覽（見 settlePreview），要講「還沒加進去」——只丟伺服器的原因，人會以為加了一半。
@@ -3749,9 +4030,16 @@ function resetAll() {
   //    而結果早就被清成 null → 綠勾與「正在確認」都不會出現，畫面停在「還沒證明讀得到」。
   gsheetProbe.value = null
   gsheetProbedUrl = ''
-  sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '', folderId: null }
+  sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
   // 換一份就全部歸位：守門旗標若留著，接下來每一份都不再檢查重複（`C-134`）
-  folderAutoPicked.value = false
+  // 分組（`C-320`）也歸位；這次開窗建過的分組（localGroups）留著——下一份同一個商品要比得到它
+  autoGroup.value = { choice: { kind: 'none' }, ask: false }
+  groupChoice.value = { kind: 'none' }
+  groupAsk.value = false
+  groupTouched.value = false
+  savedGroup.value = undefined
+  groupFill.value = null
+  productPicked.value = ''
   replaceTarget.value = null
   quotaSkipped.value = 0
   batchFiles.value = []

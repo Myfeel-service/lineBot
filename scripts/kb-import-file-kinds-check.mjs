@@ -20,7 +20,7 @@
  *    - 之後各段（一次好幾份、同名、空間滿、重試、504、取消後重來）同一套：全部回假的
  */
 import { deflateRawSync } from 'node:zlib'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cert, initializeApp } from 'firebase-admin/app'
@@ -136,13 +136,35 @@ async function realDetailWithoutEdits(req, sourceId) {
  * fake(req)：要假造的請求回傳 { status, contentType, body }；回 undefined 照原規則走
  * （GET 照常打到本機伺服器＝唯讀正式庫；不是 GET 的 /api 一律攔下、記一筆、回假的 200）。
  */
+/**
+ * 「這份在講什麼」（`C-316`）：打開一份還沒有摘要的資料時，頁面會自己打一次 PUT `{ generateSummary: true }`（會寫正式庫、會花 AI 的錢）。
+ * 每一段都會點開資料，所以這一支在**每一段**都先攔下、回假的摘要、記在 summaryCalls（不算「不該發生的寫入」）；
+ * 要驗摘要行為的那一段用 opts.summary 自己回。⚠️ 排在各段自己的 fake 前面：不然第三十段那種「這一份的 PUT 一律記下來」會把它也算進去
+ */
+const summaryCalls = []
+const isSummaryPut = (req) => {
+  if (req.method() !== 'PUT' || !/\/api\/ai\/sources\/[^/?]+$/.test(new URL(req.url()).pathname)) return null
+  try {
+    const b = JSON.parse(req.postData() || '{}')
+    return b.generateSummary === true ? b : null
+  }
+  catch { return null }
+}
+
 async function openImportDialog(fake = () => undefined, opts = {}) {
-  const { path = '/knowledge/sources?import=1', waitSel = '.kb-drop', width = 1440, height = 1000 } = opts
+  const { path = '/knowledge/sources?import=1', waitSel = '.kb-drop', width = 1440, height = 1000, summary } = opts
   const page = await browser.newPage()
   await page.setViewport({ width, height })
   await page.setRequestInterception(true)
   page.on('request', async (req) => {
     const url = req.url()
+    const sumBody = isSummaryPut(req)
+    if (sumBody) {
+      const id = decodeURIComponent(new URL(url).pathname.split('/').pop())
+      summaryCalls.push({ id, force: sumBody.force === true })
+      const r = summary ? await summary(id, sumBody) : undefined
+      return void req.respond(r ?? json({ summary: ['守門員假的摘要第一行', '守門員假的摘要第二行'], summaryAt: Date.now() }))
+    }
     const faked = await fake(req)
     if (faked) return void req.respond(faked)
     if (url.includes('/api/admin/tour-seen') && req.method() === 'GET') return void req.respond(json({ seen: TOUR_IDS }))
@@ -438,7 +460,7 @@ try {
   else fail('跑完還留著重試按鈕', actionLabels.join('／'))
   await batchPage.close()
 
-  // ── 第五段：一次好幾份裡有一份跟現有資料同名 → 等他決定、「換掉舊的」走更新那一份 ──
+  // ── 第五段：一次好幾份裡有一份跟現有資料同名 → 等他決定、「更新原本那一份」（以前叫「換掉舊的」）──
   // ⛔ 以前一次好幾份會默默多建一份同名的（2026-10-10 審查）；單份那條路會問，這裡也要問
   {
     const names = {}
@@ -466,7 +488,7 @@ try {
         bulks.push({ name: b.source?.name, replace: b.replaceSourceId ?? null, keys: Object.keys(b.source ?? {}) })
         return json({ sourceId: 's', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
       }
-      // 「換掉舊的」會先讀舊的那一份有沒有他改過的（`D-125`①）：這一段的舊資料沒有改過的
+      // 「更新原本那一份」會先讀舊的那一份有沒有他改過的（`D-125`①）：這一段的舊資料沒有改過的
       if (url.includes('/api/ai/sources/old-src-1') && m === 'GET') return json({ source: {}, chunks: [] })
       return undefined
     })
@@ -477,7 +499,8 @@ try {
     const before = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
     const dupRow = before.find(t => t.includes('退換貨政策.docx')) ?? ''
     const csvRow = before.find(t => t.includes('商品匯出.csv')) ?? ''
-    if (dupRow.includes('等你決定') && dupRow.includes('換掉舊的') && !bulks.some(b => b.name === '退換貨政策.docx')) pass('同名那份先擱著等決定（沒有默默多建一份）')
+    // `C-319`：撞名一律講「更新原本那一份」（以前一次好幾份那一列叫「換掉舊的」）
+    if (dupRow.includes('等你決定') && dupRow.includes('更新原本那一份') && !bulks.some(b => b.name === '退換貨政策.docx')) pass('同名那份先擱著等決定（沒有默默多建一份）')
     else fail('同名那份沒有停下來問', dupRow)
     if (csvRow.includes('原文超過 10 萬字已截斷')) pass('單份路會講的「原文被截斷」一次好幾份也講')
     else fail('一次好幾份沒講截斷', csvRow)
@@ -502,14 +525,14 @@ try {
       if (asked && stillThere) pass(`還有同名沒決定就按「${label}」→ 先問一聲，選「回去決定」清單原封不動`)
       else fail(`按「${label}」沒有先問、或清單不見了`, `asked=${asked} stillThere=${stillThere}`)
     }
-    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('換掉舊的'))?.click())
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('更新原本那一份'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
     const replaced = bulks.find(b => b.name === '退換貨政策.docx')
-    if (replaced?.replace === 'old-src-1') pass('按「換掉舊的」→ 走「更新這一份」（帶舊資料的 id，不用重新整理）')
-    else fail('換掉舊的沒有帶舊資料', JSON.stringify(bulks))
+    if (replaced?.replace === 'old-src-1') pass('按「更新原本那一份」→ 帶舊資料的 id 更新那一份（不用重新整理）')
+    else fail('「更新原本那一份」沒有帶舊資料', JSON.stringify(bulks))
     // 只換內容：⛔ 帶了資料夾／產品名，伺服器就照收，舊資料會被默默搬到猜的資料夾、改成 AI 猜的產品名（2026-10-12 code review）
-    if (replaced && !replaced.keys.includes('folderId') && !replaced.keys.includes('productName')) pass('「換掉舊的」不帶資料夾與產品名（舊的那份原本的設定留著）')
-    else fail('「換掉舊的」帶了資料夾或產品名', JSON.stringify(replaced))
+    if (replaced && !replaced.keys.includes('folderId') && !replaced.keys.includes('productName')) pass('「更新原本那一份」不帶分組與產品名（舊的那份原本的設定留著）')
+    else fail('「更新原本那一份」帶了分組或產品名', JSON.stringify(replaced))
     await pg.close()
   }
 
@@ -758,11 +781,18 @@ try {
     await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
     // 同名＋空間滿：兩個理由都要停在預覽（`D-123`②）
     await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
-    await pg.evaluate(() => [...document.querySelectorAll('.kb-dedup-row .el-button')].find(b => b.innerText.includes('更新這一份'))?.click())
+    // `C-319`：那一顆叫「更新原本那一份」（以前「更新這一份」）。⚠️ 要真的按到：按到了那一顆會變「已選這一份」——
+    //    以前字對不上、根本沒按到，這一關只是剛好空間本來就滿才綠（假綠燈，2026-10-15 匯入視窗那邊抓到）
+    const clicked = await pg.evaluate(() => {
+      const b = [...document.querySelectorAll('.kb-dedup-row .el-button')].find(x => x.innerText.includes('更新原本那一份'))
+      b?.click()
+      return !!b
+    })
     await sleep(500)
+    const picked = await pg.$$eval('.kb-dedup-row .el-button', els => els.some(e => e.innerText.includes('已選這一份')))
     const btn = await pg.$eval('.kb-preview-summary__actions .el-button--primary', el => ({ text: el.innerText.trim(), disabled: el.disabled || el.classList.contains('is-disabled') })).catch(() => null)
-    if (btn?.text === '空間已經滿了' && btn.disabled && !bulkCalled) pass('舊的那份全是草稿 → 換掉也空不出位置，按鈕講「空間已經滿了」、按不下去（不再承諾收 5 條、按下去整批被擋）')
-    else fail('「更新這一份」把草稿算成空出來的空間', JSON.stringify(btn))
+    if (clicked && picked && btn?.text === '空間已經滿了' && btn.disabled && !bulkCalled) pass('選了「更新原本那一份」（變成「已選這一份」）、舊的那份全是草稿 → 換掉也空不出位置，按鈕講「空間已經滿了」、按不下去')
+    else fail('「更新原本那一份」沒按到、或把草稿算成空出來的空間', JSON.stringify({ clicked, picked, btn }))
     await pg.close()
   }
 
@@ -849,6 +879,7 @@ try {
     const JOB = 'job-direct'
     const bulks = []
     const overviewCalls = []
+    const folderPosts = []
     const nine = Array.from({ length: 9 }, (_, i) => ({ title: `型號 ${i + 1}`, content: `規格 ${i + 1}`, tags: [], questions: [] }))
     const pg = await openImportDialog((req) => {
       const url = req.url()
@@ -867,6 +898,13 @@ try {
         return json({ sourceId: 'auto-src', total: b.chunks.length, indexed: b.chunks.length, failed: 0, originalKept: true, items: [] })
       }
       if (url.includes('/api/ai/sources/auto-src/overview') && m === 'POST') { overviewCalls.push(url); return json({ outcome: 'created', made: true }) }
+      // 分組（`C-320`）：沒有任何分組（畫面每次一樣，不吃正式庫的 18 組）；替他建的新分組回假的
+      if (new URL(url).pathname === '/api/ai/folders' && m === 'GET') return json({ items: [] })
+      if (new URL(url).pathname === '/api/ai/folders' && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        folderPosts.push(b)
+        return json({ id: 'auto-folder-w1', name: b.name, order: 0, createdAtMs: Date.now(), general: b.general === true })
+      }
       return undefined
     })
     await watchPreview(pg)
@@ -885,9 +923,13 @@ try {
       offer: document.querySelector('.kb-overview-suggest')?.innerText ?? '',
       primary: [...document.querySelectorAll('.kb-import-actions .el-button--primary')].map(b => b.innerText.trim()).join('／'),
       toasts: [...document.querySelectorAll('.toast')].map(t => t.innerText),
+      ask: document.querySelector('.kb-import-dialog .kb-group-pick__q')?.innerText ?? '',
+      picked: document.querySelector('.kb-import-dialog .kb-group-pick .el-radio.is-checked')?.innerText.trim() ?? '',
     }))
-    if (r.label.includes('第 3 步') && r.label.includes('加好了') && r.saved.includes('存成「退換貨政策.docx」') && r.saved.includes('產品：W1 智慧手錶') && r.saved.includes('AI 猜的')) pass(`結果頁講存成哪一份、AI 猜的產品：「${r.saved.replace(/\s+/g, ' ').trim()}」`)
-    else fail('結果頁沒講存成哪一份', JSON.stringify(r))
+    // `C-320`：上傳時不選分組、不填產品名；結果頁一行「存成『X』」，AI 認出商品但比不到任何一組時問一題「這份在講哪個商品？」（預設新分組）
+    const folderOk = !folderPosts.length || bulks[0]?.source?.folderId === 'auto-folder-w1'
+    if (r.label.includes('第 3 步') && r.label.includes('加好了') && r.saved.includes('存成「退換貨政策.docx」') && r.ask.includes('這份在講哪個商品？') && r.picked.includes('新分組「W1 智慧手錶」') && folderOk) pass(`結果頁講存成哪一份、問「這份在講哪個商品？」、預設勾「${r.picked}」（放進那一組）`)
+    else fail('結果頁沒講存成哪一份／沒問是哪個商品', JSON.stringify({ ...r, folderPosts, bulkFolder: bulks[0]?.source?.folderId }))
     if (r.warn.includes('整理時注意到 1 件事') && r.warn.includes('有效期限')) pass('沒經過預覽 → 整理時的提醒改在結果頁講')
     else fail('結果頁沒講整理時的提醒', r.warn)
     if (!r.toasts.some(t => t.includes('已加進知識庫') || t.includes('成功匯入'))) pass('視窗開著 → 不另跳「已加入」提示（結果頁就是交代，不講兩次）')
@@ -991,18 +1033,19 @@ try {
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
     await sleep(400)
     await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
-    const dupShown = await waitFor(pg, () => document.querySelector('.kb-dup-content')?.innerText.includes('重新整理，換掉那一份'), null, 15_000)
-    if (dupShown) pass('內容一模一樣 → 先停下來，給「看那一份」與「重新整理，換掉那一份」')
+    // `C-319`：叫「重新整理，更新原本那一份」（以前「重新整理，換掉那一份」）
+    const dupShown = await waitFor(pg, () => document.querySelector('.kb-dup-content')?.innerText.includes('重新整理，更新原本那一份'), null, 15_000)
+    if (dupShown) pass('內容一模一樣 → 先停下來，給「看那一份」與「重新整理，更新原本那一份」')
     else fail('內容一模一樣沒有停下來')
-    await pg.evaluate(() => [...document.querySelectorAll('.kb-dup-content .el-button')].find(b => b.innerText.includes('換掉那一份'))?.click())
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-dup-content .el-button')].find(b => b.innerText.includes('更新原本那一份'))?.click())
     await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 30_000)
     const b = bulks[0]
     const resultText = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
     const sawPreview = await pg.evaluate(() => window.__sawPreview)
     if (posts.length === 2 && posts[1].ignoreDuplicate === true && bulks.length === 1 && b.replaceSourceId === 'old-1' && !b.source?.productName && !sawPreview) {
-      pass('按「重新整理，換掉那一份」→ 直接換掉原本那一份（帶它的 id、不帶 AI 猜的產品名、沒停在預覽）')
+      pass('按「重新整理，更新原本那一份」→ 直接換掉原本那一份（帶它的 id、不帶 AI 猜的產品名、沒停在預覽）')
     }
-    else fail('「換掉那一份」不對', JSON.stringify({ posts: posts.length, ignore: posts[1]?.ignoreDuplicate, replace: b?.replaceSourceId, product: b?.source?.productName, sawPreview }))
+    else fail('「更新原本那一份」不對',JSON.stringify({ posts: posts.length, ignore: posts[1]?.ignoreDuplicate, replace: b?.replaceSourceId, product: b?.source?.productName, sawPreview }))
     if (resultText.includes('原本的 3 條知識已換成上面這批') && !resultText.includes('AI 猜的別台')) pass('結果頁講舊的 3 條去哪了、不把沒帶過去的產品名講成存進去的')
     else fail('結果頁說法不對', resultText.slice(0, 300))
     await pg.close()
@@ -1216,14 +1259,15 @@ try {
       const el = [...document.querySelectorAll('aside *, .split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === name)
       el?.click()
     }, patchedName)
-    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('換新版')), null, 15_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('上傳新版')), null, 15_000)
     const [chooser] = await Promise.all([
       pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
-      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('換新版'))?.click()),
+      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('上傳新版'))?.click()),
     ])
-    if (!chooser) throw new Error('按「換新版」沒有開選檔視窗')
+    if (!chooser) throw new Error('按「上傳新版」沒有開選檔視窗')
     await chooser.accept([pathOf.docx])
-    const intent = await waitFor(pg, () => document.querySelector('.kb-replace-intent')?.innerText.includes('換新版'), null, 10_000)
+    // `C-319`：資料頁那顆、加入視窗頂上那一行都叫「上傳新版」（以前「換新版」）
+    const intent = await waitFor(pg, () => document.querySelector('.kb-replace-intent')?.innerText.includes('上傳新版'), null, 10_000)
     await waitFor(pg, () => !!document.querySelector('.kb-result-saved'), null, 30_000)
     const body = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
     const b = bulks[0]
@@ -1248,9 +1292,10 @@ try {
     await pg.evaluate(() => [...document.querySelectorAll('.kb-start__tile')].find(b => b.innerText.includes('還沒整理好'))?.click())
     await sleep(300)
     await pg.evaluate(() => [...document.querySelectorAll('.kb-start__panel .kb-start__fold')].find(b => b.innerText.includes('手寫一條'))?.click())
-    const manual = await waitFor(pg, () => [...document.querySelectorAll('.el-dialog__title')].some(t => t.innerText.includes('手寫一條知識') && t.closest('.el-dialog')?.offsetParent !== null), null, 8000)
-    if (manual) pass('「還沒整理好」那格按「手寫一條」→ 關掉加入視窗、打開手寫一條的編輯框')
-    else fail('「手寫一條」沒有打開手寫編輯框')
+    // `C-317`：打開的是「補一條知識」小視窗（跟其他新增入口同一個），不再是五格的編輯框
+    const manual = await waitFor(pg, () => [...document.querySelectorAll('.el-dialog__title')].some(t => t.innerText.includes('補一條知識') && t.closest('.el-dialog')?.offsetParent !== null), null, 8000)
+    if (manual) pass('「還沒整理好」那格按「手寫一條」→ 關掉加入視窗、打開「補一條知識」小視窗')
+    else fail('「手寫一條」沒有打開「補一條知識」')
     await pg.close()
   }
 
@@ -1402,12 +1447,12 @@ try {
   const replaceViaDataPage = async (pg, hit, file) => {
     await waitFor(pg, name => [...document.querySelectorAll('aside *, .split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === name), hit.name)
     await pg.evaluate((name) => { [...document.querySelectorAll('aside *, .split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === name)?.click() }, hit.name)
-    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('換新版')), null, 15_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('上傳新版')), null, 15_000)
     const [chooser] = await Promise.all([
       pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
-      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('換新版'))?.click()),
+      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('上傳新版'))?.click()),
     ])
-    if (!chooser) throw new Error('按「換新版」沒有開選檔視窗')
+    if (!chooser) throw new Error('按「上傳新版」沒有開選檔視窗')
     await chooser.accept([file])
   }
 
@@ -1561,7 +1606,7 @@ try {
     id: 'x', type: 'gsheet', name: '', url: '', folderId: null, status: 'ready', chunkCount: 3, refreshIntervalMinutes: 60,
     onChangeBehavior: 'notify', productName: '', generateOverview: false, urlAutoApply: true, lastFetchedAtMs: NOW - 3600_000,
     outdatedAtMs: 0, updatedAtMs: NOW - 3600_000, numbersVolatile: false, detectStalledAtMs: 0, manualKeptCount: 0,
-    quotaSkippedCount: 0, gsheetExcludedTitles: [], blockedPendingDeletes: 0, originalFile: null, ...o,
+    quotaSkippedCount: 0, gsheetExcludedTitles: [], blockedPendingDeletes: 0, originalFile: null, summary: [], summaryAt: 0, ...o,
   })
   const fakeChunk = o => ({ id: 'c', title: '', content: '內容', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 0, updatedAtMs: NOW - 86400_000, activeUntilMs: 0, expiredAtMs: 0, ...o })
   /** 資料頁：清單整份換成 list、明細照 id 回 details[id]（那一份的條目）；delayMs[id] 讓那一份的明細晚一點回來 */
@@ -1596,12 +1641,12 @@ try {
   /** 資料頁上點那一份 → 按「換新版」→ 選檔 */
   const newVersionOf = async (pg, name, file) => {
     await pickSource(pg, name)
-    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('換新版')), null, 15_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.admin-header-actions .el-button')].some(b => b.innerText.includes('上傳新版')), null, 15_000)
     const [chooser] = await Promise.all([
       pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
-      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('換新版'))?.click()),
+      pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('上傳新版'))?.click()),
     ])
-    if (!chooser) throw new Error('按「換新版」沒有開選檔視窗')
+    if (!chooser) throw new Error('按「上傳新版」沒有開選檔視窗')
     await chooser.accept([file])
   }
 
@@ -1644,14 +1689,15 @@ try {
       row: document.querySelector('[data-tour="kb-sync-settings"]')?.innerText.replace(/\s+/g, '') ?? '',
       excluded: document.querySelector('.src-excluded__text')?.innerText ?? '',
     }))
-    if (t.quota.includes('按「立即同步」就會補上') && !t.quota.includes('每小時') && !t.editor.includes('每小時') && t.row.startsWith('自動更新：') && t.row.includes('不自動更新')) pass('設成不自動同步的試算表 → 「沒收的列」講按「立即同步」才補，整頁不再寫死「每小時」；那一格是「自動更新：不自動更新」')
+    // `C-319`：按鈕叫「立即更新」，提到它的每一句跟著叫
+    if (t.quota.includes('按「立即更新」就會補上') && !t.quota.includes('每小時') && !t.editor.includes('每小時') && t.row.startsWith('自動更新：') && t.row.includes('不自動更新')) pass('設成不自動更新的試算表 → 「沒收的列」講按「立即更新」才補，整頁不再寫死「每小時」；那一格是「自動更新：不自動更新」')
     else fail('同步頻率的講法不對', JSON.stringify({ ...t, editor: t.editor.slice(0, 200) }))
     if (t.excluded.includes('表格上有 5 列你在後台刪掉了，不會再收') && t.excluded.includes('「W1 保固多久」') && t.excluded.includes('等 5 列')) pass(`在後台刪掉的列講出來（太多只列前 3 個）：「${t.excluded}」`)
     else fail('沒講在後台刪掉、不再收的列', t.excluded)
     await pg.evaluate(() => [...document.querySelectorAll('.src-excluded .el-button')].find(b => b.innerText.includes('重新收這幾列'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('收回來')), null, 8000)
     const toasts = await toastsOf(pg)
-    if (puts.length === 1 && puts[0].clearExcludedRows === true && toasts.some(x => x.includes('按「立即同步」就會把這幾列收回來'))) pass('按「重新收這幾列」→ 叫伺服器清掉名單（clearExcludedRows），講按「立即同步」就收回來')
+    if (puts.length === 1 && puts[0].clearExcludedRows === true && toasts.some(x => x.includes('按「立即更新」就會把這幾列收回來'))) pass('按「重新收這幾列」→ 叫伺服器清掉名單（clearExcludedRows），講按「立即更新」就收回來')
     else fail('「重新收這幾列」不對', JSON.stringify({ puts, toasts }))
     await pg.close()
   }
@@ -1693,8 +1739,8 @@ try {
       email: !!document.querySelector('.src-fix__email'),
       outdated: [...document.querySelectorAll('.src-outdated-alert')].some(e => e.innerText.includes('網頁內容變動')),
     }))
-    if (fix.title.includes('表格一次少了 12 列') && fix.text.includes('立即同步') && fix.text.includes('補回去') && !fix.text.includes('抓不到內容') && !fix.email && !fix.outdated) {
-      pass(`表格一次少太多列被擋下 → 「${fix.title.trim()}」、講按立即同步確認或把列補回去（不叫人去分享、不講網頁變動）`)
+    if (fix.title.includes('表格一次少了 12 列') && fix.text.includes('立即更新') && fix.text.includes('補回去') && !fix.text.includes('抓不到內容') && !fix.email && !fix.outdated) {
+      pass(`表格一次少太多列被擋下 → 「${fix.title.trim()}」、講按「立即更新」確認或把列補回去（不叫人去分享、不講網頁變動）`)
     }
     else fail('擋下大量刪除時還在講「抓不到內容／去分享」', JSON.stringify(fix))
 
@@ -1718,7 +1764,7 @@ try {
     await clickUnlock()
     await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('已改回')), null, 8000)
     const okToasts = await toastsOf(pg)
-    if (settingsBodies.at(-1)?.clearManualLock === true && okToasts.some(x => x.includes('已改回跟著表格：下一次同步就會換成表格上的內容'))) pass('改回跟著表格 → 照伺服器回的生效時間講（下一次同步就換成表格的）')
+    if (settingsBodies.at(-1)?.clearManualLock === true && okToasts.some(x => x.includes('已改回跟著表格：下一次自動更新就會換成表格上的內容'))) pass('改回跟著表格 → 照伺服器回的生效時間講（下一次自動更新就換成表格的）')
     else fail('改回跟著表格的提示不對', JSON.stringify({ settingsBodies, okToasts }))
 
     await pg.evaluate(() => [...document.querySelectorAll('.src-chunk-row .el-button')].find(b => b.innerText.includes('編輯'))?.click())
@@ -1743,12 +1789,12 @@ try {
     else fail('沒改東西也說已儲存', JSON.stringify({ closed, saveToasts }))
     if (!closed) await pg.evaluate(() => [...document.querySelectorAll('.chunk-footer .el-button')].find(b => b.innerText.trim() === '取消')?.click())
 
-    // 立即同步途中這份被刪掉了 → 不講「同步完成：新增…」，回到清單
-    await pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('立即同步'))?.click())
+    // 立即更新途中這份被刪掉了 → 不講「更新完成：新增…」，回到清單
+    await pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('立即更新'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('被刪掉了')), null, 10_000)
     const syncToasts = await toastsOf(pg)
     const backHome = await pg.evaluate(() => !document.querySelector('.src-header-main input'))
-    if (syncToasts.some(x => x.includes('同步途中被刪掉了')) && !syncToasts.some(x => x.includes('同步完成')) && backHome) pass('立即同步時那一份被刪掉了 → 講「同步途中被刪掉了」、回到清單（不講「同步完成：新增 0…」）')
+    if (syncToasts.some(x => x.includes('更新途中被刪掉了')) && !syncToasts.some(x => x.includes('完成：新增')) && backHome) pass('立即更新時那一份被刪掉了 → 講「更新途中被刪掉了」、回到清單（不講「更新完成：新增 0…」）')
     else fail('同步途中被刪掉時的說法不對', JSON.stringify({ syncToasts, backHome }))
 
     await pickSource(pg, text.name)
@@ -1915,7 +1961,7 @@ try {
     const a = rows1.find(r => r.title === '保固多久')
     const b = rows1.find(r => r.title === '怎麼退貨')
     if (stopped && !bulks.length && s.stoppedLine.includes('還沒加進去') && s.head === '你改過的 2 條，要帶到新版嗎？' && rows1.length === 2 && a?.checked && b?.checked
-      && a.suffix === '新版也有這一條，會用你改過的' && b.suffix === '新版沒有這一條，會原樣留著' && s.btn === '更新既有資料（2 條）') {
+      && a.suffix === '新版也有這一條，會用你改過的' && b.suffix === '新版沒有這一條，會原樣留著' && s.btn === '更新原本那一份（2 條）') {
       pass('換新版、舊的有他改過的 2 條（總表不算）→ 停下來問、預設全帶，每條講新版有沒有同名；按鈕扣掉同名的那一條（2 條）')
     }
     else fail('換新版時沒問改過的那幾條', JSON.stringify({ stopped, bulks: bulks.length, ...s, rows1 }))
@@ -1931,7 +1977,7 @@ try {
     const resultText = await pg.$eval('.el-dialog__body', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
     if (bulks.length === 1 && body.replaceSourceId === 'fake-file-edit' && JSON.stringify(body.source?.keepEditedChunkIds) === '["k-a"]'
       && body.chunks.map(c => c.title).join('、') === '新功能、運費' && resultText.includes('你改過的 1 條帶到新版了')) {
-      pass('按「更新既有資料」→ 帶 keepEditedChunkIds＝[保固多久]、新版裡同名的「保固 多久」不送；結果頁講「你改過的 1 條帶到新版了」')
+      pass('按「更新原本那一份」→ 帶 keepEditedChunkIds＝[保固多久]、新版裡同名的「保固 多久」不送；結果頁講「你改過的 1 條帶到新版了」')
     }
     else fail('帶過去的那幾條沒送對', JSON.stringify({ bulks: bulks.length, replace: body?.replaceSourceId, keep: body?.source?.keepEditedChunkIds, titles: body?.chunks?.map(c => c.title), result: resultText.slice(0, 200) }))
     await pg.close()
@@ -1960,14 +2006,14 @@ try {
     await sleep(300)
     // 不帶「保固多久」→ 帶過去 1 條 → 空出 4 → 能放 6；同名那條要收了 → 要放 7 → 先收前 6、其餘 1
     const m2 = await read()
-    if (m1.btn === '更新既有資料（先收前 5 條）' && m1.warn.includes('其餘 1 條先不收') && m2.btn === '更新既有資料（先收前 6 條）' && m2.warn.includes('其餘 1 條先不收') && !bulks.length) {
+    if (m1.btn === '更新原本那一份（先收前 5 條）' && m1.warn.includes('其餘 1 條先不收') && m2.btn === '更新原本那一份（先收前 6 條）' && m2.warn.includes('其餘 1 條先不收') && !bulks.length) {
       pass('空間：帶過去的照樣佔位、新版同名的不用位置 → 先收前 5 條；改成不帶那一條 → 先收前 6 條（數字跟著勾選走）')
     }
     else fail('帶過去的那幾條沒算進空間', JSON.stringify({ m1, m2, bulks: bulks.length }))
     await pg.close()
   }
 
-  // ── 第三十六段（`D-125`①）：一次好幾份裡「換掉舊的」→ 舊的那一份他改過的一律帶過去（不停下來問），那一列講帶了幾條 ──
+  // ── 第三十六段（`D-125`①）：一次好幾份裡「更新原本那一份」→ 舊的那一份他改過的一律帶過去（不停下來問），那一列講帶了幾條 ──
   if (CHECK_FROM <= 36) {
     const names = {}
     let seq = 0
@@ -2007,14 +2053,18 @@ try {
     await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
     await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
     await waitFor(pg, () => !!document.querySelector('.kb-file-batch__conflict'), null, 60_000)
-    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('換掉舊的'))?.click())
+    // `C-319`：按鈕「更新原本那一份」（以前「換掉舊的」），那一列講「已更新原本那一份」。
+    // ⚠️ 等那顆按得下去才按：另一份還在整理時它是鎖著的（「這一批跑完就能選」）——以前同名那一列一出現就按，
+    //    另一份慢一點就按到鎖著的那顆、什麼都沒發生（這一段「偶爾失敗」的原因，2026-10-15 查到）
+    await waitFor(pg, () => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].some(b => b.innerText.includes('更新原本那一份') && !b.disabled && !b.classList.contains('is-disabled')), null, 60_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.kb-file-batch__conflict .el-button')].find(b => b.innerText.includes('更新原本那一份'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.kb-site-row')].some(r => r.innerText.includes('退換貨政策.docx') && r.innerText.includes('✓')), null, 15_000)
     const replaced = bulks.find(b => b.replaceSourceId === 'old-src-9')
     const row = await pg.$$eval('.kb-site-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('退換貨政策.docx')) ?? '')
-    if (JSON.stringify(replaced?.source?.keepEditedChunkIds) === '["e1"]' && replaced?.chunks.map(c => c.title).join('、') === '運費' && row.includes('舊的 2 條移到回收桶') && row.includes('你改過的 1 條帶到新版了')) {
-      pass(`一次好幾份「換掉舊的」→ 他改過的一律帶過去、新版同名的不送，那一列講：「${row.slice(row.indexOf('已換掉'), row.indexOf('已換掉') + 60)}…」`)
+    if (JSON.stringify(replaced?.source?.keepEditedChunkIds) === '["e1"]' && replaced?.chunks.map(c => c.title).join('、') === '運費' && row.includes('已更新原本那一份') && row.includes('舊的 2 條移到回收桶') && row.includes('你改過的 1 條帶到新版了')) {
+      pass(`一次好幾份「更新原本那一份」→ 他改過的一律帶過去、新版同名的不送，那一列講：「${row.slice(row.indexOf('已更新'), row.indexOf('已更新') + 60)}…」`)
     }
-    else fail('一次好幾份換掉舊的沒帶改過的', JSON.stringify({ keep: replaced?.source?.keepEditedChunkIds, titles: replaced?.chunks?.map(c => c.title), row }))
+    else fail('一次好幾份更新原本那一份沒帶改過的', JSON.stringify({ keep: replaced?.source?.keepEditedChunkIds, titles: replaced?.chunks?.map(c => c.title), row }))
     await pg.close()
   }
 
@@ -2481,7 +2531,7 @@ try {
     if (urlPop === '你改過這一條，網頁更新時不會蓋掉。 改回跟著網頁') pass(`網址的鎖頭：一句＋一顆按鈕（「${urlPop}」）`)
     else fail('網址的鎖頭不是一句＋一顆按鈕', urlPop)
 
-    // 檔案那一份：所屬產品沒有說明段、按鈕叫「儲存」；鎖頭講換新版；停用的那一條講到期日
+    // 檔案那一份：「所屬產品」那張卡不在資料頁上了（`C-320`：收進「⋯」→「AI 認的商品名」，第四十四段驗）；鎖頭講上傳新版；停用的那一條講到期日
     await pickSource(pg, file.name)
     await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 2, null, 30_000)
     await sleep(400)
@@ -2489,17 +2539,15 @@ try {
     const fp = await pg.evaluate(() => ({
       meta: document.querySelector('.src-header-meta')?.innerText.trim() ?? '',
       editor: document.querySelector('.split-editor')?.innerText ?? '',
-      placeholder: [...document.querySelectorAll('.split-editor input')].map(i => i.getAttribute('placeholder') ?? '').find(p => p.includes('商品')) ?? '',
-      saveBtn: [...document.querySelectorAll('.split-editor .src-settings-actions .el-button')].map(b => b.innerText.trim()),
+      productInputs: [...document.querySelectorAll('.split-editor input')].filter(i => (i.getAttribute('placeholder') ?? '').includes('商品')).length,
       off: [...document.querySelectorAll('.src-chunk-row')].find(r => r.querySelector('.src-chunk-title')?.innerText === '停用的一條')?.querySelector('.src-chunk-meta')?.innerText.trim() ?? '',
     }))
-    if (/^檔案・2 條・\d{1,2}\/\d{1,2} 更新$/.test(fp.meta) && !fp.editor.includes('知識會自動標上產品名') && !fp.editor.includes('點一下欄位會列出') && fp.placeholder === '這份都在講同一個商品時才填' && JSON.stringify(fp.saveBtn) === '["儲存"]'
-      && /^已停用（\d{4}-\d{2}-\d{2} 到期）$/.test(fp.off)) {
-      pass(`檔案：「${fp.meta}」；所屬產品只剩一格（「${fp.placeholder}」）＋「儲存」；停用的那一條講「${fp.off}」`)
+    if (/^檔案・2 條・\d{1,2}\/\d{1,2} 更新$/.test(fp.meta) && !fp.editor.includes('所屬產品') && !fp.productInputs && /^已停用（\d{4}-\d{2}-\d{2} 到期）$/.test(fp.off)) {
+      pass(`檔案：「${fp.meta}」；資料頁上沒有「所屬產品」那張卡；停用的那一條講「${fp.off}」`)
     }
-    else fail('檔案那一份不對', JSON.stringify({ ...fp, editor: ['知識會自動標上產品名', '點一下欄位會列出'].filter(w => fp.editor.includes(w)) }))
+    else fail('檔案那一份不對', JSON.stringify({ ...fp, editor: fp.editor.includes('所屬產品') }))
     const filePop = await lockPop()
-    if (filePop === '你改過這一條，換新版時會先問要不要帶過去。 換新版時直接用新版') pass(`檔案的鎖頭：一句＋一顆按鈕（「${filePop}」）`)
+    if (filePop === '你改過這一條，上傳新版時會先問要不要帶過去。 上傳新版時直接用新版') pass(`檔案的鎖頭：一句＋一顆按鈕（「${filePop}」）`)
     else fail('檔案的鎖頭不是一句＋一顆按鈕', filePop)
 
     // 還在整理的那一份：狀態接在那一行後面
@@ -2519,6 +2567,761 @@ try {
     if (phoneStrip.includes('有資料內容變了還沒重新學')) pass('手機（工作台看不到）：頁頂提醒帶照講「有資料內容變了還沒重新學」')
     else fail('手機上提醒帶把「內容變了」也拿掉了（手機上沒有別的地方講）', phoneStrip.replace(/\s+/g, ' ').slice(0, 200))
     await phone.close()
+  }
+
+  // ══ 第四十段起（2026-10-15 `D-126` 拍板、`C-315`～`C-320`）：知識庫頁三欄、這份在講什麼、補一條、按鈕叫法、分組 ══
+  // 全部假資料；「問 AI」那一支（/api/ai/playground）、補一條、分組、商品名的寫入全部在瀏覽器裡回假的
+  const C315_SHOTS = process.env.SHOT_DIR ? join(process.env.SHOT_DIR, 'c315') : ''
+  if (C315_SHOTS) mkdirSync(C315_SHOTS, { recursive: true })
+  const shot = async (pg, name, sel) => {
+    if (!C315_SHOTS) return
+    if (sel) await (await pg.$(sel))?.screenshot({ path: join(C315_SHOTS, name) }).catch(() => {})
+    else await pg.screenshot({ path: join(C315_SHOTS, name) })
+  }
+  /** 畫面上看得到、標題含 title 的那個對話框 */
+  const dialogShown = (pg, title) => pg.evaluate(t => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && (d.querySelector('.el-dialog__title')?.innerText ?? '').includes(t)), title)
+  /**
+   * 把「畫面上看得到的那一個對話框」標成 [data-shown]，後面用 `.el-dialog[data-shown]` 指它（打字要選擇器）。
+   * ⚠️ 收著的對話框還在 DOM 裡（destroy-on-close 沒開的那幾個），只用 class 會挑到收著的那一個
+   */
+  const SHOWN = '.el-dialog[data-shown]'
+  const markShown = (pg, { inner = '', title = '' }) => pg.evaluate((s, t) => {
+    document.querySelectorAll('[data-shown]').forEach(e => e.removeAttribute('data-shown'))
+    const d = [...document.querySelectorAll('.el-dialog')].find(x => x.offsetParent !== null && (!s || x.querySelector(s)) && (!t || x.querySelector('.el-dialog__title')?.innerText === t))
+    d?.setAttribute('data-shown', '1')
+    return !!d
+  }, inner, title)
+  const emptyHealthFake = () => ({
+    failedSources: [], outdatedSources: [], stalledSources: [], noProductSources: [],
+    shortChunks: { count: 0, items: [] }, failedChunks: { count: 0, items: [] }, expiredChunks: { count: 0, items: [] },
+    wrongAnswerChunks: { count: 0, items: [], scanTruncated: false }, chunkScanTruncated: false, liveChunkCount: 0,
+    aliasCandidateCount: 0, pendingSuggestions: 0, duplicates: { items: [], scannedAtMs: 0 },
+  })
+  /** 那個元素現在有沒有在亮（flashAgentTarget 用 Web Animations 亮 2.4 秒） */
+  const flashing = (pg, sel) => pg.evaluate(s => (document.querySelector(s)?.getAnimations?.().length ?? 0) > 0, sel)
+  /** 清掉再打字（el-input 的 v-model 吃 input 事件） */
+  const typeInto = async (pg, sel, text) => {
+    await pg.$eval(sel, (el) => {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, '')
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    if (text) await pg.type(sel, text, { delay: 20 })
+  }
+  /** 問 AI：在 scope（欄或抽屜）裡打一句、送出、等「用了這 N 條」出來 */
+  const askOnce = async (pg, scope, text) => {
+    await typeInto(pg, `${scope} .kb-ask__foot input`, text)
+    await pg.evaluate(s => document.querySelector(`${s} .kb-ask__foot .el-button--primary`)?.click(), scope)
+    return waitFor(pg, s => document.querySelectorAll(`${s} .kb-ask__src`).length > 0, scope, 15_000)
+  }
+  /** 「送出」那顆有沒有被右下角小幫手那顆蓋住（點它正中間，點到的是不是它自己那一行） */
+  const sendNotCovered = (pg, scope) => pg.evaluate((s) => {
+    const b = document.querySelector(`${s} .kb-ask__foot .el-button--primary`)?.getBoundingClientRect()
+    const i = document.querySelector(`${s} .kb-ask__foot input`)?.getBoundingClientRect()
+    if (!b || !i) return false
+    const hitB = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)
+    const hitI = document.elementFromPoint(i.right - 4, i.top + i.height / 2)
+    return !!hitB?.closest(`${s} .kb-ask__foot`) && !!hitI?.closest(`${s} .kb-ask__foot`) && i.width >= 120
+  }, scope)
+  const clickAskSource = (pg, scope, title) => pg.evaluate((s, t) => [...document.querySelectorAll(`${s} .kb-ask__src`)].find(b => b.querySelector('.kb-ask__src-title')?.innerText === t)?.click(), scope, title)
+
+  // ── 第四十段（`C-315`，`D-126` 第 2 題）：三欄——電腦（內容寬 ≥ 1200）右邊常駐「問 AI」、整個高度；
+  //    點「用了這幾條」→ 中間打開那一份、捲到那一條亮一下（被篩掉的也找得到、不開編輯框）；換掉的、等你看過的照實講；
+  //    「答得不對？寫一句正確答案」打開補一條、帶著那一句；721～1199 收成右上「問 AI」開抽屜；手機不放 ──
+  if (CHECK_FROM <= 40) {
+    const a = fakeSource({ id: 'c315-a', type: 'file', name: 'C315 保固說明.pdf', chunkCount: 8, refreshIntervalMinutes: 0, summary: ['保固一年', '怎麼退貨'] })
+    const b = fakeSource({ id: 'c315-b', type: 'url', name: 'C315 官網運費', url: 'https://shop.example.tw/ship', chunkCount: 2, refreshIntervalMinutes: 1440, summary: ['運費怎麼算'] })
+    const aChunks = Array.from({ length: 8 }, (_, i) => fakeChunk({ id: `a${i + 1}`, title: `保固第 ${i + 1} 條`, content: `保固內容 ${i + 1}` }))
+    aChunks[6] = fakeChunk({ id: 'a7', title: '等你看過的一條', content: '還沒上線', status: 'draft' })
+    const pageFake = fakeSourcesPage([a, b], { 'c315-a': aChunks, 'c315-b': [fakeChunk({ id: 'b1', title: '運費' }), fakeChunk({ id: 'b2', title: '離島運費' })] })
+    const asks = []
+    const c315Fake = async (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/ai/playground' && req.method() === 'POST') {
+        asks.push(JSON.parse(req.postData() || '{}').query)
+        return json({ decision: 'answered', answer: '保固一年，離島運費另計。', answerKind: 'kb', confidence: 0.9,
+          sources: [
+            { chunkId: 'a8', sourceId: 'c315-a', title: '保固第 8 條', similarity: 0.9 },
+            { chunkId: 'gone-x', sourceId: 'c315-a', title: '已經換掉的那一條', similarity: 0.8 },
+            { chunkId: 'a7', sourceId: 'c315-a', title: '等你看過的一條', similarity: 0.7, draft: true },
+            { chunkId: 'b2', sourceId: 'c315-b', title: '離島運費', similarity: 0.6 },
+          ] })
+      }
+      if (url.pathname === '/api/ai/knowledge/gone-x' && req.method() === 'GET') return json({ id: 'gone-x', sourceId: 'c315-a', deleted: true })
+      return pageFake(req)
+    }
+    const COL = '.src-ask-col'
+    const pg = await openImportDialog(c315Fake, SOURCES_PAGE)
+    await waitFor(pg, () => !!document.querySelector('.src-ask-col [data-tour="kb-ask"]'), null, 30_000)
+    await sleep(500)
+    await shot(pg, 'desktop-workbench.png')
+    const lay = await pg.evaluate(() => {
+      const col = document.querySelector('.src-ask-col')?.getBoundingClientRect()
+      const split = document.querySelector('.split-layout')?.getBoundingClientRect()
+      const cols = document.querySelector('.src-cols')?.getBoundingClientRect()
+      return {
+        colW: col ? Math.round(col.width) : 0,
+        colTop: col ? Math.round(col.top) : -1,
+        colBottom: col ? Math.round(col.bottom) : -1,
+        splitTop: split ? Math.round(split.top) : -2,
+        vh: window.innerHeight,
+        colsW: cols ? Math.round(cols.width) : 0,
+        openBtn: [...document.querySelectorAll('[data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null),
+        hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+        middle: Math.round(document.querySelector('.split-editor')?.getBoundingClientRect().width ?? 0),
+      }
+    })
+    if (Math.abs(lay.colW - 340) <= 2 && lay.colBottom >= lay.vh - 2 && Math.abs(lay.colTop - lay.splitTop) <= 1 && !lay.openBtn && !lay.hscroll) pass(`電腦（內容寬 ${lay.colsW}px）：右邊常駐「問 AI」${lay.colW}px、從上到底（${lay.colTop}→${lay.colBottom}），中間剩 ${lay.middle}px，不擺「問 AI」鈕、沒有橫向捲動`)
+    else fail('電腦上右邊那一欄不對', JSON.stringify(lay))
+
+    // 先打開 A、用「在這份裡找」把 a8 篩掉：點「用了這幾條」那一下要清掉篩選，才捲得到
+    await pickSource(pg, a.name)
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 8, null, 30_000)
+    await typeInto(pg, '.src-chunk-search input', '第 1 條')
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 1, null, 5000)
+    await pg.evaluate(() => document.querySelector('.split-editor-body')?.scrollTo(0, 0))
+    const asked = await askOnce(pg, COL, '保固多久')
+    await sleep(300)
+    await shot(pg, 'desktop-answer.png')
+    // 問過之後輸入那一行掉到最底下，正好在右下角小幫手那顆旁邊
+    if (await sendNotCovered(pg, COL)) pass('問過之後輸入那一行在最底下：右下角小幫手那顆沒有蓋住輸入框和「送出」（那一行讓出右邊）')
+    else fail('「問 AI」的送出鈕被右下角小幫手蓋住了')
+    const labels = await pg.$$eval(`${COL} .kb-ask__src`, els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
+    if (asked && asks.length === 1 && labels.length === 4 && labels[0].includes('保固第 8 條') && labels[0].includes('這一份') && labels[3].includes('C315 官網運費')) pass(`問一句 → 答案底下「用了這 4 條」，開著的那一份標「這一份」、別份標名字（${labels.map(l => l.slice(0, 16)).join('｜')}）`)
+    else fail('問 AI 的答案／出處不對', JSON.stringify({ asked, asks, labels }))
+
+    await clickAskSource(pg, COL, '保固第 8 條')
+    const lit = await waitFor(pg, () => (document.querySelector('[data-agent-target="kb-chunk:a8"]')?.getAnimations?.().length ?? 0) > 0, null, 5000)
+    const after8 = await pg.evaluate(() => {
+      const row = document.querySelector('[data-agent-target="kb-chunk:a8"]')?.getBoundingClientRect()
+      const body = document.querySelector('.split-editor-body')?.getBoundingClientRect()
+      return {
+        rows: document.querySelectorAll('.src-chunk-row').length,
+        q: document.querySelector('.src-chunk-search input')?.value ?? '',
+        inView: !!row && !!body && row.top >= body.top - 1 && row.bottom <= body.bottom + 1,
+        editor: [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.chunk-form')),
+      }
+    })
+    await sleep(1200)
+    await shot(pg, 'desktop-open-chunk.png')
+    if (lit && after8.rows === 8 && !after8.q && after8.inView && !after8.editor) pass('點「保固第 8 條」→ 「在這份裡找」清掉、捲到那一條、亮一下（不開編輯框）')
+    else fail('點出處沒有捲到那一條亮起來', JSON.stringify({ lit, ...after8 }))
+
+    await sleep(3800)
+    await clickAskSource(pg, COL, '已經換掉的那一條')
+    const goneT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('已經換掉或刪掉了')), null, 8000)
+    await sleep(3800)
+    await clickAskSource(pg, COL, '等你看過的一條')
+    const draftT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('還在「等你看過」')), null, 8000)
+    const draftLit = await flashing(pg, '[data-agent-target="kb-chunk:a7"]')
+    if (goneT && draftT && draftLit) pass('點到已經換掉的 → 講「已經換掉或刪掉了（在回收桶裡）」；點到等你看過的 → 照樣亮、講「還在『等你看過』，AI 還不會用」')
+    else fail('換掉的／等你看過的沒有照實講', JSON.stringify({ goneT, draftT, draftLit }))
+
+    await clickAskSource(pg, COL, '離島運費')
+    const toB = await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C315 官網運費' && (document.querySelector('[data-agent-target="kb-chunk:b2"]')?.getAnimations?.().length ?? 0) > 0, null, 15_000)
+    if (toB) pass('點別份的「離島運費」→ 中間換成那一份、那一條亮起來')
+    else fail('點別份的出處沒有換過去')
+
+    await pg.evaluate(s => [...document.querySelectorAll(`${s} .kb-ask__fix`)].at(-1)?.click(), COL)
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 8000)
+    const q = await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.kb-addone input')?.value ?? '')
+    await shot(pg, 'desktop-add-one-from-ask.png')
+    if (q === '保固多久') pass('「答得不對？寫一句正確答案」→ 打開「補一條知識」、客人問那一格帶著剛剛那一句')
+    else fail('從問 AI 打開補一條沒有帶那一句', q)
+    await pg.keyboard.press('Escape')
+    await sleep(500)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.el-dialog__footer .el-button:not(.el-button--primary)')?.click())
+    await sleep(400)
+
+    // 中間寬度（1100 → 內容 860）：右欄收成右上一顆「問 AI」、開抽屜；點出處 → 抽屜關掉、中間打開那一條
+    await pg.setViewport({ width: 1100, height: 900 })
+    await waitFor(pg, () => !document.querySelector('.src-ask-col') && [...document.querySelectorAll('.admin-header-actions [data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null), null, 10_000)
+    const mid = await pg.evaluate(() => ({
+      col: !!document.querySelector('.src-ask-col'),
+      btn: [...document.querySelectorAll('.admin-header-actions [data-tour="kb-ask-open"]')].map(e => e.innerText.trim()).join(),
+      hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+    }))
+    await shot(pg, 'mid-header-button.png')
+    await pg.evaluate(() => document.querySelector('.admin-header-actions [data-tour="kb-ask-open"]')?.click())
+    const drawer = await waitFor(pg, () => { const d = document.querySelector('.src-ask-drawer'); return !!d && d.offsetParent !== null && !!d.querySelector('[data-tour="kb-ask"]') }, null, 8000)
+    await sleep(500)
+    const DRAWER = '.src-ask-drawer'
+    const drawerTitle = await pg.evaluate(() => ({
+      own: document.querySelector('.src-ask-drawer .el-drawer__title')?.innerText.trim() ?? '',
+      close: !!document.querySelector('.src-ask-drawer .el-drawer__close-btn'),
+    }))
+    const askedMid = await askOnce(pg, DRAWER, '保固多久')
+    await sleep(300)
+    // 前面「等你看過」那一句提示還浮在右下角的話會擋住量測：等它消失（提示 3.5 秒就收，不是版面的問題）
+    await waitFor(pg, () => !document.querySelector('.toast'), null, 8000)
+    const drawerSend = await sendNotCovered(pg, DRAWER)
+    const sendDbg = drawerSend ? null : await pg.evaluate((s) => {
+      const r = el => { const x = el?.getBoundingClientRect(); return x ? [Math.round(x.left), Math.round(x.top), Math.round(x.right), Math.round(x.bottom)] : null }
+      const b = document.querySelector(`${s} .kb-ask__foot .el-button--primary`)
+      const bb = b?.getBoundingClientRect()
+      const hit = bb ? document.elementFromPoint(bb.left + bb.width / 2, bb.top + bb.height / 2) : null
+      return { btn: r(b), input: r(document.querySelector(`${s} .kb-ask__foot input`)), fab: r(document.querySelector('.ta-fab')), foot: r(document.querySelector(`${s} .kb-ask__foot`)), pad: getComputedStyle(document.querySelector(`${s} .kb-ask__foot`)).paddingRight, hit: hit ? `${hit.tagName}.${[...hit.classList].join('.')}` : null }
+    }, DRAWER)
+    await shot(pg, 'mid-drawer.png')
+    await clickAskSource(pg, DRAWER, '保固第 8 條')
+    const closedAndOpened = await waitFor(pg, () => {
+      const d = document.querySelector('.src-ask-drawer')
+      const hidden = !d || d.offsetParent === null || getComputedStyle(d).display === 'none' || d.getBoundingClientRect().left >= window.innerWidth - 1
+      return hidden && document.querySelector('.src-header-main input')?.value === 'C315 保固說明.pdf' && !!document.querySelector('[data-agent-target="kb-chunk:a8"]')
+    }, null, 15_000)
+    if (!mid.col && mid.btn === '問 AI' && !mid.hscroll && drawer && askedMid && closedAndOpened && drawerSend && !drawerTitle.own && drawerTitle.close) pass('內容寬 860（視窗 1100）：右欄收成右上「問 AI」→ 打開抽屜（不重寫標題、留 ✕、送出沒被小幫手蓋住）；點出處 → 抽屜收起來、中間打開那一份那一條')
+    else fail('中間寬度的「問 AI」不對', JSON.stringify({ ...mid, drawer, askedMid, closedAndOpened, drawerSend, drawerTitle, sendDbg }))
+    await pg.close()
+
+    // 中間寬度、沒選任何一份（工作台）：「問 AI」在工作台右上那一行
+    const pgMid = await openImportDialog(c315Fake, { ...SOURCES_PAGE, width: 1100, height: 900 })
+    const wbBtn = await waitFor(pgMid, () => [...document.querySelectorAll('.src-ask-bar [data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null), null, 20_000)
+    const wbPos = await pgMid.evaluate(() => {
+      const b = document.querySelector('.src-ask-bar [data-tour="kb-ask-open"]')?.getBoundingClientRect()
+      const ed = document.querySelector('.split-editor')?.getBoundingClientRect()
+      return b && ed ? { rightGap: Math.round(ed.right - b.right), topGap: Math.round(b.top - ed.top) } : null
+    })
+    await shot(pgMid, 'mid-workbench-button.png')
+    if (wbBtn && wbPos && wbPos.rightGap <= 40 && wbPos.topGap <= 40) pass(`工作台（沒選資料）：「問 AI」在中間那一欄的右上（離右邊 ${wbPos.rightGap}px、離上面 ${wbPos.topGap}px）`)
+    else fail('工作台上找不到右上的「問 AI」', JSON.stringify({ wbBtn, wbPos }))
+    await pgMid.close()
+
+    // 手機：不放（手機工作台另排 `E-13`）
+    const phone = await openImportDialog(c315Fake, { ...SOURCES_PAGE, width: 390, height: 844 })
+    await waitFor(phone, () => document.querySelectorAll('.split-list [data-tour="kb-source-row"]').length > 0, null, 30_000)
+    await sleep(500)
+    const ph = await phone.evaluate(() => ({
+      col: !!document.querySelector('.src-ask-col'),
+      btn: [...document.querySelectorAll('[data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null),
+      panel: !!document.querySelector('[data-tour="kb-ask"]'),
+      hscroll: document.documentElement.scrollWidth > window.innerWidth + 1,
+    }))
+    if (!ph.col && !ph.btn && !ph.panel && !ph.hscroll) pass('手機 390 寬：沒有「問 AI」欄、也沒有那顆鈕（手機工作台另排），沒有橫向捲動')
+    else fail('手機上還有問 AI', JSON.stringify(ph))
+    await phone.close()
+  }
+
+  // ── 第四十一段（`C-316`）：「這份在講什麼」——沒有就請伺服器寫一次（骨架）、最多三行、每份只請一次；
+  //    已經有的直接用；一段文字不請；寫不出來整塊不出現；立即更新換了內容 → force 重寫；
+  //    「在這份裡找…」標題／內容／問法都找得到、找不到講一句，條數少不擺 ──
+  if (CHECK_FROM <= 41) {
+    const s1 = fakeSource({ id: 'c316-new', type: 'file', name: 'C316 說明書', chunkCount: 8, refreshIntervalMinutes: 0 })
+    const s2 = fakeSource({ id: 'c316-has', type: 'url', name: 'C316 官網', url: 'https://shop.example.tw/faq', chunkCount: 3, summary: ['已經有的第一行', '已經有的第二行'], summaryAt: NOW - 86400_000 })
+    const s3 = fakeSource({ id: 'c316-text', type: 'manual', name: 'C316 營業時間', chunkCount: 1, lastFetchedAtMs: 0 })
+    const s4 = fakeSource({ id: 'c316-fail', type: 'file', name: 'C316 寫不出來', chunkCount: 4, refreshIntervalMinutes: 0 })
+    const s5 = fakeSource({ id: 'c316-sheet', type: 'gsheet', name: 'C316 價目表', chunkCount: 3, summary: ['舊內容的摘要'], summaryAt: NOW - 86400_000 })
+    const s1Chunks = [
+      fakeChunk({ id: 'n1', title: '保固多久', content: '一年保固' }),
+      fakeChunk({ id: 'n2', title: '怎麼退貨', content: '七天鑑賞期內可退' }),
+      fakeChunk({ id: 'n3', title: '付款方式', content: '信用卡、轉帳', questions: ['可以刷卡嗎'] }),
+      ...Array.from({ length: 5 }, (_, i) => fakeChunk({ id: `n${i + 4}`, title: `規格 ${i + 1}`, content: '尺寸' })),
+    ]
+    const pageFake = fakeSourcesPage([s1, s2, s3, s4, s5], {
+      'c316-new': s1Chunks,
+      'c316-has': [fakeChunk({ id: 'h1', title: '運費' }), fakeChunk({ id: 'h2', title: '退貨' }), fakeChunk({ id: 'h3', title: '保固' })],
+      'c316-text': [fakeChunk({ id: 't1', title: '營業時間' })],
+      'c316-fail': Array.from({ length: 4 }, (_, i) => fakeChunk({ id: `f${i + 1}`, title: `第 ${i + 1} 條` })),
+      'c316-sheet': [fakeChunk({ id: 'g1', title: '拿鐵' }), fakeChunk({ id: 'g2', title: '美式' }), fakeChunk({ id: 'g3', title: '摩卡' })],
+    })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().includes('/api/ai/sources/c316-sheet/gsheet-sync') && req.method() === 'POST') return json({ outcome: 'synced', added: 1, updated: 0, deleted: 0, kept: 2 })
+      return pageFake(req)
+    }, {
+      ...SOURCES_PAGE,
+      summary: async (id, body) => {
+        if (id === 'c316-new') { await sleep(1500); return json({ summary: ['第一行：保固一年', '第二行：七天鑑賞期', '第三行：可以刷卡'], summaryAt: Date.now() }) }
+        if (id === 'c316-fail') return json({ summary: [], summaryAt: 0, summaryFailed: true })
+        if (id === 'c316-sheet' && body.force) { s5.summary = ['新內容的摘要']; return json({ summary: ['新內容的摘要'], summaryAt: Date.now() }) }
+        return undefined
+      },
+    })
+    const callsOf = id => summaryCalls.filter(c => c.id === id)
+    const summaryState = () => pg.evaluate(() => ({
+      card: !!document.querySelector('.src-summary'),
+      skeleton: !!document.querySelector('.src-summary .el-skeleton'),
+      lines: [...document.querySelectorAll('.src-summary__list li')].map(e => e.innerText.trim()),
+      first: document.querySelector('.solo-editor-body')?.firstElementChild?.classList.contains('src-summary') ?? false,
+      title: document.querySelector('.src-summary .section-title')?.innerText.trim() ?? '',
+    }))
+    await pickSource(pg, s1.name)
+    await waitFor(pg, () => !!document.querySelector('.src-summary .el-skeleton'), null, 8000)
+    const during = await summaryState()
+    await shot(pg, 'summary-skeleton.png', '.split-editor')
+    await waitFor(pg, () => document.querySelectorAll('.src-summary__list li').length > 0, null, 10_000)
+    const done = await summaryState()
+    await shot(pg, 'summary-and-search.png', '.split-editor')
+    if (during.skeleton && done.title === '這份在講什麼' && done.lines.length === 3 && done.first && callsOf('c316-new').length === 1 && !callsOf('c316-new')[0].force) pass(`還沒有摘要 → 請伺服器寫一次（骨架等著），名稱下面第一塊「這份在講什麼」三行：${done.lines.join('／')}`)
+    else fail('「這份在講什麼」沒出現或不對', JSON.stringify({ during, done, calls: callsOf('c316-new') }))
+
+    // 在這份裡找
+    const rowsNow = () => pg.$$eval('.src-chunk-row .src-chunk-title', els => els.map(e => e.innerText))
+    await typeInto(pg, '.src-chunk-search input', '鑑賞')
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 1, null, 5000)
+    const byContent = await rowsNow()
+    await typeInto(pg, '.src-chunk-search input', '刷卡')
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 1, null, 5000)
+    const byQuestion = await rowsNow()
+    await typeInto(pg, '.src-chunk-search input', '保固')
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 1, null, 5000)
+    const byTitle = await rowsNow()
+    await typeInto(pg, '.src-chunk-search input', '沒有這種')
+    await waitFor(pg, () => !!document.querySelector('.src-chunk-none'), null, 5000)
+    const none = await pg.$eval('.src-chunk-none', e => e.innerText.trim()).catch(() => '')
+    const placeholder = await pg.$eval('.src-chunk-search input', e => e.getAttribute('placeholder')).catch(() => '')
+    if (placeholder === '在這份裡找…' && byContent.join() === '怎麼退貨' && byQuestion.join() === '付款方式' && byTitle.join() === '保固多久' && none === '沒有符合「沒有這種」的。') pass('「在這份裡找…」：內容（鑑賞→怎麼退貨）、客人問法（刷卡→付款方式）、標題都找得到；找不到講「沒有符合「沒有這種」的。」')
+    else fail('在這份裡找不對', JSON.stringify({ placeholder, byContent, byQuestion, byTitle, none }))
+
+    await pickSource(pg, s2.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C316 官網' && document.querySelectorAll('.src-chunk-row').length === 3, null, 15_000)
+    await sleep(500)
+    const has = await summaryState()
+    const searchOnSmall = !!(await pg.$('.src-chunk-search'))
+    if (has.lines.join() === '已經有的第一行,已經有的第二行' && !callsOf('c316-has').length && !searchOnSmall) pass('已經有摘要的那一份 → 直接用（不再請伺服器寫）；只有 3 條的不擺「在這份裡找」')
+    else fail('已經有摘要的那一份不對、或 3 條也擺了搜尋框', JSON.stringify({ has, calls: callsOf('c316-has'), searchOnSmall }))
+
+    await pickSource(pg, s3.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C316 營業時間', null, 15_000)
+    await sleep(800)
+    const text = await summaryState()
+    await pickSource(pg, s4.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C316 寫不出來' && document.querySelectorAll('.src-chunk-row').length === 4, null, 15_000)
+    await sleep(1200)
+    const failed = await summaryState()
+    const failToasts = await toastsOf(pg)
+    if (!text.card && !callsOf('c316-text').length && !failed.card && callsOf('c316-fail').length === 1 && !failToasts.some(t => t.includes('摘要'))) pass('一段文字（一條）不請、不擺；寫不出來（summaryFailed）整塊不出現、也不跳「摘要失敗」')
+    else fail('一段文字或寫不出來的那一份不對', JSON.stringify({ text, textCalls: callsOf('c316-text'), failed, failCalls: callsOf('c316-fail'), failToasts }))
+
+    await pickSource(pg, s1.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C316 說明書' && document.querySelectorAll('.src-summary__list li').length === 3, null, 15_000)
+    if (callsOf('c316-new').length === 1) pass('換到別份再回來 → 摘要還在、沒有再請一次（每份每次打開頁面最多一次）')
+    else fail('同一份又請了一次摘要', JSON.stringify(callsOf('c316-new')))
+
+    await pickSource(pg, s5.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C316 價目表' && document.querySelectorAll('.src-summary__list li').length === 1, null, 15_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.admin-header-actions .el-button')].find(b => b.innerText.includes('立即更新'))?.click())
+    const rewrote = await waitFor(pg, () => [...document.querySelectorAll('.src-summary__list li')].map(e => e.innerText).join() === '新內容的摘要', null, 15_000)
+    if (rewrote && callsOf('c316-sheet').length === 1 && callsOf('c316-sheet')[0].force) pass('試算表按「立即更新」更新到東西 → 帶 force 請伺服器重寫，換成新內容的摘要')
+    else fail('立即更新之後摘要沒有重寫', JSON.stringify({ rewrote, calls: callsOf('c316-sheet') }))
+    await pg.close()
+  }
+
+  // ── 第四十二段（`C-317`，`D-126` 第 3 題）：這一頁所有「新增一條」都打開「補一條知識」——側欄那顆（樣子照舊、不叫小幫手）、
+  //    「⋯ → 手動新增知識」、?q= 深連結（查不到現成的直接開、帶那一句；補好銷監控頁同問題案例）、查到現成的「還是新增一條」；
+  //    補好了在開著的那一份 → 重讀、那一條亮；在別份 → 左邊那一份亮（不切走）；舊的五格新增框不見了 ──
+  if (CHECK_FROM <= 42) {
+    const f = fakeSource({ id: 'c317-file', type: 'file', name: 'C317 說明書', chunkCount: 2, refreshIntervalMinutes: 0, summary: ['說明'] })
+    const list = [f]
+    const details = { 'c317-file': [fakeChunk({ id: 'k1', title: '保固' }), fakeChunk({ id: 'k2', title: '退貨' })] }
+    const pageFake = fakeSourcesPage(list, details)
+    const creates = []
+    const resolves = []
+    let nextCreate = null
+    const pg = await openImportDialog(async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      if (url.pathname === '/api/ai/knowledge/create' && m === 'POST') {
+        const b = JSON.parse(req.postData() || '{}')
+        creates.push(b)
+        const r = nextCreate ?? { id: `new-${creates.length}`, sourceId: 'c317-file' }
+        if (r.sourceId === 'c317-file') { details['c317-file'].push(fakeChunk({ id: r.id, title: b.title })); f.chunkCount++ }
+        else if (!list.some(s => s.id === r.sourceId)) { list.push(fakeSource({ id: r.sourceId, type: 'manual', name: b.title, chunkCount: 1 })); details[r.sourceId] = [fakeChunk({ id: r.id, title: b.title })] }
+        return json({ ...r, status: 'indexed' })
+      }
+      if (url.pathname === '/api/ai/usage/handoffs/resolve-by-query' && m === 'POST') { resolves.push(JSON.parse(req.postData() || '{}').query); return json({ resolved: 2 }) }
+      // 補好之後小視窗會用客人的話試問一次（不寫東西，但是 POST、會花 AI 的錢）：回「逾時」＝不講結果
+      if (url.pathname === '/api/ai/knowledge/verify' && m === 'POST') return json({ timedOut: true })
+      if (url.pathname === '/api/ai/knowledge/search' && m === 'GET') {
+        const q = url.searchParams.get('q') ?? ''
+        return json({ items: q.includes('運費') ? [{ id: 'k9', sourceId: 'c317-file', title: '運費怎麼算', snippet: '滿千免運', status: 'indexed' }] : [], truncated: false, countTruncated: false })
+      }
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    /** 瀏覽器裡跑的判斷（給 waitFor 用）；Node 這邊要讀就用 addOneShown() */
+    const ADD_ONE_SHOWN = () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone'))
+    const addOneShown = () => pg.evaluate(ADD_ONE_SHOWN)
+    const addOneQ = () => pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.kb-addone input')?.value ?? null)
+    const fillAndAdd = async (q, a) => {
+      await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 8000)
+      await markShown(pg, { inner: '.kb-addone' })
+      if (q !== null) await typeInto(pg, `${SHOWN} .kb-addone .admin-field-group input`, q)
+      await typeInto(pg, `${SHOWN} .kb-addone textarea`, a)
+      await sleep(200)
+      await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.el-dialog__footer .el-button--primary')?.click())
+      await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 8000)
+    }
+    const closeAddOne = async () => {
+      await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.el-dialog__footer .el-button:not(.el-button--primary)')?.click())
+      await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 5000)
+    }
+
+    // 側欄那顆：樣子跟另外三頁一樣（同兩個 class、小按鈕、自己一排），按了開補一條、⛔ 不叫小幫手
+    await waitFor(pg, () => !!document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn'), null, 30_000)
+    const sideBtn = await pg.evaluate(() => {
+      const btn = document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn')
+      return { text: btn?.innerText.trim() ?? '', small: btn?.classList.contains('el-button--small') ?? false, h: Math.round(btn?.getBoundingClientRect().height ?? 0) }
+    })
+    await pg.evaluate(() => document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn')?.click())
+    await waitFor(pg, ADD_ONE_SHOWN, null, 8000)
+    const side ={ shown: await addOneShown(), q: await addOneQ(), agent: !!(await pg.$('.ta-panel')) }
+    await markShown(pg, { inner: '.kb-addone' })
+    await shot(pg, 'add-one-dialog.png', SHOWN)
+    if (sideBtn.text === '用一句話寫一條知識' && sideBtn.small && side.shown && side.q === '' && !side.agent) pass(`側欄「用一句話寫一條知識」（樣子照舊：小按鈕 ${sideBtn.h}px、自己一排）→ 打開「補一條知識」，不叫小幫手`)
+    else fail('側欄那顆不對', JSON.stringify({ sideBtn, side }))
+    await closeAddOne()
+
+    // ⋯ → 手動新增知識（⚠️ 先等上一個視窗的遮罩淡出：淡出的那半秒裡點下去，點到的是遮罩、選單不會開）
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
+    await sleep(300)
+    await pg.click('[data-tour="kb-more"]')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '手動新增知識'), null, 8000)
+    const moreItems = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '手動新增知識')?.click())
+    const fromMore = await waitFor(pg, ADD_ONE_SHOWN, null, 8000)
+    const oldCreate = await dialogShown(pg, '新增知識')
+    if (fromMore && !oldCreate) pass(`「⋯ → 手動新增知識」→ 同一個「補一條知識」（不再是五格的「新增知識」框）；選單：${moreItems.join('／')}`)
+    else fail('「⋯ → 手動新增知識」不對', JSON.stringify({ fromMore, oldCreate, moreItems }))
+
+    // 開著「C317 說明書」補一條、伺服器說放進這一份 → 重讀、那一條亮；⛔ 不帶商品名（小視窗沒有那一格）
+    await closeAddOne()
+    await pickSource(pg, f.name)
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    await pg.evaluate(() => document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn')?.click())
+    await fillAndAdd('有門市嗎', '沒有門市，只在網路上賣。')
+    const litNew = await waitFor(pg, () => (document.querySelector('[data-agent-target="kb-chunk:new-1"]')?.getAnimations?.().length ?? 0) > 0, null, 10_000)
+    const okToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('加好了')), null, 5000)
+    const c1 = creates[0] ?? {}
+    if (litNew && okToast && c1.title === '有門市嗎' && c1.content === '沒有門市，只在網路上賣。' && !('productName' in c1) && JSON.stringify(c1.questions) === '["有門市嗎"]' && !resolves.length) pass('開著那一份補一條 → 送出去標題＝客人問、問法帶那一句、不帶商品名；放進這一份 → 重讀、那一條亮起來；沒有從 ?q= 來就不銷案')
+    else fail('補一條放進開著的那一份不對', JSON.stringify({ litNew, okToast, c1, resolves }))
+
+    // 放進另一份（新開的一段文字）→ 左邊那一份亮、不切走
+    await sleep(3800)
+    nextCreate = { id: 'new-x', sourceId: 'c317-new-text' }
+    await pg.evaluate(() => document.querySelector('.split-sidebar .agent-ask-row .agent-ask-btn')?.click())
+    await fillAndAdd('營業時間', '週一到週五 10 點到 18 點。')
+    const litRow = await waitFor(pg, () => (document.querySelector('[data-agent-target="kb-source:c317-new-text"]')?.getAnimations?.().length ?? 0) > 0, null, 10_000)
+    const stay = await pg.$eval('.src-header-main input', e => e.value).catch(() => '')
+    if (litRow && stay === 'C317 說明書') pass('補的那一條放進新的一份 → 左邊那一份亮一下，中間照舊是他在看的那一份（不切走）')
+    else fail('補到別份時沒亮、或被切走了', JSON.stringify({ litRow, stay }))
+    nextCreate = null
+    await pg.close()
+
+    // ?q=（AI 表現頁「補知識」）：查不到現成的 → 直接開補一條、帶那一句；補好 → 銷監控頁同問題案例
+    const pgQ = await openImportDialog(async (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/ai/knowledge/create' && req.method() === 'POST') { creates.push(JSON.parse(req.postData() || '{}')); return json({ id: 'new-q', sourceId: 'c317-q', status: 'indexed' }) }
+      if (url.pathname === '/api/ai/usage/handoffs/resolve-by-query' && req.method() === 'POST') { resolves.push(JSON.parse(req.postData() || '{}').query); return json({ resolved: 2 }) }
+      if (url.pathname === '/api/ai/knowledge/verify' && req.method() === 'POST') return json({ timedOut: true })
+      if (url.pathname === '/api/ai/knowledge/search' && req.method() === 'GET') {
+        const q = url.searchParams.get('q') ?? ''
+        return json({ items: q.includes('運費') ? [{ id: 'k9', sourceId: 'c317-file', title: '運費怎麼算', snippet: '滿千免運', status: 'indexed' }] : [], truncated: false, countTruncated: false })
+      }
+      return pageFake(req)
+    }, { path: `/knowledge/sources?q=${encodeURIComponent('可以寄到香港嗎')}`, waitSel: '[data-tour="kb-sources"]' })
+    const qShown = await waitFor(pgQ, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 20_000)
+    const qVal = await pgQ.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.kb-addone input')?.value ?? '')
+    await markShown(pgQ, { inner: '.kb-addone' })
+    await typeInto(pgQ, `${SHOWN} .kb-addone textarea`, '可以，運費另計。')
+    await sleep(200)
+    await pgQ.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.el-dialog__footer .el-button--primary')?.click())
+    const resolved = await waitFor(pgQ, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('同問題案例標為已處理')), null, 10_000)
+    if (qShown && qVal === '可以寄到香港嗎' && resolved && resolves.at(-1) === '可以寄到香港嗎') pass('?q=「可以寄到香港嗎」、查不到現成的 → 直接開「補一條知識」帶那一句；補好 → 監控頁同問題的案例標成已處理')
+    else fail('?q= 補一條不對', JSON.stringify({ qShown, qVal, resolved, resolves }))
+
+    // ?q= 查得到現成的 → 先問「這題可能已經有答案了」→「還是新增一條」→ 同一個小視窗
+    await gotoAgain(pgQ, `${BASE}/admin/${WORKSPACE_ID}/knowledge/sources?q=${encodeURIComponent('運費多少')}`)
+    const dupAsk = await waitFor(pgQ, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.innerText.includes('這題可能已經有答案了')), null, 20_000)
+    await pgQ.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.innerText.includes('這題可能已經有答案了'))?.querySelectorAll('.el-dialog__footer .el-button')?.forEach(b => { if (b.innerText.includes('還是新增一條')) b.click() }))
+    const dupThen = await waitFor(pgQ, () => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.kb-addone input')?.value === '運費多少', null, 8000)
+    if (dupAsk && dupThen) pass('?q=「運費多少」查到現成的「運費怎麼算」→ 先問要不要改那一條；按「還是新增一條」→ 同一個「補一條知識」、帶著那一句')
+    else fail('?q= 查到現成的那條路不對', JSON.stringify({ dupAsk, dupThen }))
+    await pgQ.close()
+  }
+
+  // ── 第四十三段（`C-319`，`D-126` 第 5 題）：更新類按鈕一種講法——試算表、網址「立即更新」，檔案「上傳新版」；
+  //    提到它們的提醒也這樣講；整頁不再出現「換新版」「立即同步」「重新同步」 ──
+  if (CHECK_FROM <= 43) {
+    const sheet = fakeSource({ id: 'c319-sheet', name: 'C319 價目表', chunkCount: 2, refreshIntervalMinutes: 60, summary: ['價目'] })
+    const web = fakeSource({ id: 'c319-url', type: 'url', name: 'C319 官網', url: 'https://shop.example.tw/a', chunkCount: 2, outdatedAtMs: NOW - 600_000, summary: ['官網'] })
+    const file = fakeSource({ id: 'c319-file', type: 'file', name: 'C319 說明書', chunkCount: 2, refreshIntervalMinutes: 0, summary: ['說明'],
+      status: 'failed', failureReason: '檔案讀不到' })
+    const pageFake = fakeSourcesPage([sheet, web, file], {
+      'c319-sheet': [fakeChunk({ id: 'p1', title: '拿鐵', manuallyEditedAtMs: NOW - 86400_000 }), fakeChunk({ id: 'p2', title: '美式' })],
+      'c319-url': [fakeChunk({ id: 'w1', title: '運費' }), fakeChunk({ id: 'w2', title: '退貨' })],
+      'c319-file': [fakeChunk({ id: 'd1', title: '保固', manuallyEditedAtMs: NOW - 86400_000 }), fakeChunk({ id: 'd2', title: '退貨' })],
+    })
+    const pg = await openImportDialog(async (req) => {
+      if (req.url().includes('/api/ai/sources/c319-sheet') && req.method() === 'PUT') return json(sheet)
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    const OLD = ['換新版', '立即同步', '重新同步']
+    const read = () => pg.evaluate(() => ({
+      btns: [...document.querySelectorAll('.admin-header-actions .el-button')].map(b => b.innerText.trim()).filter(Boolean),
+      editor: document.querySelector('.split-editor')?.innerText ?? '',
+    }))
+    await pickSource(pg, sheet.name)
+    await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 2 && document.querySelector('.src-header-main input')?.value === 'C319 價目表', null, 15_000)
+    await sleep(300)
+    const r1 = await read()
+    // 鎖頭點開的那一句也照新叫法
+    await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())
+    await sleep(400)
+    // 「自動更新：」改成不自動 → 提示講右上「立即更新」
+    await pg.$eval('.src-sync-row .el-select__wrapper', el => el.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-select-dropdown__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '不自動更新'), null, 8000)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-select-dropdown__item')].find(e => e.offsetParent !== null && e.innerText.trim() === '不自動更新')?.click())
+    const offToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('要更新時按右上「立即更新」')), null, 8000)
+    await pickSource(pg, web.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C319 官網' && document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    await sleep(300)
+    const r2 = await read()
+    await pickSource(pg, file.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C319 說明書' && document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    await sleep(300)
+    const r3 = await read()
+    await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.src-lock-pop')].some(p => getComputedStyle(p).display !== 'none' && p.innerText.includes('上傳新版')), null, 5000)
+    const pops = await pg.$$eval('.src-lock-pop', els => els.map(e => e.innerText).join(' '))
+    await shot(pg, 'buttons-file.png', '.split-editor')
+    const oldHits = [r1.editor, r2.editor, r3.editor, pops].flatMap(t => OLD.filter(w => t.includes(w)))
+    if (r1.btns.includes('立即更新') && r2.btns.includes('立即更新') && r3.btns.includes('上傳新版') && r2.editor.includes('建議點上方「立即更新」') && r3.editor.includes('按上方「上傳新版」') && offToast && !oldHits.length) {
+      pass('試算表、網址右上「立即更新」、檔案「上傳新版」；網址有變動的提醒、檔案壞了的修法、鎖頭、關掉自動更新的提示都照新叫法，整頁沒有「換新版／立即同步／重新同步」')
+    }
+    else fail('更新類按鈕的叫法不一致', JSON.stringify({ b1: r1.btns, b2: r2.btns, b3: r3.btns, offToast, oldHits }))
+    await pg.close()
+  }
+
+  // ── 第四十四段（`C-320`，`D-126` 第 1 題）：「資料夾」改叫「分組」；通用的那幾組排最上面、標「通用」；
+  //    編輯分組可以改成通用（只送那一格）；資料頁沒有「所屬產品」卡、改在「⋯ → AI 認的商品名」（試算表沒有）；
+  //    「沒說是哪個商品」的待辦直接打開那個小視窗；拖曳搬組照舊 ──
+  if (CHECK_FROM <= 44) {
+    const folders = [
+      { id: 'c320-prod', name: '乾淨方MAX', order: 0, createdAtMs: NOW, general: false },
+      { id: 'c320-faq', name: '客服 FAQ', order: 1, createdAtMs: NOW, general: true },
+      { id: 'c320-gen', name: '通用', order: 2, createdAtMs: NOW, general: true },
+      { id: 'c320-dry', name: 'C320 除濕機', order: 3, createdAtMs: NOW, general: false },
+    ]
+    const inProd = fakeSource({ id: 'c320-a', type: 'file', name: 'C320 乾淨方說明書', folderId: 'c320-prod', chunkCount: 2, productName: 'SHARP 乾淨方MAX', summary: ['說明'] })
+    const loose = fakeSource({ id: 'c320-c', type: 'file', name: 'C320 沒分組的檔案', chunkCount: 2, refreshIntervalMinutes: 0, productName: '', summary: ['說明'] })
+    const sheet = fakeSource({ id: 'c320-d', name: 'C320 價目表（試算表）', chunkCount: 2, summary: ['價目'] })
+    const noName = fakeSource({ id: 'c320-e', type: 'file', name: 'C320 除濕機快速上手', chunkCount: 2, refreshIntervalMinutes: 0, productName: '', summary: ['說明'] })
+    const pageFake = fakeSourcesPage([inProd, loose, sheet, noName], {
+      'c320-a': [fakeChunk({ id: 'x1', title: '濾網' }), fakeChunk({ id: 'x2', title: '保固' })],
+      'c320-c': [fakeChunk({ id: 'y1', title: '運費' }), fakeChunk({ id: 'y2', title: '退貨' })],
+      'c320-d': [fakeChunk({ id: 'z1', title: '拿鐵' }), fakeChunk({ id: 'z2', title: '美式' })],
+      'c320-e': [fakeChunk({ id: 'e1', title: '開機' }), fakeChunk({ id: 'e2', title: '水箱' })],
+    })
+    const health = { ...emptyHealthFake(), noProductSources: [{ id: 'c320-c', name: loose.name, chunkCount: 2 }] }
+    const folderPuts = []
+    const sourcePuts = []
+    const reindexes = []
+    const pg = await openImportDialog(async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      if (url.pathname === '/api/ai/folders' && m === 'GET') return json({ items: folders })
+      if (url.pathname === '/api/ai/knowledge/health' && m === 'GET') return json(health)
+      const fp = url.pathname.match(/^\/api\/ai\/folders\/([^/]+)$/)
+      if (fp && m === 'PUT') {
+        const b = JSON.parse(req.postData() || '{}')
+        folderPuts.push({ id: fp[1], body: b })
+        const target = folders.find(x => x.id === fp[1])
+        if (target && typeof b.general === 'boolean') target.general = b.general
+        if (target && b.name) target.name = b.name
+        return json(target)
+      }
+      const sp = url.pathname.match(/^\/api\/ai\/sources\/(c320-[a-e])$/)
+      if (sp && m === 'PUT') {
+        const b = JSON.parse(req.postData() || '{}')
+        sourcePuts.push({ id: sp[1], body: b })
+        const s = [inProd, loose, sheet, noName].find(x => x.id === sp[1])
+        if (s && 'folderId' in b) s.folderId = b.folderId
+        if (s && typeof b.productName === 'string') { s.productName = b.productName; health.noProductSources = [] }
+        // 搬進「C320 除濕機」（商品分組）：沒名字的那份伺服器照同組補上（要幾秒）；另一份那時同組有兩個名字 → 只回名單
+        if (s && b.folderId === 'c320-dry' && s.id === 'c320-e') {
+          await sleep(2000)
+          s.productName = 'GPLUS 除濕機 12L'
+          return json({ ...s, groupFill: { productName: 'GPLUS 除濕機 12L', indexed: 2, failed: 0 } })
+        }
+        if (s && b.folderId === 'c320-dry' && s.id === 'c320-c') return json({ ...s, groupFill: { names: ['GPLUS 除濕機 12L', 'GPLUS 除濕機 16L'] } })
+        return json(s)
+      }
+      const ri = url.pathname.match(/^\/api\/ai\/sources\/(c320-[a-e])\/reindex$/)
+      if (ri && m === 'POST') { reindexes.push(ri[1]); return json({ indexed: 2, failed: 0 }) }
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 4, null, 30_000)
+    await sleep(500)
+    await shot(pg, 'groups-sidebar.png', '.split-sidebar')
+    const heads = () => pg.$$eval('.src-folder-header', els => els.map((e) => {
+      const label = e.querySelector('.src-folder-label')?.getBoundingClientRect()
+      const count = e.querySelector('.src-folder-count')?.getBoundingClientRect()
+      return {
+        name: e.querySelector('.src-folder-name')?.innerText.trim() ?? '',
+        general: !!e.querySelector('.src-folder-general'),
+        edit: e.querySelector('.src-folder-icon-btn')?.getAttribute('aria-label') ?? '',
+        // 「（N）」整個在標籤框裡（以前「通用」章把它擠到框外、只剩「（0」）
+        countShown: !!label && !!count && count.right <= label.right + 0.5,
+      }
+    }))
+    const h1 = await heads()
+    if (JSON.stringify(h1.map(h => h.name)) === '["客服 FAQ","通用","乾淨方MAX","C320 除濕機"]' && JSON.stringify(h1.map(h => h.general)) === '[true,false,false,false]' && h1.every(h => h.edit === '編輯分組') && h1.every(h => h.countShown)) pass(`分組：通用的排最上面（${h1.map(h => h.name + (h.general ? '［通用］' : '')).join('、')}），名字本來就叫「通用」的不重標；每組右邊「編輯分組」`)
+    else fail('分組的順序或「通用」標不對', JSON.stringify(h1))
+
+    await pg.click('[data-tour="kb-more"]')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '新增分組'), null, 8000)
+    const menu = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
+    await pg.keyboard.press('Escape')
+    await pg.mouse.click(700, 600)
+    await sleep(400)
+    if (menu.includes('新增分組') && !menu.some(t => t.includes('資料夾'))) pass(`「⋯」選單講「新增分組」（${menu.join('／')}）`)
+    else fail('「⋯」選單還在講資料夾', menu.join('／'))
+
+    // 編輯分組：把「乾淨方MAX」改成通用 → 只送 general；排到通用那一段（伺服器順序：乾淨方MAX 0）
+    await pg.evaluate(() => [...document.querySelectorAll('.src-folder-header')].find(e => e.innerText.includes('乾淨方MAX'))?.querySelector('.src-folder-icon-btn')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    await markShown(pg, { title: '編輯分組' })
+    await shot(pg, 'groups-edit.png', SHOWN)
+    const editText = await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組')?.innerText ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組')?.querySelector('.src-folder-general-check')?.click())
+    await sleep(200)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組')?.querySelector('.folder-footer-right .el-button--primary')?.click())
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    await sleep(300)
+    const h2 = await heads()
+    const fput = folderPuts[0]?.body ?? {}
+    if (folderPuts.length === 1 && folderPuts[0].id === 'c320-prod' && fput.general === true && !('name' in fput) && JSON.stringify(h2.map(h => h.name)) === '["乾淨方MAX","客服 FAQ","通用","C320 除濕機"]' && h2[0].general && editText.includes('刪除分組') && !editText.includes('資料夾')) pass('編輯分組勾「通用」→ 只送 general:true（名字沒改不送）、那一組排進最上面那一段；視窗講「分組」不講資料夾')
+    else fail('編輯分組改成通用不對', JSON.stringify({ folderPuts, h2, editText: editText.replace(/\s+/g, ' ').slice(0, 160) }))
+
+    // 拖曳搬組照舊：沒分組的那一份拖到「客服 FAQ」→ PUT folderId；拖分組裡的那份時講「拖到這裡 = 移出分組」
+    const dragTo = async (srcName, folderName) => pg.evaluate(async (s, fname) => {
+      const row = [...document.querySelectorAll('.flow-sidebar-row')].find(r => r.innerText.includes(s))
+      const handle = row?.querySelector('.drag-handle')
+      // ⚠️ 照組名比（.src-folder-name）：用 innerText.includes 的話「通用」會先比到標著「通用」的別組
+      const head = [...document.querySelectorAll('.src-folder-header')].find(e => e.querySelector('.src-folder-name')?.innerText.trim() === fname)
+      if (!handle || !head) return { ok: false }
+      const dt = new DataTransfer()
+      handle.dispatchEvent(new DragEvent('dragstart', { dataTransfer: dt, bubbles: true, cancelable: true }))
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+      const zone = document.querySelector('.src-unfolder-zone')?.innerText.trim() ?? ''
+      head.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }))
+      head.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+      handle.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true, cancelable: true }))
+      return { ok: true, zone }
+    }, srcName, folderName)
+    const d1 = await dragTo(loose.name, '客服 FAQ')
+    await sleep(800)
+    const d2 = await dragTo(inProd.name, '通用')
+    // 有商品名的那份搬進「通用」：伺服器不清掉商品名 → 要講一句、指路（⛔ 不默默留著）
+    const keptToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 認的商品名照舊是「SHARP 乾淨方MAX」') && t.innerText.includes('「⋯」→「AI 認的商品名」')), null, 5000)
+    await sleep(800)
+    const moves = sourcePuts.filter(p => 'folderId' in p.body)
+    if (d1.ok && moves[0]?.id === 'c320-c' && moves[0].body.folderId === 'c320-faq' && d2.zone === '拖到這裡 = 移出分組' && moves[1]?.id === 'c320-a' && moves[1].body.folderId === 'c320-gen') pass('拖曳搬組照舊：拖到哪一組就送那一組（folderId）；拖分組裡的那份時講「拖到這裡 = 移出分組」')
+    else fail('拖曳搬組不對', JSON.stringify({ d1, d2, moves }))
+    if (keptToast) pass('有商品名的那份搬進「通用」→ 講「AI 認的商品名照舊是「SHARP 乾淨方MAX」，要改在…「⋯」→「AI 認的商品名」」（伺服器不會清掉，不默默留著）')
+    else fail('搬出商品分組時沒講商品名照舊', (await toastsOf(pg)).join('｜'))
+
+    // 搬進商品分組、這一份沒有商品名 → 伺服器照同組補上（groupFill.productName，慢）：那一列標「搬移中」、好了講補成什麼
+    await dragTo(noName.name, 'C320 除濕機')
+    const busy = await waitFor(pg, n => [...document.querySelectorAll('.flow-sidebar-row')].some(r => r.innerText.includes(n) && r.innerText.includes('搬移中')), noName.name, 5000)
+    const filled = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 認的商品名補成「GPLUS 除濕機 12L」，重新學了 2 條')), null, 10_000)
+    const busyGone = await waitFor(pg, n => ![...document.querySelectorAll('.flow-sidebar-row')].some(r => r.innerText.includes(n) && r.innerText.includes('搬移中')), noName.name, 5000)
+    if (busy && filled && busyGone) pass('搬進商品分組、伺服器替它補商品名（要幾秒）→ 那一列先標「搬移中」，好了講「AI 認的商品名補成「GPLUS 除濕機 12L」，重新學了 2 條」')
+    else fail('搬組補商品名的過程沒講', JSON.stringify({ busy, filled, busyGone }))
+    // 同組有好幾個名字 → ⛔ 不猜：直接打開那一份的「AI 認的商品名」，那幾個名字排在上面點一個
+    await sleep(3800)
+    await dragTo(loose.name, 'C320 除濕機')
+    const pickOpened = await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 沒分組的檔案' && [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名' && d.querySelector('.src-product-choices')), null, 10_000)
+    await markShown(pg, { title: 'AI 認的商品名' })
+    const choice = await pg.evaluate(s => ({
+      ask: document.querySelector(`${s} .src-product-choices__ask`)?.innerText.trim() ?? '',
+      names: [...document.querySelectorAll(`${s} .src-product-choices .el-button`)].map(b => b.innerText.trim()),
+      before: document.querySelector(`${s} input`)?.value ?? '',
+    }), SHOWN)
+    await shot(pg, 'product-name-choices.png', SHOWN)
+    await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-product-choices .el-button`)].find(b => b.innerText.includes('16L'))?.click(), SHOWN)
+    await sleep(300)
+    const afterPick = await pg.$eval(`${SHOWN} input`, e => e.value).catch(() => '')
+    if (pickOpened && choice.ask === '「C320 除濕機」裡有這幾個，這份是哪一個？' && choice.names.join('|') === 'GPLUS 除濕機 12L|GPLUS 除濕機 16L' && choice.before === '' && afterPick === 'GPLUS 除濕機 16L') pass('搬進的那一組有兩個商品名 → 不替他猜：打開「AI 認的商品名」、問「「C320 除濕機」裡有這幾個，這份是哪一個？」，點一個就填進去')
+    else fail('同組有好幾個名字時的處理不對', JSON.stringify({ pickOpened, choice, afterPick }))
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button:not(.el-button--primary)`)?.click(), SHOWN)
+    await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
+    await sleep(300)
+
+    // 資料頁：沒有「所屬產品」卡；「⋯」→「AI 認的商品名」小視窗 → 存了重新學；試算表的「⋯」沒有這一項
+    await pickSource(pg, sheet.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 價目表（試算表）', null, 15_000)
+    await pg.click('.admin-header-actions .admin-more-btn')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '刪除'), null, 8000)
+    const sheetMenu = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
+    await pg.keyboard.press('Escape')
+    await pg.mouse.click(700, 600)
+    await sleep(400)
+    await pickSource(pg, inProd.name)
+    await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 乾淨方說明書' && document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    const editorText = await pg.$eval('.split-editor', e => e.innerText).catch(() => '')
+    await pg.click('.admin-header-actions .admin-more-btn')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === 'AI 認的商品名'), null, 8000)
+    await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].find(e => e.offsetParent !== null && e.innerText.trim() === 'AI 認的商品名')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 8000)
+    await sleep(300)
+    const pdBefore = await pg.evaluate(() => {
+      const d = [...document.querySelectorAll('.el-dialog')].find(x => x.offsetParent !== null && x.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名')
+      return { value: d?.querySelector('input')?.value ?? '', placeholder: d?.querySelector('input')?.getAttribute('placeholder') ?? '', saveDisabled: d?.querySelector('.el-dialog__footer .el-button--primary')?.disabled ?? null }
+    })
+    await markShown(pg, { title: 'AI 認的商品名' })
+    await shot(pg, 'product-name-dialog.png', SHOWN)
+    await typeInto(pg, `${SHOWN} input`, 'SHARP 乾淨方 MAX KC-P70')
+    await sleep(300)
+    // 點標題收掉自動完成的下拉（⛔ 不按 Esc：會連視窗一起關掉）
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__title`)?.click(), SHOWN)
+    await sleep(300)
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button--primary`)?.click(), SHOWN)
+    const savedT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 已重新學會')), null, 10_000)
+    // 關的時候有半秒淡出（那半秒裡還量得到）：等它真的收起來
+    const pdClosed = await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 3000)
+    const pPut = sourcePuts.find(p => p.id === 'c320-a' && 'productName' in p.body)
+    if (!sheetMenu.includes('AI 認的商品名') && !editorText.includes('所屬產品') && pdBefore.value === 'SHARP 乾淨方MAX' && pdBefore.placeholder === '這份都在講同一個商品時才填' && pdBefore.saveDisabled === true
+      && pPut?.body.productName === 'SHARP 乾淨方 MAX KC-P70' && reindexes.includes('c320-a') && savedT && pdClosed) {
+      pass('資料頁沒有「所屬產品」卡；「⋯ → AI 認的商品名」小視窗帶著現在的名字（沒改按不下去）→ 存了送 productName、接著重新學、視窗關掉；試算表的「⋯」沒有這一項')
+    }
+    else fail('AI 認的商品名不對', JSON.stringify({ sheetMenu, card: editorText.includes('所屬產品'), pdBefore, pPut, reindexes, savedT, pdClosed }))
+
+    // 待辦「沒說是哪個商品」→「補上商品名」直接打開那個小視窗（上面存商品名時假伺服器把這一類清空了，這裡放回來、重新整理）
+    health.noProductSources = [{ id: 'c320-c', name: loose.name, chunkCount: 2 }]
+    await gotoAgain(pg, `${BASE}/admin/${WORKSPACE_ID}/knowledge/sources`)
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('沒說是哪個商品')), null, 30_000)
+    const todo = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('沒說是哪個商品')) ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('沒說是哪個商品'))?.querySelector('.el-button')?.click())
+    const todoOpened = await waitFor(pg, () => document.querySelector('.src-header-main input')?.value === 'C320 沒分組的檔案' && [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === 'AI 認的商品名'), null, 15_000)
+    if (todo.includes('有 1 份文件沒說是哪個商品') && todo.includes('補上商品名') && todoOpened) pass('待辦「有 1 份文件沒說是哪個商品」→「補上商品名」：打開那一份、直接跳出「AI 認的商品名」（不用自己去「⋯」找）')
+    else fail('「沒說是哪個商品」的待辦沒有直接打開小視窗', JSON.stringify({ todo, todoOpened }))
+    await pg.close()
+
+    // 觀察者（`G-107`：存不了的照樣看得到）：「⋯」整顆沒有，那一份被認成哪個商品接在名稱下面那一行；
+    // 也沒有「問 AI」（測試對話是客服級）、沒有「用一句話寫一條知識」。角色在瀏覽器裡改（「我有哪些官方帳號」那一支回 viewer），不動正式庫
+    const viewer = await openImportDialog(async (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/admin/workspaces/my' && req.method() === 'GET') {
+        const real = await (await fetch(req.url(), { headers: req.headers() })).json()
+        for (const w of real.workspaces ?? []) if (w.workspaceId === WORKSPACE_ID) w.role = 'viewer'
+        return json(real)
+      }
+      if (url.pathname === '/api/ai/folders' && req.method() === 'GET') return json({ items: folders })
+      return pageFake(req)
+    }, SOURCES_PAGE)
+    await waitFor(viewer, () => !document.querySelector('.split-sidebar .agent-ask-row') && !!document.querySelector('.admin-viewer-banner'), null, 30_000)
+    await pickSource(viewer, inProd.name)
+    await waitFor(viewer, () => document.querySelectorAll('.src-chunk-row').length === 2, null, 15_000)
+    await sleep(500)
+    await shot(viewer, 'viewer-product-line.png', '.split-editor-header')
+    const v = await viewer.evaluate(() => ({
+      meta: document.querySelector('.src-header-meta')?.innerText.trim() ?? '',
+      more: !!document.querySelector('.admin-header-actions .admin-more-btn'),
+      ask: !!document.querySelector('[data-tour="kb-ask"]') || [...document.querySelectorAll('[data-tour="kb-ask-open"]')].some(e => e.offsetParent !== null),
+      addOne: !!document.querySelector('.split-sidebar .agent-ask-row'),
+    }))
+    if (v.meta.endsWith('・AI 認的商品：SHARP 乾淨方 MAX KC-P70') && !v.more && !v.ask && !v.addOne) pass(`觀察者：沒有「⋯」、沒有問 AI、沒有補一條；名稱下面那一行照樣看得到「${v.meta}」`)
+    else fail('觀察者看不到商品名、或看到了不能用的按鈕', JSON.stringify(v))
+    await viewer.close()
   }
 }
 catch (e) {

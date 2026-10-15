@@ -63,7 +63,7 @@
   font-size: 13px;
 }
 
-/* 同名的每一份各自帶一顆「更新這一份」（`C-135`）。
+/* 同名的每一份各自帶一顆「更新原本那一份」（`C-135`；`C-319` 以前叫「更新這一份」）。
    ⛔ 按鈕不可以擠成一排小字：那句提醒原本唯一的建議是「改個名字」，照做就是製造重複——
       現在主要出口是這顆按鈕，它必須看得見、按得到。窄視窗折行不讓它壓到名字。 */
 .kb-dedup-row {
@@ -137,7 +137,7 @@
   margin-top: 12px;
 }
 
-/* 名稱／所屬產品的收合區（`D-50` 簡化 2）。摘要卡在上面下完結論，這裡才是「要改再點」。
+/* 名稱的收合區（`D-50` 簡化 2；`C-320` 起只剩名稱）。摘要卡在上面下完結論，這裡才是「要改再點」。
    ⛔ 不要加底色或框線把它做成一張卡:它是摘要卡的延伸,長成第二張卡就又變回
       「兩個要填的欄位排在結果前面」那個問題。 */
 .kb-meta-editor {
@@ -564,12 +564,148 @@
   color: var(--el-text-color-secondary);
 }
 
-/* 結果頁「存成哪一份」（`D-123`②）：直接加入沒人看過名稱／產品／資料夾，在數字下面補一行；是附註，不搶數字 */
+/* 結果頁「存成哪一份、放在哪一組」（`D-123`②、`C-320`）：直接加入沒人看過，在數字下面補一行；是附註，不搶數字。
+   一行＝名字＋「放在『X』・改」；問「這份在講哪個商品？」時那一題換到下一行（.kb-group-pick.is-ask 自己佔一整行） */
 .kb-result-saved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 2px;
   margin: -4px 0 12px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-regular);
+}
+
+/*
+ * 「放在哪一組」（`C-320`，KnowledgeImportGroupPick）：平常是一行字＋「改」（跟摘要卡那顆「改」同一種文字鈕）；
+ * 按「改」就地出一個小選單。問那一題的時候是一句問句＋一排選項（el-radio 帶框＝看得出是「選一個」）。
+ */
+.kb-group-pick {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+
+  &.is-ask {
+    display: flex;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  &__q {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+  }
+
+  /* ⚠️ el-radio-group 預設是 inline-flex 不換行、el-radio 之間 32px 的 margin-right，帶框的 small 固定 24px 高：
+        商品名一長，字跑出框外、整排撐出視窗（2026-10-15 手機 390 寬截圖看到）。
+        Element 的 `.el-radio.is-bordered.el-radio--small` 是三個 class，這裡要夾到四個才蓋得過（所以寫在 .kb-group-pick 底下） */
+  .kb-group-pick__chips {
+    .el-radio-group {
+      flex-wrap: wrap;
+      gap: 6px;
+      max-width: 100%;
+    }
+    .el-radio.is-bordered {
+      height: auto;
+      min-height: 24px;
+      max-width: 100%;
+      margin-right: 0;
+      padding-top: 3px;
+      padding-bottom: 3px;
+      white-space: normal;
+      align-items: flex-start;
+    }
+    .el-radio.is-bordered .el-radio__input {
+      margin-top: 2px;
+    }
+    .el-radio.is-bordered .el-radio__label {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.5;
+    }
+  }
+
+  &__line {
+    overflow-wrap: anywhere;
+  }
+
+  &__edit {
+    padding: 0;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 12px;
+    color: var(--el-color-primary);
+    cursor: pointer;
+
+    &:hover:not(:disabled) { text-decoration: underline; }
+    &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+    &:disabled { cursor: not-allowed; opacity: 0.6; }
+  }
+
+  /* 「搬過去中⋯」：搬進商品分組時伺服器可能要補商品名、重新學一次（最久約 9 秒），要看得出正在做 */
+  &__busy {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 選單本身：窄的時候縮，不撐破一列 */
+  &__select {
+    width: 220px;
+    max-width: 100%;
+  }
+}
+
+/*
+ * 結果頁搬進商品分組之後伺服器補了什麼（`C-320` `/code-review` ②⑬）：補好了一行灰字；
+ * 同組好幾個商品名＝一句問句＋那幾個名字的按鈕（點了就存）；沒補成用琥珀（會讓他少東西：AI 認不出這一份是哪一台）
+ */
+.kb-group-fill {
+  margin: -6px 0 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+
+  &.is-warn { color: #b45309; }
+
+  &__q {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  &__names {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    .el-button + .el-button { margin-left: 0; }
+  }
+  &__more {
+    margin: 6px 0 0;
+  }
+}
+
+/* 一次好幾份那一列的「放在『X』・改」：跟大小那一行同一級灰字，排在檔名底下 */
+.kb-file-batch__group {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--el-text-color-secondary);
 }
 
 /* 結果頁「AI 整理成這幾條」（`D-124`）：他第一次看到 AI 做了什麼；淺底一塊、標題一條一行，不做成可編輯的框 */
@@ -598,7 +734,7 @@
   }
 }
 
-/* 從資料頁「換新版」進來（`D-124`）：一進來就在整理，第一行講清楚會換掉哪一份 */
+/* 從資料頁「上傳新版」進來（`D-124`；`C-319` 以前叫「換新版」）：一進來就在整理，第一行講清楚會更新哪一份 */
 .kb-replace-intent {
   margin: -6px 0 10px;
   padding: 8px 10px;
@@ -703,7 +839,7 @@
     font-size: 14px;
     color: var(--text-primary);
   }
-  /* 名稱・所屬產品收成一行（`D-50` 簡化 2）：是結論的附註，不能比結論搶眼 */
+  /* 名稱一行、放在哪一組一行（`D-50` 簡化 2；`C-320` 起「所屬產品」不在這裡）：是結論的附註，不能比結論搶眼 */
   &__meta {
     margin: 4px 0 0;
     font-size: 12px;

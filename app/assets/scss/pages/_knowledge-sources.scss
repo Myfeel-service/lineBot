@@ -6,6 +6,161 @@
 /* ── 「要處理的事」：原本三個並排橫幅（orphan / 體檢 chip / AI 建議）的收斂點。
    三種視覺語言並排會讓店家看不出該先做哪個，改成一份照嚴重度排序的清單。 */
 
+/* ── 三欄（`C-315`）：你的資料｜中間｜右邊「問 AI」 ─────────────────────
+   外層是這一頁自己的（⛔ 不動共用的 AdminSplitLayout）：AdminSplitLayout 照舊撐滿，右邊多一欄。
+   `.main-content:has(.split-layout)` 已經把外框的捲動、內距拿掉（_main.scss），這一層只負責排成一列、撐滿高度。
+   右欄固定 340px、整個高度（中間捲、右欄不跟著捲），面板自己在欄裡捲。 */
+.src-cols {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+
+  > .split-layout {
+    flex: 1;
+    min-width: 0;
+  }
+}
+.src-ask-col {
+  flex: 0 0 340px;
+  width: 340px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-surface);
+  overflow-y: auto;
+
+  > * {
+    flex: 1;
+    min-height: 0;
+  }
+}
+/*
+ * 右下角小幫手那顆（58px、離右下各 1.5rem，見 _tutorial-agent.scss，z-index 比抽屜高）正好蓋在面板最底下那一行的右半邊——
+ * 「送出」整顆被蓋住（2026-10-15 守門員截圖抓到）。那一行讓出右邊：輸入框＋送出排在那顆的左邊。
+ * ⚠️ 欄跟抽屜都貼著視窗右緣，所以讓出的寬度＝那顆的寬＋離邊＋一點間隔。
+ * 還沒問過（沒有對話那一段）時那一行在最上面、碰不到那顆，不用讓（`:has` 只在有對話時才讓）
+ */
+.src-ask-col .kb-ask:has(.kb-ask__log) .kb-ask__foot,
+.src-ask-drawer .kb-ask:has(.kb-ask__log) .kb-ask__foot {
+  padding-right: calc(58px + 1.5rem + 8px);
+}
+/* 721～1199：右上那顆「問 AI」打開的抽屜。面板自己有內距，抽屜的 body 不再多一層。
+   抽屜不再寫自己的標題（面板第一行就是「問 AI 一題」，再寫一次是重複）：只留右上角的 ✕，疊在面板標題那一行的右邊 */
+.src-ask-drawer {
+  .el-drawer__header {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 1;
+    margin: 0;
+    padding: 12px;
+  }
+
+  .el-drawer__body {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+
+    > * {
+      flex: 1;
+      min-height: 0;
+    }
+  }
+}
+/* 工作台沒有標頭：「問 AI」那一顆自己一行靠右，跟選著一份時右上那顆同一個位置。
+   ⚠️ 工作台是置中的（.src-workbench margin:auto），這一行要在它外面、貼著右邊，不然會跟著縮到 720 寬裡 */
+.src-ask-bar {
+  align-self: flex-end;
+  flex-shrink: 0;
+  margin: -8px -8px 0 0;
+}
+
+/* 「這份在講什麼」（`C-316`）：最多三行重點；寫的時候一行骨架 */
+.src-summary {
+  &__list {
+    margin: 0;
+    padding-left: 1.2em;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-primary);
+
+    li + li { margin-top: 2px; }
+  }
+  &__skeleton { padding: 2px 0; }
+}
+
+/* 知識那張卡的標頭：標題左、「在這份裡找…」右；窄的時候搜尋框換到下一行、撐滿 */
+.src-chunks-head {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.src-chunk-search {
+  width: 200px;
+  max-width: 100%;
+}
+.src-chunk-none { margin: 0; }
+@media (max-width: 720px) {
+  .src-chunk-search { width: 100%; }
+}
+
+/* 分組名字（`C-320`）：太長只截名字，後面的「通用」章和「（N）」照樣看得到（.src-folder-label 是 flex，見 _flow.scss） */
+.src-folder-label .src-folder-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.src-folder-label .src-folder-count { flex: none; }
+
+/* 分組標頭上的「通用」（`C-320`）：FAQ、公告、價目表這種不是講單一商品的那幾組；小小一個灰章，不搶組名 */
+.src-folder-general {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--el-fill-color);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 編輯分組裡「通用」那一格。⚠️ el-checkbox 固定 32px 高、不換行：手機 390 寬一長就溢出——夾父層蓋掉（同 .kb-suggest-queries） */
+.folder-form .src-folder-general-check {
+  height: auto;
+  min-height: 24px;
+  margin-right: 0;
+  white-space: normal;
+  align-items: flex-start;
+
+  .el-checkbox__input { margin-top: 3px; }
+  .el-checkbox__label { line-height: 1.6; overflow-wrap: anywhere; }
+}
+
+/* 「AI 認的商品名」小視窗：存的時候那一句（約需幾十秒） */
+.src-product-saving { margin: 8px 0 0; }
+/* 搬進有好幾個商品名的分組時，那幾個名字排在框上面點一個（`C-320`）；名字長就換行 */
+.src-product-choices {
+  margin: 0 0 10px;
+
+  &__ask {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    .el-button { margin: 0; white-space: normal; height: auto; min-height: 24px; text-align: left; }
+  }
+}
+
 
 .src-health-list-hint {
   margin: 0 0 10px;
@@ -788,12 +943,6 @@
     font-size: 12px;
     color: var(--el-text-color-secondary);
   }
-}
-.kb-suggest-dialog-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
 }
 
 /* ── 抓取失敗:就地修（結論先行 + 該做什麼 + 修的工具，最後才是系統原文） ── */

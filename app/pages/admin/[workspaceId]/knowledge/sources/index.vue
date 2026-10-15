@@ -1,4 +1,11 @@
 <template>
+  <!--
+    三欄（`C-315`，老闆 10-15 拍板 `D-126` 第 2 題）：你的資料｜中間（工作台或那一份）｜右邊「問 AI」。
+    右邊那一欄包在這一頁自己的外層（⛔ 不改共用的 AdminSplitLayout：二十幾頁在用，只有這一頁要第三欄）。
+    放不下 340px 時（內容寬 < 1200）收成右上一顆「問 AI」、打開是抽屜；手機不放（手機工作台另排 `E-13`）。
+    寬度看的是這一塊自己（ResizeObserver），不是整個視窗：左邊那條主選單收起來／展開，能放的寬度就不一樣。
+  -->
+  <div ref="colsRef" class="src-cols" :class="`src-cols--${askMode}`">
   <!-- 手機一次只看一邊（`D-124` 拍板做 `E-13` 的一小塊：手機拍照加入、看結果）：清單↔一份資料的內容 -->
   <AdminSplitLayout :is-empty="!selectedSource" mobile-stack mobile-back-label="你的資料" @mobile-back="backToWorkbench">
     <!-- ── Sidebar Header ── -->
@@ -17,11 +24,13 @@
           <template #dropdown>
             <el-dropdown-menu>
               <!-- 選單/按鈕用正式的功能動詞;白話留給說明文字(老闆 8/05:按鈕寫成口語句太過頭) -->
-              <el-dropdown-item v-if="canEditKb" @click="openCreateManual">
+              <!-- `C-317`：跟側欄「用一句話寫一條知識」、問 AI 的「寫一句正確答案」打開同一個小視窗（以前是五格的編輯框） -->
+              <el-dropdown-item v-if="canEditKb" @click="openAddOne()">
                 手動新增知識
               </el-dropdown-item>
+              <!-- `C-320`：這一頁的「資料夾」改叫「分組」（`D-126` 第 1 題：之後分組＝商品） -->
               <el-dropdown-item v-if="canEditFolders" data-tour="kb-folder-new" @click="createFolderPrompt">
-                新增資料夾
+                新增分組
               </el-dropdown-item>
               <el-dropdown-item v-if="canEditSources" divided @click="openAliasDialog">
                 產品名稱整理{{ aliasCandidateCount ? `（${aliasCandidateCount}）` : '' }}
@@ -46,7 +55,14 @@
       <!-- 2026-10-12（`D-124`）：字改成講做出什麼——「一條」知識，跟上面「加入知識」（一整份資料）分得開。
            ⛔ 不收進加入視窗、不拿掉：推播、標籤、AI 腳本、知識庫四頁都在這個位置（`D-112`／`D-113`），
            只動這頁會不一致。換字是推播頁本來就有的做法（「用一句話擬草稿」） -->
-      <AgentAskButton page="knowledge" label="用一句話寫一條知識" row />
+      <!--
+        `C-317`（`D-126` 第 3 題）：這一頁按了打開「補一條」小視窗（一兩句答案 → AI 整理 → 直接上線），不再叫小幫手。
+        ⛔ 位置、大小、字、外觀照舊（同 AgentAskButton 那兩個 class）：推播、標籤、AI 腳本、知識庫四頁都在這個位置，
+        只換這一頁按下去的事，不換它長什麼樣。建不了的人（沒有 knowledge.write）整顆不出現
+      -->
+      <div v-if="canEditKb" class="agent-ask-row">
+        <el-button size="small" class="agent-ask-btn" :icon="ChatDotRound" @click="openAddOne()">用一句話寫一條知識</el-button>
+      </div>
       <!-- 回工作台的那一行（老闆 8/05 要求有事時要看得到）：點了回工作台；兩邊都是空的才不顯示——沒事可提醒。
            `C-314`（老闆 10-14「只呈現需要的東西」）：只在選著一份資料時出現。沒選資料時右邊就是工作台、
            「要處理的事」整份攤在那裡，這一行再講一次「N 件要處理」是重複，點了也不會去任何地方 -->
@@ -103,7 +119,7 @@
               size="small"
               type="primary"
               plain
-              @click="openPrefilledCreate(searchKeyword.trim())"
+              @click="openAddOne(searchKeyword.trim(), { resolveHandoffs: true })"
             >
               補進知識庫
             </el-button>
@@ -153,11 +169,13 @@
       </div>
       <div v-else class="split-list">
         <!-- 未分類資料（直接平鋪在最上方，沒有 header） -->
+        <!-- data-agent-target：補了一條、放進左邊這一份時亮一下（`C-317`，見 onAddOneCreated） -->
         <div
           v-for="src in uncategorizedSources"
           :key="src.id"
           class="flow-sidebar-row"
           :class="{ 'flow-sidebar-row--dragging': draggedSourceId === src.id }"
+          :data-agent-target="`kb-source:${src.id}`"
         >
           <!-- `G-102`：拖進資料夾＝`sources/[id]` PUT（sources.write），觀察者不給把手（同機器人模組頁） -->
           <span
@@ -185,7 +203,7 @@
           />
         </div>
 
-        <!-- 「移出資料夾」drop zone：只在拖曳「資料夾內」的知識時才出現 -->
+        <!-- 「移出分組」drop zone：只在拖曳「分組內」的資料時才出現 -->
         <div
           v-if="isDraggingFromFolder"
           class="src-unfolder-zone"
@@ -194,11 +212,14 @@
           @dragleave="onFolderDragLeave('__none__')"
           @drop.prevent="onFolderDrop(null)"
         >
-          拖到這裡 = 移出資料夾
+          拖到這裡 = 移出分組
         </div>
 
-        <!-- 每個資料夾 -->
-        <template v-for="folder in folders" :key="folder.id">
+        <!--
+          每個分組（`C-320`）。「通用」那幾組（FAQ、公告、價目表這種不是講單一商品的）排最上面、名字旁邊標「通用」；
+          其餘照原本的順序。拖曳照舊：資料拖進哪一組就放哪一組，組的標頭可以拖來排順序（通用跟商品不混排，見 reorderFoldersTo）
+        -->
+        <template v-for="folder in orderedFolders" :key="folder.id">
           <div
             class="src-folder-header"
             :class="{
@@ -211,24 +232,28 @@
             @dragleave="onFolderDragLeave(folder.id)"
             @drop.prevent="onFolderDrop(folder.id)"
           >
-            <!-- `G-102`：資料夾排序＝`folders/reorder`（folders.write） -->
+            <!-- `G-102`：分組排序＝`folders/reorder`（folders.write） -->
             <span
               v-if="canEditFolders"
               class="drag-handle flow-sidebar-drag-handle src-folder-drag-handle"
               draggable="true"
-              aria-label="拖曳排序資料夾"
+              aria-label="拖曳排序分組"
               @click.stop
               @dragstart.stop="onFolderHeaderDragStart($event, folder.id)"
               @dragend.stop="onFolderHeaderDragEnd"
             >⠿</span>
             <span class="src-folder-label">
               <span class="src-folder-arrow">{{ isExpanded(folder.id) ? '▾' : '▸' }}</span>
-              <el-icon><Folder /></el-icon> {{ folder.name }}
+              <el-icon><Folder /></el-icon>
+              <!-- 名字自己一個 span：太長時只截名字（…），後面的「通用」和條數不被擠掉（240px 側欄，守門員截圖看到「（0」被切） -->
+              <span class="src-folder-name">{{ folder.name }}</span>
+              <!-- 名字本來就叫「通用」的不再標一次 -->
+              <span v-if="folder.general && folder.name.trim() !== '通用'" class="src-folder-general">通用</span>
               <span class="src-folder-count">（{{ countByFolder[folder.id] ?? 0 }}）</span>
             </span>
             <span v-if="canEditFolders" class="src-folder-actions">
-              <el-tooltip content="編輯資料夾" placement="top" :show-after="300">
-                <button class="src-folder-icon-btn" @click.stop="openFolderEdit(folder)"><el-icon><EditPen /></el-icon></button>
+              <el-tooltip content="編輯分組" placement="top" :show-after="300">
+                <button class="src-folder-icon-btn" aria-label="編輯分組" @click.stop="openFolderEdit(folder)"><el-icon><EditPen /></el-icon></button>
               </el-tooltip>
             </span>
           </div>
@@ -238,6 +263,7 @@
               :key="src.id"
               class="flow-sidebar-row src-row--in-folder"
               :class="{ 'flow-sidebar-row--dragging': draggedSourceId === src.id }"
+              :data-agent-target="`kb-source:${src.id}`"
             >
               <span
                 v-if="canEditSources"
@@ -265,7 +291,7 @@
               v-if="!(sourcesByFolder[folder.id] ?? []).length"
               class="src-folder-empty"
             >
-              （資料夾為空{{ canEditSources ? '；可從外面拖一筆過來' : '' }}）
+              （這一組是空的{{ canEditSources ? '；可從外面拖一份過來' : '' }}）
             </div>
           </template>
         </template>
@@ -277,6 +303,10 @@
          資料清單被推到摺線以下;右邊這片大空間卻只放一段靜態說明。
          現在側欄回歸「搜尋+資料清單」,工作的事(異常+建議)放進來這裡——照使用者要做的事長。 -->
     <template #editor-empty>
+      <!-- 「問 AI」收成一顆的時候（內容寬 721～1199，`C-315`）：工作台沒有標頭，這一行就是它的標頭，跟選著一份時右上那顆同一個位置 -->
+      <div v-if="askMode === 'drawer'" class="src-ask-bar">
+        <el-button :icon="ChatDotRound" data-tour="kb-ask-open" @click="askDrawerOpen = true">問 AI</el-button>
+      </div>
       <div class="src-workbench">
         <!-- 開帳讀網站整理出來、等你看過的卡（`C-250`③）：新帳號進知識庫第一件該做的事，排最上面 -->
         <KnowledgeSiteDrafts :can-edit="canEditKb" @changed="loadSources(true)" />
@@ -383,9 +413,13 @@
           {{ headerMeta }}<span v-if="headerStatus" class="src-header-meta__status" :class="`is-${headerStatus.tone}`">・{{ headerStatus.text }}</span>
         </p>
       </div>
-      <div v-if="canEditSources" class="flex gap-1 admin-header-actions">
+      <div v-if="canEditSources || askMode === 'drawer'" class="flex gap-1 admin-header-actions">
+        <!--
+          更新類按鈕一種講法（`C-319`，`D-126` 第 5 題）：試算表、網址「立即更新」（網址照舊先給你看哪裡不一樣），
+          檔案「上傳新版」（要選檔，字要講出「上傳」）。以前三種講法：重新同步／立即同步／換新版
+        -->
         <el-button
-          v-if="selectedSource?.type === 'url'"
+          v-if="canEditSources && selectedSource?.type === 'url'"
           type="primary"
           plain
           data-tour="kb-resync"
@@ -394,28 +428,38 @@
         >
           {{ resyncButtonLabel }}
         </el-button>
-        <el-button v-if="resyncing" text @click="cancelResync">
+        <el-button v-if="canEditSources && resyncing" text @click="cancelResync">
           取消
         </el-button>
         <el-button
-          v-if="selectedSource?.type === 'gsheet'"
+          v-if="canEditSources && selectedSource?.type === 'gsheet'"
           type="primary"
           plain
           data-tour="kb-resync"
           :loading="gsheetSyncing"
           @click="syncGsheetNow"
         >
-          立即同步
+          立即更新
         </el-button>
-        <!-- 檔案沒有自動更新：改版就在這裡換（`D-124`），跟網址的「重新同步」、試算表的「立即同步」同一個位置 -->
-        <el-tooltip v-if="selectedSource?.type === 'file' && canEditKb" content="選新的檔案，整理好直接換掉這一份" placement="bottom" :show-after="300">
+        <!-- 檔案沒有自動更新：改版就在這裡換（`D-124`），跟網址、試算表的「立即更新」同一個位置 -->
+        <el-tooltip v-if="canEditSources && selectedSource?.type === 'file' && canEditKb" content="選新的檔案，整理好直接換掉這一份" placement="bottom" :show-after="300">
           <!-- ⛔ 不掛 data-tour="kb-resync"：那一步導覽講的是「會自動跟上」，檔案不會 -->
-          <el-button type="primary" plain @click="pickNewVersion">換新版</el-button>
+          <el-button type="primary" plain @click="pickNewVersion">上傳新版</el-button>
         </el-tooltip>
-        <!-- 刪除收在「⋯」（全站同一顆）。知識來源不給複製：同一份內容學兩次，AI 會被重複的卡片搞混 -->
+        <!-- 「問 AI」收成一顆時（`C-315`，內容寬 721～1199）：跟工作台那一行同一個位置（右上） -->
+        <el-button v-if="askMode === 'drawer'" :icon="ChatDotRound" data-tour="kb-ask-open" @click="askDrawerOpen = true">問 AI</el-button>
+        <!--
+          刪除收在「⋯」（全站同一顆）。知識來源不給複製：同一份內容學兩次，AI 會被重複的卡片搞混。
+          「AI 認的商品名」（`C-320`）：以前是資料頁上常駐的一整張「所屬產品」卡，九成的人不用動它——收進這裡，點了開小視窗。
+          試算表一列可能是不同商品，不適用（同以前那張卡）
+        -->
         <AdminMoreMenu
-          :items="[{ command: 'delete', label: '刪除', icon: Delete, danger: true, disabled: deleting }]"
-          @command="(cmd) => cmd === 'delete' && deleteSource()"
+          v-if="canEditSources"
+          :items="[
+            { command: 'product', label: 'AI 認的商品名', show: selectedSource?.type !== 'gsheet' },
+            { command: 'delete', label: '刪除', icon: Delete, danger: true, disabled: deleting },
+          ]"
+          @command="onSourceMoreCommand"
         />
       </div>
     </template>
@@ -423,7 +467,27 @@
     <!-- ── Editor Body ── -->
     <template #editor-body>
       <div v-if="selectedSource" class="solo-editor-body admin-panel-stack">
-        <!-- 重新同步後確認「網頁沒變」:這是使用者按下按鈕後唯一的答覆,用面板不用 toast -->
+        <!--
+          「這份在講什麼」（`C-316`，`D-126` 第四節：NotebookLM 點開一份是先看到摘要）：最多三行。
+          伺服器還沒寫過的，打開時請它寫一次（每份每次打開頁面最多一次，見 maybeGenerateSummary），寫的時候一小塊骨架；
+          寫不出來就整塊不出現（⛔ 不講「摘要失敗」：這一塊是看了比較快懂，不是要他處理的事）。
+          只有一條的那種（一段文字）不擺：摘要就是那一條再講一次
+        -->
+        <div v-if="summaryLines.length || summaryLoadingId === selectedSource.id" class="message-card src-section-card src-summary">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">這份在講什麼</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <el-skeleton v-if="!summaryLines.length" :rows="1" animated class="src-summary__skeleton" />
+            <ul v-else class="src-summary__list">
+              <li v-for="(line, i) in summaryLines" :key="i">{{ line }}</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 「立即更新」後確認「網頁沒變」:這是使用者按下按鈕後唯一的答覆,用面板不用 toast -->
         <el-alert
           v-if="resyncNoChange === selectedSource.id"
           type="success"
@@ -444,7 +508,7 @@
         </el-alert>
 
         <!-- 偵測到變動的提示。⚠️ 只給網址（`C-308`⑤）：試算表一次少太多列被擋下時也會標「有變動」，
-             這段講的「網頁內容變動、按重新同步」對試算表是錯的——那種情況下面的修理框會講 -->
+             這段講的「網頁內容變動、按立即更新」對試算表是錯的——那種情況下面的修理框會講 -->
         <el-alert
           v-if="selectedSource.outdatedAtMs > 0 && selectedSource.type === 'url'"
           type="warning"
@@ -456,7 +520,7 @@
             偵測到網頁內容變動 — {{ relativeTime(selectedSource.outdatedAtMs) }}
           </template>
           <div>
-            最後一次自動偵測發現原始網址內容已改變，建議點上方「重新同步」檢視差異後決定要不要套用。
+            最後一次自動偵測發現原始網址內容已改變，建議點上方「立即更新」檢視差異後決定要不要套用。
           </div>
         </el-alert>
 
@@ -531,42 +595,10 @@
           <p v-if="failureAdvice.kind !== 'massDelete'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
         </div>
 
-        <!-- 所屬產品（P1-1）：知識索引時自動繼承資料產品名；改動後自動重建該資料索引。
-             gsheet 一列多產品不適用。 -->
-        <div v-if="selectedSource.type !== 'gsheet'" class="message-card src-section-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">所屬產品</span>
-            </div>
-          </div>
-          <!--
-            `C-314`：拿掉兩段說明（上面「知識會自動標上產品名…FAQ、公告這類請留空」、欄位下面「點一下欄位會列出你已經在用的
-            N 個產品…」）——什麼時候該填，框裡那一句就講完了；有哪些現成的，點一下框就列出來（每個還標著幾條在用）。
-            卡片標題已經叫「所屬產品」，欄位不再標一次。按鈕叫「儲存」：存了會重新學一次，按下去之後旁邊那一句會講（約需幾十秒）
-          -->
-          <div class="card-section-stack">
-            <KnowledgeProductNameField
-              v-if="canEditSources"
-              v-model="productNameForm"
-              placeholder="這份都在講同一個商品時才填"
-              :show-hint="false"
-            />
-            <!-- `G-107`：存不了的人只給看（原本是灰掉的輸入框）。空的＝不是只講一個商品 -->
-            <p v-else class="src-readonly-value">{{ productNameForm || '未設定' }}</p>
-            <div v-if="canEditSources" class="src-settings-actions">
-              <el-button
-                type="primary"
-                size="small"
-                :loading="savingProductName"
-                :disabled="productNameForm.trim() === productNameBaseline"
-                @click="saveProductName"
-              >
-                儲存
-              </el-button>
-              <span v-if="savingProductName" class="text-muted text-xs">正在讓 AI 重新學習這份資料的知識，約需幾十秒⋯</span>
-            </div>
-          </div>
-        </div>
+        <!--
+          「所屬產品」那張卡拿掉了（`C-320`）：搬進右上「⋯」→「AI 認的商品名」（小視窗，見檔尾 productDialogOpen）。
+          九成的資料不用動它，常駐一整張表單是讓每個人每次都看一遍
+        -->
 
         <!--
           自動更新（網址、Google 試算表）。`C-314`：以前兩張卡各一段說明＋一格選單＋「儲存設定」，
@@ -624,7 +656,7 @@
               <p class="src-detect-note__title">⚠ 這個網址自動偵測幫不上忙</p>
               <p>
                 每次抓到的內容都不一樣（常見於有隨機推薦、輪播區塊的首頁），系統分不出哪一次才算真的改版，
-                所以<strong>不會</strong>主動提醒你。要更新知識請按上方「重新同步」自己看差異，
+                所以<strong>不會</strong>主動提醒你。要更新知識請按上方「立即更新」自己看差異，
                 或改用內容固定的頁面（單一商品頁、說明頁）當資料來源。
               </p>
               <p class="src-detect-note__meta">從 {{ relativeTime(selectedSource.detectStalledAtMs) }}開始</p>
@@ -634,7 +666,7 @@
               <p>
                 像是集資金額、支持人數、倒數天數。系統已經學會忽略這些數字，
                 <strong>只在文字內容改變時才提醒你</strong>——所以單純改數字（例如只調價格）不會通知，
-                那種情況要自己按上方「重新同步」。
+                那種情況要自己按上方「立即更新」。
               </p>
             </div>
 
@@ -676,10 +708,24 @@
 
         <!-- 旗下 chunks -->
         <div class="message-card src-section-card" data-tour="kb-chunks">
-          <div class="message-card-header">
+          <div class="message-card-header src-chunks-head">
             <div class="card-header-main">
               <span class="section-title">知識（{{ chunks.length }}）</span>
             </div>
+            <!--
+              在這份裡找（`C-316`）：標題、內容、客人可能怎麼問一起找，在瀏覽器裡篩（這一份的條目已經都在畫面上，不用再問伺服器）。
+              幾條而已一眼看得完的，不擺這一格
+            -->
+            <el-input
+              v-if="chunks.length > CHUNK_SEARCH_MIN"
+              v-model="chunkQuery"
+              size="small"
+              clearable
+              placeholder="在這份裡找…"
+              aria-label="在這份裡找"
+              :prefix-icon="Search"
+              class="src-chunk-search"
+            />
           </div>
           <div class="card-section-stack">
             <div v-if="detailLoading" class="src-chunk-loading"><div class="spinner" /></div>
@@ -703,11 +749,14 @@
                   {{ t.label }}（{{ t.count }}）
                 </button>
               </div>
+              <p v-if="!visibleChunks.length && activeChunkQuery" class="text-muted text-sm src-chunk-none">沒有符合「{{ activeChunkQuery }}」的。</p>
               <div class="src-chunk-list">
+                <!-- data-agent-target：問 AI 點了「用了這幾條」打開的那一條要捲過來亮一下（`C-315`，見 revealChunk） -->
                 <div
                   v-for="c in visibleChunks"
                   :key="c.id"
                   :class="['src-chunk-row', c.status === 'disabled' && 'src-chunk-row--off']"
+                  :data-agent-target="`kb-chunk:${c.id}`"
                 >
                   <div class="src-chunk-body">
                     <div class="src-chunk-main">
@@ -762,6 +811,83 @@
       </div>
     </template>
   </AdminSplitLayout>
+
+  <!-- 右邊「問 AI」（`C-315`）：內容寬夠（≥ 1200）才常駐；問的人要有測試對話的權限（`playground.use`，觀察者沒有）。
+       ⚠️ 欄跟抽屜只會有一個在畫面上：寬度跨過門檻時換位置，那一份對話會重來（不會兩份同時在問） -->
+  <aside v-if="askMode === 'column'" class="src-ask-col">
+    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
+  </aside>
+  </div>
+
+  <!-- 內容寬 721～1199：右上那顆「問 AI」打開的抽屜（同一個面板） -->
+  <!-- 抽屜不寫標題：面板第一行就是「問 AI 一題」，再寫一次是重複（右上的 ✕ 照留，樣式見 .src-ask-drawer） -->
+  <el-drawer
+    v-if="askMode === 'drawer'"
+    v-model="askDrawerOpen"
+    aria-label="問 AI"
+    direction="rtl"
+    size="380px"
+    append-to-body
+    class="src-ask-drawer"
+  >
+    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
+  </el-drawer>
+
+  <!--
+    補一條（`C-317`）：這一頁所有「新增一條」的入口都開這一個——側欄「用一句話寫一條知識」、「⋯」→「手動新增知識」、
+    問 AI 的「寫一句正確答案」、搜尋不到時的「補進知識庫」、加入視窗的「手寫一條」、從 AI 表現頁／對話帶 ?q= 進來。
+    以前是五格的編輯框（標題、內容、問法、產品、進階），補一句答案要面對五個欄位
+  -->
+  <KnowledgeAddOneDialog
+    v-model:open="addOneOpen"
+    :initial-question="addOneQuestion"
+    @created="onAddOneCreated"
+  />
+  <!-- ⛔ 不帶 product-name：以前的五格框預設沿用「正開著的那一份」的產品名、而且看得到改得掉；
+       小視窗沒有那一格，帶了就是偷偷把「營業時間」標成某一台的（客人問別台時這條就被擋掉、或被拿去答錯台） -->
+
+  <!-- AI 認的商品名（`C-320`）：從右上「⋯」打開；存了會讓 AI 重新學這一份（同以前那張「所屬產品」卡、同一支） -->
+  <el-dialog
+    v-model="productDialogOpen"
+    title="AI 認的商品名"
+    width="min(440px, 92vw)"
+    :close-on-click-modal="!savingProductName"
+    destroy-on-close
+  >
+    <!-- 剛搬進一個有好幾個商品名的分組（`C-320`）：⛔ 不替他猜，那幾個名字排在這裡點一個就好 -->
+    <div v-if="productChoices.length" class="src-product-choices">
+      <p class="src-product-choices__ask">{{ productChoicesGroup ? `「${productChoicesGroup}」裡有這幾個，這份是哪一個？` : '這份是哪一個？' }}</p>
+      <div class="src-product-choices__row">
+        <el-button
+          v-for="n in productChoices"
+          :key="n"
+          size="small"
+          :type="productNameForm.trim() === n ? 'primary' : 'default'"
+          plain
+          @click="productNameForm = n"
+        >
+          {{ n }}
+        </el-button>
+      </div>
+    </div>
+    <KnowledgeProductNameField
+      v-model="productNameForm"
+      placeholder="這份都在講同一個商品時才填"
+      :show-hint="false"
+    />
+    <p v-if="savingProductName" class="text-muted text-xs src-product-saving">正在讓 AI 重新學習這份資料的知識，約需幾十秒⋯</p>
+    <template #footer>
+      <el-button :disabled="savingProductName" @click="productDialogOpen = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="savingProductName"
+        :disabled="productNameForm.trim() === productNameBaseline"
+        @click="saveProductName"
+      >
+        儲存
+      </el-button>
+    </template>
+  </el-dialog>
 
   <!-- ── 產品名稱整理:同一台的不同叫法,系統列候選、由人確認 ── -->
   <el-dialog
@@ -865,7 +991,7 @@
         :key="item.id"
         type="button"
         class="src-health-list-item"
-        @click="gotoHealthItem(item)"
+        @click="gotoHealthItem(item, { productName: healthListCategory === 'noProductSources' })"
       >
         <span class="src-health-item-title">{{ item.title }}</span>
         <span v-if="item.meta" class="text-muted text-xs">{{ item.meta }}</span>
@@ -877,7 +1003,7 @@
   <!-- ── Diff Modal ──────────────────────────────────── -->
   <el-dialog
     v-model="diffOpen"
-    title="重新同步：差異預覽"
+    title="立即更新：先看哪裡不一樣"
     width="min(900px, 92vw)"
     :close-on-click-modal="false"
     destroy-on-close
@@ -1070,9 +1196,10 @@
   </el-dialog>
 
   <!-- ── Chunk Edit Modal ───────────────────────────── -->
+  <!-- 只剩「改既有的一條」（`C-317`）：新增一條全部走上面的「補一條」小視窗 -->
   <el-dialog
     v-model="chunkEditOpen"
-    :title="chunkReadonly ? '知識內容' : chunkEditMode === 'create' ? '新增知識(手寫一條知識)' : '編輯知識'"
+    :title="chunkReadonly ? '知識內容' : '編輯知識'"
     width="min(700px, 92vw)"
     :close-on-click-modal="chunkReadonly"
     destroy-on-close
@@ -1120,7 +1247,7 @@
         九成九打開的是「可用」那一條，最上面掛一個綠色「可用」只是多一樣東西要看；
         停用的不掛：下面「AI 可以用這一條」那顆開關關著就是在講這件事
       -->
-      <div v-if="chunkEditMode === 'edit' && chunkStatusWorthShowing" class="chunk-status-row">
+      <div v-if="chunkStatusWorthShowing" class="chunk-status-row">
         <span :class="['badge', chunkStatusBadge(chunkEditStatus)]">{{ chunkStatusLabel(chunkEditStatus) }}</span>
         <span v-if="chunkEditStatus === 'pending'" class="text-xs text-muted">處理中，約 5–30 秒後 AI 就能用這條回答</span>
         <span v-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
@@ -1204,16 +1331,7 @@
           別放電話、姓名這類個資
         </p>
       </div>
-      <!--
-        所屬產品:只有「新開一條」才問。手寫的知識原本完全沒有產品欄,
-        寫一條「濾網怎麼洗」進去,客人指名問**另一台**時這條照樣可能被拿去回答。
-        編輯既有的條目不在這裡問——它跟著所屬那份資料走,要改請到左邊那份資料的「所屬產品」,
-        兩邊都能改的話會出現「這條說 A、那份資料說 B」對不起來。
-      -->
-      <div v-if="chunkEditMode === 'create'" class="admin-field-group">
-        <AdminFieldLabel text="這條是在講哪個產品？（不是講單一產品就留空）" tight />
-        <KnowledgeProductNameField v-model="chunkProductName" />
-      </div>
+      <!-- 商品名不在這裡問：一條跟著它所在的那一份走（那一份右上「⋯」→「AI 認的商品名」），兩邊都能改會對不起來 -->
 
       <!-- 供 AI 使用開關(已完成索引的卡才有;pending/failed 本來就不會被引用)。
            `C-314`：標籤改成講結果的一句話，開關旁那一行說明拿掉（開關本身就是答案） -->
@@ -1259,7 +1377,6 @@
       </div>
       <div v-else class="chunk-footer">
         <el-button
-          v-if="chunkEditMode === 'edit'"
           type="danger"
           plain
           :loading="chunkDeleting"
@@ -1276,7 +1393,7 @@
             :disabled="chunkDeleting || !chunkForm.title.trim() || !chunkForm.content.trim()"
             @click="saveChunk"
           >
-            {{ chunkEditMode === 'create' ? '建立' : '儲存' }}
+            儲存
           </el-button>
         </div>
       </div>
@@ -1294,7 +1411,7 @@
     @job-state="importJobState = $event"
     @manual="onImportManual"
   />
-  <!-- 「換新版」的選檔視窗（見 pickNewVersion）：收得了的種類跟加入視窗同一份 -->
+  <!-- 「上傳新版」的選檔視窗（見 pickNewVersion）：收得了的種類跟加入視窗同一份 -->
   <input ref="newVersionInput" type="file" :accept="KNOWLEDGE_FILE_ACCEPT" class="kb-file-input" @change="onNewVersionChosen">
 
   <!-- ── 補知識前的查重(P1-1):改既有的比新建一條重複的好 ──────── -->
@@ -1458,10 +1575,10 @@
     </template>
   </el-dialog>
 
-  <!-- ── Folder Edit Modal ──────────────────────────── -->
+  <!-- ── Folder Edit Modal（`C-320`：這一頁叫「分組」）──────────────── -->
   <el-dialog
     v-model="folderEditOpen"
-    title="編輯資料夾"
+    title="編輯分組"
     width="min(480px, 92vw)"
     :close-on-click-modal="false"
     destroy-on-close
@@ -1476,9 +1593,13 @@
           placeholder="例：客服 FAQ"
         />
       </div>
+      <!-- 「通用」那一組（`C-320`）：勾了排到最上面；商品分組裡沒填商品名的那份，伺服器會照同組其他份補上，通用的不補 -->
+      <el-checkbox v-model="folderForm.general" class="src-folder-general-check">
+        通用（FAQ、公告這種不是講單一商品的）
+      </el-checkbox>
       <p v-if="folderEditTarget" class="folder-form-hint">
-        目前底下 {{ countByFolder[folderEditTarget.id] ?? 0 }} 筆資料。
-        若刪除，底下的資料會自動移到「未分類」，<strong>不會</strong>被刪掉。
+        目前底下 {{ countByFolder[folderEditTarget.id] ?? 0 }} 份資料。
+        刪掉這一組，底下的資料會移到「未分類」，<strong>不會</strong>被刪掉。
       </p>
     </div>
     <template #footer>
@@ -1490,14 +1611,14 @@
           :disabled="folderSaving"
           @click="deleteFolderFromModal"
         >
-          刪除資料夾
+          刪除分組
         </el-button>
         <div class="folder-footer-right">
           <el-button @click="folderEditOpen = false">取消</el-button>
           <el-button
             type="primary"
             :loading="folderSaving"
-            :disabled="folderDeleting || !folderForm.name.trim() || folderForm.name.trim() === folderEditTarget?.name"
+            :disabled="folderDeleting || !folderForm.name.trim() || !folderFormDirty"
             @click="saveFolderName"
           >
             儲存
@@ -1509,13 +1630,14 @@
 </template>
 
 <script setup lang="ts">
-import { Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upload } from '@element-plus/icons-vue'
+import { ChatDotRound, Check, Delete, EditPen, FirstAidKit, Folder, Loading, Lock, Search, Upload } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { formatFileSize } from '~/utils/knowledge-upload'
 import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
+import type { AddOneCreated } from '~/utils/kb-add-one'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
@@ -1556,6 +1678,10 @@ interface SourceSummary {
   blockedPendingDeletes?: number
   /** type='file'：留著的原檔（`C-296`③）；null＝沒有（2026-10-10 以前匯入的檔案當時讀完就刪了） */
   originalFile?: { name: string, size: number } | null
+  /** 「這份在講什麼」最多三行（`C-316`）；空的＝伺服器還沒寫過（打開時請它寫一次，見 maybeGenerateSummary）。⚠️ 舊伺服器沒有這一格，讀的時候一律 `?? []` */
+  summary: string[]
+  /** 摘要是什麼時候寫的（ms）；0＝還沒寫過 */
+  summaryAt: number
 }
 
 interface ChunkRow {
@@ -1629,6 +1755,8 @@ const canEditFolders = computed(() => can('folders.write'))
 const canReindexAll = computed(() => can('knowledge.reindexAll'))
 // 待辦「AI 客服還沒開啟」要不要給「前往開啟」：AI 設定頁只有管理員存得了（`G-102`）
 const canEditAiSettings = computed(() => can('ai.settings.write'))
+/** 右邊「問 AI」（`C-315`）：問的是測試對話那一支（`playground.use`＝客服級），觀察者整欄不出現 */
+const canAsk = computed(() => can('playground.use'))
 /** 知識視窗只給看（`G-102`）：建卡入口本來就只給 canEditKb，所以唯讀一定是「看一張既有的」 */
 const chunkReadonly = computed(() => !canEditKb.value)
 const { showToast } = useAdminToast()
@@ -1676,14 +1804,24 @@ const sourcesDegraded = ref(false)
 const sourcesTruncated = ref(false)
 const migrating = ref(false)
 
-// ── 資料夾分組 ───────────────────────────────────────
+// ── 分組（資料庫裡叫 folder；這一頁的字叫「分組」，`C-320`）──────────────
 interface FolderRow {
   id: string
   name: string
   order: number
   createdAtMs: number
+  /** 「通用」那一組（FAQ、公告、價目表這種不是講單一商品的，`C-320`）：排最上面、名字旁標「通用」。⚠️ 舊伺服器沒有這一格，一律用 `=== true` 判斷 */
+  general: boolean
 }
 const folders = ref<FolderRow[]>([])
+/**
+ * 畫面上的順序：「通用」的排最上面，其餘照伺服器的順序（`C-320`）。
+ * ⚠️ 拖曳排序也照這個順序算（見 reorderFoldersTo）——拿原本的 folders 算位置的話，畫面上拖到第二個、存進去的是另一個位置
+ */
+const orderedFolders = computed(() => [
+  ...folders.value.filter(f => f.general === true),
+  ...folders.value.filter(f => f.general !== true),
+])
 
 // 哪些資料夾是展開狀態（含特殊值 '__none__' 代表「未分類」）；localStorage 持久化
 const expandedFolders = ref<Set<string>>(new Set(['__none__']))
@@ -1775,10 +1913,12 @@ async function reorderFoldersTo(targetFolderId: string) {
   draggedFolderId.value = null
   folderReorderOverId.value = null
   if (!fromId || fromId === targetFolderId) return
-  const next = [...folders.value]
+  // 照畫面上的順序（通用在前）算位置；通用跟商品不混排——拖過界的話放下去也會被排回原處，乾脆不動
+  const next = [...orderedFolders.value]
   const fromIndex = next.findIndex(f => f.id === fromId)
   const toIndex = next.findIndex(f => f.id === targetFolderId)
   if (fromIndex < 0 || toIndex < 0) return
+  if ((next[fromIndex]!.general === true) !== (next[toIndex]!.general === true)) return
   const previous = folders.value
   const [moved] = next.splice(fromIndex, 1)
   next.splice(toIndex, 0, moved!)
@@ -1791,7 +1931,7 @@ async function reorderFoldersTo(targetFolderId: string) {
   }
   catch (err: any) {
     folders.value = previous
-    showToast(apiErrorText(err, '資料夾排序儲存失敗'), 'error')
+    showToast(apiErrorText(err, '分組的順序沒有存成，請再試一次'), 'error')
   }
 }
 
@@ -1826,16 +1966,74 @@ async function onFolderDrop(folderId: string | null) {
   if ((src.folderId ?? null) === folderId) return // 沒換位置
   // 樂觀更新
   src.folderId = folderId
+  /*
+   * 搬進商品分組、這一份還沒有商品名：伺服器照同組其他份補上、重新學這一份（`C-320`，groupFill），最久約 9 秒——
+   * 那一列標「搬移中」讓他知道還在做。⚠️ 等 0.6 秒才標：一般的搬移一下就好，馬上標會閃一下
+   */
+  const busyTimer = setTimeout(() => { movingSourceIds.value = new Set([...movingSourceIds.value, srcId]) }, 600)
+  const keptName = String(src.productName ?? '').trim()
   try {
-    await apiFetch(`/api/ai/sources/${srcId}`, {
+    const res = await apiFetch<{ groupFill?: GroupFill }>(`/api/ai/sources/${srcId}`, {
       method: 'PUT',
       body: { folderId },
     })
+    if (res?.groupFill) await onGroupFill(srcId, folderId, res.groupFill)
+    /*
+     * 搬出商品分組（到「未分類」或「通用」）：伺服器⛔不會清掉商品名（那是他的決定，`C-320` 紅線 2）——
+     * 不講的話他以為搬出來就不算那一台了，AI 卻照樣把它當那一台。講一句、指路
+     */
+    else if (keptName && (folderId === null || folders.value.find(f => f.id === folderId)?.general === true)) {
+      showToast(`AI 認的商品名照舊是「${keptName}」，要改在那一份右上的「⋯」→「AI 認的商品名」`, 'info')
+    }
   }
   catch (err: any) {
     showToast(apiErrorText(err, '移動失敗'), 'error')
     await loadSources()
   }
+  finally {
+    clearTimeout(busyTimer)
+    if (movingSourceIds.value.has(srcId)) {
+      const next = new Set(movingSourceIds.value)
+      next.delete(srcId)
+      movingSourceIds.value = next
+    }
+  }
+}
+
+/** 搬組時伺服器順手做的商品名（`C-320`）：補好了一個名字，或同組有好幾個名字不替他猜 */
+interface GroupFill {
+  productName?: string
+  indexed?: number
+  failed?: number
+  names?: string[]
+}
+/** 正在搬、伺服器還在補商品名的那幾份（左邊那一列標「搬移中」） */
+const movingSourceIds = ref<Set<string>>(new Set())
+
+async function onGroupFill(srcId: string, folderId: string | null, fill: GroupFill) {
+  if (fill.productName) {
+    // 補了名字＝那一份的條目重新學過了：清單（體檢「沒說是哪個商品」跟著少一份）、開著的那一份都要重讀
+    await loadSources(true)
+    if (selectedId.value === srcId) await loadSourceDetail(srcId)
+    const indexed = Number(fill.indexed ?? 0)
+    const failed = Number(fill.failed ?? 0)
+    const learned = indexed > 0 ? `，重新學了 ${indexed} 條` : ''
+    showToast(failed > 0
+      ? `AI 認的商品名補成「${fill.productName}」${learned}；有 ${failed} 條還沒學會，點開那一份按「重新學習」`
+      : `AI 認的商品名補成「${fill.productName}」${learned}`, failed > 0 ? 'warning' : 'success')
+    return
+  }
+  const names = [...new Set((fill.names ?? []).map(n => String(n ?? '').trim()).filter(Boolean))]
+  if (names.length < 2) return
+  /*
+   * 同一組裡有好幾個商品名：⛔ 不替他猜。直接打開那一份的「AI 認的商品名」、把那幾個名字排在上面讓他點一個
+   * （打開的就是在問「是哪一個」，不先多跳一個確認框）；不想選就按取消，名字維持空的
+   */
+  const src = sources.value.find(s => s.id === srcId)
+  if (!src) return
+  if (selectedId.value !== srcId) await selectSource(src)
+  if (selectedId.value !== srcId) return
+  openProductDialog({ choices: names, group: folders.value.find(f => f.id === folderId)?.name ?? '' })
 }
 
 const chunks = ref<ChunkRow[]>([])
@@ -1873,7 +2071,25 @@ const chunkFilterTabs = computed(() => {
     .filter(d => d.key === 'all' || d.count > 0)
 })
 
-const visibleChunks = computed(() => chunks.value.filter(c => matchChunkFilter(c, chunkFilter.value)))
+/**
+ * 「在這份裡找…」（`C-316`）：標題、內容、客人可能怎麼問一起找，不分大小寫。
+ * 篩選鈕（沒學起來、已停用）照舊疊在上面。條數不多（≤ CHUNK_SEARCH_MIN）時不擺這一格——一眼看得完
+ */
+const CHUNK_SEARCH_MIN = 5
+const chunkQuery = ref('')
+function matchChunkQuery(c: Pick<ChunkRow, 'title' | 'content' | 'questions'>, q: string): boolean {
+  if (!q) return true
+  const kw = q.toLowerCase()
+  return c.title.toLowerCase().includes(kw)
+    || c.content.toLowerCase().includes(kw)
+    || (c.questions ?? []).some(x => x.toLowerCase().includes(kw))
+}
+/** 搜尋框沒擺出來時（條數少）不篩：⛔ 不然刪到剩幾條、框不見了，殘留的字還在偷偷篩、清單少一截卻沒地方清 */
+const activeChunkQuery = computed(() => (chunks.value.length > CHUNK_SEARCH_MIN ? chunkQuery.value.trim() : ''))
+const visibleChunks = computed(() => {
+  const q = activeChunkQuery.value
+  return chunks.value.filter(c => matchChunkFilter(c, chunkFilter.value) && matchChunkQuery(c, q))
+})
 
 /**
  * 篩選中的那一類被清空時要自己退回「全部」。
@@ -2268,12 +2484,17 @@ async function restoreChunk(r: RecycleRow) {
 function isSyncingType(t: string | undefined): boolean {
   return t === 'url' || t === 'gsheet'
 }
-/** 鎖頭有沒有意義：一段文字（manual）不會同步、也沒有換新版，鎖了跟沒鎖一樣——不畫 */
+/** 鎖頭有沒有意義：一段文字（manual）不會同步、也沒有上傳新版，鎖了跟沒鎖一樣——不畫 */
 function lockApplies(t: string | undefined): boolean {
   return t === 'url' || t === 'gsheet' || t === 'file'
 }
-/** 試算表有沒有在自動同步（設成「不自動同步」的，只有按「立即同步」才會動） */
+/** 試算表有沒有在自動更新（設成「不自動更新」的，只有按「立即更新」才會動） */
 const gsheetAutoSync = computed(() => (selectedSource.value?.refreshIntervalMinutes ?? 0) > 0)
+
+/*
+ * 下面這幾句提到的按鈕名字跟右上那顆一致（`C-319`）：試算表、網址「立即更新」，檔案「上傳新版」；
+ * 自動的那一次叫「自動更新」（跟「自動更新：每小時」那一格同一個詞）。⛔ 不再寫「同步」「換新版」
+ */
 
 /**
  * 鎖頭點開那一句（`C-314`：一句＋一顆按鈕就好）。以前三句：改過的時間、現在用哪一版、改回去之後什麼時候換——
@@ -2282,26 +2503,26 @@ const gsheetAutoSync = computed(() => (selectedSource.value?.refreshIntervalMinu
 function lockMeaning(t: string | undefined): string {
   if (t === 'gsheet') return '你改過這一條，表格更新時不會蓋掉。'
   if (t === 'url') return '你改過這一條，網頁更新時不會蓋掉。'
-  return '你改過這一條，換新版時會先問要不要帶過去。'
+  return '你改過這一條，上傳新版時會先問要不要帶過去。'
 }
 function unlockEffect(t: string | undefined): string {
   if (t === 'gsheet') {
     return gsheetAutoSync.value
-      ? '改回之後，下一次同步會換成表格上的內容；想馬上換就按「立即同步」。'
-      : '改回之後，按「立即同步」就會換成表格上的內容。'
+      ? '改回之後，下一次自動更新會換成表格上的內容；想馬上換就按「立即更新」。'
+      : '改回之後，按「立即更新」就會換成表格上的內容。'
   }
   if (t === 'url') return '改回之後，網頁下次有變動時會換成網頁上的內容。'
-  return '改回之後，下次「換新版」不會再問，直接用新版的內容。'
+  return '改回之後，下次「上傳新版」不會再問，直接用新版的內容。'
 }
 /**
  * 改回去那顆按鈕的字。
  * 檔案（`C-314`）：檔案不會自己更新，「改回跟著新版」講的是一個還不存在的新版、讀不懂。
- * 這顆按下去的實際效果是「下次換新版不問了、直接用新版的內容」（同一支解鎖，unlockToast 的 next_replace 那句）——
+ * 這顆按下去的實際效果是「下次上傳新版不問了、直接用新版的內容」（同一支解鎖，unlockToast 的 next_replace 那句）——
  * 按鈕就直接講這件事。⛔ 不拿掉這顆：鎖頭要消失只有這條路（編輯框裡那顆只給試算表／網頁）；
- * 不想按也沒關係，換新版那一下畫面本來就會一條條問帶不帶（`D-125`①）
+ * 不想按也沒關係，上傳新版那一下畫面本來就會一條條問帶不帶（`D-125`①）
  */
 function unlockLabel(t: string | undefined): string {
-  return t === 'gsheet' ? '改回跟著表格' : t === 'url' ? '改回跟著網頁' : '換新版時直接用新版'
+  return t === 'gsheet' ? '改回跟著表格' : t === 'url' ? '改回跟著網頁' : '上傳新版時直接用新版'
 }
 /**
  * 改回去之後什麼時候生效：照伺服器回的 appliesOn 講（`C-308`②：伺服器知道這一份的同步設定）；
@@ -2311,11 +2532,11 @@ function unlockToast(appliesOn: string | undefined, t: string | undefined): stri
   const on = appliesOn ?? (t === 'gsheet' ? 'next_sync' : t === 'url' ? 'next_change' : t === 'file' ? 'next_replace' : 'never')
   if (on === 'next_sync') {
     return gsheetAutoSync.value
-      ? '已改回跟著表格：下一次同步就會換成表格上的內容'
-      : '已改回跟著表格：按「立即同步」就會換成表格上的內容'
+      ? '已改回跟著表格：下一次自動更新就會換成表格上的內容'
+      : '已改回跟著表格：按「立即更新」就會換成表格上的內容'
   }
   if (on === 'next_change') return '已改回跟著網頁：網頁下次有變動時會換成網頁上的內容'
-  if (on === 'next_replace') return '好了：下次換新版會直接用新版的內容'
+  if (on === 'next_replace') return '好了：下次上傳新版會直接用新版的內容'
   return '好了：這份資料不會自動更新，這一條維持現在的內容'
 }
 
@@ -2409,27 +2630,23 @@ async function dupRescan() {
   }
 }
 
-// ── Chunk edit / create modal ───────────────────────
+// ── Chunk edit modal（只剩改既有的一條，`C-317`：新增一律走「補一條」小視窗）───────────────
 const chunkEditOpen = ref(false)
-const chunkEditMode = ref<'create' | 'edit'>('create')
-const chunkEditingId = ref<string | null>(null) // edit 模式才有值
+const chunkEditingId = ref<string | null>(null)
 // questions 是 AI 整理產生的常見問法,使用者不直接編;沒值就不送、後端保留既有
 const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions: undefined as string[] | undefined })
-/** 新開一條時的所屬產品(後端寫進自動建立的那份 manual 資料);編輯既有條目不用 */
-const chunkProductName = ref('')
 /** 打開的那一條有沒有被鎖（＞0＝用他改過的版本，見鎖頭那段）；編輯框講「它跟不跟著來源」用 */
 const chunkEditLockedAtMs = ref(0)
 /**
- * 編輯框裡那一句（`C-309`）：在這裡存了會不會蓋掉「跟著來源更新」。只有會同步／會換新版的來源才講，
+ * 編輯框裡那一句（`C-309`）：在這裡存了會不會蓋掉「跟著來源更新」。只有會同步／會上傳新版的來源才講，
  * ⛔ 一句就好——要一直有效該去哪裡改、或改回去的那顆按鈕，都接在同一行
  */
 const chunkSyncNote = computed(() => {
-  if (chunkEditMode.value !== 'edit') return ''
   const t = selectedSource.value?.type
   const locked = chunkEditLockedAtMs.value > 0
   if (t === 'gsheet') return locked ? '這一條用你改過的版本，不跟著表格。' : '在這裡改了，這一條就不再跟著表格更新；要一直有效，直接改試算表。'
   if (t === 'url') return locked ? '這一條用你改過的版本，不跟著網頁。' : '在這裡改了，這一條就不再跟著網頁更新。'
-  if (t === 'file') return locked ? '你改過這一條：「換新版」時會先問你要不要帶到新版。' : '在這裡改過的，「換新版」時會先問你要不要帶到新版。'
+  if (t === 'file') return locked ? '你改過這一條：「上傳新版」時會先問你要不要帶到新版。' : '在這裡改過的，「上傳新版」時會先問你要不要帶到新版。'
   return ''
 })
 
@@ -2485,8 +2702,64 @@ watch(searchKeyword, (kw) => {
   }, 500)
 })
 
-/** 從監控頁 ?q= 進來補卡：建卡成功後把同問題的轉真人案例自動標已處理 */
+/**
+ * 從監控頁（AI 表現）、對話頁 ?q= 進來補卡、或搜尋不到按「補進知識庫」：補好之後把同問題的轉真人案例自動標已處理。
+ * 改既有那一條（查重那一步選「改這一條」）也算把這題處理掉了（見 saveChunk）
+ */
 const pendingResolveQuery = ref('')
+
+// ── 補一條（`C-317`，`D-126` 第 3 題）────────────────────────────────
+// 這一頁所有「新增一條」都開 KnowledgeAddOneDialog（一兩句答案 → AI 整理 → 直接上線）。
+// 以前是五格的編輯框（標題、內容、問法、產品、進階），而「用一句話寫一條知識」叫的是小幫手、建好還要去「等你看過」按採用——
+// 同一件事兩種結果。
+const addOneOpen = ref(false)
+const addOneQuestion = ref('')
+/**
+ * 打開補一條。q＝客人原話（預填「客人問」那一格）；resolveHandoffs＝補好之後順手銷掉同問題的轉真人案例（?q= 那條路）。
+ * ⛔ 每次打開都重設「待銷案的問句」：從 ?q= 進來卻放棄、之後自己補另一條時，殘留的舊問句會讓不相干的那一條把監控頁案例誤標成已處理
+ */
+function openAddOne(q = '', opts: { resolveHandoffs?: boolean } = {}) {
+  if (!canEditKb.value) return
+  addOneQuestion.value = q.slice(0, 200)
+  pendingResolveQuery.value = opts.resolveHandoffs && q ? q : ''
+  addOneOpen.value = true
+}
+
+/**
+ * 補好了（`C-317`）：重讀清單（左邊那一份的條數、體檢）；那一條在正開著的那一份 → 重讀明細、捲過去亮一下；
+ * 不在（多半是新開的一段文字）→ 左邊那一份亮一下，讓他知道放到哪了。⛔ 不硬切走他正在看的那一份
+ */
+async function onAddOneCreated(evt: AddOneCreated) {
+  const resolvedQ = pendingResolveQuery.value
+  pendingResolveQuery.value = ''
+  if (resolvedQ) void resolveHandoffsByQuery(resolvedQ)
+  await loadSources(true)
+  const openId = selectedId.value
+  if (openId && evt.sourceId === openId) {
+    await loadSourceDetail(openId)
+    if (evt.chunkId) {
+      clearChunkNarrowing()
+      await nextTick()
+      void flashAgentTarget(`kb-chunk:${evt.chunkId}`, 3000)
+    }
+    return
+  }
+  if (evt.sourceId) void flashAgentTarget(`kb-source:${evt.sourceId}`, 3000)
+}
+
+/** 補完卡順手銷案：把監控頁同問題的轉真人案例標成已處理（加值動作，失敗不影響補好的那一條） */
+async function resolveHandoffsByQuery(q: string) {
+  try {
+    const r = await apiFetch<{ resolved: number }>('/api/ai/usage/handoffs/resolve-by-query', { method: 'POST', body: { query: q } })
+    if (r.resolved > 0) showToast(`已把監控頁 ${r.resolved} 筆同問題案例標為已處理`, 'success')
+  }
+  catch { /* 銷案是順手的加值動作 */ }
+}
+
+/** 問 AI 的「答得不對？寫一句正確答案」（`C-315`）：同一個小視窗，帶著剛剛問的那一句 */
+function onAskAddOne(evt: { question?: string }) {
+  openAddOne(String(evt?.question ?? ''))
+}
 
 // ── 補知識前先查重複（P1-1） ──────────────────────────
 // 三個「補知識」入口原本都直接開空白視窗，同一題從不同入口進來就建出好幾條重複內容，
@@ -2514,27 +2787,19 @@ async function startAddKnowledge(q: string) {
     dupChecking.value = false
   }
   if (dupHits.value.length) dupOpen.value = true
-  else openPrefilledCreate(q)
-}
-
-/** 客人原話預填成標題與問法（原話就是最好的問法，一併進 embedding） */
-function openPrefilledCreate(q: string) {
-  openCreateManual()
-  chunkForm.value.title = q.slice(0, 100) // 對齊標題欄位 maxlength=100
-  chunkForm.value.questions = [q.slice(0, 200)]
-  pendingResolveQuery.value = q
+  else openAddOne(q, { resolveHandoffs: true })
 }
 
 async function dupEdit(row: SearchRow) {
   dupOpen.value = false
-  // 改既有那一條也算把這題處理掉了 → 沿用同一套自動銷案
-  pendingResolveQuery.value = dupQuery.value
-  await openChunkById(row.id)
+  pendingResolveQuery.value = ''
+  // 改既有那一條也算把這題處理掉了 → 沿用同一套自動銷案（存了、真的有改才銷，見 saveChunk）
+  await openChunkById(row.id, { resolveQuery: dupQuery.value })
 }
 
 function dupCreateAnyway() {
   dupOpen.value = false
-  openPrefilledCreate(dupQuery.value)
+  openAddOne(dupQuery.value, { resolveHandoffs: true })
 }
 const chunkSaving = ref(false)
 const chunkDeleting = ref(false)
@@ -2547,8 +2812,7 @@ const chunkEnabled = ref(true)
 const chunkActiveUntil = ref('') // 'YYYY-MM-DD';空字串 = 永久
 const chunkExpiredAtMs = ref(0)
 /** 開關/期限只對已索引或已停用的卡有意義(pending/failed 本來就不會被引用) */
-const chunkShowUsage = computed(() =>
-  chunkEditMode.value === 'edit' && (chunkEditStatus.value === 'indexed' || chunkEditStatus.value === 'disabled'))
+const chunkShowUsage = computed(() => chunkEditStatus.value === 'indexed' || chunkEditStatus.value === 'disabled')
 /**
  * 編輯框最上面那個狀態章要不要掛（`C-314`）：只有不正常時（處理中、沒學起來、等你看過，或有失敗原因）。
  * 「可用」是正常不講；「已停用」不講——下面「AI 可以用這一條」那顆開關關著就是在講這件事
@@ -2573,7 +2837,13 @@ function ymdLabel(ms: number): string {
 // ── Folder edit modal ───────────────────────────────
 const folderEditOpen = ref(false)
 const folderEditTarget = ref<FolderRow | null>(null)
-const folderForm = ref({ name: '' })
+const folderForm = ref({ name: '', general: false })
+/** 名字或「通用」有改才能按儲存（只送改了的那一格） */
+const folderFormDirty = computed(() => {
+  const t = folderEditTarget.value
+  if (!t) return false
+  return folderForm.value.name.trim() !== t.name || folderForm.value.general !== (t.general === true)
+})
 const folderSaving = ref(false)
 const folderDeleting = ref(false)
 
@@ -2589,7 +2859,13 @@ async function loadSources(forceHealth = false) {
       apiFetch<{ items: SourceSummary[]; orphanCount?: number; degraded?: boolean; truncated?: boolean }>('/api/ai/sources/list'),
       apiFetch<{ items: FolderRow[] }>('/api/ai/folders').catch(() => ({ items: [] as FolderRow[] })),
     ])
-    sources.value = sourcesRes.items
+    // 清單那一支沒帶摘要（舊伺服器、或清單不回這一格）時，留著剛剛明細／寫摘要拿到的那一份（`C-316`）：
+    // 不留的話，拖一份進分組（重讀清單）那一下「這份在講什麼」就不見了
+    const prevSummary = new Map(sources.value.map(s => [s.id, s.summary]))
+    sources.value = sourcesRes.items.map((s) => {
+      const kept = s.summary === undefined ? prevSummary.get(s.id) : undefined
+      return kept ? { ...s, summary: kept } : s
+    })
     orphanCount.value = Number(sourcesRes.orphanCount ?? 0)
     sourcesDegraded.value = sourcesRes.degraded === true
     sourcesTruncated.value = sourcesRes.truncated === true
@@ -2723,7 +2999,7 @@ interface TodoItem {
 function singleOrList(single: Array<{ id: string }>, kind: 'source' | 'chunk', cat: HealthCategory): () => void {
   if (single.length === 1) {
     const id = single[0]!.id
-    return () => { void gotoHealthItem({ id, kind }) }
+    return () => { void gotoHealthItem({ id, kind }, { productName: cat === 'noProductSources' }) }
   }
   return () => openHealthList(cat)
 }
@@ -2859,10 +3135,12 @@ const todoItems = computed<TodoItem[]>(() => {
     items.push({
       id: 'noProductSources',
       tone: 'warning',
-      title: `有 ${h.noProductSources.length} 份文件沒說是哪個產品`,
+      title: `有 ${h.noProductSources.length} 份文件沒說是哪個商品`,
       why: '客人指名問某一台時，AI 可能拿別台產品的內容回答。',
-      cta: '前往設定',
-      action: singleOrList(h.noProductSources, 'source', 'noProductSources'),
+      // `C-320`：商品名收進那一份右上的「⋯」，這顆直接打開那個小視窗（一份時）；改不了商品名的人（`G-102`）只留這一列當作知道
+      ...(canEditSources.value
+        ? { cta: '補上商品名', action: singleOrList(h.noProductSources, 'source', 'noProductSources') }
+        : {}),
     })
   }
   // ⛔「內容較短」刻意不在這裡：它不是待辦，判準見 healthIssueCount 上面那段。
@@ -2951,9 +3229,10 @@ async function loadHealth(force = false) {
 type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'quotaSkippedSheets' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
-  outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「重新同步」看差異,決定要不要更新知識。' },
-  stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「重新同步」,或改用內容固定的頁面當資料來源。' },
-  noProductSources: { title: '文件未設產品名', hint: '這些內容較多的檔案資料沒設「所屬產品」——若是單一產品的說明書,客人指名問的時候可能拿別台產品的內容回答。點進資料補上產品名。' },
+  outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「立即更新」看差異,決定要不要更新知識。' },
+  stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「立即更新」,或改用內容固定的頁面當資料來源。' },
+  // `C-320`：點一份直接打開「AI 認的商品名」那個小視窗（gotoHealthItem），所以只講「點一份補上」
+  noProductSources: { title: '文件沒說是哪個商品', hint: '若是單一商品的說明書，客人指名問的時候 AI 可能拿別的商品回答。點一份補上商品名。' },
   quotaSkippedSheets: { title: '試算表還有列沒收', hint: '知識空間滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
   failedChunks: { title: '知識學習失敗', hint: '這幾條 AI 沒有學成功,客人問到相關問題時找不到它們。點開知識按「重新學習」可以重試。' },
   // ⛔ 字數不要寫死：門檻是 SHORT_CHUNK_CONTENT_CHARS，前後端共用同一把尺。
@@ -3026,11 +3305,15 @@ function openHealthList(cat: HealthCategory) {
   healthListOpen.value = true
 }
 
-async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }) {
+async function gotoHealthItem(item: { id: string; kind: 'source' | 'chunk' }, opts: { productName?: boolean } = {}) {
   healthListOpen.value = false
   if (item.kind === 'source') {
     const src = sources.value.find(s => s.id === item.id)
-    if (src) await selectSource(src)
+    if (src) {
+      await selectSource(src)
+      // 「沒說是哪個商品」：商品名收在右上「⋯」裡（`C-320`），帶到那一份還要他自己找——直接打開那個小視窗
+      if (opts.productName && selectedId.value === src.id) openProductDialog()
+    }
     else showToast('找不到這份資料(可能剛被刪除),請重新整理', 'error')
   }
   else {
@@ -3189,31 +3472,38 @@ async function undoAlias(p: AliasPair) {
   }
 }
 
-// ── 資料夾 CRUD ─────────────────────────────────────
+// ── 分組 CRUD（`C-320`：資料庫裡叫 folder，畫面上叫「分組」）─────────────────
 async function createFolderPrompt() {
+  let name = ''
   try {
-    const { value } = await ElMessageBox.prompt('輸入資料夾名稱：', '新資料夾', {
+    const { value } = await ElMessageBox.prompt('分組的名字（例：商品名、客服 FAQ）', '新增分組', {
       confirmButtonText: '建立',
       cancelButtonText: '取消',
-      inputPlaceholder: '例：客服 FAQ',
+      inputPlaceholder: '例：乾淨方 MAX',
       inputPattern: /^.{1,50}$/,
       inputErrorMessage: '名稱長度需 1–50 字',
     })
-    const name = String(value ?? '').trim()
-    if (!name) return
+    name = String(value ?? '').trim()
+  }
+  catch { return /* 使用者取消 */ }
+  if (!name) return
+  // ⛔ 建不成要講（以前跟「按取消」接在同一個 catch 裡，伺服器拒絕時畫面什麼都沒發生）
+  try {
     const folder = await apiFetch<FolderRow>('/api/ai/folders', { method: 'POST', body: { name } })
     folders.value = [...folders.value, folder]
     expandedFolders.value = new Set([...expandedFolders.value, folder.id])
     saveExpandedState()
-    showToast('已建立資料夾', 'success')
+    showToast('已建立分組', 'success')
   }
-  catch { /* 使用者取消 */ }
+  catch (err: any) {
+    showToast(apiErrorText(err, '分組沒有建成，請再試一次'), 'error')
+  }
 }
 
-// 編輯資料夾 modal — 改名 + 刪除都在這裡做
+// 編輯分組 modal — 改名 + 刪除都在這裡做
 function openFolderEdit(folder: FolderRow) {
   folderEditTarget.value = folder
-  folderForm.value = { name: folder.name }
+  folderForm.value = { name: folder.name, general: folder.general === true }
   folderEditOpen.value = true
 }
 
@@ -3221,16 +3511,17 @@ async function saveFolderName() {
   if (!folderEditTarget.value) return
   const target = folderEditTarget.value
   const newName = folderForm.value.name.trim()
-  if (!newName || newName === target.name) return
+  if (!newName || !folderFormDirty.value) return
+  const body: { name?: string, general?: boolean } = {}
+  if (newName !== target.name) body.name = newName
+  if (folderForm.value.general !== (target.general === true)) body.general = folderForm.value.general
   folderSaving.value = true
   try {
-    const res = await apiFetch<FolderRow>(`/api/ai/folders/${target.id}`, {
-      method: 'PUT',
-      body: { name: newName },
-    })
+    const res = await apiFetch<FolderRow>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
     const idx = folders.value.findIndex(f => f.id === target.id)
-    if (idx >= 0) folders.value[idx] = res
-    showToast('已重新命名', 'success')
+    // 舊伺服器回的沒有 general：照這次送的補上，畫面上的排序才對得上
+    if (idx >= 0) folders.value[idx] = { ...res, general: res.general ?? (body.general ?? target.general === true) }
+    showToast('已儲存', 'success')
     folderEditOpen.value = false
   }
   catch (err: any) {
@@ -3246,10 +3537,10 @@ async function deleteFolderFromModal() {
   const target = folderEditTarget.value
   const count = countByFolder.value[target.id] ?? 0
   const msg = count
-    ? `要刪除「${target.name}」這個資料夾嗎？\n底下的 ${count} 筆資料會自動移到「未分類」，不會被刪除。`
-    : `要刪除「${target.name}」這個空資料夾嗎？`
+    ? `要刪除「${target.name}」這一組嗎？\n底下的 ${count} 份資料會移到「未分類」，不會被刪除。`
+    : `要刪除「${target.name}」這一組嗎？（底下沒有資料）`
   try {
-    await ElMessageBox.confirm(msg, '刪除資料夾', {
+    await ElMessageBox.confirm(msg, '刪除分組', {
       confirmButtonText: '刪除',
       cancelButtonText: '取消',
       confirmButtonClass: 'el-button--danger',
@@ -3265,7 +3556,7 @@ async function deleteFolderFromModal() {
     for (const s of sources.value) {
       if (s.folderId === target.id) s.folderId = null
     }
-    showToast(count ? `已刪除資料夾，${count} 筆資料已移至未分類` : '已刪除空資料夾', 'success')
+    showToast(count ? `已刪除分組，${count} 份資料移到了未分類` : '已刪除分組', 'success')
     folderEditOpen.value = false
   }
   catch (err: any) {
@@ -3299,8 +3590,8 @@ async function selectSource(src: SourceSummary) {
   // 先清空再載入:否則標頭已換、知識列表還是上一份資料的(快速切換會張冠李戴)
   chunks.value = []
   // 篩選不跟著換資料的話:上一份選「AI 沒學起來」,換到一份全部正常的,
-  // 那個分類不存在 → 按鈕消失、清單空白,看起來像這份資料沒有知識
-  chunkFilter.value = 'all'
+  // 那個分類不存在 → 按鈕消失、清單空白,看起來像這份資料沒有知識。「在這份裡找」打的字同理（`C-316`）
+  clearChunkNarrowing()
   detailLoading.value = true
   try {
     await loadSourceDetail(src.id)
@@ -3309,6 +3600,83 @@ async function selectSource(src: SourceSummary) {
     // 只有「仍然選著這份資料」才收 spinner:A 的 finally 不該關掉 B 正在跑的 loading
     if (selectedId.value === src.id) detailLoading.value = false
   }
+  if (selectedId.value === src.id) {
+    // 內容在沒開著的時候換過（見 refreshSummaryAfterContentChange）：這一次打開要重寫
+    const stale = summaryStale.delete(src.id)
+    void maybeGenerateSummary(src.id, stale)
+  }
+}
+
+/** 篩選鈕回「全部」、「在這份裡找」清空：換一份、或要捲到某一條時（那一條可能正被篩掉） */
+function clearChunkNarrowing() {
+  chunkFilter.value = 'all'
+  chunkQuery.value = ''
+}
+
+// ── 這份在講什麼（`C-316`）───────────────────────────────────────
+/** 最多三行；空的＝還沒有（或正在寫） */
+const summaryLines = computed(() =>
+  (selectedSource.value?.summary ?? []).map(s => String(s ?? '').trim()).filter(Boolean).slice(0, 3))
+/** 正在請伺服器寫摘要的那一份（骨架只畫在那一份上） */
+const summaryLoadingId = ref('')
+/** 這次打開頁面已經請伺服器寫過的：每份最多一次（⛔ 寫不出來的不要每點一次就再付一次 AI 的錢） */
+const summaryTried = new Set<string>()
+
+/**
+ * 還沒有摘要的那一份，打開時請伺服器寫一次（PUT generateSummary）。
+ * 不請的：存不了的人（同一支 PUT 是 sources.write，觀察者會 403）、還在整理／壞掉的、
+ * 一段文字（manual）與只有一條的（摘要就是那一條再講一次）。
+ * force＝內容剛換過（上傳新版、立即更新）：伺服器不會自己重寫，存著的是舊內容的摘要——要明講重寫。
+ * 寫不出來（summaryFailed、或出錯）＝整塊不出現，不講失敗：這一塊是幫他看得快，不是他要處理的事
+ */
+async function maybeGenerateSummary(sourceId: string, force = false) {
+  const src = sources.value.find(s => s.id === sourceId)
+  if (!src || !canEditSources.value || summaryTried.has(sourceId)) return
+  if (src.type === 'manual' || src.status !== 'ready' || src.chunkCount < 2) return
+  if (!force && (src.summary ?? []).some(s => String(s ?? '').trim())) return
+  summaryTried.add(sourceId)
+  summaryLoadingId.value = sourceId
+  // 重寫的那一下先把舊的收掉（骨架代替）：舊內容的摘要多掛一秒都是在講錯的東西
+  if (force) src.summary = []
+  try {
+    const res = await apiFetch<{ summary?: string[], summaryAt?: number, summaryFailed?: boolean }>(`/api/ai/sources/${sourceId}`, {
+      method: 'PUT',
+      body: force ? { generateSummary: true, force: true } : { generateSummary: true },
+    })
+    const lines = Array.isArray(res?.summary) ? res.summary : []
+    const row = sources.value.find(s => s.id === sourceId)
+    if (res?.summaryFailed) summaryFailedOnce(sourceId, force)
+    else if (row) {
+      row.summary = lines
+      row.summaryAt = Number(res?.summaryAt ?? 0)
+    }
+  }
+  catch { summaryFailedOnce(sourceId, force) /* 寫不出來就不擺（見上） */ }
+  finally {
+    if (summaryLoadingId.value === sourceId) summaryLoadingId.value = ''
+  }
+}
+/**
+ * 寫不出來：這一次就不擺（⛔ 重寫失敗也不退回舊內容的那份——那是在講換掉之前的東西）；
+ * 從「已試過」拿掉，下次打開這一份再試一次（重寫失敗的那種，下次照樣帶 force）
+ */
+function summaryFailedOnce(sourceId: string, force: boolean) {
+  summaryTried.delete(sourceId)
+  if (force) summaryStale.add(sourceId)
+}
+
+/**
+ * 內容換過了（上傳新版、立即更新套用、試算表更新到東西）：伺服器不會自己重寫摘要（存著的是舊內容的），
+ * 開著的是這一份就馬上請它重寫（force）；不是開著的這一份，下次打開時再寫（從「已試過」名單拿掉、標成要重寫）
+ */
+const summaryStale = new Set<string>()
+function refreshSummaryAfterContentChange(sourceId: string) {
+  summaryTried.delete(sourceId)
+  if (selectedId.value === sourceId) {
+    summaryStale.delete(sourceId)
+    void maybeGenerateSummary(sourceId, true)
+  }
+  else summaryStale.add(sourceId)
 }
 
 async function loadSourceDetail(sourceId: string) {
@@ -3318,9 +3686,12 @@ async function loadSourceDetail(sourceId: string) {
     // 沒有這行的話,慢的舊請求晚到會把 A 的知識/同步設定蓋進 B 的畫面(張冠李戴),
     // 此時按「儲存設定」還會把 A 的同步間隔寫進 B。
     if (selectedId.value !== sourceId) return
-    // 用最新的 source 覆寫 list 裡的同一筆，保證 detail 不過時
+    // 用最新的 source 覆寫 list 裡的同一筆，保證 detail 不過時（沒帶摘要那一格的話留著手上那一份，同 loadSources）
     const idx = sources.value.findIndex(s => s.id === sourceId)
-    if (idx >= 0) sources.value[idx] = res.source
+    if (idx >= 0) {
+      const prevSummary = sources.value[idx]!.summary
+      sources.value[idx] = res.source.summary === undefined && prevSummary ? { ...res.source, summary: prevSummary } : res.source
+    }
     chunks.value = res.chunks
     // 編輯視窗開著時同步該卡最新索引狀態（輪詢刷新列表,視窗裡的「處理中」也要跟著變）
     if (chunkEditOpen.value && chunkEditingId.value) {
@@ -3332,8 +3703,7 @@ async function loadSourceDetail(sourceId: string) {
       }
     }
     seedSettingsForm(res.source)
-    productNameForm.value = res.source.productName
-    productNameBaseline.value = res.source.productName
+    // 商品名那一格只在小視窗打開那一下填（openProductDialog）：⛔ 不在這裡填——輪詢重讀明細會把他正在打的字洗掉
     urlForm.value = res.source.url ?? ''
     // 抓取失敗的 Sheet:把要分享的帳號先撈好，商家一眼就看到要加誰（不必再去開匯入視窗找）
     if (res.source.failureReason && res.source.type === 'gsheet') void loadServiceAccountEmail()
@@ -3343,13 +3713,36 @@ async function loadSourceDetail(sourceId: string) {
   }
 }
 
-// ── 所屬產品（P1-1）─────────────────────────────────
+// ── AI 認的商品名（資料庫裡叫 productName，P1-1；`C-320` 收進右上「⋯」）─────────────────
 // 產品名進 embedding 前綴，舊向量還帶舊值 → 儲存後一律接著重建這份資料的索引才生效。
 // 候選清單與匯入視窗共用同一份快取（存了新名字要讓兩邊都看得到）。
 const { addLocal: addProductNameLocal, invalidate: invalidateProductNamesCache } = useProductNames()
 const productNameForm = ref('')
 const productNameBaseline = ref('')
 const savingProductName = ref(false)
+const productDialogOpen = ref(false)
+/**
+ * 搬進一個有好幾個商品名的分組時（groupFill.names，`C-320`）：那幾個名字排在框上面讓他點一個，上面一句講是哪一組。
+ * 從「⋯」打開的沒有（框點一下就會列出全部現成的名字）
+ */
+const productChoices = ref<string[]>([])
+const productChoicesGroup = ref('')
+
+/** 右上「⋯」 */
+function onSourceMoreCommand(cmd: string) {
+  if (cmd === 'delete') void deleteSource()
+  else if (cmd === 'product') openProductDialog()
+}
+/** 每次打開都從這一份現在的值開始（上次打開沒存的不帶過來） */
+function openProductDialog(opts: { choices?: string[], group?: string } = {}) {
+  const s = selectedSource.value
+  if (!s || s.type === 'gsheet' || !canEditSources.value) return
+  productNameForm.value = s.productName ?? ''
+  productNameBaseline.value = s.productName ?? ''
+  productChoices.value = opts.choices ?? []
+  productChoicesGroup.value = opts.group ?? ''
+  productDialogOpen.value = true
+}
 
 // ── 抓取失敗:就地修 ──────────────────────────────────
 // 兩種最常見原因,修的地方各自不同(一個在 Google 那邊、一個是網址換了),
@@ -3373,28 +3766,28 @@ const failureAdvice = computed(() => {
     // ⛔ 不叫人去分享（以前照「類型是試算表」一律教分享）：表讀得到，是系統等他確認——去 Google 改分享沒有用
     return {
       kind: 'massDelete' as const,
-      what: '為了避免誤刪，系統先不動對應的知識。是你刪的就按上方「立即同步」確認；不是的話，到試算表把那幾列補回去。',
+      what: '為了避免誤刪，系統先不動對應的知識。是你刪的就按上方「立即更新」確認；不是的話，到試算表把那幾列補回去。',
       rows,
     }
   }
   if (s.type === 'gsheet') {
     return {
       kind: 'gsheet' as const,
-      what: '最常見的原因是這份 Google 試算表沒有分享給下面這個帳號。到試算表按「共用」，把這個帳號加為「檢視者」，再回來按上方「立即同步」。',
+      what: '最常見的原因是這份 Google 試算表沒有分享給下面這個帳號。到試算表按「共用」，把這個帳號加為「檢視者」，再回來按上方「立即更新」。',
       rows: 0,
     }
   }
   if (s.type === 'url') {
     return {
       kind: 'url' as const,
-      what: '原本的網頁可能被移走或改網址了。確認新網址後貼在下面換掉，換好會自動重新抓一次；網頁只是暫時掛掉的話，按上方「重新同步」再試即可。',
+      what: '原本的網頁可能被移走或改網址了。確認新網址後貼在下面換掉，換好會自動重新抓一次；網頁只是暫時掛掉的話，按上方「立即更新」再試即可。',
       rows: 0,
     }
   }
-  // ⛔ 不教「重新匯入一次」（`C-309`）：同一個位置就有「換新版」，重新匯入會多一份
+  // ⛔ 不教「重新匯入一次」（`C-309`）：同一個位置就有「上傳新版」，重新匯入會多一份
   return {
     kind: 'other' as const,
-    what: s.type === 'file' ? '檔案不會自動更新。內容有問題的話，按上方「換新版」放一份新的。' : '這一段文字不會自動更新。內容有問題的話，點下面那一條直接改。',
+    what: s.type === 'file' ? '檔案不會自動更新。內容有問題的話，按上方「上傳新版」放一份新的。' : '這一段文字不會自動更新。內容有問題的話，點下面那一條直接改。',
     rows: 0,
   }
 })
@@ -3402,8 +3795,8 @@ const failureAdvice = computed(() => {
 // ── 試算表：什麼時候補、在後台刪掉的列（`C-308`④、`D-125`②）──────────
 /** 「空出空間後什麼時候補上」那半句：照這一份實際的同步頻率講，⛔ 不寫死「每小時」 */
 const gsheetRefillWhen = computed(() => (gsheetAutoSync.value
-  ? `下一次同步（${optionLabel(GSHEET_INTERVAL_OPTIONS, selectedSource.value?.refreshIntervalMinutes ?? 0)}一次，或按「立即同步」）會自動補上`
-  : '按「立即同步」就會補上（這一份設成不自動同步）'))
+  ? `下一次自動更新（${optionLabel(GSHEET_INTERVAL_OPTIONS, selectedSource.value?.refreshIntervalMinutes ?? 0)}一次，或按「立即更新」）會補上`
+  : '按「立即更新」就會補上（這一份設成不自動更新）'))
 
 const excludedTitles = computed(() => (selectedSource.value?.type === 'gsheet' ? selectedSource.value.gsheetExcludedTitles ?? [] : []))
 /** 列出來的那幾列：太多就列前 3 個、其餘講「等 N 列」——那一行只是讓他認得是哪幾列，不是清單 */
@@ -3420,7 +3813,7 @@ async function clearExcludedRows() {
   clearingExcluded.value = true
   try {
     await apiFetch(`/api/ai/sources/${id}`, { method: 'PUT', body: { clearExcludedRows: true } })
-    showToast(gsheetAutoSync.value ? '好了：下一次同步會把這幾列收回來（想馬上收就按「立即同步」）' : '好了：按「立即同步」就會把這幾列收回來', 'success')
+    showToast(gsheetAutoSync.value ? '好了：下一次自動更新會把這幾列收回來（想馬上收就按「立即更新」）' : '好了：按「立即更新」就會把這幾列收回來', 'success')
     await loadSourceDetail(id)
   }
   catch (err: any) {
@@ -3483,8 +3876,9 @@ async function saveProductName() {
       { method: 'POST' },
     )
     productNameBaseline.value = next
+    productDialogOpen.value = false
     void addProductNameLocal(next) // 剛設的名字要立刻出現在下拉裡(下一份資料才選得到同一個)
-    await loadSources(true) // 側欄那列的產品名要跟著變
+    await loadSources(true) // 體檢「沒說是哪個商品」要跟著變
     if (res.failed > 0) {
       showToast(`已儲存；${res.indexed} 條學習成功 / ${res.failed} 條失敗，可再按一次重試`, 'error')
     }
@@ -3542,10 +3936,10 @@ onBeforeUnmount(stopIndexPolling)
 /** 「自動更新：」那一格的選項：網址、試算表各一份（試算表多一個「每 30 分鐘」） */
 const intervalOptions = computed(() => (selectedSource.value?.type === 'gsheet' ? GSHEET_INTERVAL_OPTIONS : URL_INTERVAL_OPTIONS))
 
-/** 改了頻率之後那一句：改成什麼；關掉的話講要更新時按哪一顆（試算表「立即同步」、網址「重新同步」，跟右上那顆同名） */
+/** 改了頻率之後那一句：改成什麼；關掉的話講要更新時按哪一顆（跟右上那顆同名，`C-319` 兩種都叫「立即更新」） */
 function intervalSavedToast(minutes: number, t: string | undefined): string {
   if (minutes > 0) return `已改成${optionLabel(t === 'gsheet' ? GSHEET_INTERVAL_OPTIONS : URL_INTERVAL_OPTIONS, minutes)}自動更新`
-  return `已關掉自動更新：要更新時按右上「${t === 'gsheet' ? '立即同步' : '重新同步'}」`
+  return '已關掉自動更新：要更新時按右上「立即更新」'
 }
 
 /**
@@ -3660,7 +4054,7 @@ const { progress: resyncProgress, poll: pollResyncJob, cancel: cancelResync, res
 const resyncJobId = ref('')
 
 const resyncButtonLabel = computed(() => {
-  if (!resyncing.value) return '重新同步'
+  if (!resyncing.value) return '立即更新'
   const p = resyncProgress.value
   if (!p) return '重新抓取網頁⋯'
   return p.total > 1 ? `${p.label} ${p.done}/${p.total}⋯` : `${p.label}⋯`
@@ -3779,7 +4173,7 @@ async function startResync(force = false) {
   catch (err: any) {
     // 錯誤三要素:發生什麼 / 資料有沒有被動到 / 下一步。比對是唯讀的,可以誠實保證沒動到。
     if (err?.message === PREVIEW_JOB_CANCELLED) {
-      showToast('已取消重新同步;你的知識沒有被改動', 'success')
+      showToast('已取消更新；你的知識沒有被改動', 'success')
     }
     /**
      * ⚠️ 逾時要單獨講（2026-09-03 code review 抓到）：重新同步的產物（新舊比對）
@@ -3793,7 +4187,7 @@ async function startResync(force = false) {
         apiFetch(`/api/ai/knowledge/preview-jobs/${resyncJobId.value}`, { method: 'DELETE' }).catch(() => {})
       }
       // 「貼上文字」不是畫面上任何東西的名字（加入視窗只有一個框，2026-10-12 文字審視）
-      showToast('這個網頁整理太久，這次先停了；你的知識沒有被改動。可以再按一次重新同步，或把內容複製下來，在「加入知識」直接貼進框裡。', 'warning')
+      showToast('這個網頁整理太久，這次先停了；你的知識沒有被改動。可以再按一次「立即更新」，或把內容複製下來，在「加入知識」直接貼進框裡。', 'warning')
     }
     else {
       const reason = apiErrorText(err, '重新整理沒有完成')
@@ -3834,13 +4228,13 @@ async function syncGsheetNow() {
     if (res.outcome === 'blocked_mass_deletion') {
       try {
         await ElMessageBox.confirm(
-          `表格比上次同步少了 ${res.pendingDeletes ?? 0} 列，對應的知識會移到回收桶（30 天內可還原）。\n\n如果不是你刪的，請先到試算表確認分頁與內容是否正常，不要繼續。`,
+          `表格比上次更新時少了 ${res.pendingDeletes ?? 0} 列，對應的知識會移到回收桶（30 天內可還原）。\n\n如果不是你刪的，請先到試算表確認分頁與內容是否正常，不要繼續。`,
           '一次要刪很多條，先確認一下',
           { confirmButtonText: '我確認要刪', cancelButtonText: '先不要', type: 'warning' },
         )
       }
       catch {
-        showToast('已取消；這次同步沒有做任何變更', 'success')
+        showToast('已取消；這次沒有做任何變更', 'success')
         return
       }
       res = await apiFetch<GsheetSyncRes>(
@@ -3848,21 +4242,23 @@ async function syncGsheetNow() {
         { method: 'POST', body: { allowMassDeletion: true } },
       )
     }
-    // 同步途中這份資料被刪掉了（`C-308`③）：⛔ 不講「同步完成：新增…」——那些都沒留下來。講一句、清單重讀、回工作台
+    // 更新途中這份資料被刪掉了（`C-308`③）：⛔ 不講「更新完成：新增…」——那些都沒留下來。講一句、清單重讀、回工作台
     if (res.outcome === 'source_deleted') {
-      showToast('這份資料在同步途中被刪掉了，這次同步沒有留下任何東西', 'warning')
+      showToast('這份資料在更新途中被刪掉了，這次沒有留下任何東西', 'warning')
       backToWorkbench()
       await loadSources(true)
       return
     }
-    await loadSourceDetail(selectedId.value!)
+    const sid = selectedId.value!
+    await loadSourceDetail(sid)
     // 同步成功也可能剛清掉失敗標記 → 一定要 force 重跑體檢。
     // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
     await loadSources(true)
-    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了同步卻什麼都沒發生。
-    // 什麼時候補照同步頻率講（`C-308`④）：設成不自動同步的不會「自動」補
+    if (res.outcome === 'synced' && (res.added || res.updated || res.deleted)) refreshSummaryAfterContentChange(sid)
+    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了更新卻什麼都沒發生。
+    // 什麼時候補照自動更新的頻率講（`C-308`④）：設成不自動更新的不會「自動」補
     const quotaTail = res.quotaSkipped
-      ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後${gsheetAutoSync.value ? '，下一次同步會自動補上' : '再按一次「立即同步」就會補上'}）`
+      ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後${gsheetAutoSync.value ? '，下一次自動更新會補上' : '再按一次「立即更新」就會補上'}）`
       : ''
     if (res.outcome === 'unchanged') {
       showToast(quotaTail ? `表格沒有變動${quotaTail}` : '已是最新，無變動', quotaTail ? 'warning' : 'success')
@@ -3870,19 +4266,19 @@ async function syncGsheetNow() {
     else if (res.manualKept || quotaTail) {
       // 被手動編輯鎖住的分歧要講出來——不講的話，商家改了表格卻永遠不生效、也不知道為什麼
       showToast(
-        `同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`
+        `更新完成：新增 ${res.added}、修改 ${res.updated}、刪除 ${res.deleted}`
         + (res.manualKept ? `；另有 ${res.manualKept} 條是你改過的，沒跟著表格更新（點那一條旁邊的鎖頭可以改回）` : '')
         + quotaTail,
         'warning',
       )
     }
     else {
-      showToast(`同步完成：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}`, 'success')
+      showToast(`更新完成：新增 ${res.added}、修改 ${res.updated}、刪除 ${res.deleted}`, 'success')
     }
   }
   catch (err: any) {
     // 中文原因在 data.statusMessage（err.statusMessage 是 HTTP 狀態那一行，HTTP/2 下是空的）
-    showToast(apiErrorText(err, '同步失敗'), 'error')
+    showToast(apiErrorText(err, '更新沒有完成'), 'error')
   }
   finally {
     gsheetSyncing.value = false
@@ -3924,7 +4320,7 @@ async function applyDiff() {
   if (divergentKeeps > 0) {
     try {
       await ElMessageBox.confirm(
-        `你保留了 ${divergentKeeps} 項與網頁不同的內容（那幾條維持舊版）。網頁的新內容這次不會套用；之後按重新同步時，這些差異仍會再列出來。`,
+        `你保留了 ${divergentKeeps} 項與網頁不同的內容（那幾條維持舊版）。網頁的新內容這次不會套用；之後按「立即更新」時，這些差異仍會再列出來。`,
         '有保留與網頁不同的內容',
         { confirmButtonText: '照我的選擇套用', cancelButtonText: '回去再看看', type: 'warning' },
       )
@@ -3965,7 +4361,7 @@ async function applyDiff() {
     // 空間不夠、先沒加的新增（`C-308`⑪）：伺服器收到滿為止，沒收的那幾條一定要講——不講就是「沉默地少收」
     const skipped = Number(res.quotaSkipped ?? 0)
     if (skipped > 0) {
-      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；還有 ${skipped} 條新增因為知識空間滿了沒加（空出空間後再按一次「重新同步」就會補上）`, 'warning')
+      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；還有 ${skipped} 條新增因為知識空間滿了沒加（空出空間後再按一次「立即更新」就會補上）`, 'warning')
     }
     else {
       showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')
@@ -3975,6 +4371,7 @@ async function applyDiff() {
     await loadSources(true)
     // 重載「被套用的那份資料」;使用者若已切到別的資料,那邊的畫面不受影響
     if (selectedId.value === targetId) await loadSourceDetail(targetId)
+    if (res.added || res.updated || res.deleted) refreshSummaryAfterContentChange(targetId)
   }
   catch (err: any) {
     // 逾時/斷線:後端很可能已經做完(或做到一半)。diff 與 applyId 都還在,
@@ -4040,7 +4437,7 @@ const importPrefill = ref('')
 function goImport() { importOpen.value = true }
 
 /**
- * 「換新版」（`D-124` 新手走查）：檔案改版以前只能回「加入知識」重傳，而且名字要一樣才會問要不要換——
+ * 「上傳新版」（`D-124` 新手走查；`C-319` 以前叫「換新版」）：檔案改版以前只能回「加入知識」重傳，而且名字要一樣才會問要不要換——
  * 改了檔名就默默多一份。現在在那一份上直接換：選檔視窗在這裡開（要在點擊當下開，瀏覽器才放行），
  * 選好交給加入視窗，整理好直接換掉這一份（流程同「重新整理，換掉那一份」）。
  */
@@ -4059,24 +4456,32 @@ async function onNewVersionChosen(e: Event) {
   await nextTick()
   importDialogRef.value?.replaceWithFile(file, { id: src.id, name: src.name, chunkCount: src.chunkCount })
 }
-/** 加入視窗「還沒整理好」那格的「手寫一條」：關掉加入視窗、打開手寫一條的編輯框 */
+/** 加入視窗「還沒整理好」那格的「手寫一條」：關掉加入視窗、打開「補一條」（`C-317`：跟其他新增入口同一個小視窗） */
 function onImportManual() {
   importOpen.value = false
-  openCreateManual()
+  openAddOne()
 }
 
 async function onImported(sourceId: string | null) {
   await loadSources(true)
   if (sourceId) {
     const src = sources.value.find(s => s.id === sourceId)
+    // 上傳新版換掉的常常就是這一份：內容換了，「這份在講什麼」要重寫（`C-316`；新加的一份本來就沒有，重寫＝第一次寫）
+    summaryTried.delete(sourceId)
+    summaryStale.add(sourceId)
     if (src) await selectSource(src)
     return
   }
   // 視窗關著、背景自己加好的（sourceId 是 null，不搶他正在看的那一份）：右邊開著的那一份也要重讀一次。
-  // ⛔ 換新版換掉的常常就是他開著的這一份（2026-10-13 `/code-review`）：不重讀的話右邊一直是已經移到回收桶的舊條目，
-  //    他在上面改、或以為沒換成又按一次換新版
+  // ⛔ 上傳新版換掉的常常就是他開著的這一份（2026-10-13 `/code-review`）：不重讀的話右邊一直是已經移到回收桶的舊條目，
+  //    他在上面改、或以為沒換成又按一次上傳新版
   const openId = selectedId.value
-  if (openId && sources.value.some(s => s.id === openId)) await loadSourceDetail(openId)
+  if (openId && sources.value.some(s => s.id === openId)) {
+    const before = chunks.value.map(c => c.id).join('\n')
+    await loadSourceDetail(openId)
+    // 條目換了＝背景換掉的就是這一份 → 摘要重寫；⛔ 沒換（背景加好的是別份）不重寫，不白花 AI 的錢
+    if (selectedId.value === openId && chunks.value.map(c => c.id).join('\n') !== before) refreshSummaryAfterContentChange(openId)
+  }
 }
 
 // ── 一鍵整理舊版未分組知識 ───────────────────────────
@@ -4126,30 +4531,14 @@ async function commitName() {
   finally { savingName = false }
 }
 
-// ── 新增手寫知識 ─────────────────────────────────────
-function openCreateManual() {
-  // 每次重開都要清掉「待銷案的問句」:從 ?q= 進來卻放棄、之後自己手寫另一條時,
-  // 殘留的舊問句會讓不相干的知識把監控頁案例誤標成已處理
-  pendingResolveQuery.value = ''
-  chunkEditMode.value = 'create'
-  chunkEditingId.value = null
-  chunkForm.value = { title: '', content: '', tags: [], questions: undefined }
-  // 選著某份資料時新開一條,預設沿用那份資料的產品(多半就是在補同一台的東西)
-  chunkProductName.value = selectedSource.value?.productName ?? ''
-  chunkEditStatus.value = ''
-  chunkEditFailureReason.value = ''
-  chunkEditLockedAtMs.value = 0
-  chunkEnabled.value = true
-  chunkActiveUntil.value = ''
-  chunkExpiredAtMs.value = 0
-  chunkSettingsOriginal = { enabled: true, activeUntil: '' }
-  chunkAdvancedOpen.value = false
-  chunkEditOpen.value = true
-}
-
-// ── 編輯既有 chunk ───────────────────────────────────
-function openEditChunk(chunk: ChunkRow) {
-  chunkEditMode.value = 'edit'
+// ── 編輯既有 chunk（新增一條走「補一條」小視窗，見 openAddOne）──────────────
+/**
+ * 這一次打開編輯框要不要在存了之後銷案（查重那一步選「改這一條」才有，見 dupEdit）。
+ * ⛔ 跟著這一次打開走、每次打開都重設：放在共用的 pendingResolveQuery 的話，他按了取消、之後改別條也會被拿去銷案
+ */
+let chunkEditResolveQuery = ''
+function openEditChunk(chunk: ChunkRow, resolveQuery = '') {
+  chunkEditResolveQuery = resolveQuery
   chunkEditingId.value = chunk.id
   chunkForm.value = {
     title: chunk.title,
@@ -4294,48 +4683,15 @@ async function saveChunk() {
   try {
     const body: Record<string, unknown> = { title: t, content: c }
     /*
-     * 標籤（`C-314`：欄位不給看了，系統自己管）：新開的一條照送（通常是空的，按過「AI 整理一下」就是 AI 給的）；
-     * 改既有的那一條只有「AI 整理一下」換了標籤才送——⛔ 沒換就不送：後端 PUT 沒帶 tags＝不改那一格，
+     * 標籤（`C-314`：欄位不給看了，系統自己管）：只有「AI 整理一下」換了標籤才送——⛔ 沒換就不送：後端 PUT 沒帶 tags＝不改那一格，
      * 原本的標籤一個都不會被洗掉（照送也行，但舊資料若有超過上限的標籤，照送會被擋下 400、整條存不了）
      */
-    if (chunkEditMode.value === 'create' || tagsKey(chunkForm.value.tags) !== chunkTagsOriginal) body.tags = chunkForm.value.tags
+    if (tagsKey(chunkForm.value.tags) !== chunkTagsOriginal) body.tags = chunkForm.value.tags
     // 只要欄位有出現在畫面上就照送（含清成空陣列）——用 length 判斷的話，
     // 使用者把夾了個資的問法全部刪掉會送不出去，等於刪不掉。
     // undefined = 這次沒有這個欄位，後端保留既有值。
     if (chunkForm.value.questions !== undefined) body.questions = chunkForm.value.questions
-    if (chunkEditMode.value === 'create') {
-      // 建立新手寫知識（後端會自動建一個 type='manual' 的 source 包它，產品名寫在那份資料上）
-      const product = chunkProductName.value.trim()
-      body.productName = product
-      const res = await apiFetch<{ id: string; sourceId: string }>('/api/ai/knowledge/create', {
-        method: 'POST',
-        body,
-      })
-      if (product) void addProductNameLocal(product)
-      showToast('已建立', 'success')
-      chunkEditOpen.value = false
-      // 就地驗證:不用再換頁去「測試對話」重打一次(與系統建議那條路的行為對齊)
-      void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
-      // 從監控頁 ?q= 進來的:建完卡自動把同問題的轉真人案例標已處理,不用回去逐筆按
-      if (pendingResolveQuery.value) {
-        const resolvedQ = pendingResolveQuery.value
-        pendingResolveQuery.value = ''
-        apiFetch<{ resolved: number }>('/api/ai/usage/handoffs/resolve-by-query', {
-          method: 'POST',
-          body: { query: resolvedQ },
-        })
-          .then((r) => {
-            if (r.resolved > 0) showToast(`已把監控頁 ${r.resolved} 筆同問題案例標為已處理`, 'success')
-          })
-          .catch(() => {}) // 銷案是順手的加值動作,失敗不影響建卡
-      }
-      await loadSources(true)
-      if (res.sourceId) {
-        selectedId.value = res.sourceId
-        await loadSourceDetail(res.sourceId)
-      }
-    }
-    else if (chunkEditingId.value) {
+    if (chunkEditingId.value) {
       const put = await apiFetch<{ changed?: boolean }>(`/api/ai/knowledge/${chunkEditingId.value}`, {
         method: 'PUT',
         body,
@@ -4355,6 +4711,9 @@ async function saveChunk() {
       if (put?.changed === false && !Object.keys(settingsBody).length) return
       showToast('已儲存', 'success')
       if (put?.changed !== false) void verifyChunkAnswerable(t, chunkForm.value.questions?.[0])
+      // 從 ?q= 的查重那一步選「改這一條」進來的：真的改了才算把這題處理掉（`C-317`：以前這條路設了問句卻從來沒銷案）
+      if (chunkEditResolveQuery && put?.changed !== false) void resolveHandoffsByQuery(chunkEditResolveQuery)
+      chunkEditResolveQuery = ''
       if (selectedId.value) await loadSourceDetail(selectedId.value)
       await loadSources(true) // 因為 manual source 名稱可能跟著變
     }
@@ -4368,7 +4727,7 @@ async function saveChunk() {
 }
 
 async function deleteChunkFromModal() {
-  if (chunkEditMode.value !== 'edit' || !chunkEditingId.value) return
+  if (!chunkEditingId.value) return
   const title = chunkForm.value.title || '(未命名)'
   try {
     await ElMessageBox.confirm(
@@ -4454,6 +4813,8 @@ function chunkStatusBadge(s: string) {
  * 試算表一次少太多列被擋下（`C-308`⑤）狀態也是 failed，但不是壞了、是等他確認——講「等你確認」不講「失敗」。
  */
 function sourceChip(src: SourceSummary): { text: string, tone: 'warning' | 'error' | 'neutral' } | null {
+  // 搬進商品分組、伺服器正在補商品名＋重新學（`C-320`，最久約 9 秒）
+  if (movingSourceIds.value.has(src.id)) return { text: '搬移中', tone: 'neutral' }
   if (src.status === 'failed') return massDeleteRows(src) > 0 ? { text: '等你確認', tone: 'warning' } : { text: '失敗', tone: 'error' }
   if (src.status === 'fetching' || src.status === 'splitting') return { text: statusLabel(src.status), tone: 'neutral' }
   if (src.outdatedAtMs > 0) return { text: '有變動', tone: 'warning' }
@@ -4470,7 +4831,7 @@ function statusChipTone(src: SourceSummary): 'success' | 'warning' | 'error' | '
  * 左邊每一份底下那一行：只剩「N 條」（`C-314`）。
  * 以前還接產品名、「同步：46 分鐘前」——240px 寬的側欄裡每一列都被截成「…」，看不完也用不到。
  * 「沒設產品」改由「要處理的事」那一條講（noProductSources，跟這裡以前用的是同一個判斷）；
- * 產品名、更新時間點進那一份就看得到（名稱下面那一行、「所屬產品」那一格）。
+ * 更新時間點進那一份就看得到（名稱下面那一行）；商品名在那一份右上「⋯」→「AI 認的商品名」（`C-320`）。
  */
 function metaText(src: SourceSummary) {
   return `${src.chunkCount} 條`
@@ -4489,6 +4850,11 @@ const headerMeta = computed(() => {
   // 「9/4」後面空一格再接「更新」；「35 分鐘前」「剛剛」直接接
   if (when) parts.push(/\d$/.test(when) ? `${when} 更新` : `${when}更新`)
   else if (isSyncingType(s.type)) parts.push('還沒同步過')
+  /*
+   * 改不了商品名的人（觀察者、客服，`G-107`：存不了的照樣看得到）：「⋯ → AI 認的商品名」他們看不到，
+   * 這一份被 AI 當成哪個商品就接在這一行後面講（`C-320`）。改得了的人在「⋯」裡看，這一行不多擺
+   */
+  if (!canEditSources.value && s.type !== 'gsheet' && String(s.productName ?? '').trim()) parts.push(`AI 認的商品：${s.productName.trim()}`)
   return parts.join('・')
 })
 /**
@@ -4551,7 +4917,7 @@ onMounted(async () => {
     // 只有一份／一條就直接帶過去（`C-309`：「前往比對」打開一張只有一列的清單，還要再點一次）——同 singleOrList
     healthListCategory.value = healthParam as HealthCategory
     const only = healthListItems.value
-    if (only.length === 1) await gotoHealthItem(only[0]!)
+    if (only.length === 1) await gotoHealthItem(only[0]!, { productName: healthParam === 'noProductSources' })
     else openHealthList(healthParam as HealthCategory)
     return
   }
@@ -4602,7 +4968,7 @@ onMounted(async () => {
   }
 })
 
-async function openChunkById(chunkId: string) {
+async function openChunkById(chunkId: string, opts: { resolveQuery?: string } = {}) {
   try {
     const info = await apiFetch<{ id: string; sourceId: string | null; deleted?: boolean }>(`/api/ai/knowledge/${chunkId}`)
     /**
@@ -4626,10 +4992,102 @@ async function openChunkById(chunkId: string) {
     }
     await selectSource(src)
     const chunk = chunks.value.find(c => c.id === chunkId)
-    if (chunk) openEditChunk(chunk)
+    if (chunk) openEditChunk(chunk, opts.resolveQuery)
   }
   catch (err: any) {
     showToast(apiErrorText(err, '找不到這一條(可能已被刪除)'), 'error')
   }
+}
+
+// ── 右邊「問 AI」（`C-315`）──────────────────────────────────────
+/**
+ * 放不放得下第三欄：看這一頁自己的寬度（主選單收起來／展開都算進去），不是整個視窗。
+ * column＝常駐右邊（≥ 1200）；drawer＝右上一顆「問 AI」開抽屜（721～1199）；none＝手機（≤ 720，手機工作台另排 `E-13`）或沒有權限。
+ * ⚠️ 手機那一刀跟 mobileStack 同一條線（視窗 ≤ 720，見 _split-layout.scss），不然 721 寬時清單跟內容疊著、抽屜鈕卻不見
+ */
+const ASK_COLUMN_MIN = 1200
+const PHONE_MAX = 720
+const colsRef = ref<HTMLElement | null>(null)
+const colsWidth = ref(0)
+const viewportWidth = ref(0)
+const askMode = computed<'column' | 'drawer' | 'none'>(() => {
+  if (!canAsk.value || !colsWidth.value || viewportWidth.value <= PHONE_MAX) return 'none'
+  return colsWidth.value >= ASK_COLUMN_MIN ? 'column' : 'drawer'
+})
+const askDrawerOpen = ref(false)
+/** 「用了這 N 條 · 哪一份」的資料名：手上的清單就有，傳進去面板就不用再讀一次 /api/ai/sources/list */
+const askSourceNames = computed<Record<string, string>>(() => Object.fromEntries(sources.value.map(s => [s.id, s.name])))
+// 寬度變了、抽屜那一種不在了（拉寬成常駐、或縮成手機）：抽屜的開著狀態要收掉，下次回到中間寬度不會自己跳出來
+watch(askMode, (m) => { if (m !== 'drawer') askDrawerOpen.value = false })
+
+let colsObserver: ResizeObserver | null = null
+function measureCols() {
+  colsWidth.value = Math.round(colsRef.value?.getBoundingClientRect().width ?? 0)
+  viewportWidth.value = window.innerWidth
+}
+onMounted(() => {
+  measureCols()
+  if (typeof ResizeObserver !== 'undefined' && colsRef.value) {
+    colsObserver = new ResizeObserver(() => measureCols())
+    colsObserver.observe(colsRef.value)
+  }
+  window.addEventListener('resize', measureCols)
+})
+onBeforeUnmount(() => {
+  colsObserver?.disconnect()
+  colsObserver = null
+  window.removeEventListener('resize', measureCols)
+})
+
+/**
+ * 答案底下「用了這幾條」點了（`C-315`）：中間打開那一份、捲到那一條、亮一下（不開編輯框：他是要看 AI 用了什麼，不一定要改）。
+ * 那一條不在了（換掉、刪掉）、或還在「等你看過」，照實講一句（⛔ 不要點了什麼都沒發生）。
+ */
+async function onAskOpenChunk(evt: { chunkId?: string, sourceId?: string | null }) {
+  const chunkId = String(evt?.chunkId ?? '')
+  if (!chunkId) return
+  askDrawerOpen.value = false // 抽屜蓋著中間：關掉才看得到那一條
+  await revealChunk(chunkId, evt?.sourceId ? String(evt.sourceId) : null)
+}
+
+async function revealChunk(chunkId: string, sourceIdHint: string | null) {
+  let sourceId = sourceIdHint
+  let owner = sourceId ? sources.value.find(s => s.id === sourceId) : undefined
+  if (sourceId && !owner) {
+    await loadSources() // 剛加進來的那一份可能還不在清單上
+    owner = sources.value.find(s => s.id === sourceId)
+  }
+  if (!owner) {
+    // 沒給是哪一份、或清單上找不到：問伺服器那一條現在在哪
+    try {
+      const info = await apiFetch<{ id: string, sourceId: string | null, deleted?: boolean }>(`/api/ai/knowledge/${encodeURIComponent(chunkId)}`)
+      if (info.deleted) {
+        showToast('這一條已經換掉或刪掉了（在回收桶裡）', 'warning')
+        return
+      }
+      sourceId = info.sourceId
+      owner = sourceId ? sources.value.find(s => s.id === sourceId) : undefined
+    }
+    catch (err: any) {
+      showToast(apiErrorText(err, '找不到這一條，可能剛被刪掉了'), 'warning')
+      return
+    }
+  }
+  if (!owner) {
+    showToast('找不到這一條所在的資料，可能剛被刪掉了', 'warning')
+    return
+  }
+  if (selectedId.value !== owner.id) await selectSource(owner)
+  clearChunkNarrowing()
+  const row = chunks.value.find(c => c.id === chunkId)
+  if (!row) {
+    // 那一份打開了、那一條卻不在：多半是剛被換掉（上傳新版、立即更新）——問一下是不是在回收桶，講對的那一句
+    const gone = await apiFetch<{ deleted?: boolean }>(`/api/ai/knowledge/${encodeURIComponent(chunkId)}`).catch(() => null)
+    showToast(gone?.deleted ? '這一條已經換掉或刪掉了（在回收桶裡）' : '這一條已經不在這份資料裡了', 'warning')
+    return
+  }
+  if (row.status === 'draft') showToast('這一條還在「等你看過」，AI 還不會用它回答', 'warning')
+  await nextTick()
+  void flashAgentTarget(`kb-chunk:${chunkId}`, 3000)
 }
 </script>
