@@ -61,7 +61,7 @@ import { isServiceHoursDnd, serviceHoursSentence, type ServiceHoursLike } from '
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
-import { renderWithAttributes } from './render-attributes'
+import { attributeContextForUser, renderWithAttributes } from './render-attributes'
 import {
   lineUserFirestoreDocId,
   lineUserIdFromFirestoreDocId,
@@ -282,12 +282,9 @@ function sanitizeForFirestore(value: any): any {
   return undefined
 }
 
+/** 推播一人一則送時用同一份（`attributeContextForUser`），⛔ 不要在這裡另加規則 */
 function buildAttributeContext(userData: UserDoc | null): Record<string, string> {
-  const context: Record<string, string> = { ...(userData?.attributes ?? {}) }
-  if (userData?.displayName) {
-    context.displayName = userData.displayName
-  }
-  return context
+  return attributeContextForUser(userData)
 }
 
 /**
@@ -1921,7 +1918,12 @@ export async function renderModuleToLineMessages(
     userId?: string
     attributes?: Record<string, string>
   },
-): Promise<{ flow: FlowDoc; lineMessages: messagingApi.Message[]; hydratedMessages: any[] } | null> {
+): Promise<{
+  flow: FlowDoc
+  lineMessages: messagingApi.Message[]
+  hydratedMessages: any[]
+  renderFor: (attributes: Record<string, string>) => messagingApi.Message[]
+} | null> {
   const wid = requireWorkspaceId(options.workspaceId, 'renderModuleToLineMessages')
   // 🔴 `C-266`：推播按鈕的模組 id 店家自己填得到——歸屬由 getFlowByModuleId 比對，對不上＝當模組不存在
   //    （呼叫端會講「模組已經不存在」，跟 `validate.post` 同一個判斷）
@@ -1929,19 +1931,26 @@ export async function renderModuleToLineMessages(
   if (!flow) return null
   const { channelSecret } = await getLineWorkspaceCredentials(wid)
   const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], wid)
-  const lineMessages = buildLineMessages(
+  /**
+   * `D-118` A：推播一人一則送時，模組只抓一次、每一位用自己的 `attributes` 重組一次（不再讀資料庫）。
+   * ⚠️ 名字換進去之後才截斷（`buildLineMessages` 本來就這樣做），⛔ 不要先組好再換字——
+   *    換完可能超過 LINE 的字數上限，那一位就整則被退回。
+   * ⛔ `userId` 照呼叫端給的：推播一律不給（網址按鈕的貼標連結會被點擊追蹤再包一層、轉址時對不上，`C-238`）。
+   */
+  const renderFor = (attributes: Record<string, string>) => buildLineMessages(
     hydratedMessages,
-    options.attributes ?? {},
+    attributes,
     options.requestOrigin || '',
     options.userId || '',
     channelSecret,
   )
+  const lineMessages = renderFor(options.attributes ?? {})
   /**
    * `C-246`：連**編輯器格式的那一份**一起交出來（圖文訊息已塞進 `payload`）。
    * 推播送出時要把它存起來當「那天到底發了什麼」的答案——後台的預覽元件讀的是這個格式，
    * 存 LINE API 格式回頭只會看到一排畫不出來的型別名。
    */
-  return { flow, lineMessages, hydratedMessages }
+  return { flow, lineMessages, hydratedMessages, renderFor }
 }
 
 

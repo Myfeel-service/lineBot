@@ -12,7 +12,7 @@ import { runDueScheduledBroadcasts } from './run-due-scheduled-broadcasts'
 import { getDb } from './firebase'
 import { executeBroadcastSend } from './broadcast-send'
 import { writeAuditLog } from './audit-log'
-import { BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED } from '~~/shared/broadcast-failure'
+import { BROADCAST_STUCK_PER_RECIPIENT, BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED } from '~~/shared/broadcast-failure'
 
 const mockGetDb = vi.mocked(getDb)
 const mockSend = vi.mocked(executeBroadcastSend)
@@ -213,7 +213,34 @@ describe('看門狗：收殮卡死在 processing 的推播', () => {
 
     await runDueScheduledBroadcasts()
 
-    expect(selectedFields[0]).toEqual(['workspaceId', 'name', 'startedAt', 'updatedAt'])
+    expect(selectedFields[0]).toEqual(['workspaceId', 'name', 'startedAt', 'updatedAt', 'sendMode'])
+  })
+
+  /**
+   * `D-118` A：一人一則送的推播每一位帶固定的重送編號，24 小時內再送 LINE 會擋下收過的人——
+   * 卡在送到一半時講這件事，⛔ 不叫他去一位位問客人有沒有收到。
+   */
+  it('一人一則送的卡在送到一半 → 講「24 小時內重設再發不會重複」', async () => {
+    const { txUpdates } = makeDb([{
+      id: 'b10',
+      data: { workspaceId: 'w1', status: 'processing', startedAt: ts(30 * MIN), updatedAt: ts(20 * MIN), sendMode: 'perRecipient' },
+    }])
+
+    const out = await runDueScheduledBroadcasts()
+
+    expect(out.reaped).toBe(1)
+    expect(txUpdates[0]!.patch.failureReason).toBe(BROADCAST_STUCK_PER_RECIPIENT)
+  })
+
+  it('一人一則但連受眾快照都還沒寫（還沒呼叫 LINE）→ 照舊講「沒有人收到，可以放心重發」', async () => {
+    const { txUpdates } = makeDb([{
+      id: 'b11',
+      data: { workspaceId: 'w1', status: 'processing', startedAt: ts(20 * MIN), updatedAt: ts(20 * MIN), sendMode: 'perRecipient' },
+    }])
+
+    await runDueScheduledBroadcasts()
+
+    expect(txUpdates[0]!.patch.failureReason).toBe(BROADCAST_STUCK_SAFE_TO_RESEND)
   })
 
   it('看門狗收殮後，到期的 scheduled 單照常發送（兩件事同一輪都要做）', async () => {

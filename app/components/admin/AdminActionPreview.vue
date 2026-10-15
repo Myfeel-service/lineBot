@@ -49,9 +49,15 @@
         而這件事只有推播那一頁講得出來。⛔ 不要為此另寫一支預覽元件。
       -->
       <slot name="ready-note" :count="previewMessages.length" />
-      <!-- `D-118`：推播拿不到客人資料，變數一律是空白——那句是警告，放在手機上面先被看到
-           （放底下會被右下角的小幫手浮鈕蓋住半句） -->
-      <p v-if="broadcast && variableNote" class="aap__note aap__note--warn">{{ variableNote }}</p>
+      <!-- 推播頁：那句放在手機上面（放底下會被右下角的小幫手浮鈕蓋住半句）。
+           只有回頭看 10/15 以前送的推播（名字當時是空白）才是警告色 -->
+      <p
+        v-if="broadcast && variableNote"
+        class="aap__note"
+        :class="blankVariables ? 'aap__note--warn' : 'aap__note--quiet'"
+      >
+        {{ variableNote }}
+      </p>
       <FlowMessagePreview
         :messages="previewMessages"
         :rich-messages="richMessages"
@@ -74,7 +80,7 @@ import { computed, ref, watch } from 'vue'
 import { autoReplyActionToLineMessages } from '~~/shared/auto-reply-content'
 import { lineMessagesToPreviewMessages } from '~~/shared/broadcast-content'
 import {
-  broadcastVariableNote,
+  broadcastBlankVariableNote,
   previewVariableNote,
   renderBroadcastVariablesDeep,
   renderPreviewVariablesDeep,
@@ -89,11 +95,14 @@ const props = withDefaults(defineProps<{
   emptyText?: string
   /** 只畫泡泡：要嵌進呼叫端自己的聊天室外框時用（圖文選單的試按） */
   bare?: boolean
-  /**
-   * 推播用（`D-118`）：一次送給所有人，送出端拿不到客人資料，`{{displayName}}` 一律是空白。
-   * ⛔ 不開的話預覽會畫「王小明」並說「客人看到的是他自己的名字」——對推播是假話。
-   */
+  /** 推播頁：講變數的那一句放在手機上面（下面會被小幫手浮鈕蓋住） */
   broadcast?: boolean
+  /**
+   * 回頭看 2026-10-15 以前送出的推播（`D-118`）：那時推播一律群發、拿不到客人資料，名字那一格是**空白**。
+   * ⛔ 這種推播不開的話預覽會畫「王小明」並說「客人看到的是他自己的名字」——對它是假話。
+   * 還沒送的推播不要開：現在用了變數會一人一則送、每位換上自己的名字。
+   */
+  blankVariables?: boolean
 }>(), {
   moduleOptions: () => [],
   title: '客人會看到什麼',
@@ -170,12 +179,12 @@ const rawPreviewMessages = computed(() => {
  * `C-255`：把 `{{displayName}}` 這類變數換成範例值，**畫面才跟 LINE 上一樣**。
  * ⛔ 換掉的東西由 `variableNote` 講出來（`previewVariableNote`），不可以默默換。
  */
-const renderedPreview = computed(() => (props.broadcast
+const renderedPreview = computed(() => (props.blankVariables
   ? renderBroadcastVariablesDeep(rawPreviewMessages.value)
   : renderPreviewVariablesDeep(rawPreviewMessages.value)))
 const previewMessages = computed(() => renderedPreview.value.value)
-const variableNote = computed(() => (props.broadcast
-  ? broadcastVariableNote(renderedPreview.value.keys)
+const variableNote = computed(() => (props.blankVariables
+  ? broadcastBlankVariableNote(renderedPreview.value.keys)
   : previewVariableNote(renderedPreview.value.keys)))
 
 const richMessages = computed(() =>

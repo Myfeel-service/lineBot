@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PREVIEW_SAMPLE_DISPLAY_NAME,
-  broadcastVariableNote,
-  broadcastVariableWarning,
+  broadcastBlankVariableNote,
   findSendVariables,
   previewVariableNote,
   renderBroadcastVariablesDeep,
@@ -90,11 +89,11 @@ describe('previewVariableNote', () => {
 })
 
 /**
- * `D-118`：推播一次送給所有人，送出端拿不到客人資料，名字變數一律是空白。
- * ⛔ 預覽不可以畫「王小明」、不可以說「客人看到的是他自己的名字」。
+ * `D-118`：2026-10-15 以前送出的推播一律群發，名字變數客人收到的是空白——回頭看那些推播時照實畫。
+ * ⛔ 那種預覽不可以畫「王小明」、不可以說「客人看到的是他自己的名字」。
  * （跟送出端逐字一樣的那條釘在 `server/utils/handler.render-text.test.ts`）
  */
-describe('推播的預覽：名字一律是空白', () => {
+describe('舊推播（群發）的預覽：名字是空白', () => {
   it('換成空白並回報換了什麼，不碰網址欄位、不就地改', () => {
     const input = [{ type: 'text', text: '{{displayName}} ，還記得我們', uri: 'https://x.tw/{{displayName}}' }]
     const r = renderBroadcastVariablesDeep(input)
@@ -104,19 +103,22 @@ describe('推播的預覽：名字一律是空白', () => {
     expect(input[0]!.text).toBe('{{displayName}} ，還記得我們')
   })
 
-  it('說明講的是「空白」，⛔ 不出現範例名字', () => {
-    const s = broadcastVariableNote(['displayName'])
+  it('說明講的是「當時是空白」，⛔ 不出現範例名字、⛔ 不把 {{displayName}} 原字印給店家看', () => {
+    const s = broadcastBlankVariableNote(['displayName'])
     expect(s).toContain('空白')
-    expect(s).toContain('所有人')
+    expect(s).toContain('當時')
+    expect(s).toContain('客人的 LINE 名稱')
     expect(s).not.toContain(PREVIEW_SAMPLE_DISPLAY_NAME)
-    expect(broadcastVariableNote([])).toBe('')
+    expect(s).not.toContain('{{')
+    expect(broadcastBlankVariableNote(['displayName', 'city'])).toContain('（city）')
+    expect(broadcastBlankVariableNote([])).toBe('')
   })
 
-  it('發送前的提醒：每一格都掃（連網址），沒有就不提醒', () => {
+  it('送出端靠它決定要不要一人一則：每一格都掃（連網址），沒有就是空的', () => {
     expect(findSendVariables([{ altText: '{{displayName}} 你關注的', actions: [{ uri: 'https://x/{{code}}' }] }]))
       .toEqual(['displayName', 'code'])
     expect(findSendVariables([{ type: 'text', text: '今天公休' }])).toEqual([])
-    expect(broadcastVariableWarning(['displayName'])).toContain('空白')
-    expect(broadcastVariableWarning([])).toBe('')
+    // ⚠️ 中文變數名送出端不換，也不算「用了變數」（不會因為它改成一人一則）
+    expect(findSendVariables([{ type: 'text', text: '{{姓名}} 你好' }])).toEqual([])
   })
 })

@@ -85,6 +85,8 @@ const pass = msg => console.log(`✅ ${msg}`)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] })
+/** 瀏覽器想送、被擋下的寫入（跑完列出來：⛔ 擋了什麼要講得出來） */
+const blockedWrites = []
 
 async function openLoggedInPage(path, opts = {}) {
   const ctx = await browser.createBrowserContext()
@@ -96,14 +98,27 @@ async function openLoggedInPage(path, opts = {}) {
    * ⚠️ 組出來的東西要**對得上真實結構**（欄位從正式庫的那一筆讀出來再補上新欄位），
    *    自己編一份長得不像的資料，測到的就只是一個我們自己想像的世界。
    */
-  if (opts.interceptJson) {
-    await page.setRequestInterception(true)
-    page.on('request', (req) => {
-      const body = opts.interceptJson(req.url(), req.method())
-      if (body === undefined) return void req.continue()
-      req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
-    })
-  }
+  /**
+   * ⛔ **所有不是 GET 的 /api 一律在瀏覽器擋下**（2026-10-15 `D-118` A 補上）：
+   * 推播列表頁有「排程」或「發送中」的推播時會自己打 `POST /api/broadcast/process-due`，
+   * 那支會把**到期的排程推播真的送出去**——本機 dev 連的是正式庫，等於從這台電腦發推播給客人。
+   * 以前這支腳本只靠「不按發送鈕」保證零寫入，這條路沒擋到。擋下後回一個「什麼都沒做」的假回應。
+   */
+  await page.setRequestInterception(true)
+  page.on('request', (req) => {
+    const body = opts.interceptJson?.(req.url(), req.method())
+    if (body !== undefined) {
+      return void req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    }
+    if (req.method() !== 'GET' && new URL(req.url()).pathname.startsWith('/api/')) {
+      const fake = req.url().includes('/api/broadcast/process-due')
+        ? { triggered: 0, reaped: 0, results: [] }
+        : { statusMessage: '守門員擋下寫入' }
+      blockedWrites.push(`${req.method()} ${new URL(req.url()).pathname}`)
+      return void req.respond({ status: fake.statusMessage ? 403 : 200, contentType: 'application/json', body: JSON.stringify(fake) })
+    }
+    req.continue()
+  })
   page.on('pageerror', e => console.log('  [page error]', String(e).slice(0, 200)))
   /** ⛔ 一定要接原生對話框：這幾頁掛了「還沒存喔」，沒人回答會卡死整個 JS 執行緒直到 protocolTimeout */
   page.on('dialog', async d => { await d.accept().catch(() => {}) })
@@ -151,6 +166,8 @@ const probe = () => ({
   rowCount: document.querySelectorAll('.fmp-row').length,
   sourceNote: document.querySelector('.aap__source')?.innerText?.trim() ?? '',
   readyNote: [...document.querySelectorAll('.bc-preview .aap__note')].map(el => el.innerText.trim()).join(' ｜ '),
+  /** `D-118` A：講名字的那一句是不是警告色（只有回頭看 10/15 以前送的才該是） */
+  nameNoteWarn: [...document.querySelectorAll('.bc-preview .aap__note--warn')].some(el => el.innerText.includes('名')),
   emptyState: !!document.querySelector('.fmp-empty'),
   testSendButton: [...document.querySelectorAll('.bc-testsend button')].map(el => el.innerText.trim()),
 })
@@ -601,6 +618,84 @@ try {
       else {
         pass('⑬ 對照組：有留存時就不再講「沒有留存」')
       }
+      await newPage.close()
+    }
+  }
+
+  // ══ ⑭ 推播裡的客人名字（`D-118` A，2026-10-15）══════════════════
+  /**
+   * 10/15 起用了變數的推播一人一則送、每位換上自己的名字；之前一律群發、客人收到的是空白。
+   *   ⑭a 還沒送的（新增）→ 畫範例名字「王小明」＋講是範例；⛔ 不再說「每位客人看到的都是空白」、
+   *       ⛔ 不把 {{displayName}} 原字印給店家看（老闆 10/15：看不懂）
+   *   ⑭b 10/15 以前送的（正式庫真的那一則，沒有 sendMode）→ 照實畫空白並講「當時」
+   *   ⑭c 對照組：同一則補上 sendMode='perRecipient' → 改畫範例名字（證明是看 sendMode 在分，不是看「已送出」）
+   */
+  console.log('\n── 推播裡的客人名字（D-118 A）────────')
+  {
+    const draftPage = await openLoggedInPage(`/admin/${WORKSPACE_ID}/broadcasts`)
+    await draftPage.waitForSelector('[data-tour="bc-new"]', { timeout: 60_000 })
+    await draftPage.click('[data-tour="bc-new"]')
+    await draftPage.waitForSelector('[data-tour="bc-content"]', { timeout: 30_000 })
+    await sleep(800)
+    if (!await pickActionType(draftPage, '傳送文字')) fail('⑭a 找不到「傳送文字」這個選項')
+    if (!await typeInto(draftPage, '回覆文字', '{{displayName}} 今天公休')) fail('⑭a 找不到「回覆文字」欄位')
+    const a = await draftPage.evaluate(probe)
+    if (a.bubbleText === '王小明 今天公休') pass('⑭a 還沒送的推播：名字畫成範例「王小明」')
+    else fail('⑭a 還沒送的推播沒有畫範例名字', `氣泡＝「${a.bubbleText}」`)
+    if (a.readyNote.includes('範例') && !a.readyNote.includes('當時') && !a.readyNote.includes('所有人')) {
+      pass(`⑭a 講的是「範例、客人看到自己的名字」：「${a.readyNote}」`)
+    }
+    else fail('⑭a 名字那句講錯了', `量到的是「${a.readyNote}」`)
+    if (a.nameNoteWarn) fail('⑭a 名字那句還是警告色（現在名字填得進去，不該再警告）')
+    else pass('⑭a 名字那句不是警告色')
+    if (`${a.previewRaw}${a.readyNote}`.includes('{{')) fail('⑭a 畫面上出現 {{…}} 原字', a.readyNote)
+    else pass('⑭a 對照組：畫面上沒有 {{displayName}} 原字')
+    await draftPage.close()
+
+    const varSent = sentSnap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .find(b => !b.sendMode && JSON.stringify(b.sentContent?.messages ?? []).includes('{{displayName}}'))
+    if (!varSent) {
+      console.log('⚠️ 這個工作區沒有「留存內容裡有客人名字、10/15 以前送的」推播，⑭b⑭c 跳過（不算過也不算不過）')
+    }
+    else {
+      console.log(`   （拿來看的舊推播：${varSent.name ?? varSent.id}）`)
+      const oldPage = await openLoggedInPage(`/admin/${WORKSPACE_ID}/broadcasts?id=${varSent.id}`)
+      await oldPage.waitForFunction(() => document.querySelectorAll('.fmp-row').length > 0, { timeout: 60_000 }).catch(() => {})
+      await sleep(800)
+      const b = await oldPage.evaluate(probe)
+      if (b.readyNote.includes('當時') && b.readyNote.includes('空白') && b.readyNote.includes('客人的 LINE 名稱')) {
+        pass(`⑭b 10/15 以前送的：照實講當時是空白：「${b.readyNote}」`)
+      }
+      else fail('⑭b 舊推播沒講「當時名字是空白」', `量到的是「${b.readyNote}」`)
+      if (b.previewRaw.includes('王小明')) fail('⑭b 舊推播畫成範例名字——客人當時收到的是空白')
+      else pass('⑭b 舊推播沒有畫成範例名字')
+      if (b.nameNoteWarn) pass('⑭b 舊推播那句是警告色')
+      else fail('⑭b 舊推播那句不是警告色')
+      if (`${b.previewRaw}${b.readyNote}`.includes('{{')) fail('⑭b 畫面上出現 {{…}} 原字', b.readyNote)
+      else pass('⑭b 畫面上沒有 {{displayName}} 原字')
+      await oldPage.close()
+
+      const patched = {
+        ...varSent,
+        audienceSnapshot: { filter: null, estimatedCount: varSent.audienceSnapshot?.estimatedCount ?? 0, resolvedUserIds: [] },
+        sendMode: 'perRecipient',
+      }
+      const newPage = await openLoggedInPage(`/admin/${WORKSPACE_ID}/broadcasts?id=${varSent.id}`, {
+        interceptJson: (url, method) =>
+          (method === 'GET' && url.includes(`/api/broadcast/${varSent.id}`) && !url.includes('/report'))
+            ? patched
+            : undefined,
+      })
+      await newPage.waitForFunction(() => document.querySelectorAll('.fmp-row').length > 0, { timeout: 60_000 }).catch(() => {})
+      await sleep(800)
+      const c = await newPage.evaluate(probe)
+      if (c.previewRaw.includes('王小明') && c.readyNote.includes('範例') && !c.readyNote.includes('當時')) {
+        pass('⑭c 對照組：同一則改成一人一則送的，畫的是範例名字（是看 sendMode 在分）')
+      }
+      else fail('⑭c 一人一則送的推播回頭看沒有畫範例名字', `量到的是「${c.readyNote}」`)
+      if (c.nameNoteWarn) fail('⑭c 一人一則送的推播那句還是警告色')
+      else pass('⑭c 一人一則送的推播那句不是警告色')
       await newPage.close()
     }
   }
@@ -1290,6 +1385,9 @@ finally {
   if (prefsData) await prefsRef.set(prefsData)
   else if ((await prefsRef.get()).exists) await prefsRef.delete()
   console.log(`\nadminUserPrefs/${uid} 已${prefsData ? '還原成原本的內容' : '刪回原本的「不存在」'}`)
+  const blockedSummary = Object.entries(blockedWrites.reduce((m, k) => ({ ...m, [k]: (m[k] ?? 0) + 1 }), {}))
+    .map(([k, n]) => `${k} ×${n}`)
+  console.log(`瀏覽器想送、被擋下的寫入：${blockedSummary.length ? blockedSummary.join('、') : '沒有'}`)
 }
 
 console.log(failed ? '\n❌ 有關卡沒過' : '\n✅ 全部通過')

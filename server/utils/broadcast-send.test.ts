@@ -8,7 +8,7 @@ vi.mock('firebase-admin/firestore', () => ({
   Timestamp: { now: () => ({ toMillis: () => 0 }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
-vi.mock('./line', () => ({ multicastMessage: vi.fn() }))
+vi.mock('./line', () => ({ multicastMessage: vi.fn(), pushMessagesPerRecipient: vi.fn() }))
 vi.mock('./broadcast-claim', () => ({ claimBroadcastForSend: vi.fn() }))
 vi.mock('./audience', () => ({ resolveAudienceUserIds: vi.fn() }))
 vi.mock('./handler', () => ({ renderModuleToLineMessages: vi.fn() }))
@@ -16,16 +16,17 @@ vi.mock('./broadcast-click-track', () => ({
   wrapBroadcastMessagesForClickTracking: vi.fn((m: unknown) => m),
 }))
 
-import { executeBroadcastSend } from './broadcast-send'
+import { broadcastRetryKey, executeBroadcastSend } from './broadcast-send'
 import { renderModuleToLineMessages } from './handler'
 import { getDb } from './firebase'
-import { multicastMessage } from './line'
+import { multicastMessage, pushMessagesPerRecipient } from './line'
 import { claimBroadcastForSend } from './broadcast-claim'
 import { BROADCAST_ALL_RECIPIENTS_FAILED } from '~~/shared/broadcast-failure'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 
 const mockGetDb = vi.mocked(getDb)
 const mockMulticast = vi.mocked(multicastMessage)
+const mockPush = vi.mocked(pushMessagesPerRecipient)
 const mockClaim = vi.mocked(claimBroadcastForSend)
 
 type Patch = Record<string, any>
@@ -36,7 +37,12 @@ type Patch = Record<string, any>
  * - failStatusWriteNth：讓第 N 次「帶 status 的寫入」拋錯（1=checkpoint、2=最終統計、3=catch 補寫）
  *   之所以只數帶 status 的，是為了不受前面受眾快照等其他 update 影響
  */
-function makeDb(opts: { failCommit?: boolean; failStatusWriteNth?: number[] } = {}) {
+function makeDb(opts: {
+  failCommit?: boolean
+  failStatusWriteNth?: number[]
+  /** 一人一則送時讀的客人資料（`users/{docId}`），沒列到的＝讀不到 */
+  users?: Record<string, Record<string, unknown>>
+} = {}) {
   const updates: Patch[] = []
   const deliveries: Patch[] = []
   let statusWrites = 0
@@ -53,7 +59,12 @@ function makeDb(opts: { failCommit?: boolean; failStatusWriteNth?: number[] } = 
   }
 
   const db = {
-    collection: vi.fn(() => ({ doc: vi.fn(() => ref) })),
+    collection: vi.fn((name: string) => ({
+      doc: vi.fn((docId?: string) => (name === 'users' ? { __user: true, id: docId } : ref)),
+    })),
+    getAll: vi.fn(async (...args: any[]) => args
+      .filter(a => a?.__user)
+      .map(r => ({ id: r.id, exists: Boolean(opts.users?.[r.id]), data: () => opts.users?.[r.id] }))),
     batch: vi.fn(() => ({
       set: vi.fn((_r: unknown, doc: Patch) => { deliveries.push(doc) }),
       commit: vi.fn(async () => {
@@ -84,6 +95,7 @@ const lastStatusPatch = (updates: Patch[]) => [...updates].reverse().find(u => '
 beforeEach(() => {
   mockGetDb.mockReset()
   mockMulticast.mockReset()
+  mockPush.mockReset()
   mockClaim.mockReset()
   // ⛔ 模組渲染也要重設：上一條的回傳值留著的話，下一條會在「沒選模組」的情境下拿到內容
   vi.mocked(renderModuleToLineMessages).mockReset()
@@ -386,24 +398,157 @@ describe('executeBroadcastSend — 模組型推播送的是模組的內容，而
     expect(updates.find(u => 'sentContent' in u)).toBeUndefined()
   })
 
-  it('⛔ 純文字／開網址推播裡的 {{displayName}} 送出前換成空白（以前原字送出，預覽卻說是空白）', async () => {
+})
+
+/**
+ * `D-118` A（2026-10-15 老闆「要看得到名字」）：**用了 {{變數}} 的推播一人一則送**，每一位換上自己的名字。
+ *
+ * 以前一律群發、名字一律是空白：9/29 起 MYFEEL 7 則上市／倒數推播、約 8,500 人次收到開頭空一格的句子。
+ * 這一組釘住：①有變數才一人一則、沒有照舊群發 ②每一位拿到的是**他自己的**名字（名字是 LINE 代號的不算）
+ * ③重送編號固定（送到一半斷掉→重設→再送時 LINE 才擋得住已經收過的人）④呼叫 LINE 之前就記下 sendMode。
+ */
+describe('executeBroadcastSend — 用了客人名字的推播一人一則送', () => {
+  const UID_LIKE = 'U4af4980629b8c1d2e3f4a5b6c7d8e9f0'
+
+  function claimText(text: string, userIds: string[], extra: Record<string, unknown> = {}) {
     mockClaim.mockResolvedValue({
       workspaceId: 'w1',
       status: 'processing',
-      messages: [
-        { type: 'text', text: '嗨 {{displayName}}，今天公休' },
-        { type: 'template', altText: 'x', template: { type: 'buttons', text: '{{ displayName }}看這裡', actions: [{ type: 'uri', label: '開', uri: 'https://x.tw/?n={{displayName}}' }] } },
-      ],
-      audienceSource: { type: 'import', importedUserIds: ['w1_U1'] },
+      messages: [{ type: 'text', text }],
+      audienceSource: { type: 'import', importedUserIds: userIds },
+      ...extra,
     } as any)
-    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
-    makeDb()
+  }
+
+  /** 假 LINE：照實呼叫 buildMessages（送到那一位才組），記下每一位收到什麼 */
+  function pushRecords(result: Partial<Awaited<ReturnType<typeof pushMessagesPerRecipient>>> = {}) {
+    const received = new Map<string, any[]>()
+    const keys = new Map<string, string>()
+    mockPush.mockImplementation(async (recipients, build) => {
+      for (const r of recipients) {
+        received.set(r.lineUserId, build(r.lineUserId))
+        keys.set(r.lineUserId, r.retryKey)
+      }
+      return {
+        successCount: recipients.length,
+        alreadySentCount: 0,
+        failedIds: [],
+        failureReasons: {},
+        lineAggregationApplied: true,
+        stoppedReason: null,
+        ...result,
+      }
+    })
+    return { received, keys }
+  }
+
+  it('⭐ 每一位收到自己的名字；讀不到資料、名字是 LINE 代號的那一格留空', async () => {
+    claimText('{{displayName}} 快快快！今晚結束', ['w1_U1', 'w1_U2', 'w1_U3'])
+    makeDb({
+      users: {
+        w1_U1: { displayName: '王小明', lineUserId: 'U1' },
+        w1_U2: { displayName: UID_LIKE, lineUserId: UID_LIKE },
+      },
+    })
+    const { received } = pushRecords()
+
+    const res = await executeBroadcastSend('bc1')
+
+    expect(mockMulticast).not.toHaveBeenCalled()
+    expect(received.get('U1')![0].text).toBe('王小明 快快快！今晚結束')
+    expect(received.get('U2')![0].text).toBe(' 快快快！今晚結束')
+    expect(received.get('U3')![0].text).toBe(' 快快快！今晚結束')
+    expect(res).toMatchObject({ success: true, sentCount: 3, failedCount: 0 })
+  })
+
+  it('⛔ 沒用變數的推播照舊群發（一人一則送不會多得到任何東西，只會更慢）', async () => {
+    claimText('今天公休', ['w1_U1', 'w1_U2'])
+    mockMulticast.mockResolvedValue({ successCount: 2, failedIds: [], lineAggregationApplied: true })
+    const { updates } = makeDb()
 
     await executeBroadcastSend('bc1')
 
-    const sent = JSON.stringify(mockMulticast.mock.calls[0]![1])
-    expect(sent).not.toContain('{{')
-    expect(sent).toContain('嗨 ，今天公休')
-    expect(sent).toContain('https://x.tw/?n=')
+    expect(mockPush).not.toHaveBeenCalled()
+    expect(mockMulticast).toHaveBeenCalledTimes(1)
+    expect(updates.find(u => 'sendMode' in u)!.sendMode).toBe('multicast')
+  })
+
+  it('⭐ 呼叫 LINE 之前就記下 sendMode（送到一半斷掉時，看門狗與回頭看的預覽都靠它）', async () => {
+    claimText('嗨 {{displayName}}', ['w1_U1'])
+    const { updates } = makeDb({ users: { w1_U1: { displayName: '吉米' } } })
+    let writtenBeforeLine = false
+    mockPush.mockImplementation(async (recipients) => {
+      writtenBeforeLine = updates.some(u => u.sendMode === 'perRecipient')
+      return { successCount: recipients.length, alreadySentCount: 0, failedIds: [], failureReasons: {}, lineAggregationApplied: true, stoppedReason: null }
+    })
+
+    await executeBroadcastSend('bc1')
+
+    expect(writtenBeforeLine).toBe(true)
+  })
+
+  it('⭐ 重送編號＝這則推播＋這位客人，固定不變、不含重發次數（重設再送才擋得住收過的人）', async () => {
+    claimText('嗨 {{displayName}}', ['w1_U1', 'w1_U2'], { retryCount: 1 })
+    makeDb()
+    const { keys } = pushRecords()
+
+    await executeBroadcastSend('bc1')
+
+    expect(keys.get('U1')).toBe(broadcastRetryKey('bc1', 'U1'))
+    expect(keys.get('U2')).toBe(broadcastRetryKey('bc1', 'U2'))
+    expect(keys.get('U1')).not.toBe(keys.get('U2'))
+    expect(broadcastRetryKey('bc1', 'U1')).not.toBe(broadcastRetryKey('bc2', 'U1'))
+    // LINE 要的是十六進位 UUID
+    expect(keys.get('U1')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    // 彙總單位照舊跟著重發次數換（開封／點擊不跟上一次疊在一起）
+    expect(mockPush.mock.calls[0]![3]).toEqual({ customAggregationUnits: [broadcastAggregationUnit('bc1', 2)] })
+  })
+
+  it('模組型：模組只抓一次，每一位用自己的名字重組', async () => {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: [{ type: 'template', altText: 'x', template: { type: 'buttons', text: '點下面', actions: [{ type: 'postback', label: '開始', data: 'triggerModule=mod_abc' }] } }],
+      audienceSource: { type: 'import', importedUserIds: ['w1_U1', 'w1_U2'] },
+    } as any)
+    vi.mocked(renderModuleToLineMessages).mockResolvedValue({
+      flow: { name: '乾淨方MAX推播' },
+      lineMessages: [{ type: 'text', text: ' 倒數' }],
+      hydratedMessages: [{ type: 'text', text: '{{displayName}} 倒數' }],
+      renderFor: (attrs: Record<string, string>) => [{ type: 'text', text: `${attrs.displayName ?? ''} 倒數` }],
+    } as any)
+    makeDb({ users: { w1_U1: { displayName: '王小明' }, w1_U2: { displayName: '陳小華' } } })
+    const { received } = pushRecords()
+
+    await executeBroadcastSend('bc1')
+
+    expect(renderModuleToLineMessages).toHaveBeenCalledTimes(1)
+    expect(received.get('U1')![0].text).toBe('王小明 倒數')
+    expect(received.get('U2')![0].text).toBe('陳小華 倒數')
+  })
+
+  it('一人一則拿得到每一位沒送到的原因，寫進沒收到的名單；上一輪已收到的算送達', async () => {
+    claimText('嗨 {{displayName}}', ['w1_U1', 'w1_U2', 'w1_U3'])
+    const { deliveries } = makeDb()
+    pushRecords({ successCount: 2, alreadySentCount: 1, failedIds: ['U2'], failureReasons: { U2: 'LINE push failed (400): blocked' } })
+
+    const res = await executeBroadcastSend('bc1')
+
+    expect(res).toMatchObject({ sentCount: 2, failedCount: 1 })
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]).toMatchObject({ userId: 'w1_U2', failureReason: 'LINE push failed (400): blocked' })
+  })
+
+  it('本月額度用完、一位都沒送到 → 失敗原因講額度，⛔ 不說成「多半是封鎖了」', async () => {
+    claimText('嗨 {{displayName}}', ['w1_U1', 'w1_U2'])
+    const { updates } = makeDb()
+    const quota = '本月推播則數已用完（LINE 官方帳號方案的額度），要等下個月重算或升級方案才能再送。'
+    pushRecords({ successCount: 0, failedIds: ['U1', 'U2'], failureReasons: { U1: quota, U2: quota }, stoppedReason: quota })
+
+    await executeBroadcastSend('bc1')
+
+    const final = lastStatusPatch(updates)!
+    expect(final.status).toBe('failed')
+    expect(final.failureReason).toBe(quota)
   })
 })

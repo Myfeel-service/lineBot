@@ -1,10 +1,11 @@
-import { v4 as uuidv4 } from 'uuid'
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { CLICK_TRACKING_VERSION, wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
-import { multicastMessage } from './line'
+import { multicastMessage, pushMessagesPerRecipient } from './line'
 import { renderModuleToLineMessages } from './handler'
-import { renderBroadcastMessagesForSend } from './render-attributes'
+import { attributeContextForUser, renderBroadcastMessagesForSend } from './render-attributes'
+import { findSendVariables } from '~~/shared/preview-variables'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
 import { lineStatsNextDueAt } from '~~/shared/broadcast-line-stats'
 /**
@@ -25,6 +26,38 @@ import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shar
 export type ExecuteBroadcastSendOptions = {
   /** manual：後台立即發送（僅 draft）；scheduler：Cron 到期排程 */
   source?: BroadcastSendSource
+}
+
+/**
+ * 一人一則送時，每一位的重送編號＝「這則推播＋這位客人」算出來的固定值（`D-118` A）。
+ * ⛔ 不放重發次數：送到一半斷掉→重設→再送時要算出**同一個**編號，LINE 才會把已經收過的人擋下來。
+ */
+const BROADCAST_RETRY_KEY_NS = '0b7d5c1e-3f4a-4c8e-a2b9-6d1e8f3a7c52'
+export function broadcastRetryKey(broadcastId: string, lineUserId: string): string {
+  return uuidv5(`${broadcastId}:${lineUserId}`, BROADCAST_RETRY_KEY_NS)
+}
+
+/**
+ * 一人一則送要用的每位客人資料（名字、收集到的欄位）。
+ * 只讀換變數用得到的三格；一次 300 份分批讀（Firestore 的 getAll 一次塞太多會很慢）。
+ * 讀不到的人回空的＝名字那一格留空（跟一般回覆取不到名字同一個結果）。
+ */
+async function loadAttributeContexts(
+  db: FirebaseFirestore.Firestore,
+  docIds: string[],
+): Promise<Map<string, Record<string, string>>> {
+  const out = new Map<string, Record<string, string>>()
+  const CHUNK = 300
+  const chunks: string[][] = []
+  for (let i = 0; i < docIds.length; i += CHUNK) chunks.push(docIds.slice(i, i + CHUNK))
+  await Promise.all(chunks.map(async (ids) => {
+    const refs = ids.map(id => db.collection('users').doc(id))
+    const snaps = await db.getAll(...refs, { fieldMask: ['displayName', 'lineUserId', 'attributes'] })
+    for (const s of snaps) {
+      if (s.exists) out.set(s.id, attributeContextForUser(s.data() as Record<string, unknown>))
+    }
+  }))
+  return out
 }
 
 /**
@@ -93,6 +126,8 @@ export async function executeBroadcastSend(
     allFailed: boolean
     aggregationUnit: string | null
     aggregationApplied: boolean
+    /** 一人一則送時整批停下來的原因（本月額度用完這種），每一位都沒送到時拿來當失敗原因 */
+    stoppedReason?: string | null
   }
   let lineOutcome: LineOutcome | null = null
 
@@ -106,7 +141,8 @@ export async function executeBroadcastSend(
     lineInsightAggregationApplied: o.aggregationApplied,
     // 每一條寫 failed 的路徑都要留下人看得懂的原因（小幫手警示已承諾「進去看失敗原因」）；
     // 成功時明確清成 null，才不會留著上一輪嘗試的舊原因
-    failureReason: o.allFailed ? BROADCAST_ALL_RECIPIENTS_FAILED : null,
+    // ⚠️ 一人一則送到一半整批停下來（額度用完）時講那個原因，⛔ 不要說成「多半是封鎖了」
+    failureReason: o.allFailed ? (o.stoppedReason || BROADCAST_ALL_RECIPIENTS_FAILED) : null,
     /**
      * `D-121`：排上「發完第 1 天去問 LINE 的打開／點連結人數」。排程只讀這個時間到了的推播
      * （`server/utils/broadcast-line-stats.ts`），⛔ 少了這一欄這則就永遠不會被問到。
@@ -152,8 +188,12 @@ export async function executeBroadcastSend(
     // ── 組出「真正要送出去的那幾則」──────────────────────────────────
     const clickOrigin = String(runtimeConfig.clickTrackingBaseUrl || '').trim().replace(/\/$/, '')
     const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
-    // 純文字／開網址：變數換成空白再送（發模組那條路下面會整份換掉，規則相同）
+    // 純文字／開網址：群發時變數換成空白再送（發模組那條路下面會整份換掉，規則相同）
     let outboundMessages = renderBroadcastMessagesForSend(data.messages)
+    /** 一人一則送時，每一位用自己的資料重組（`D-118` A）。模組型下面換成模組的那一支 */
+    let renderFor = (attributes: Record<string, string>) => renderBroadcastMessagesForSend(data.messages, attributes)
+    /** 拿來看「有沒有用到變數」的那一份：送出去的是什麼就看什麼 */
+    let contentForVariables: unknown = data.messages
     /**
      * `C-246`：把**真的送出去的那幾則**留下來。
      *
@@ -172,6 +212,8 @@ export async function executeBroadcastSend(
         throw new Error(`Broadcast module not found or empty: ${triggerModuleId}`)
       }
       outboundMessages = rendered.lineMessages as any[]
+      renderFor = rendered.renderFor as (attributes: Record<string, string>) => any[]
+      contentForVariables = rendered.hydratedMessages
       sentContent = {
         kind: 'module',
         moduleId: triggerModuleId,
@@ -187,12 +229,27 @@ export async function executeBroadcastSend(
       }
     }
 
+    /**
+     * `D-118` A（2026-10-15 老闆「要看得到名字」）：**內容用了 {{變數}} 才一人一則送**，沒用的照舊群發。
+     * ⛔ 不要全部改成一人一則：沒有變數的推播一人一則送不會多得到任何東西，只會更慢、多打幾千次 LINE。
+     * 以前群發時變數一律是空白——9/29 起 MYFEEL 7 則上市／倒數推播、約 8,500 人次收到開頭空一格的句子。
+     */
+    const sendMode: 'perRecipient' | 'multicast' = findSendVariables(contentForVariables).length > 0
+      ? 'perRecipient'
+      : 'multicast'
+
     // ── 寫入受眾快照（status 已在 claim 時改為 processing）────────────
     const snapshotAt = FieldValue.serverTimestamp()
     await ref.update({
       totalCount: resolvedUserIds.length,
       'audienceSnapshot.resolvedUserIds': resolvedUserIds,
       'audienceSnapshot.estimatedCount': resolvedUserIds.length,
+      /**
+       * 這一次是群發還是一人一則（`D-118` A）。⚠️ 後台回頭看已送出的推播時靠它決定預覽畫名字還是空白
+       * （這一欄之前送的都是群發＝名字是空白）；看門狗也靠它判斷「重發會不會重複」。
+       * ⛔ 一定要在呼叫 LINE **之前**寫：送到一半斷掉時，看門狗讀得到。
+       */
+      sendMode,
       ...(sentContent ? { sentContent: { ...sentContent, at: snapshotAt } } : {}),
       /**
        * `C-301`：這一次發送的點擊紀錄認不認得圖片上的連結。成效頁靠它決定要不要講
@@ -204,11 +261,11 @@ export async function executeBroadcastSend(
       updatedAt: snapshotAt,
     })
 
-    // ── 呼叫 LINE multicast API ──────────────────────────────────────
+    // ── 呼叫 LINE（群發或一人一則）──────────────────────────────────
 
-    const messagesForLine = clickOrigin.startsWith('http')
-      ? wrapBroadcastMessagesForClickTracking(outboundMessages, id, clickOrigin)
-      : outboundMessages
+    const wrapForLine = (messages: any[]) => (clickOrigin.startsWith('http')
+      ? wrapBroadcastMessagesForClickTracking(messages, id, clickOrigin)
+      : messages)
 
     if (!clickOrigin.startsWith('http')) {
       console.warn('[broadcast/send] PUBLIC_BASE_URL（或舊名 LINE_IMAGEMAP_BASE_URL／CLICK_TRACKING_BASE_URL）未設定，推播 URI 點擊不會寫入 broadcastClickLogs')
@@ -228,12 +285,36 @@ export async function executeBroadcastSend(
 
     // 重發過的推播要換一個彙總單位，否則 LINE 會把上一次的開封／點擊算進這一次
     const lineUnit = broadcastAggregationUnit(id, Number(data.retryCount ?? 0) + 1)
-    const { successCount, failedIds, lineAggregationApplied } = await multicastMessage(
-      lineUserIds,
-      messagesForLine as any,
-      workspaceId,
-      { customAggregationUnits: [lineUnit] },
-    )
+    let successCount: number
+    let failedIds: string[]
+    let lineAggregationApplied: boolean
+    /** 一人一則才拿得到每一位各自的原因；群發是一批 500 人一起回 */
+    let failureReasons: Record<string, string> = {}
+    let stoppedReason: string | null = null
+
+    if (sendMode === 'perRecipient') {
+      const contexts = await loadAttributeContexts(db, recipients.map(r => r.docId))
+      const contextByLineUserId = new Map(recipients.map(r => [r.lineUserId, contexts.get(r.docId) ?? {}]))
+      const pushed = await pushMessagesPerRecipient(
+        recipients.map(r => ({ lineUserId: r.lineUserId, retryKey: broadcastRetryKey(id, r.lineUserId) })),
+        lineUserId => wrapForLine(renderFor(contextByLineUserId.get(lineUserId) ?? {})) as any,
+        workspaceId,
+        { customAggregationUnits: [lineUnit] },
+      )
+      ;({ successCount, failedIds, lineAggregationApplied, failureReasons, stoppedReason } = pushed)
+      if (pushed.alreadySentCount) {
+        // 送到一半斷掉後重發：這些人上一輪就收到了，LINE 認出同一個重送編號沒有再送（算在送達裡）
+        console.info(`[broadcast/send] ${id}：${pushed.alreadySentCount} 位上一輪已收到，這一輪沒有重複送`)
+      }
+    }
+    else {
+      ;({ successCount, failedIds, lineAggregationApplied } = await multicastMessage(
+        lineUserIds,
+        wrapForLine(outboundMessages) as any,
+        workspaceId,
+        { customAggregationUnits: [lineUnit] },
+      ))
+    }
 
     if (!lineAggregationApplied) {
       console.warn('[broadcast/send] LINE 未套用 customAggregationUnits，開封數將無法從 LINE Insight 取得')
@@ -247,6 +328,7 @@ export async function executeBroadcastSend(
       allFailed: successCount === 0,
       aggregationUnit: lineAggregationApplied ? lineUnit : null,
       aggregationApplied: lineAggregationApplied,
+      stoppedReason,
     }
 
     // ── 送出後立刻落地發送結果（checkpoint）──────────────────────────
@@ -330,8 +412,8 @@ export async function executeBroadcastSend(
             campaignId: id,
             userId: r.docId,
             deliveryStatus: 'failed',
-            // LINE 是一批最多 500 人一起回覆結果，拿不到每個人各自的原因
-            failureReason: 'LINE multicast failed',
+            // 群發是一批最多 500 人一起回覆結果，拿不到每個人各自的原因；一人一則有
+            failureReason: failureReasons[r.lineUserId] ?? 'LINE multicast failed',
             sentAt: null,
             createdAt,
           }

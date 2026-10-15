@@ -73,15 +73,18 @@ export function renderPreviewVariablesDeep<T>(input: T): PreviewVariableResult<T
 }
 
 /**
- * ── 推播是例外（`D-118`，2026-10-08）────────────────────────────
- * 推播走 LINE 群發（一次送給所有人、每個人內容一樣），送出端組訊息時**沒有任何一位客人的資料**，
- * 變數一律換成空字串（`renderWithAttributes` 帶空的 attributes）。所以推播的預覽 ⛔ 不可以畫「王小明」、
- * ⛔ 不可以寫「客人看到的是他自己的名字」——9/29 起 7 則推播、約 8,400 人次收到的是
- * 「 ，還記得我們問過你…」這種開頭空一格的句子，而預覽一直說會換成名字。
+ * ── 2026-10-15 以前送出的推播（`D-118`）────────────────────────────
+ * 那時推播一律走 LINE 群發（一次送給所有人、每個人內容一樣），送出端組訊息時**沒有任何一位客人的資料**，
+ * 變數一律換成空字串。9/29 起 7 則推播、約 8,500 人次收到「 ，還記得我們問過你…」這種開頭空一格的句子，
+ * 而預覽一直畫「王小明」。
+ *
+ * 2026-10-15 起（`D-118` A）用了變數的推播改成一人一則送、每位換上自己的名字，
+ * **還沒送的推播預覽跟其他地方一樣**（`renderPreviewVariablesDeep`＋`previewVariableNote`）。
+ * 下面這幾支只給「回頭看當時送了什麼」用：⛔ 那時候客人收到的是空白，不可以畫成名字
+ * （判斷看推播的 `sendMode`：沒有這一欄＝群發＝空白）。
  *
  * ⚠️ 換的規則要跟送出端**同一條**：只認英文開頭的變數名（`server/utils/render-attributes.ts` 的
- *    `renderWithAttributes`；推播送出前走同檔的 `renderBroadcastMessagesForSend`）。
- *    中文變數名送出端不換、原字送出，這裡也不換。`render-attributes.test.ts` 釘兩邊一致。
+ *    `renderWithAttributes`）。中文變數名送出端不換、原字送出，這裡也不換。`render-attributes.test.ts` 釘兩邊一致。
  */
 const SEND_VAR_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g
 
@@ -93,8 +96,8 @@ function collectKeys(text: string, keys: string[]): void {
 }
 
 /**
- * 推播的預覽：變數換成**空白**（跟客人實際收到的一樣）。⛔ 不可以就地改，一律回新的。
- * `keys`＝這次真的被換掉的變數，呼叫端要用 `broadcastVariableNote` 講出來。
+ * 舊推播（群發）的預覽：變數換成**空白**（跟客人當時收到的一樣）。⛔ 不可以就地改，一律回新的。
+ * `keys`＝這次真的被換掉的變數，呼叫端要用 `broadcastBlankVariableNote` 講出來。
  */
 export function renderBroadcastVariablesDeep<T>(input: T): PreviewVariableResult<T> {
   const keys: string[] = []
@@ -116,8 +119,8 @@ export function renderBroadcastVariablesDeep<T>(input: T): PreviewVariableResult
 }
 
 /**
- * 推播內容裡會被換成空白的變數（發送前的提醒用，`validate.post.ts`）。
- * ⚠️ 這裡**每一格都掃**，連網址也掃：送出端連按鈕網址裡的變數也會換成空白，那是一條連不上的網址。
+ * 推播內容用了哪些變數（`broadcast-send.ts` 靠它決定要不要一人一則送）。
+ * ⚠️ 這裡**每一格都掃**，連網址也掃：送出端連按鈕網址裡的變數也會換，用到了就要一人一則。
  */
 export function findSendVariables(input: unknown): string[] {
   const keys: string[] = []
@@ -130,22 +133,19 @@ export function findSendVariables(input: unknown): string[] {
   return keys
 }
 
+/**
+ * 變數講成店家看得懂的話。⛔ 不要把 `{{displayName}}` 原字印給店家看（2026-10-15 老闆：看不懂）；
+ * 名字的叫法跟「插入變數」那顆選單同一個（`BUILTIN_SCRIPT_VARIABLES`）。
+ */
 function variableTokens(keys: string[]): string {
-  return keys.map(k => (k === 'displayName' ? '客人名字（{{displayName}}）' : `{{${k}}}`)).join('、')
+  return keys.map(k => (k === 'displayName' ? '「客人的 LINE 名稱」' : `（${k}）`)).join('、')
 }
 
-/** 推播預覽下面那一句實話（`D-118`） */
-export function broadcastVariableNote(keys: string[]): string {
+/** 回頭看 2026-10-15 以前送出的推播：那時名字是空白，照實講 */
+export function broadcastBlankVariableNote(keys: string[]): string {
   if (!keys.length) return ''
   // ⚠️ 這句畫在手機**上面**（放底下會被小幫手浮鈕蓋住），所以是「下面就是」
-  return `推播是一次送給所有人，拿不到每位客人的資料：內容裡的${variableTokens(keys)}，每位客人看到的都是空白（下面就是實際的樣子）。`
-}
-
-/** 發送前確認框的提醒（`D-118`）：講後果＋怎麼改 */
-export function broadcastVariableWarning(keys: string[]): string {
-  if (!keys.length) return ''
-  return `內容用了${variableTokens(keys)}：推播是一次送給所有人，這一格每位客人看到的都是空白。`
-    + '要放名字的話，請改寫成少了名字也讀得通的句子再送。'
+  return `這則發送的時候，推播還不會換成每位客人的名字：內容裡的${variableTokens(keys)}，客人收到的是空白（下面就是當時的樣子）。`
 }
 
 /**

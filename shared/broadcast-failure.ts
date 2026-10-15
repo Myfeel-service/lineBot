@@ -19,6 +19,14 @@ export const BROADCAST_STUCK_SAFE_TO_RESEND
 export const BROADCAST_STUCK_UNVERIFIED
   = '發送做到一半中斷，無法確認 LINE 是否已把訊息送出。重發前請先跟一兩位名單上的客人確認有沒有收到，避免重複發送。'
 
+/**
+ * 看門狗：一人一則送的推播（`sendMode: 'perRecipient'`，`D-118` A）做到一半中斷。
+ * 每一位帶固定的重送編號，LINE 24 小時內認得——同一則推播再送一次，收過的人會被擋下來。
+ * ⚠️ 兩個條件都要講：超過 24 小時 LINE 就不認了；內容改過的話 LINE 不保證擋得住。
+ */
+export const BROADCAST_STUCK_PER_RECIPIENT
+  = '發送做到一半中斷，有些人已經收到、有些人還沒。這則是一人一則送的：24 小時內按「重設為草稿再發一次」、內容不要改，已經收到的人不會收到第二則，只會補送給還沒收到的人。超過 24 小時再發就可能重複。'
+
 /** LINE 收下了訊息，但回報每一位收件人都送不到 */
 export const BROADCAST_ALL_RECIPIENTS_FAILED
   = 'LINE 回報名單上每一位都沒收到，多半是這些人已經封鎖或刪除官方帳號。重發前建議先確認名單。'

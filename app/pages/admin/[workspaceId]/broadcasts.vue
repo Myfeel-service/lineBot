@@ -477,7 +477,7 @@
           <p class="aap__source">
             這是<b>當時真的送出去</b>的 {{ sentContentMessages.length }} 則{{ sentContentModuleName ? `（機器人模組「${sentContentModuleName}」）` : '' }}：
           </p>
-          <p v-if="sentContentVarNote" class="aap__note aap__note--warn">{{ sentContentVarNote }}</p>
+          <p v-if="sentContentVarNote" class="aap__note" :class="sentWithBlankVariables ? 'aap__note--warn' : 'aap__note--quiet'">{{ sentContentVarNote }}</p>
           <FlowMessagePreview :messages="sentContentPreview.value" :oa-name="currentWorkspaceName" />
         </div>
 
@@ -489,6 +489,7 @@
           :module-options="flowOptions"
           title=""
           broadcast
+          :blank-variables="sentWithBlankVariables"
         >
           <template #ready-note="{ count }">
             <!-- ⛔ 這句只有推播講得出來：別處是客人按了才收到，推播是直接送到手機上 -->
@@ -502,11 +503,10 @@
           </template>
         </AdminActionPreview>
 
-        <!-- ③ 純文字／開啟網址：送出端只把 {{變數}} 換成空白（`render-attributes.ts`），預覽照同一條畫 -->
-        <!-- `D-118`：用了名字變數時要多講一句，改用跟①同一種面板（手機上面一句、下面手機）；
+        <!-- ③ 純文字／開啟網址：用了名字變數時多講一句（範例名字，或舊推播當時是空白），改用跟①同一種面板（手機上面一句、下面手機）；
              ⛔ 句子直接接在手機旁邊會變成預覽區的第二欄，把手機擠到中間 -->
         <div v-else-if="textPreviewVarNote" class="bc-preview bc-preview--panel">
-          <p class="aap__note aap__note--warn">{{ textPreviewVarNote }}</p>
+          <p class="aap__note" :class="sentWithBlankVariables ? 'aap__note--warn' : 'aap__note--quiet'">{{ textPreviewVarNote }}</p>
           <FlowMessagePreview :messages="textPreview.value" :oa-name="currentWorkspaceName" />
         </div>
         <FlowMessagePreview
@@ -661,12 +661,6 @@
         </ul>
       </div>
       <div v-else class="bc-validate-ok">
-        <!-- `D-118`：擋不擋由他決定（不擋），但按下去之前一定要知道名字那格會是空白 -->
-        <div v-if="validateResult.warnings?.length" class="admin-alert admin-alert--warn">
-          <ul>
-            <li v-for="w in validateResult.warnings" :key="w">{{ w }}</li>
-          </ul>
-        </div>
         <p v-if="dialogIsSchedule && pendingScheduleAtLocal" class="tags-hint">
           將排程於 {{ formatScheduleLabel(pendingScheduleAtLocal) }} 自動發送（不會立即送出）。
         </p>
@@ -733,7 +727,12 @@ import {
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
-import { broadcastVariableNote, renderBroadcastVariablesDeep } from '~~/shared/preview-variables'
+import {
+  broadcastBlankVariableNote,
+  previewVariableNote,
+  renderBroadcastVariablesDeep,
+  renderPreviewVariablesDeep,
+} from '~~/shared/preview-variables'
 import { taipeiDate, taipeiDateTime } from '~~/shared/time'
 import { festivalHint } from '~/utils/festival-hint'
 
@@ -774,6 +773,19 @@ function apiErrorMessage(e: unknown, fallback: string): string {
     if (typeof o.message === 'string') return o.message
   }
   return fallback
+}
+
+/**
+ * 送出那一下等太久、連線先斷了（閘道 30 秒就放棄，伺服器還在送）。
+ * `D-118` A 之後用了客人名字的推播一人一則送，好友上千位時會送十幾秒以上，比以前更容易碰到。
+ * ⛔ 這種情況不可以講「發送失敗」：人會以為沒送出去而再按一次。
+ */
+function maybeStillSending(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false
+  const o = e as Record<string, unknown>
+  const status = Number(o.statusCode ?? o.status ?? 0)
+  if (status === 502 || status === 503 || status === 504) return true
+  return !status && /fetch|network|timeout|aborted/i.test(String(o.message ?? ''))
 }
 
 function isNotFoundApiError(e: unknown): boolean {
@@ -1036,14 +1048,34 @@ const sentContentMessages = computed<any[]>(() => {
 const sentContentModuleName = computed(() => String(sentContent.value?.moduleName ?? ''))
 
 /**
- * `D-118`：推播是一次送給所有人，送出端拿不到客人資料，`{{displayName}}` 一律送成空白。
- * 三條預覽路都要畫成客人實際看到的樣子（空白）並講出來——⛔ 原本純文字／已送出那兩條原字印出
- * `{{displayName}}`、模組那條畫成「王小明」，三條都不是客人收到的樣子。
+ * 這則送出去的時候是群發還是一人一則（`D-118` A，送出端寫的 `sendMode`，只有詳情 API 有）。
+ * ⛔ 一樣要每次都覆寫（`loadFormFromItem`），不然會拿上一則的來判斷。
  */
-const sentContentPreview = computed(() => renderBroadcastVariablesDeep(sentContentMessages.value))
-const sentContentVarNote = computed(() => broadcastVariableNote(sentContentPreview.value.keys))
-const textPreview = computed(() => renderBroadcastVariablesDeep(previewMessages.value))
-const textPreviewVarNote = computed(() => broadcastVariableNote(textPreview.value.keys))
+const detailSendMode = ref<string | null>(null)
+
+/**
+ * `D-118`：**2026-10-15 以前送出的推播一律群發**，名字那一格客人收到的是空白；之後用了變數的改成
+ * 一人一則、每位換上自己的名字。所以只有「已經送出、而且沒有 `sendMode`」的推播要畫成空白並照實講，
+ * 其他（草稿、排程中、之後送的）跟別頁一樣畫範例名字。
+ * ⚠️ 失敗／發送中的要真的送到過人（`sentCount > 0`）才算——沒送出去就沒有人收到空白。
+ * ⚠️ 新的推播沒用變數時是 `multicast`，但那種內容沒有變數可換，畫哪一種都一樣。
+ */
+const sentWithBlankVariables = computed(() => {
+  const item = selectedItem.value
+  if (!isReadOnly.value || !item || detailSendMode.value) return false
+  if (item.status === 'completed') return true
+  return (item.status === 'failed' || item.status === 'processing') && Number(item.sentCount ?? 0) > 0
+})
+const renderForPreview = (messages: any[]) => (sentWithBlankVariables.value
+  ? renderBroadcastVariablesDeep(messages)
+  : renderPreviewVariablesDeep(messages))
+const noteForPreview = (keys: string[]) => (sentWithBlankVariables.value
+  ? broadcastBlankVariableNote(keys)
+  : previewVariableNote(keys))
+const sentContentPreview = computed(() => renderForPreview(sentContentMessages.value))
+const sentContentVarNote = computed(() => noteForPreview(sentContentPreview.value.keys))
+const textPreview = computed(() => renderForPreview(previewMessages.value))
+const textPreviewVarNote = computed(() => noteForPreview(textPreview.value.keys))
 
 // ── `C-248`：試發一則給自己看（`D-119` ⑥：收件人改成固定名單打勾）──────────────────
 interface TestRecipient { lineUserId: string; displayName: string; pictureUrl: string; email?: string; unreachable?: 'blocked' | 'gone' }
@@ -1250,6 +1282,7 @@ function loadFormFromItem(item: any) {
    * 再點一則沒留存的，右邊會繼續畫上一則的內容——而人完全不會知道那是舊的。
    */
   detailSentContent.value = item.sentContent ?? null
+  detailSendMode.value = typeof item.sendMode === 'string' ? item.sendMode : null
   form.value = {
     name: item.name ?? '',
     audienceType: src.type ?? 'all',
@@ -1642,6 +1675,13 @@ async function confirmSendNow() {
     if (found) await selectItem(found, { skipDiscardConfirm: true })
   }
   catch (e: unknown) {
+    if (maybeStillSending(e)) {
+      const msg = '等太久沒有回應，推播可能還在送（好友多、又用了客人名字時會送比較久）。請不要再按一次，等一兩分鐘重新整理，看這則的狀態。'
+      confirmDialogError.value = msg
+      showToast(msg, 'warning')
+      await loadData().catch(() => {})
+      return
+    }
     const msg = apiErrorMessage(e, '發送失敗')
     confirmDialogError.value = msg
     showToast(msg, 'error')

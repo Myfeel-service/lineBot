@@ -76,11 +76,23 @@ describe('renderTextForUser', () => {
     expect(renderTextForUser('謝謝您的來訊', userData)).toBe('謝謝您的來訊')
     expect(renderTextForUser('{{displayName}} 您好', null)).toBe(' 您好')
   })
+
+  /**
+   * ⛔ 建客人資料時抓不到 LINE 個人資料，`ensureUser` 會先把 userId 塞進名字欄——
+   *    照用的話客人收到「U4af…您好」。當作沒有名字。
+   */
+  it('名字是一串 LINE 代號的不算名字，那一格留空', () => {
+    const uid = 'U4af4980629b8c1d2e3f4a5b6c7d8e9f0'
+    expect(renderTextForUser('{{displayName}} 您好', { displayName: uid, lineUserId: uid })).toBe(' 您好')
+    expect(renderTextForUser('{{displayName}} 您好', { displayName: uid })).toBe(' 您好')
+    // 長得不像代號的照用（名字剛好是英文字母也一樣）
+    expect(renderTextForUser('{{displayName}} 您好', { displayName: 'Ula', lineUserId: uid })).toBe('Ula 您好')
+  })
 })
 
 /**
- * `D-118`：推播的預覽（`renderBroadcastVariablesDeep`）要跟送出端換成**一樣的字**。
- * 推播走群發、沒有任何客人的資料＝送出端等於 `renderTextForUser(值, null)`。
+ * `D-118`：回頭看 2026-10-15 以前送出的推播（群發、沒有任何客人的資料），
+ * 預覽（`renderBroadcastVariablesDeep`）要跟當時送出端換成**一樣的字**＝`renderTextForUser(值, null)`。
  * ⛔ 兩邊的變數規則（只認英文開頭的名字）一旦漂開，預覽又會開始說謊。
  */
 describe('推播預覽跟送出端換成一樣的字', () => {

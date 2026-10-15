@@ -2,7 +2,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { executeBroadcastSend } from './broadcast-send'
 import { getDb } from './firebase'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
-import { BROADCAST_ALL_RECIPIENTS_FAILED, BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
+import { BROADCAST_ALL_RECIPIENTS_FAILED, BROADCAST_STUCK_PER_RECIPIENT, BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 /**
  * 排程到點送出也記一筆操作紀錄（`D-117` 拍板 1，2026-10-08）。
  * 以前紀錄停在「排定了推播」就斷了：看的人不知道後來到底有沒有送、送了幾人。
@@ -62,7 +62,7 @@ async function reapStuckProcessingBroadcasts(
   // messages 快照，而這裡一個都用不到——這支每分鐘跑一次，不能每次都把它們搬回來。
   const snap = await db.collection('broadcasts')
     .where('status', '==', 'processing')
-    .select('workspaceId', 'name', 'startedAt', 'updatedAt')
+    .select('workspaceId', 'name', 'startedAt', 'updatedAt', 'sendMode')
     .limit(20)
     .get()
   if (snap.empty) return 0
@@ -89,6 +89,11 @@ async function reapStuckProcessingBroadcasts(
     const lineNotCalled = Boolean(
       startedAt && updatedAt && updatedAt.getTime() === startedAt.getTime(),
     )
+    // `D-118` A：一人一則送的有重送編號，24 小時內重發不會重複——講這句，⛔ 不要叫他去一位位問有沒有收到
+    // （`sendMode` 跟受眾快照同一筆寫入、在呼叫 LINE 之前，所以讀得到它就代表已經走到送出那一步）
+    const stuckReason = lineNotCalled
+      ? BROADCAST_STUCK_SAFE_TO_RESEND
+      : data.sendMode === 'perRecipient' ? BROADCAST_STUCK_PER_RECIPIENT : BROADCAST_STUCK_UNVERIFIED
 
     try {
       const didReap = await db.runTransaction(async (tx) => {
@@ -96,7 +101,7 @@ async function reapStuckProcessingBroadcasts(
         if (fresh.data()?.status !== 'processing') return false
         tx.update(doc.ref, {
           status: 'failed',
-          failureReason: lineNotCalled ? BROADCAST_STUCK_SAFE_TO_RESEND : BROADCAST_STUCK_UNVERIFIED,
+          failureReason: stuckReason,
           updatedAt: FieldValue.serverTimestamp(),
         })
         return true

@@ -1,7 +1,9 @@
 import * as line from '@line/bot-sdk'
 import { HTTPFetchError } from '@line/bot-sdk'
 import { createHmac, timingSafeEqual } from 'crypto'
+import { v5 as uuidv5 } from 'uuid'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
+import { describeLineSendFailure, lineSendFailureKind } from './line-send-error'
 
 function lineMulticastErrorDetail(err: unknown): string {
   if (err instanceof HTTPFetchError && err.body) return `${err.message} | ${err.body}`
@@ -273,6 +275,151 @@ export async function multicastMessage(
   }
 
   return { successCount, failedIds, lineAggregationApplied }
+}
+
+/**
+ * 不帶彙總單位那一次要換一個重送編號：LINE 說同一個編號重送時內容要一模一樣，
+ * 拿掉彙總單位已經是不同的請求了。由原編號推出來（固定的），重來一次時算出來的還是同一個。
+ */
+const RETRY_KEY_PLAIN_NS = '6f1c3e52-8a4b-4f0e-9d2a-3b7c5e1a9f40'
+const PUSH_MAX_ATTEMPTS = 4
+const PUSH_DEFAULT_CONCURRENCY = 40
+
+export type PerRecipientPushOptions = {
+  /** LINE 彙總單位（最多 1 個），用於查詢開封／官方網址點擊統計 */
+  customAggregationUnits?: string[]
+  /** 同時送幾位（LINE 推送的上限是每秒 2,000 次） */
+  concurrency?: number
+  /** 測試用：退避等待 */
+  sleep?: (ms: number) => Promise<void>
+}
+
+export type PerRecipientPushResult = {
+  /** LINE 收下了的人數（含 `alreadySentCount`） */
+  successCount: number
+  /** 之前那一輪就已經收下的（同一個重送編號 LINE 回 409）：這一輪沒有再送一次 */
+  alreadySentCount: number
+  failedIds: string[]
+  /** 沒送到的人各自的原因（一人一則才拿得到；群發是一批 500 人一起回） */
+  failureReasons: Record<string, string>
+  /** 每一位都帶著彙總單位送出時才是 true */
+  lineAggregationApplied: boolean
+  /**
+   * 中途整批停下來的原因（本月額度用完、憑證失效這種「下一位也一樣會被退」的錯）。
+   * 停下來之後剩下的人**沒有再打 LINE**，一律記成沒送到、原因就是這一句。
+   */
+  stoppedReason: string | null
+}
+
+type PushOutcome = { ok: true, already: boolean } | { ok: false, status: number, detail: string }
+
+/**
+ * 一人一則送（`D-118` A，2026-10-15）：內容用了 {{變數}} 的推播，每一位換上自己的資料再送。
+ *
+ * LINE 群發（multicast）一次送一批、每人內容一樣，沒有「每人換上自己名字」的功能（LINE 自家後台的
+ * 一般群發也不能放名字）；有在推播放名字的工具，背後都是一人一則。LINE 照收到的人數算則數，所以費用一樣。
+ *
+ * ⭐ **每一位帶一個固定的重送編號**（`X-Line-Retry-Key`，呼叫端用「推播＋這位客人」算出來）：
+ *    LINE 收下過的編號 24 小時內再送會回 409、不會再送一次。所以送到一半斷掉、看門狗收成失敗、
+ *    重設再送時，**已經收到的人不會收到第二則**——群發做不到這件事（一批送出去就是送出去了）。
+ * ⚠️ 409 算「收到了」（`alreadySentCount` 另外記），⛔ 不可以當失敗：那會讓他被記成沒收到。
+ * ⚠️ 送太快（429）、5xx、連線失敗用同一個編號退避重試；其他 4xx 重試也不會變，直接記失敗。
+ * ⛔ **本月額度用完也是 429**（`lineSendFailureKind` 分得出來），那種重試沒用、下一位也一樣：
+ *    整批停下來（`stoppedReason`），剩下的人不再打 LINE。不停的話 9 千位每位退避 3 秒半，要等十幾分鐘。
+ * ⚠️ 彙總單位跟群發同一套退路：第一位帶著被退回、拿掉就收下 → 之後每一位都不帶（`lineAggregationApplied=false`）。
+ * `buildMessages` 送到那一位才組（9 千多位好友時不先把每一份都放進記憶體）。
+ */
+export async function pushMessagesPerRecipient(
+  recipients: Array<{ lineUserId: string, retryKey: string }>,
+  buildMessages: (lineUserId: string) => line.messagingApi.Message[],
+  workspaceId: string,
+  options: PerRecipientPushOptions = {},
+): Promise<PerRecipientPushResult> {
+  const { client } = await getMessagingBundle(workspaceId)
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+  const firstUnit = options.customAggregationUnits?.[0]
+  const units = firstUnit ? [firstUnit] : undefined
+  let unitsOk = Boolean(units)
+  let stoppedReason: string | null = null
+
+  const sendOne = async (lineUserId: string, retryKey: string, withUnits: boolean): Promise<PushOutcome> => {
+    if (stoppedReason) return { ok: false, status: 0, detail: stoppedReason }
+    const messages = buildMessages(lineUserId)
+    // 只有「本來要帶彙總單位、退回後拿掉」那一次才換編號；本來就沒帶的用原編號
+    const key = withUnits || !units ? retryKey : uuidv5(retryKey, RETRY_KEY_PLAIN_NS)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await client.pushMessage(
+          withUnits && units ? { to: lineUserId, messages, customAggregationUnits: units } : { to: lineUserId, messages },
+          key,
+        )
+        return { ok: true, already: false }
+      }
+      catch (err) {
+        const status = err instanceof HTTPFetchError ? err.status : 0
+        if (status === 409) return { ok: true, already: true }
+        const kind = lineSendFailureKind(err)
+        const detail = describeLineSendFailure(err) ?? lineMulticastErrorDetail(err)
+        if (kind === 'monthlyQuota' || kind === 'auth') {
+          stoppedReason ??= detail
+          return { ok: false, status, detail }
+        }
+        const retriable = kind === null || kind === 'rateLimited' || kind === 'server'
+        if (retriable && attempt < PUSH_MAX_ATTEMPTS - 1) {
+          await sleep(500 * 2 ** attempt + Math.floor(Math.random() * 250))
+          if (stoppedReason) return { ok: false, status: 0, detail: stoppedReason }
+          continue
+        }
+        return { ok: false, status, detail }
+      }
+    }
+  }
+
+  let successCount = 0
+  let alreadySentCount = 0
+  const failedIds: string[] = []
+  const failureReasons: Record<string, string> = {}
+  const record = (lineUserId: string, r: PushOutcome) => {
+    if (r.ok) {
+      successCount += 1
+      if (r.already) alreadySentCount += 1
+      return
+    }
+    failedIds.push(lineUserId)
+    failureReasons[lineUserId] = `${r.status ? `LINE ${r.status}：` : ''}${r.detail}`.slice(0, 300)
+  }
+
+  let queue = recipients
+  if (queue.length && unitsOk) {
+    const first = queue[0]!
+    let r = await sendOne(first.lineUserId, first.retryKey, true)
+    if (!r.ok && r.status >= 400 && r.status < 500) {
+      const plain = await sendOne(first.lineUserId, first.retryKey, false)
+      if (plain.ok) {
+        console.warn('[pushMessagesPerRecipient] 帶 customAggregationUnits 被退回、拿掉就收下，之後每一位都不帶：', r.detail)
+        unitsOk = false
+        r = plain
+      }
+    }
+    record(first.lineUserId, r)
+    queue = queue.slice(1)
+  }
+
+  let next = 0
+  const worker = async () => {
+    while (next < queue.length) {
+      const r = queue[next++]!
+      record(r.lineUserId, await sendOne(r.lineUserId, r.retryKey, unitsOk))
+    }
+  }
+  const concurrency = Math.max(1, options.concurrency ?? PUSH_DEFAULT_CONCURRENCY)
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker))
+
+  if (failedIds.length) {
+    console.error(`[pushMessagesPerRecipient] ${failedIds.length}/${recipients.length} 位沒送到，例：`, failureReasons[failedIds[0]!])
+  }
+  if (stoppedReason) console.error(`[pushMessagesPerRecipient] 整批停下來：${stoppedReason}`)
+  return { successCount, alreadySentCount, failedIds, failureReasons, lineAggregationApplied: unitsOk, stoppedReason }
 }
 
 const LINE_MESSAGING_ORIGIN = 'https://api.line.me/v2'

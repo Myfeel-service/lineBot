@@ -79,6 +79,7 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
       flow: { name: '開賣通知' },
       lineMessages: [{ type: 'imagemap' }, { type: 'text', text: '開賣了' }],
       hydratedMessages: [],
+      renderFor: (attrs: Record<string, string>) => [{ type: 'imagemap' }, { type: 'text', text: `${attrs.displayName ?? ''}開賣了` }],
     } as any)
 
     const res = await (handler as any)({})
@@ -101,12 +102,13 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
     expect(res.messageCount).toBe(1)
   })
 
-  it('⛔ 純文字裡的 {{displayName}}：跟正式發送一樣換成空白（⛔ 不換成收件人「吉米」、⛔ 也不原字送出）', async () => {
+  /** `D-118` A：正式發送用了變數就一人一則、每位換上自己的名字，試發要一樣（⛔ 也不原字送出） */
+  it('⭐ 純文字裡的 {{displayName}}：換成收件人自己的名字，跟正式發送一樣', async () => {
     docsReturn({ workspaceId: WS, messages: [{ type: 'text', text: '嗨 {{displayName}}，今天公休' }] }, { displayName: '吉米' })
 
     await (handler as any)({})
 
-    expect(mockPush.mock.calls[0]![1]).toEqual([{ type: 'text', text: '嗨 ，今天公休' }])
+    expect(mockPush.mock.calls[0]![1]).toEqual([{ type: 'text', text: '嗨 吉米，今天公休' }])
   })
 
   it('⛔ 不是 LINE 帳號的編號 → 擋下來，不要讓 LINE 回一個看不懂的 400', async () => {
@@ -156,9 +158,9 @@ describe('試發一則：送的是正式發送會送的那一份', () => {
  */
 describe('試發只能發給名單上的人，一次可以好幾位', () => {
   /** 每位好友各自的資料（null＝不是好友了） */
-  function friendsAre(map: Record<string, Record<string, any> | null>) {
+  function friendsAre(map: Record<string, Record<string, any> | null>, messages: any[] = [{ type: 'text', text: 'hi' }]) {
     mockGetDoc.mockImplementation(async (collection: string, id: string) => {
-      if (collection === 'broadcasts') return { workspaceId: WS, name: '水多會-超早鳥倒數', messages: [{ type: 'text', text: 'hi' }] } as any
+      if (collection === 'broadcasts') return { workspaceId: WS, name: '水多會-超早鳥倒數', messages } as any
       if (collection === 'users') return (Object.entries(map).find(([k]) => id.endsWith(k))?.[1] ?? null) as any
       return null as any
     })
@@ -214,5 +216,26 @@ describe('試發只能發給名單上的人，一次可以好幾位', () => {
 
     await expect((handler as any)({})).rejects.toThrow(/至少勾一位/)
     expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  /** `D-118` A：跟正式發送一樣一人一則換名字——看稿的人在手機上看到的就是客人會看到的 */
+  it('⭐ 模組型：每一位收件人換上自己的名字（模組只抓一次）', async () => {
+    friendsAre({ [FRIEND]: { displayName: '江' }, [COLLEAGUE]: { displayName: '游瑞茹' } }, moduleCard)
+    mockRender.mockResolvedValue({
+      flow: { name: '乾淨方MAX推播' },
+      lineMessages: [{ type: 'text', text: ' 快快快' }],
+      hydratedMessages: [],
+      renderFor: (attrs: Record<string, string>) => [{ type: 'text', text: `${attrs.displayName ?? ''} 快快快` }],
+    } as any)
+    mockPush.mockResolvedValue({} as Awaited<ReturnType<typeof pushMessage>>)
+    body = { lineUserIds: [FRIEND, COLLEAGUE] }
+
+    const res = await (handler as any)({})
+
+    expect(mockRender).toHaveBeenCalledTimes(1)
+    const byTo = Object.fromEntries(mockPush.mock.calls.map(c => [c[0], (c[1] as any)[0].text]))
+    expect(byTo[FRIEND]).toBe('江 快快快')
+    expect(byTo[COLLEAGUE]).toBe('游瑞茹 快快快')
+    expect(res.messageCount).toBe(1)
   })
 })

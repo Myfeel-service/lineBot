@@ -2,7 +2,7 @@ import { getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { renderModuleToLineMessages } from '~~/server/utils/handler'
-import { renderBroadcastMessagesForSend } from '~~/server/utils/render-attributes'
+import { attributeContextForUser, renderBroadcastMessagesForSend } from '~~/server/utils/render-attributes'
 import { pushMessage } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -96,8 +96,12 @@ export default defineEventHandler(async (event) => {
 
   // ── 組出「正式發送時會送出去的那幾則」──────────────────────────────
   const triggerModuleId = extractBroadcastTriggerModuleId(doc.messages)
-  // 變數換成空白，跟正式發送同一支（⛔ 試發收到原字 {{displayName}}、正式發送卻是空白，就白試了）
-  let messages = renderBroadcastMessagesForSend(doc.messages as Record<string, unknown>[])
+  /**
+   * 每一位換上**他自己的**名字，跟正式發送同一支（`D-118` A：用了變數的推播一人一則送）。
+   * ⛔ 試發收到的跟正式發送不一樣就白試了——以前試發收到原字 {{displayName}}、正式發送卻是空白。
+   */
+  let renderFor = (attributes: Record<string, string>) =>
+    renderBroadcastMessagesForSend(doc.messages as Record<string, unknown>[], attributes)
   let moduleName = ''
   if (triggerModuleId) {
     const rendered = await renderModuleToLineMessages(triggerModuleId, { workspaceId, requestOrigin })
@@ -107,9 +111,11 @@ export default defineEventHandler(async (event) => {
         statusMessage: '這則推播要送出的機器人模組已經不存在、被停用，或裡面一則訊息都沒有——正式發送也會失敗。請先把模組處理好。',
       })
     }
-    messages = rendered.lineMessages as unknown as Record<string, unknown>[]
+    renderFor = attributes => rendered.renderFor(attributes) as unknown as Record<string, unknown>[]
     moduleName = String((rendered.flow as { name?: string })?.name || '')
   }
+  /** 則數每一位都一樣（換名字不會多出一則），回給畫面講「每人送了幾則」 */
+  const messageCount = renderFor({}).length
 
   // 一位一位送：誰送到、誰沒送到要分得開（⛔ 一位失敗不可以讓其他人也算失敗）
   const sent: TestSendResult[] = []
@@ -125,7 +131,7 @@ export default defineEventHandler(async (event) => {
       continue
     }
     try {
-      await pushMessage(lineUserId, messages as never, workspaceId)
+      await pushMessage(lineUserId, renderFor(attributeContextForUser(friend)) as never, workspaceId)
       sent.push({ lineUserId, displayName, ok: true })
     }
     catch (e: unknown) {
@@ -164,7 +170,7 @@ export default defineEventHandler(async (event) => {
       name: String(doc.name ?? ''),
       recipientNames: names.join('、'),
       recipientCount: names.length,
-      messagesCount: messages.length,
+      messagesCount: messageCount,
       ...(moduleName ? { moduleName } : {}),
     },
     note: `試發給 ${names.join('、')}${moduleName ? `（模組：${moduleName}）` : ''}`,
@@ -172,7 +178,7 @@ export default defineEventHandler(async (event) => {
 
   return {
     ok: true,
-    messageCount: messages.length,
+    messageCount,
     moduleName,
     sent,
   }
