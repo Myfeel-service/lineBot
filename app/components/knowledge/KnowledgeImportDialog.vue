@@ -154,13 +154,12 @@
             <!--
               沒分享：三步教學**在這裡再出現一次**（2026-10-12 `D-124` 新手走查）。起步那一格只在框還空的時候看得到，
               先貼了連結的人一走到「讀不到」，三步和截圖全都不見了，只剩一串帳號——最需要教的那一刻反而沒有。
-              ⚠️ 截圖跟起步那一格共用同一個展開狀態（sheetShotsOpen）：在那邊打開過，這裡也是開的。
             -->
             <ol v-if="gsheetProbe?.status === 'no_access'" class="kb-start__steps kb-gsheet-share__steps">
               <li>打開這份試算表，按右上角<strong>「共用」</strong></li>
               <li>
                 貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
-                <KnowledgeSheetShareHow v-model:open="sheetShotsOpen" :email="shareEmail" @copy="copyServiceEmail" />
+                <KnowledgeSheetShareHow :email="shareEmail" @copy="copyServiceEmail" />
               </li>
               <li>回來按下面的「分享好了，再測一次」</li>
             </ol>
@@ -317,7 +316,7 @@
         </div>
 
         <!--
-          試算表：五步壓成三步（`D-123`），三張真截圖收在「看圖怎麼按」——第一次做的人點開看，做過的人不用再捲過三張圖。
+          試算表：五步壓成三步（`D-123`）；三張真截圖一律攤開（2026-10-15 老闆：不要收起來，原本收在「看圖怎麼按」）。
           帳號、截圖、圖上編號的規矩都在 KnowledgeSheetShareHow（讀不到時那一塊共用同一份）。
         -->
         <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
@@ -334,7 +333,7 @@
             </li>
             <li>
               按右上角<strong>「共用」</strong>，貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
-              <KnowledgeSheetShareHow v-model:open="sheetShotsOpen" :email="shareEmail" @copy="copyServiceEmail" />
+              <KnowledgeSheetShareHow :email="shareEmail" @copy="copyServiceEmail" />
             </li>
             <li>把試算表的網址貼到上面的框，會<strong>馬上告訴你讀不讀得到</strong></li>
           </ol>
@@ -1530,8 +1529,6 @@ watch(() => detected.value?.label, () => { hintOpen.value = false })
  *    回來時面板要還開著、帳號還在眼前。
  */
 const startOpen = ref<'' | 'sheet' | 'text' | 'web'>('')
-/** 試算表那格的三張截圖（「看圖怎麼按」）：預設收起，做過的人不用再捲過三張圖 */
-const sheetShotsOpen = ref(false)
 
 /** 點投放框的空白處＝聚焦輸入框；點到框裡的按鈕（選擇檔案）就讓按鈕自己來 */
 function focusPaste(e: MouseEvent) {

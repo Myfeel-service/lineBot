@@ -848,13 +848,10 @@ try {
         vh: window.innerHeight,
       }
     })
-    if (sheet.steps === 3 && sheet.shots === 0 && sheet.btnBottom > 0 && sheet.btnBottom <= sheet.vh) pass(`點「Google 試算表」→ 三步、圖先收著，主按鈕在第一屏（底邊 ${sheet.btnBottom}px／視窗 ${sheet.vh}px）`)
-    else fail('「Google 試算表」那格不對', JSON.stringify(sheet))
-    await pg.evaluate(() => document.querySelector('.kb-start__fold')?.click())
-    await sleep(300)
-    const shotsOpen = await pg.$$eval('.kb-start__shots .kb-shot', els => els.length)
-    if (shotsOpen === 3) pass('按「看圖怎麼按」→ 三張真截圖才出來')
-    else fail('「看圖怎麼按」沒有展開三張圖', String(shotsOpen))
+    // 2026-10-15 老闆：截圖不要收起來 → 一點開就是三步＋三張圖、沒有收合鈕（主按鈕因此會被推到第一屏外，只記數字不判紅）
+    const sheetFold = await pg.evaluate(() => [...document.querySelectorAll('.kb-start__panel .kb-start__fold')].map(b => b.innerText.trim()))
+    if (sheet.steps === 3 && sheet.shots === 3 && sheetFold.length === 0) pass(`點「Google 試算表」→ 三步＋三張截圖直接攤開、沒有收合鈕（主按鈕底邊 ${sheet.btnBottom}px／視窗 ${sheet.vh}px）`)
+    else fail('「Google 試算表」那格不對', JSON.stringify({ ...sheet, sheetFold }))
 
     const [chooser] = await Promise.all([
       pg.waitForFileChooser({ timeout: 5000 }).catch(() => null),
@@ -1129,12 +1126,10 @@ try {
       btn: [...document.querySelectorAll('.kb-gsheet-share__row .el-button')].map(b => b.innerText.trim()).join('／'),
       detail: !!document.querySelector('.kb-gsheet-share__detail'),
     }))
-    await pg.evaluate(() => document.querySelector('.kb-gsheet-share__steps .kb-start__fold')?.click())
-    await sleep(300)
     const shots = await pg.$$eval('.kb-gsheet-share__steps .kb-shot', els => els.length)
     if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-sheet-no-access.png') })
     // 帳號：開窗時讀到的那份優先（正式的系統帳號），探測帶回來的只是備援——所以只驗「有一個帳號」
-    if (s.steps === 3 && s.email.includes('@') && s.btn === '分享好了，再測一次' && !s.detail && shots === 3) pass('試算表讀不到 → 紅字下面再給一次三步＋帳號＋看圖（以前貼了連結教學就收起來），不秀 Google 英文原文')
+    if (s.steps === 3 && s.email.includes('@') && s.btn === '分享好了，再測一次' && !s.detail && shots === 3) pass('試算表讀不到 → 紅字下面再給一次三步＋帳號＋三張截圖直接攤開（以前貼了連結教學就收起來），不秀 Google 英文原文')
     else fail('試算表讀不到時沒有教學', JSON.stringify({ ...s, shots }))
     await pg.close()
   }

@@ -1,6 +1,8 @@
 <template>
   <!--
-    試算表「共用給系統帳號」那一步的帳號＋「看圖怎麼按」三張截圖（加入視窗起步那一格、讀不到時那一塊共用）。
+    試算表「共用給系統帳號」那一步的帳號＋三張截圖（加入視窗起步那一格、讀不到時那一塊共用）。
+    ⛔ 圖一律攤開、不做收合（2026-10-15 老闆：「知識庫這邊不要收起來」）：`D-123` 曾收進「看圖怎麼按」好讓主按鈕留在第一屏，
+       但共用這一步是站外畫面、第一次做的人一定要看圖，收起來等於多一個要先想到去點的動作。
     ⛔ 不要再抄一份到別處（2026-10-13 `/code-review`）：以前兩處逐字各一份，Google 改了按鈕名稱只改到一份，
        兩處就教出不同的步驟，而且沒有任何測試會紅（`C-180` 那種畫面副本債）。
     ⛔ 圖是老闆拍的真截圖（2026-09-03，走 `make-onboarding-shots.py` 的 gsheet 區塊）：站外畫面不憑記憶畫，
@@ -14,10 +16,7 @@
     <el-button size="small" text type="primary" @click="emit('copy')">複製</el-button>
   </span>
   <span v-else class="text-xs text-muted">（讀不到系統帳號，請重新整理頁面或聯絡我們）</span>
-  <button type="button" class="kb-start__fold" :aria-expanded="open" @click="open = !open">
-    {{ open ? '收起圖' : '看圖怎麼按' }}
-  </button>
-  <div v-if="open" class="kb-start__shots">
+  <div class="kb-start__shots">
     <figure class="kb-shot">
       <img :src="SHOTS.gsheetShare1" alt="Google 共用視窗最上面那一格，紅框標示要貼帳號的位置" loading="lazy">
       <figcaption><span class="kb-shot__n">1</span>帳號貼在紅框那一格</figcaption>
@@ -38,6 +37,4 @@ import { ONBOARDING_SHOTS as SHOTS } from '~/utils/onboarding-shots'
 
 defineProps<{ email: string }>()
 const emit = defineEmits<{ copy: [] }>()
-/** 圖展開了沒：兩處共用同一個狀態（在起步那格打開過，讀不到時那塊也是開的），由父層傳進來 */
-const open = defineModel<boolean>('open', { default: false })
 </script>
