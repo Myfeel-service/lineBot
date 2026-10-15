@@ -59,131 +59,44 @@
                `C-314`：拿掉「30 天內」——每一筆都一樣，講一次都嫌多 -->
           <span class="kb-suggest-item__count">{{ s.sampled ? '至少' : '' }}被問 {{ s.eventCount }} 次</span>
         </div>
-        <div v-if="canEdit" class="kb-suggest-item__actions">
-          <el-button size="small" type="primary" plain @click="openReview(s)">審核草稿</el-button>
-          <el-button size="small" text :loading="dismissingId === s.id" @click="dismiss(s)">忽略</el-button>
+        <!--
+          三選一（`C-318`，2026-10-15 老闆拍板 D-126④）。以前只有「審核草稿」跟「忽略」：MYFEEL 36 筆只採用 2 筆、忽略 28 筆，
+          忽略的大多是真缺口——不是沒用，是補起來太麻煩（草稿常是空的、要自己從頭寫標題＋內容＋問法＋標籤）。
+          「寫一句答案」打開同一個「補一條知識」小視窗（一兩句→AI 整理→加入就上線）；
+          「交給真人就好」＝這類問題本來就該真人回（查訂單、議價）；「不用管」＝不是缺口。後兩個都是整組拿掉，原因記下來。
+        -->
+        <div v-if="canEdit" class="kb-suggest-item__actions kb-suggest-item__actions--three">
+          <el-button size="small" type="primary" @click="openAddOne(s)">寫一句答案</el-button>
+          <el-button
+            size="small"
+            :loading="dismissing?.id === s.id && dismissing.reason === 'handoff'"
+            :disabled="!!dismissing"
+            @click="dismiss(s, 'handoff')"
+          >
+            交給真人就好
+          </el-button>
+          <el-button
+            size="small"
+            :loading="dismissing?.id === s.id && dismissing.reason === 'ignore'"
+            :disabled="!!dismissing"
+            @click="dismiss(s, 'ignore')"
+          >
+            不用管
+          </el-button>
         </div>
       </div>
     </div>
 
-    <!-- 審核草稿:可改可直接採用;含佔位符(知識庫查不到的事實)要先補完 -->
-    <el-dialog
-      v-model="reviewOpen"
-      title="審核知識草稿"
-      width="620px"
-      :close-on-click-modal="false"
-      append-to-body
-    >
-      <template v-if="reviewing">
-        <!--
-          `C-311`：同一組常是同一個產品的不同問題（「小滑手」那組：哪一國做的／只能沖義式嗎／寬深高…）。
-          以前寫一條回答其中一題、按採用，整組消失，其他題目沒人回答。一題以上就讓他勾這一條回答了哪幾題，
-          沒勾的留在清單上。這份勾選清單取代原本的「客人這樣問」，同樣的題目不列兩次；預設勾哪幾題見 defaultAnsweredQueries。
-        -->
-        <div class="kb-suggest-queries">
-          <template v-if="isMulti">
-            <div class="kb-suggest-queries__head">
-              <span class="kb-suggest-queries__label">這一條回答了哪幾題？</span>
-              <el-checkbox
-                v-if="reviewQueries.length > 2"
-                :model-value="allTicked"
-                :indeterminate="someTicked"
-                @change="toggleAll"
-              >
-                全部
-              </el-checkbox>
-            </div>
-            <el-checkbox-group v-model="answeredModel" class="kb-suggest-queries__checks">
-              <el-checkbox v-for="q in reviewQueries" :key="q" :value="q">「{{ q }}」</el-checkbox>
-            </el-checkbox-group>
-            <p class="kb-suggest-queries__note">沒勾的會留在清單上，之後再補。</p>
-          </template>
-          <template v-else>
-            <span class="kb-suggest-queries__label">客人這樣問（30 天內 {{ reviewing.eventCount }} 次）</span>
-            <ul>
-              <li v-for="(q, i) in reviewing.sampleQueries" :key="i">「{{ q }}」</li>
-            </ul>
-          </template>
-        </div>
-
-        <el-alert
-          v-if="draftBlanks > 0"
-          type="warning"
-          :closable="false"
-          show-icon
-          :title="`草稿有 ${draftBlanks} 個「請填寫」空格`"
-          description="那些是知識庫裡查不到的資訊，AI 依規則留空、不自己編。請把正確內容補進去再採用。"
-          style="margin-bottom: 12px"
-        />
-        <el-alert
-          v-else-if="reviewing.draftError"
-          type="info"
-          :closable="false"
-          show-icon
-          title="草稿產生失敗，請自行撰寫內容"
-          :description="reviewing.draftError"
-          style="margin-bottom: 12px"
-        />
-
-        <el-form label-position="top">
-          <el-form-item label="標題" required>
-            <el-input v-model="form.title" maxlength="100" show-word-limit placeholder="這一條回答什麼，例：運費與到貨時間" />
-          </el-form-item>
-          <el-form-item label="內容" required>
-            <el-input
-              v-model="form.content"
-              type="textarea"
-              :rows="10"
-              maxlength="5000"
-              show-word-limit
-              placeholder="用可以直接回覆客人的語氣寫"
-            />
-          </el-form-item>
-          <el-form-item label="客人可能怎麼問（會幫 AI 更容易找到這一條）">
-            <el-select
-              v-model="form.questions"
-              multiple
-              filterable
-              allow-create
-              default-first-option
-              :multiple-limit="3"
-              placeholder="輸入後按 Enter，最多 3 條"
-              style="width: 100%"
-            />
-          </el-form-item>
-          <el-form-item label="標籤（選填）">
-            <el-select
-              v-model="form.tags"
-              multiple
-              filterable
-              allow-create
-              default-first-option
-              placeholder="輸入後按 Enter"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </el-form>
-      </template>
-      <template #footer>
-        <div class="kb-suggest-dialog-footer">
-          <el-button text :loading="dismissingId === reviewing?.id" @click="reviewing && dismiss(reviewing)">
-            忽略這個主題
-          </el-button>
-          <div>
-            <el-button @click="reviewOpen = false">取消</el-button>
-            <!-- 還有「請填寫」空格就先擋在前端:讓人按了才被後端 400 是白跑一趟 -->
-            <el-button
-              type="primary"
-              :loading="accepting"
-              :disabled="!form.title.trim() || !form.content.trim() || draftBlanks > 0 || noneTicked"
-              @click="accept"
-            >
-              {{ draftBlanks > 0 ? `還有 ${draftBlanks} 個空格要補` : noneTicked ? '至少勾一題' : '採用並學習' }}
-            </el-button>
-          </div>
-        </div>
-      </template>
-    </el-dialog>
+    <!--
+      `C-318`：原本的「審核草稿」大視窗（標題／內容／問法／標籤四格）換成「補一條知識」小視窗。
+      AI 先擬好的草稿有內容就當成一開始的預覽（「AI 先擬好的」），他也可以自己打一兩句再按「AI 幫我整理」。
+      一題以上的組照舊勾「這一條回答了哪幾題？」（`C-311`，沒勾的留在清單上）。
+    -->
+    <KnowledgeAddOneDialog
+      v-model:open="addOneOpen"
+      :suggestion="addOneSuggestion"
+      @created="onCreated"
+    />
   </div>
 </template>
 
@@ -191,9 +104,11 @@
 import { MagicStick } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
-import { countKnowledgeDraftBlanks, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import type { KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { apiErrorText } from '~/utils/api-error-text'
 import { suggestionTopicLabel } from '~/utils/kb-suggestion-label'
-import { defaultAnsweredQueries, syncTickedQuestions } from '~/utils/kb-suggestion-answered'
+import { defaultAnsweredQueries } from '~/utils/kb-suggestion-answered'
+import type { AddOneCreated, AddOneSuggestion } from '~/utils/kb-add-one'
 
 interface SuggestionRow {
   id: string
@@ -212,15 +127,8 @@ interface SuggestionRow {
   lastSeenAtMs: number
 }
 
-interface AcceptResponse {
-  chunkId: string
-  status: string
-  failureReason: string | null
-  resolvedConversations: number
-  verify: { decision: string; confidence: number } | null
-  /** 沒勾、還留在清單上的題數（`C-311`；整組採用＝0） */
-  remainingQuestions?: number
-}
+/** 「交給真人就好」／「不用管」（`C-318`）：一樣是整組拿掉，原因記下來（dismiss 端點收 reason） */
+type DismissReason = 'handoff' | 'ignore'
 
 const emit = defineEmits<{
   /** 採用成功(知識庫多了一個 manual 資料),父頁面要重載資料列表 */
@@ -250,52 +158,19 @@ const lastScanAtMs = ref(0)
 const gapEvents = ref(0)
 const scanRequested = ref(false)
 const refreshing = ref(false)
-const dismissingId = ref<string | null>(null)
-const accepting = ref(false)
+/** 正在拿掉哪一筆、按的是哪一顆（兩顆都會整組拿掉，轉圈要轉在按下去的那一顆） */
+const dismissing = ref<{ id: string; reason: DismissReason } | null>(null)
 
-const reviewOpen = ref(false)
-const reviewing = ref<SuggestionRow | null>(null)
-const form = ref<{ title: string; content: string; tags: string[]; questions: string[] }>({
-  title: '', content: '', tags: [], questions: [],
-})
+const addOneOpen = ref(false)
+const addOneSuggestion = ref<AddOneSuggestion | null>(null)
 
 const lastError = ref('')
 
 /** 這一組全部的客人原句（`C-311`）：伺服器還沒給 queries（舊版）就退回樣本句 */
 const groupQueries = (s: SuggestionRow) => (s.queries?.length ? s.queries : s.sampleQueries)
 
-/**
- * 「這一條回答了哪幾題？」（`C-311`）。只有一題的組照舊（沒有可選的）；一題以上才出現勾選清單。
- * 勾選一變，「客人可能怎麼問」跟著變（規則見 syncTickedQuestions）——所以 v-model 綁的是這個可寫 computed，
- * 不用 watch：watch 在開下一筆時也會觸發，會拿上一筆的勾選去改這一筆的問法。
- */
-const reviewQueries = computed(() => (reviewing.value ? groupQueries(reviewing.value) : []))
-const isMulti = computed(() => reviewQueries.value.length > 1)
-const answered = ref<string[]>([])
-const answeredModel = computed<string[]>({
-  get: () => answered.value,
-  set: (next) => {
-    form.value.questions = syncTickedQuestions(form.value.questions, answered.value, next)
-    answered.value = next
-  },
-})
-const allTicked = computed(() => answered.value.length === reviewQueries.value.length)
-const someTicked = computed(() => answered.value.length > 0 && !allTicked.value)
-/** 一題都沒勾＝這一條沒回答任何一題，採用按鈕擋下（伺服器也會 400） */
-const noneTicked = computed(() => isMulti.value && !answered.value.length)
-function toggleAll(v: unknown) {
-  answeredModel.value = v ? [...reviewQueries.value] : []
-}
-
 // 載入完成與採用/忽略後都會換新陣列 → 每次變動都把最新數字報給父頁面
 watch(items, v => emit('count', v.length))
-
-/**
- * 佔位符即時計數:使用者在彈窗補完空格,警示要跟著消失。
- * 用 shared 的同一支正則——各寫一份的話,後端擋下採用時前端卻顯示「草稿乾淨」,
- * 使用者會收到 400 卻看不出哪裡要補。
- */
-const draftBlanks = computed(() => countKnowledgeDraftBlanks(form.value.content))
 
 /*
  * `C-314`：底下那一行（「上次分析：N 天前」／「尚未分析」／「讀不到分析結果」）拿掉了——
@@ -338,106 +213,62 @@ async function load() {
   }
 }
 
-function openReview(s: SuggestionRow) {
-  reviewing.value = s
+/**
+ * 「寫一句答案」（`C-318`）：打開「補一條知識」小視窗（建議那條路）。
+ * 預設勾哪幾題照 `C-311` 的 defaultAnsweredQueries：第三個參數是「標題欄會填的字」——草稿標題，沒有草稿就是主題名，
+ * 而主題名常就是其中一題的原句（正式站小滑手那組主題＝第 3 題「只能沖義式嗎」）。⛔ 不預設全勾（理由見那支）。
+ * 草稿有內容就交給視窗當「AI 先擬好的」預覽；草稿常是空的（知識庫本來就沒答案才會答不出來），那就等他自己打一兩句。
+ */
+function openAddOne(s: SuggestionRow) {
   const qs = groupQueries(s)
-  const multi = qs.length > 1
-  // 標題欄填什麼，預設就勾那一題：沒有草稿時填的是主題名，而主題名常就是其中一題的原句
-  //（正式站小滑手那組主題＝第 3 題「只能沖義式嗎」）——兩邊不一致會建出標題跟題目對不上的一條
   const title = s.draft?.title ?? s.topic
-  const ticked = multi ? defaultAnsweredQueries(qs, s.draft?.questions, title) : []
-  answered.value = ticked
-  form.value = {
-    title,
-    content: s.draft?.content ?? '',
-    tags: [...(s.draft?.tags ?? [])],
-    // 一題以上（`C-311`）：問法＝AI 擬的＋預設勾的客人原句。⛔ 沒有草稿時不再拿前 3 句客人原句當問法——
-    // 那會把沒勾（＝這一條沒回答）的題目也寫進這一條
-    questions: multi
-      ? syncTickedQuestions(s.draft?.questions ?? [], [], ticked)
-      : (s.draft?.questions?.length ? [...s.draft.questions] : [...s.sampleQueries.slice(0, 3)]),
+  addOneSuggestion.value = {
+    id: s.id,
+    queries: [...qs],
+    answeredDefault: qs.length > 1 ? defaultAnsweredQueries(qs, s.draft?.questions, title) : [...qs.slice(0, 1)],
+    draft: s.draft,
   }
-  reviewOpen.value = true
+  addOneOpen.value = true
 }
 
-async function accept() {
-  const s = reviewing.value
-  if (!s) return
-  accepting.value = true
-  try {
-    const res = await apiFetch<AcceptResponse>(`/api/ai/knowledge/suggestions/${s.id}/accept`, {
-      method: 'POST',
-      body: {
-        title: form.value.title.trim(),
-        content: form.value.content.trim(),
-        tags: form.value.tags,
-        questions: form.value.questions,
-        // `C-311`：勾了哪幾題（照清單順序）。只有一題的組不帶＝整組採用，跟以前一樣
-        ...(isMulti.value ? { answeredQueries: reviewQueries.value.filter(q => answered.value.includes(q)) } : {}),
-      },
-    })
-    reviewOpen.value = false
-    const left = res.remainingQuestions ?? 0
-    if (left > 0) {
-      // 沒勾的留在同一筆、伺服器重算了次數也換了名字——重讀清單才對得上（不在這裡自己猜）
-      await load()
-    }
-    else {
-      items.value = items.value.filter(i => i.id !== s.id)
-    }
-
-    // 回饋要講清楚三件事:學會了沒、試答結果、順手銷了幾筆案例；只回答其中幾題的再講沒勾的去哪了（`C-311`）
-    const resolvedNote = res.resolvedConversations > 0 ? `，並把 ${res.resolvedConversations} 筆監控頁案例標為已處理` : ''
-    const leftNote = left > 0 ? `。沒勾的 ${left} 題還在清單上` : ''
-    if (res.status !== 'indexed') {
-      showToast(`知識已建立，但 AI 學習失敗——請到知識上按「重新學習」${leftNote}`, 'error')
-    }
-    else if (res.verify?.decision === 'answered') {
-      // 不印相關度分數:對商家沒有意義,只會讓人以為那個數字要達到某個標準
-      showToast(`已學會！剛才用客人的問法試問過，AI 答得出來了${resolvedNote}${leftNote}`, 'success')
-    }
-    else {
-      // 卡建好了但試答沒答出來＝還沒真的解決,用警示色(不是綠色成功)
-      showToast(`知識已建立${resolvedNote}，但試答仍答不出來，建議到「測試對話」確認${leftNote}`, 'warning')
-    }
-    emit('accepted')
-  }
-  catch (err: any) {
-    showToast(err?.data?.statusMessage || err?.statusMessage || '採用失敗，請再試一次', 'error')
-  }
-  finally {
-    accepting.value = false
-  }
+/** 加好了（提示視窗自己講過了）：只回答其中幾題的那筆還在、伺服器重算了次數也換了名字——重讀清單才對得上（不在這裡自己猜） */
+async function onCreated(p: AddOneCreated) {
+  const id = addOneSuggestion.value?.id
+  if ((p.remainingQuestions ?? 0) > 0) await load()
+  else if (id) items.value = items.value.filter(i => i.id !== id)
+  emit('accepted')
 }
 
-async function dismiss(s: SuggestionRow) {
-  // `C-311`：忽略照舊是整組。一組有好幾題時先講清楚會一起拿掉——審核視窗裡有勾選清單，
-  // 不講的話容易以為只略過沒勾的那幾題
+/**
+ * 「交給真人就好」／「不用管」（`C-318`）：都是整組拿掉，原因記下來（dismiss 收 reason）。
+ * 一組有好幾題時先講清楚會一起拿掉（`C-311`：「寫一句答案」那邊是可以只回答其中幾題的，不講的話容易以為這裡也是）。
+ */
+async function dismiss(s: SuggestionRow, reason: DismissReason) {
+  if (dismissing.value) return
   const n = groupQueries(s).length
   if (n > 1) {
     try {
       await ElMessageBox.confirm(
-        `這一組的 ${n} 題會全部從清單拿掉。`,
-        '忽略這個主題？',
-        { confirmButtonText: '全部忽略', cancelButtonText: '取消', type: 'warning' },
+        `這一組的 ${n} 題都不再列。`,
+        reason === 'handoff' ? '這一組都交給真人？' : '這一組都不用管？',
+        { confirmButtonText: '好', cancelButtonText: '取消', type: 'warning' },
       )
     }
     catch {
       return
     }
   }
-  dismissingId.value = s.id
+  dismissing.value = { id: s.id, reason }
   try {
-    await apiFetch(`/api/ai/knowledge/suggestions/${s.id}/dismiss`, { method: 'POST' })
+    await apiFetch(`/api/ai/knowledge/suggestions/${encodeURIComponent(s.id)}/dismiss`, { method: 'POST', body: { reason } })
     items.value = items.value.filter(i => i.id !== s.id)
-    if (reviewing.value?.id === s.id) reviewOpen.value = false
-    showToast('已忽略。同一主題如果被問的次數翻倍，會再次出現', 'success')
+    showToast(reason === 'handoff' ? '好，這類問題交給真人' : '已略過', 'success')
   }
-  catch {
-    showToast('忽略失敗，請再試一次', 'error')
+  catch (err) {
+    showToast(apiErrorText(err, '沒改成，請再試一次'), 'error')
   }
   finally {
-    dismissingId.value = null
+    dismissing.value = null
   }
 }
 

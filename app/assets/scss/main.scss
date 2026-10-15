@@ -46,6 +46,9 @@
 @use "./components/follow-welcome";
 @use "./components/store-profile";
 @use "./components/marketing-calendar";
+// 知識庫改版（`C-315`／`C-317`，D-126）：右邊「問 AI 一題」、「補一條知識」小視窗
+@use "./components/knowledge-ask";
+@use "./components/knowledge-add-one";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

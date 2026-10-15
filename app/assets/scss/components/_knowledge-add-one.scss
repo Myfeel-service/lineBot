@@ -1,0 +1,56 @@
+// 「補一條知識」小視窗（`C-317`，app/components/knowledge/KnowledgeAddOneDialog.vue）
+// 照示意頁 RhjGQXbdZhqiXpXuM3Vjei ④：客人問／正確答案兩格＋「AI 整理成這樣」淺灰框。
+// 「這一條回答了哪幾題？」沿用 `C-311` 的 .kb-suggest-queries（pages/_knowledge-sources.scss），不另寫一套。
+// 房規：樣式放 partial＋main.scss @use，不寫在 .vue <style>。
+
+.kb-addone {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+
+  // .kb-suggest-queries 本來在審核視窗裡自己帶 margin-bottom；這裡由外層 gap 管間距，不疊兩次
+  .kb-suggest-queries { margin-bottom: 0; }
+
+  &__tidy {
+    display: flex;
+    justify-content: flex-start;
+  }
+
+  &__preview {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  &__preview-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  // 標題那一格粗一點，一眼看得出哪一格是標題（夾父層 0,2,0 才蓋得過 EP 的 .el-input__inner）
+  &__preview-title .el-input__inner { font-weight: 600; }
+
+  &__warn {
+    margin: 0;
+    font-size: 12px;
+    color: var(--el-color-warning-dark-2);
+  }
+  &__error {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--el-color-danger);
+  }
+}
+
+// 「客人問了、AI 答不出來」每一列三顆按鈕（`C-318`）：側欄窄的時候要能換行；
+// EP 的 .el-button + .el-button 有 margin-left:12px，換行後第二行會往右縮一截（夾父層 0,2,0 才蓋得過）。
+// 兩個 class 疊起來（0,2,0）：pages/_knowledge-sources.scss 的 .kb-suggest-item__actions 排在這支後面載入，同權重會蓋掉 gap
+.kb-suggest-item__actions.kb-suggest-item__actions--three {
+  flex-wrap: wrap;
+  gap: 6px;
+
+  .el-button + .el-button { margin-left: 0; }
+}
