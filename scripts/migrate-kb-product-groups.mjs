@@ -43,6 +43,16 @@ const merges = args.filter(a => a.startsWith('--merge=')).map((a) => {
   return { from: String(from ?? '').trim(), into: String(into ?? '').trim() }
 })
 const clears = args.filter(a => a.startsWith('--clear-product=')).map(a => a.slice('--clear-product='.length).trim()).filter(Boolean)
+// 指定一份的產品名（拿不準、要人選的那幾份；老闆選好之後用）：--set-product=<資料id>:<產品名>（產品名裡可以有冒號，只切第一個）
+const sets = args.filter(a => a.startsWith('--set-product=')).map((a) => {
+  const v = a.slice('--set-product='.length)
+  const i = v.indexOf(':')
+  return { id: (i > 0 ? v.slice(0, i) : '').trim(), name: (i > 0 ? v.slice(i + 1) : '').trim() }
+})
+if (sets.some(s => !s.id || !s.name)) {
+  console.error('--set-product 要寫成 --set-product=<資料id>:<產品名>')
+  process.exit(1)
+}
 
 if (!workspaceId) {
   console.error('用法：node --env-file=.env_myfeel scripts/migrate-kb-product-groups.mjs <workspaceId> [--apply] [--merge=從:到] [--clear-product=資料id]')
@@ -202,8 +212,17 @@ function printPlan(state, plan) {
   console.log(`   產品名空的、拿不準不補 ${plan.ambiguous.length} 份`)
   console.log(`   通用分組裡有產品名、要問 ${plan.questions.length} 份`)
   console.log(`   可能重複的資料夾 ${plan.duplicates.length} 組`)
-  if (merges.length || clears.length) {
+  if (merges.length || clears.length || sets.length) {
     console.log(`   另外指定：合併 ${merges.length} 組、清產品名 ${clears.length} 份${clears.length ? `（${clears.map(id => `${q(sources.find(s => s.id === id)?.name ?? id)} ${relearnCount.get(id) ?? 0} 條要重新學習`).join('、')}）` : ''}`)
+    for (const m of merges) {
+      const from = state.folders.find(f => f.id === m.from)
+      const into = state.folders.find(f => f.id === m.into)
+      console.log(`     · 合併 ${q(from?.name ?? m.from)} → ${q(into?.name ?? m.into)}（搬 ${sources.filter(s => s.folderId === m.from).length} 份；合完整組重新判斷要不要補產品名）`)
+    }
+    for (const s of sets) {
+      const src = sources.find(x => x.id === s.id)
+      console.log(`     · 指定產品名：${q(src?.name ?? s.id)}（現在 ${q(src?.productName || '（空）')}）→ ${q(s.name)}，${relearnCount.get(s.id) ?? 0} 條要重新學習`)
+    }
   }
 }
 
@@ -246,6 +265,9 @@ async function runApply(state, plan) {
       await updateSourceSettings(db, workspaceId, s.id, { folderId: into.id })
       movedIds.push(s.id)
     }
+    // 合完整組都要重新判斷，不只搬過去的那幾份：原本就在目標組、因為「同組沒人填過」補不了的那份
+    //（MYFEEL「SHARP 自動調理零水鍋」裡的「Progress」），合進來的那份帶著產品名，現在補得上了
+    for (const s of state.sources.filter(x => x.folderId === into.id)) movedIds.push(s.id)
     const { movedSources } = await deleteFolderCascade(db, workspaceId, from.id)
     await audit('knowledgeFolder.delete', from.id, `「${from.name}」併進「${into.name}」：搬了 ${members.length} 份${movedSources ? `，另有 ${movedSources} 份搬家途中新加進來的改成未分類` : ''}（C-320）`)
     console.log(`   ✓ ${q(from.name)} 併進 ${q(into.name)}（${members.length} 份）`)
@@ -281,6 +303,21 @@ async function runApply(state, plan) {
     failed += r.failed
     await audit('source.put', id, `${s.name}：清掉產品名「${s.productName}」（通用分組裡不講單一商品），重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}（C-320）`)
     console.log(`   ✓ ${q(s.name)} 清掉產品名，重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}`)
+  }
+
+  // 5. 指定產品名（有指定才做；拿不準、老闆選好的那幾份）
+  for (const t of sets) {
+    const s = state.sources.find(x => x.id === t.id)
+    if (!s) {
+      console.log(`   ✗ 指定產品名 ${t.id}：找不到這份資料，跳過`)
+      continue
+    }
+    await updateSourceSettings(db, workspaceId, t.id, { productName: t.name })
+    const r = await relearnSourceChunks(db, workspaceId, t.id)
+    relearned += r.indexed
+    failed += r.failed
+    await audit('source.put', t.id, `${s.name}：產品名「${s.productName || '（空）'}」改成「${t.name}」（同組有兩種寫法，照老闆選的），重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}（C-320）`)
+    console.log(`   ✓ ${q(s.name)} 產品名設成 ${q(t.name)}，重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}`)
   }
 
   console.log(`\n完成：重新學習 ${relearned} 條${failed ? `、失敗 ${failed} 條（排程會自動重試，或到那一份按重新學習）` : ''}`)
