@@ -1121,7 +1121,17 @@ function resolveUriWithTagging(input: {
     userId: input.userId,
     tagIds,
   }, secret)
-  return `${publicBase}/api/t/${encodeURIComponent(token)}`
+  const tagged = `${publicBase}/api/t/${encodeURIComponent(token)}`
+  /*
+   * LINE 的網址最多 1000 字（按鈕、Flex、imagemap 都是）。貼標連結把原網址、客人、標籤整包編進去，約原網址 1.33 倍再加兩三百字——
+   * 原網址五六百字（中文商品名＋UTM）就超過，LINE 會把**整則**退回：推播一人一則送時每一位都失敗、0 人收到（`C-322` 審查第 2 條）。
+   * 超過就退回原網址：這顆按鈕點了不貼標，但訊息送得出去。⛔ 要留 log，不可以安靜吞掉
+   */
+  if (tagged.length > 1000) {
+    console.warn(`[uri-tagging] 貼標連結 ${tagged.length} 字超過 LINE 上限 1000，這顆按鈕改用原網址（點了不貼標）：原網址 ${original.length} 字、${tagIds.length} 個標籤`)
+    return original
+  }
+  return tagged
 }
 
 function clampImagemapArea(

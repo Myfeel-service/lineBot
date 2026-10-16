@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { renderBroadcastVariablesDeep } from '~~/shared/preview-variables'
+import { renderBroadcastVariablesDeep, renderPreviewVariablesDeep } from '~~/shared/preview-variables'
 import { attributeContextForUser, renderBroadcastMessagesForSend, renderWithAttributes } from './render-attributes'
 
 /**
@@ -36,6 +36,15 @@ describe('推播的變數：預覽跟送出同一條規則', () => {
 
   it('一般回覆照舊換成那位客人的值', () => {
     expect(renderWithAttributes('嗨 {{displayName}}', { displayName: '吉米' })).toBe('嗨 吉米')
+  })
+
+  it('還沒送的預覽（範例值）換的跟送出端是同一批變數：中文變數名兩邊都原字（`C-321` 審查第 3 條）', () => {
+    for (const text of SAMPLES) {
+      const sentKeys = text !== renderWithAttributes(text, {}) ? 'changed' : 'same'
+      const previewKeys = renderPreviewVariablesDeep({ type: 'text', text }).keys.length ? 'changed' : 'same'
+      expect(previewKeys, text).toBe(sentKeys)
+    }
+    expect(renderPreviewVariablesDeep({ type: 'text', text: '{{姓名}} 你好' }).value.text).toBe('{{姓名}} 你好')
   })
 })
 

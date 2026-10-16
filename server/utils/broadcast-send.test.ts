@@ -461,6 +461,49 @@ describe('executeBroadcastSend — 用了客人名字的推播一人一則送', 
     expect(res).toMatchObject({ success: true, sentCount: 3, failedCount: 0 })
   })
 
+  it('⭐ 匯入名單存的是 LINE 代號（`U…`，好友頁「推播給這 N 位」、手動貼的）：照樣讀得到名字（`C-321` 審查第 1 條）', async () => {
+    // 以前直接拿 U1 去讀 users/U1，一份都讀不到：每位的名字都是空白，試發（用的是正確的文件編號）卻看得到自己的名字
+    claimText('嗨 {{displayName}}', ['U1', 'w1_U2'])
+    makeDb({
+      users: {
+        w1_U1: { displayName: '王小明', lineUserId: 'U1' },
+        w1_U2: { displayName: '陳小華', lineUserId: 'U2' },
+      },
+    })
+    const { received } = pushRecords()
+
+    await executeBroadcastSend('bc1')
+
+    expect(received.get('U1')![0].text).toBe('嗨 王小明')
+    expect(received.get('U2')![0].text).toBe('嗨 陳小華')
+  })
+
+  it('⭐ 一人一則送的過程每 2 分鐘寫一次「還活著」（看門狗 10 分鐘沒寫入就收成失敗，`C-321` 審查第 5 條）；送完就停', async () => {
+    vi.useFakeTimers()
+    try {
+      claimText('嗨 {{displayName}}', ['w1_U1'])
+      const { updates } = makeDb({ users: { w1_U1: { displayName: '吉米' } } })
+      let beatsWhileSending = 0
+      mockPush.mockImplementation(async (recipients) => {
+        const before = updates.length
+        // LINE 一直回 5xx、退避重試，送了 11 分鐘
+        await vi.advanceTimersByTimeAsync(11 * 60_000)
+        beatsWhileSending = updates.slice(before).filter(u => Object.keys(u).join() === 'updatedAt').length
+        return { successCount: recipients.length, alreadySentCount: 0, failedIds: [], failureReasons: {}, lineAggregationApplied: true, stoppedReason: null }
+      })
+
+      await executeBroadcastSend('bc1')
+      const afterSend = updates.length
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(beatsWhileSending).toBe(5)
+      expect(updates.length).toBe(afterSend)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('⛔ 沒用變數的推播照舊群發（一人一則送不會多得到任何東西，只會更慢）', async () => {
     claimText('今天公休', ['w1_U1', 'w1_U2'])
     mockMulticast.mockResolvedValue({ successCount: 2, failedIds: [], lineAggregationApplied: true })

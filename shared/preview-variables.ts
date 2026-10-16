@@ -22,7 +22,12 @@
 /** 範例名字。⚠️ 畫面上一定要標明這是範例，不是那位客人真的叫這個。 */
 export const PREVIEW_SAMPLE_DISPLAY_NAME = '王小明'
 
-const VAR_RE = /\{\{\s*([A-Za-z0-9_一-鿿]+)\s*\}\}/g
+/**
+ * ⚠️ 跟送出端同一條：只認英文開頭的變數名（`server/utils/render-attributes.ts` 的 `renderWithAttributes`）。
+ * 以前這裡也認中文（`{{姓名}}`）：預覽畫「（姓名）」說會換成客人的資料，送出端卻原字送出、客人收到「{{姓名}}」——
+ * 推播改成還沒送的也走這一支之後（`C-321`）被審查抓到（`C-321` 審查第 3 條）。中文變數名預覽也照原字畫
+ */
+const VAR_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g
 
 /** ⛔ 這些欄位的值是網址／識別碼，換掉會壞掉 */
 const SKIP_KEYS = new Set(['uri', 'url', 'imageUrl', 'thumbnailUrl', 'previewUrl', 'data', 'id', 'moduleId', 'richMessageRef'])

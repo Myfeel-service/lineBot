@@ -15,7 +15,7 @@ import { lineStatsNextDueAt } from '~~/shared/broadcast-line-stats'
  * 而漂開的結果就是 `C-229` 那個畫了四個月、客人一次都沒收到的預覽。
  */
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
-import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
+import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
 import { addTagsToUser } from './tagging'
 import { getWorkspacePlan } from './billing'
@@ -283,11 +283,16 @@ export async function executeBroadcastSend(
       console.warn('[broadcast/send] PUBLIC_BASE_URL（或舊名 LINE_IMAGEMAP_BASE_URL／CLICK_TRACKING_BASE_URL）未設定，推播 URI 點擊不會寫入 broadcastClickLogs')
     }
 
+    /*
+     * docId 是名單上原本的寫法，⚠️ 不一定是客人資料的文件編號：「匯入名單」存的是 LINE 代號（`U…`，好友頁「推播給這 N 位」、
+     * 手動貼的都是），文件編號是 `工作區_U…`。讀名字、貼標一律用 userDocId——以前直接拿 docId 去讀 users/U…，
+     * 一份都讀不到：匯入名單發的推播每位的名字都是空白、預覽卻說會換成他的名字；發完貼標也貼不上（`C-321` 審查第 1 條）
+     */
     const recipients = resolvedUserIds
-      .map((docId) => ({
-        docId,
-        lineUserId: String(lineUserIdFromFirestoreDocId(docId, workspaceId) || '').trim(),
-      }))
+      .map((docId) => {
+        const lineUserId = String(lineUserIdFromFirestoreDocId(docId, workspaceId) || '').trim()
+        return { docId, lineUserId, userDocId: lineUserId ? lineUserFirestoreDocId(lineUserId, workspaceId) : '' }
+      })
       .filter((r) => Boolean(r.lineUserId))
     const lineUserIds = recipients.map((r) => r.lineUserId)
 
@@ -305,14 +310,31 @@ export async function executeBroadcastSend(
     let stoppedReason: string | null = null
 
     if (sendMode === 'perRecipient') {
-      const contexts = await loadAttributeContexts(db, recipients.map(r => r.docId))
-      const contextByLineUserId = new Map(recipients.map(r => [r.lineUserId, contexts.get(r.docId) ?? {}]))
-      const pushed = await pushMessagesPerRecipient(
-        recipients.map(r => ({ lineUserId: r.lineUserId, retryKey: broadcastRetryKey(id, r.lineUserId) })),
-        lineUserId => wrapForLine(renderFor(contextByLineUserId.get(lineUserId) ?? {}, lineUserId)) as any,
-        workspaceId,
-        { customAggregationUnits: [lineUnit] },
-      )
+      const contexts = await loadAttributeContexts(db, recipients.map(r => r.userDocId))
+      const contextByLineUserId = new Map(recipients.map(r => [r.lineUserId, contexts.get(r.userDocId) ?? {}]))
+      /*
+       * 還活著的記號（`C-321` 審查第 5 條）：看門狗 10 分鐘沒看到寫入就把推播收成「失敗」，一人一則送從寫快照到送完中間不寫任何東西——
+       * LINE 一直回 5xx、每位退避重試時可能拖過 10 分鐘，還在送就被收掉；這時重設再發＝兩個流程同時送。
+       * 送的過程每 2 分鐘推一下 updatedAt（快照已經寫過、updatedAt 早就不等於 startedAt，不影響看門狗「能不能安全補發」的判斷）。
+       * ⛔ 最後一筆要等它寫完再往下（Lambda 上不 await 的寫入會被凍住）
+       */
+      let heartbeat: Promise<unknown> = Promise.resolve()
+      const heartbeatTimer = setInterval(() => {
+        heartbeat = ref.update({ updatedAt: FieldValue.serverTimestamp() }).catch(() => {})
+      }, 2 * 60_000)
+      let pushed: Awaited<ReturnType<typeof pushMessagesPerRecipient>>
+      try {
+        pushed = await pushMessagesPerRecipient(
+          recipients.map(r => ({ lineUserId: r.lineUserId, retryKey: broadcastRetryKey(id, r.lineUserId) })),
+          lineUserId => wrapForLine(renderFor(contextByLineUserId.get(lineUserId) ?? {}, lineUserId)) as any,
+          workspaceId,
+          { customAggregationUnits: [lineUnit] },
+        )
+      }
+      finally {
+        clearInterval(heartbeatTimer)
+        await heartbeat
+      }
       ;({ successCount, failedIds, lineAggregationApplied, failureReasons, stoppedReason } = pushed)
       if (pushed.alreadySentCount) {
         // 送到一半斷掉後重發：這些人上一輪就收到了，LINE 認出同一個重送編號沒有再送（算在送達裡）
@@ -374,7 +396,7 @@ export async function executeBroadcastSend(
         const chunk = succeeded.slice(i, i + CHUNK)
         const results = await Promise.allSettled(chunk.map(r =>
           // ⛔ 走既有的 addTagsToUser，不要另寫一份寫入——那支還維護命中次數等欄位
-          addTagsToUser(r.docId, completionTagIds, 'system', `broadcast:${id}`, workspaceId),
+          addTagsToUser(r.userDocId, completionTagIds, 'system', `broadcast:${id}`, workspaceId),
         ))
         for (const res of results) {
           if (res.status === 'fulfilled') taggedCount += 1
