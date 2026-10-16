@@ -725,10 +725,10 @@
    * ⚠️ 圖標高度用 --brand-logo-h（BrandLogo 的規矩：大小由外層給，元件不開 size prop）；
    *    on-color＝白色版，綠底上才看得見。
    * ⚠️ 09-09 第五輪拿掉的是**中線那顆沒有標籤的浮球**（讀起來像壞掉的按鈕）——
-   *    ⛔ 那顆仍然不要加回來，跟這裡「標籤裡的小圖標」是兩件事。
-   * ⚠️ 圖標高度**不可以超過那行字的行框**（0.82rem × line-height 1 ＝ 13.1px）：flex 容器的高
-   *    由最高的那個孩子決定，放 15px 就會把右邊標籤撐成 31px、左邊仍 29px——兩顆並排差 2px，
-   *    下緣對不齊（實測到才改的）。13px 之下兩顆同高 29px。 */
+   *    ⛔ 那顆仍然不要加回來，跟這裡「標籤裡的小圖標」是兩件事。 */
+  /* ⚠️ 圖標高度**不可以超過那行字的行框**（0.82rem × line-height 1 ＝ 13.1px）：flex 容器的高
+     由最高的那個孩子決定，放 15px 就會把右邊標籤撐成 31px、左邊仍 29px——兩顆並排差 2px，
+     下緣對不齊（實測到才改的）。13px 之下兩顆同高 29px。 */
   .lp-vs__tag--o .brand-logo { --brand-logo-h: 13px; height: var(--brand-logo-h); width: auto; flex: none; }
   /* 兩顆章：蓋在各自那扇窗的右上角，像驗訖章（靜態 rotate，punch 動畫只動 scale/opacity
      ——individual properties，不碰 transform）。
