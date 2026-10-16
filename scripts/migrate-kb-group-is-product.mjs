@@ -389,14 +389,26 @@ if (relearnFailedReason) {
       process.exit(1)
     }
     const { relearnSourceChunks } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-product-group.ts'))
+    const { writeAuditLog } = await jiti.import(join(ROOT, 'server/utils/audit-log.ts'))
+    // 操作紀錄要跟著寫：10-16 補學 281 條沒記，後台只看得到第一次「失敗 281 條」、看不出後來補好了
+    const audit = entry => writeAuditLog({ workspaceId, uid: '', actor: 'system', ...entry }, db)
     let indexed = 0
     let failed = 0
     for (const sid of bySource.keys()) {
+      const name = String((await db.collection('knowledgeSources').doc(sid).get()).get('name') ?? sid)
       const r = await relearnSourceChunks(db, workspaceId, sid)
       indexed += r.indexed
       failed += r.failed
-      console.log(`  ${sid}：學 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed}（${r.failures[0]?.failureReason ?? ''}）` : ''}`)
+      // 同後台「重新學習這一份」（reindex.post.ts）的記法
+      await audit({
+        action: 'source.reindex',
+        targetId: sid,
+        after: { name, itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed },
+        note: `搬家（D-127）補學：${name}：重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}`,
+      })
+      console.log(`  ${q(name)}：學 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed}（${r.failures[0]?.failureReason ?? ''}）` : ''}`)
     }
+    await audit({ action: 'knowledgeFolder.put', note: `搬家（D-127）補學做完：之前失敗的 ${bySource.size} 份重新學習 ${indexed} 條${failed ? `（失敗 ${failed} 條）` : '、0 失敗'}` })
     console.log(`\n做完：重新學習 ${indexed} 條、失敗 ${failed} 條`)
   }
   process.exit(0)
