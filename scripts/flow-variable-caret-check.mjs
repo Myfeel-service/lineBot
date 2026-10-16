@@ -36,7 +36,11 @@ const WORKSPACE_ID = process.env.CHECK_WORKSPACE_ID ?? '7dfc1033-f069-4a28-8d22-
 /** 飛利浦AC0510｜預熱（有一則「文字＋按鈕」的訊息，textarea 與單行輸入框都看得到） */
 const FLOW_ID = process.env.CHECK_FLOW_ID ?? '58d6846d-7d76-4991-9c60-c4491a756e9c'
 
-const TOKEN = '{{displayName}}'
+/**
+ * `D-128`：輸入框裡顯示的是膠囊的字（前後各一個窄的不換行空白包住「LINE 名稱」，見 shared/variable-tokens），
+ * 存的時候才換回 {{displayName}}。這支量的是輸入框裡的字，所以期望值是膠囊的字。
+ */
+const TOKEN = ' LINE 名稱 '
 const SAMPLE = '您好，請問要寄到哪'
 
 const { FIREBASE_PROJECT_ID: projectId, FIREBASE_CLIENT_EMAIL: clientEmail, FIREBASE_PRIVATE_KEY: privateKey, FIREBASE_API_KEY: apiKey } = process.env
@@ -157,12 +161,12 @@ async function mouseClick(selector, matchText = '', scroll = true) {
 }
 
 /**
- * 真的用滑鼠按 `{{...}}`、再按下拉裡的「聯絡人名稱」。
+ * 真的用滑鼠按「＋ 插入客人資料」、再按下拉裡的「LINE 名稱」（`D-128` 以前是 `{{...}}`／「聯絡人名稱」）。
  */
 async function pickVariable(wrapSelector) {
   await mouseClick(`${wrapSelector} .flow-var-inset__btn`)
   await sleep(400)
-  await mouseClick('.el-dropdown-menu__item', '聯絡人名稱', false)
+  await mouseClick('.el-dropdown-menu__item', 'LINE 名稱', false)
   await sleep(400)
 }
 
@@ -281,6 +285,50 @@ seen = await readField(TA, 'textarea')
 check('⑨ 欄位已經滿 160 字時，按下去仍然插得進去（⛔ 不可以變成按了沒反應）',
   seen.value.includes(TOKEN) && seen.value.startsWith(`滿滿滿${TOKEN}`),
   `長度 ${seen.value.length}、開頭「${seen.value.slice(0, 20)}」`)
+
+// ── ⑩⑪⑫ 膠囊要像一個字（`D-128`）─────────────────────────────
+// ⑩ 退格一次整顆刪掉（不會刪成「LINE 名」半顆）
+await resetField(TA, 'textarea', '您好')
+await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  el.focus()
+  el.setSelectionRange(2, 2)
+}, TA)
+await pickVariable(TA)
+await sleep(300)
+// ⑫ 先量膠囊有沒有畫出來、跟字對不對得齊（同一格字型量那幾個字的寬度，跟膠囊比）
+const pill = await page.evaluate((sel, token) => {
+  const wrap = document.querySelector(sel)
+  const ta = wrap.querySelector('textarea')
+  const p = wrap.querySelector('.var-field__pill')
+  if (!p) return null
+  const cs = getComputedStyle(ta)
+  const ctx = document.createElement('canvas').getContext('2d')
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`
+  const r = p.getBoundingClientRect()
+  const t = ta.getBoundingClientRect()
+  return { w: r.width, expect: ctx.measureText(token).width, inside: r.left >= t.left && r.right <= t.right && r.top >= t.top && r.bottom <= t.bottom }
+}, TA, TOKEN)
+check('⑫ 插進去的變數畫成一顆膠囊、寬度跟那幾個字一樣（後面的字不會錯位）',
+  !!pill && pill.inside && Math.abs(pill.w - pill.expect) < 3,
+  pill ? `膠囊 ${pill.w.toFixed(1)}px、字 ${pill.expect.toFixed(1)}px、在框內＝${pill.inside}` : '找不到膠囊')
+await page.keyboard.press('Backspace')
+await sleep(300)
+seen = await readField(TA, 'textarea')
+check('⑩ 膠囊後面按一次退格 → 整顆刪掉', seen.value === '您好', `「${seen.value}」`)
+
+// ⑪ 左鍵一次跳過整顆（游標不會停在膠囊中間）
+await resetField(TA, 'textarea', '您好')
+await page.evaluate((sel) => {
+  const el = document.querySelector(sel).querySelector('textarea')
+  el.focus()
+  el.setSelectionRange(2, 2)
+}, TA)
+await pickVariable(TA)
+await page.keyboard.press('ArrowLeft')
+await sleep(200)
+seen = await readField(TA, 'textarea')
+check('⑪ 膠囊後面按一次左鍵 → 跳到膠囊前面', seen.caret === 2, `游標在 ${seen.caret}（應為 2）`)
 
 // ── ⑤ 單行輸入框（按鈕文字）走的是另一個分支 ─────────────────────
 const INPUT_WRAP = '.flow-input-inset-wrap'

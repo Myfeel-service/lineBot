@@ -123,11 +123,10 @@
                 :action="form.action"
                 :type-options="presetActionTypeOptions"
                 :module-options="modules"
-                :variable-options="[]"
+                :variable-options="[DISPLAY_NAME_VARIABLE_OPTION]"
                 header-label=""
                 flat
                 :show-label-field="false"
-                :show-variable-inset="false"
                 module-title="機器人模組"
                 module-placeholder="請選擇要觸發的模組"
                 text-title="回覆文字"
@@ -186,6 +185,8 @@
 import { Box, Delete, Plus } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { normalizeAutoReplyAction, normalizeAutoReplyTagging } from '~~/shared/auto-reply-rule'
+// `D-128`：回覆文字也能插入客人的 LINE 名稱（送出端 renderWithAttributes 本來就會換，以前只是沒有按鈕、要自己打 {{displayName}}）
+import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import {
   normalizeSupportPreset,
   validateSupportPreset,

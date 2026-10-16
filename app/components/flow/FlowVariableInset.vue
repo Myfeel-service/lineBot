@@ -18,7 +18,10 @@
             :key="opt.value"
             :command="opt.token"
           >
-            {{ opt.label }}
+            <span class="flow-var-inset__item">
+              <span class="flow-var-inset__item-label">{{ opt.label }}</span>
+              <span v-if="opt.hint" class="flow-var-inset__item-hint">{{ opt.hint }}</span>
+            </span>
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>
@@ -27,13 +30,17 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { CaretRange } from '~/utils/insert-token-at-caret'
 import { insertTokenAtCaret } from '~/utils/insert-token-at-caret'
 
-export type VariableInsetOption = { value: string; label: string; token: string }
+/**
+ * token＝插進輸入框的字。`D-128` 起是膠囊的顯示用字（`displayTokenFor`），輸入框要是 `VariableTextField`；
+ * label＝選單上的名稱（「LINE 名稱」），hint＝底下一行小字講它是什麼。
+ */
+export type VariableInsetOption = { value: string; label: string; token: string; hint?: string }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     options: VariableInsetOption[]
     /** Compact trigger for size="small" inputs */
@@ -52,10 +59,13 @@ const emit = defineEmits<{
   pick: [token: string, range: CaretRange | null]
 }>()
 
-const glyph = '{{...}}'
-const ariaLabel = '插入變數'
-// 滑鼠懸停說明（白話），避免 {{...}} 這個工程符號沒人看得懂
-const hint = '插入變數（例：聯絡人名稱）'
+/**
+ * `D-128`（2026-10-17 老闆「看起來很像程式碼」）：按鈕以前寫「{{...}}」——工程符號，店家看不出按了會怎樣。
+ * 改講會做什麼；單行的小輸入框（卡片標題）位置窄，用短的。
+ */
+const glyph = computed(() => (props.size === 'sm' ? '＋ 客人資料' : '＋ 插入客人資料'))
+const ariaLabel = '插入客人資料'
+const hint = '插入客人的資料（例：LINE 名稱），送出時換成每位客人自己的'
 
 const rootEl = ref<HTMLElement | null>(null)
 

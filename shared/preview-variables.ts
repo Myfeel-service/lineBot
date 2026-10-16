@@ -38,15 +38,48 @@ export interface PreviewVariableResult<T> {
   keys: string[]
 }
 
+/**
+ * 預覽裡「這一段是範例」的記號（`D-128`）：範例值前後各夾一個私用字元，畫面用 `PreviewText` 把夾住的那段標黃色。
+ * 私用字元平常不會出現在文案裡；⛔ 只有要畫在預覽上的才加（`{ mark: true }`），拿去算字數或送出的不要加。
+ */
+export const PREVIEW_MARK_OPEN = ''
+export const PREVIEW_MARK_CLOSE = ''
+
+export interface PreviewVariableOptions {
+  /** 範例值前後夾上記號，畫面標黃色（`D-128`） */
+  mark?: boolean
+}
+
 /** 一段文字裡的變數換成範例值 */
-export function renderPreviewVariablesInText(text: string): PreviewVariableResult<string> {
+export function renderPreviewVariablesInText(text: string, opts: PreviewVariableOptions = {}): PreviewVariableResult<string> {
   const keys: string[] = []
   const out = String(text ?? '').replace(VAR_RE, (_m, rawKey: string) => {
     const key = String(rawKey)
     if (!keys.includes(key)) keys.push(key)
-    return key === 'displayName' ? PREVIEW_SAMPLE_DISPLAY_NAME : `（${key}）`
+    const sample = key === 'displayName' ? PREVIEW_SAMPLE_DISPLAY_NAME : `（${key}）`
+    return opts.mark ? `${PREVIEW_MARK_OPEN}${sample}${PREVIEW_MARK_CLOSE}` : sample
   })
   return { value: out, keys }
+}
+
+/** 帶記號的預覽文字切成一段段（mark＝範例、要標黃色）。記號被字數截斷剩一半也不會壞：沒關起來的標到最後 */
+export function splitPreviewMarks(text: string): Array<{ text: string; mark: boolean }> {
+  const s = String(text ?? '')
+  if (!s.includes(PREVIEW_MARK_OPEN) && !s.includes(PREVIEW_MARK_CLOSE)) return [{ text: s, mark: false }]
+  const out: Array<{ text: string; mark: boolean }> = []
+  let mark = false
+  let buf = ''
+  for (const ch of s) {
+    if (ch === PREVIEW_MARK_OPEN || ch === PREVIEW_MARK_CLOSE) {
+      if (buf) out.push({ text: buf, mark })
+      buf = ''
+      mark = ch === PREVIEW_MARK_OPEN
+      continue
+    }
+    buf += ch
+  }
+  if (buf) out.push({ text: buf, mark })
+  return out
 }
 
 /**
@@ -55,13 +88,13 @@ export function renderPreviewVariablesInText(text: string): PreviewVariableResul
  * ⛔ **不可以就地改**：傳進來的多半是表單或抓回來的模組內容，
  *    改到原物件等於把範例值寫進店家正在編的資料裡。這裡一律回新的。
  */
-export function renderPreviewVariablesDeep<T>(input: T): PreviewVariableResult<T> {
+export function renderPreviewVariablesDeep<T>(input: T, opts: PreviewVariableOptions = {}): PreviewVariableResult<T> {
   const keys: string[] = []
 
   const walk = (value: unknown, key?: string): unknown => {
     if (typeof value === 'string') {
       if (key && SKIP_KEYS.has(key)) return value
-      const r = renderPreviewVariablesInText(value)
+      const r = renderPreviewVariablesInText(value, opts)
       for (const k of r.keys) if (!keys.includes(k)) keys.push(k)
       return r.value
     }
@@ -162,8 +195,9 @@ export function previewVariableNote(keys: string[]): string {
   if (!keys.length) return ''
   const hasName = keys.includes('displayName')
   const others = keys.filter(k => k !== 'displayName')
+  // `D-128`：範例在預覽上標黃色了，句子從「標黃色的」講起（老闆 10-17 示意頁定的說法）
   const parts: string[] = []
-  if (hasName) parts.push(`「${PREVIEW_SAMPLE_DISPLAY_NAME}」是範例——客人看到的是他自己的名字`)
+  if (hasName) parts.push('客人看到的是他自己的 LINE 名稱')
   if (others.length) parts.push(`${others.map(k => `（${k}）`).join('')}會換成那位客人的資料`)
-  return `${parts.join('；')}。取不到的話那一格會是空白。`
+  return `標黃色的是範例：${parts.join('；')}。取不到的話那一格會是空白。`
 }

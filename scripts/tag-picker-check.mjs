@@ -1174,15 +1174,16 @@ async function checkBuiltinVariable() {
     if (!picked) { fail('自動回應：沒有既有流程可以點開'); return }
     await sleep(2500)
 
+    // `D-128`：按鈕改叫「＋ 插入客人資料」、選單上寫「LINE 名稱」（以前是「插入變數」「{{ displayName }}」，像程式碼）
     const menu = await page.evaluate(() => {
       const btn = [...document.querySelectorAll('.el-button')]
-        .find(b => b.textContent.includes('插入變數') && b.getBoundingClientRect().width > 0)
+        .find(b => b.textContent.includes('插入客人資料') && b.getBoundingClientRect().width > 0)
       if (!btn) return null
       btn.click()
       return true
     })
     if (!menu) {
-      fail('自動回應：回覆步驟旁沒有「插入變數」——沒有收集步驟的流程（例如加好友歡迎）就永遠教不到客人名字')
+      fail('自動回應：回覆步驟旁沒有「插入客人資料」——沒有收集步驟的流程（例如加好友歡迎）就永遠教不到客人名字')
       return
     }
     await sleep(900)
@@ -1190,11 +1191,11 @@ async function checkBuiltinVariable() {
       [...document.querySelectorAll('.el-dropdown-menu__item')]
         .filter(e => e.getBoundingClientRect().width > 0)
         .map(e => e.textContent.replace(/\s+/g, ' ').trim()))
-    if (!items.some(t => t.includes('displayName'))) {
-      fail(`自動回應：插入變數選單裡沒有客人名字（看到：${items.join('／').slice(0, 60)}）`)
+    if (!items.some(t => t.includes('LINE 名稱')) || items.some(t => t.includes('{{'))) {
+      fail(`自動回應：插入客人資料選單裡沒有「LINE 名稱」或還印著 {{ }}（看到：${items.join('／').slice(0, 60)}）`)
     }
     else {
-      pass(`自動回應：插入變數選單有客人的 LINE 名稱（${items.find(t => t.includes('displayName'))}）`)
+      pass(`自動回應：插入客人資料選單有「LINE 名稱」（${items.find(t => t.includes('LINE 名稱'))}）`)
     }
     await page.keyboard.press('Escape')
     await sleep(300)

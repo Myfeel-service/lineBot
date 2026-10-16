@@ -21,8 +21,9 @@
       <div class="admin-field-group">
         <AdminFieldLabel :text="labelTitle" tight />
         <div :class="['flow-input-inset-wrap', insetWrapClass, 'control-full']">
-          <el-input
+          <VariableTextField
             v-model="action.label"
+            :known-keys="variableKeys"
             :placeholder="labelPlaceholder"
             :maxlength="labelMaxlength"
             :show-word-limit="labelShowWordLimit"
@@ -65,14 +66,19 @@
     <template v-else-if="action.type === messageTypeValue">
       <div class="admin-field-group">
         <AdminFieldLabel :text="textTitle" tight />
-        <div :class="['flow-input-inset-wrap', insetWrapClass, 'control-full']">
+        <!--
+          多行時插入鈕放在框的右下角（同機器人模組的回覆文字）；單行時放在框內右側。
+          `D-128` 以前多行這裡從沒開過插入鈕，套單行那一種會讓按鈕壓在字上
+        -->
+        <div :class="textMultiline && showVariableInset ? ['flow-textarea-wrapper', 'flow-textarea-wrapper--var-inset', 'flow-textarea-wrapper--no-resize', 'control-full'] : ['flow-input-inset-wrap', insetWrapClass, 'control-full']">
           <!--
             textMultiline：這段文字是機器人「回」給客人的（預存／自動回覆／行銷活動）時要能換行——
             段落、條列、留白都是回覆的一部分，擠成一行客人讀不下去。
             按鈕動作那種「代客人送出的文字」維持單行：那是一句話，不是一段文案。
           -->
-          <el-input
+          <VariableTextField
             v-model="action.text"
+            :known-keys="variableKeys"
             :type="textMultiline ? 'textarea' : 'text'"
             :autosize="textMultiline ? { minRows: 3, maxRows: 12 } : undefined"
             :resize="textMultiline ? 'none' : undefined"
@@ -123,6 +129,7 @@
 
 <script setup lang="ts">
 import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+import { toDisplayText, toStoredText } from '~~/shared/variable-tokens'
 
 type ActionOption = {
   value: string
@@ -132,7 +139,9 @@ type ActionOption = {
 type VariableOption = {
   value: string
   label: string
+  /** 插進輸入框的字（`D-128` 起是膠囊的顯示用字，見 shared/variable-tokens 的 displayTokenFor） */
   token: string
+  hint?: string
 }
 
 type ModuleOption = {
@@ -224,12 +233,16 @@ const insetButtonSize = computed(() =>
   props.fieldSize === 'small' ? 'sm' : 'default',
 )
 
+/** 這個編輯器「自己打括號也算」的變數名（`D-128`） */
+const variableKeys = computed(() => props.variableOptions.map(o => o.value))
+
 /**
- * `range` 是按下 `{{...}}` 當下的游標位置（由 FlowVariableInset 記下來），
+ * `range` 是按下插入鈕當下的游標位置（由 FlowVariableInset 記下來），
  * 沒有值就退回舊行為接在最後面。規則與邊界都在 `insertTokenAtCaret`（有測試）。
+ * ⚠️ 游標位置是輸入框裡顯示的字（膠囊）上的位置：先換成顯示用的字、插完再換回存的格式（`D-128`）。
  */
 function insertToken(key: 'label' | 'text', token: string, range?: CaretRange | null) {
-  props.action[key] = insertTokenAtCaret(props.action[key], token, range).text
+  props.action[key] = toStoredText(insertTokenAtCaret(toDisplayText(props.action[key] ?? ''), token, range).text, 'send', variableKeys.value)
 }
 
 function setTagIds(ids: string[]) {

@@ -377,11 +377,10 @@
                 :action="form.action"
                 :type-options="campaignActionTypeOptions"
                 :module-options="modules"
-                :variable-options="[]"
+                :variable-options="[DISPLAY_NAME_VARIABLE_OPTION]"
                 header-label=""
                 flat
                 :show-label-field="false"
-                :show-variable-inset="false"
                 :hide-fields-when-none="true"
                 none-type-value="none"
                 module-title="機器人模組"
@@ -432,6 +431,8 @@ import { ElMessageBox } from 'element-plus'
 import { LIFF_ID_RE } from '~~/shared/liff-lead-path'
 import { LEAD_FAILURE_NOT_OWNER_NOTE, summarizeLeadFailures } from '~~/shared/lead-page-failure'
 import { campaignDeleteConfirmCopy } from '~~/shared/delete-impact'
+// `D-128`：回覆文字也能插入客人的 LINE 名稱（送出端 renderWithAttributes 本來就會換，以前只是沒有按鈕）
+import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
 // `G-109`：活動的新增／儲存／刪除端點是 `marketing.write`；

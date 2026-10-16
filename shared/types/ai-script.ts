@@ -556,7 +556,10 @@ export function renderScriptTemplate(
     if (c != null && c !== '') return c
     const a = ctx.attributes?.[key]
     if (a != null && a !== '') return a
-    return `{{${key}}}` // 找不到值就留原字串方便排查
+    // 客人的 LINE 名稱取不到＝空白（`D-128`）：畫面上一直說「取不到時會變成空白」（BUILTIN_VARIABLE_HINT），
+    // 以前卻跟收集欄位一樣留原字，客人收到「{{displayName}} 您好」
+    if (key === 'displayName') return ''
+    return `{{${key}}}` // 收集欄位找不到值就留原字串方便排查
   })
 }
 

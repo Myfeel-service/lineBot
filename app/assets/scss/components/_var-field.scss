@@ -1,0 +1,35 @@
+/*
+ * 可以放「客人資料」變數的輸入框（`VariableTextField`，`D-128`）：{{displayName}} 顯示成一顆膠囊「LINE 名稱」。
+ * 膠囊那一層疊在輸入框上面：滑鼠穿過去、字是透明的（看到的是底下輸入框的字），只畫半透明的綠底＋細框。
+ * ⚠️ 那一層的字型、內距、框線、大小由元件照輸入框即時抄過去（syncLayer），這裡不要再寫死，否則換行位置會對不上。
+ */
+.var-field {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.var-field__layer {
+  position: absolute;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  margin: 0;
+}
+
+.var-field__layer-inner {
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+}
+
+.var-field__pill {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--el-color-primary) 16%, transparent);
+  /* 用陰影畫框、不佔寬度：膠囊的寬度一定要跟底下那幾個字一樣，後面的字才不會錯位 */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--el-color-primary) 38%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

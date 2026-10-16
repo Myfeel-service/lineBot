@@ -7,6 +7,7 @@ import {
   renderBroadcastVariablesDeep,
   renderPreviewVariablesDeep,
   renderPreviewVariablesInText,
+  splitPreviewMarks,
 } from './preview-variables'
 
 describe('renderPreviewVariablesInText', () => {
@@ -70,17 +71,40 @@ describe('renderPreviewVariablesDeep', () => {
   })
 })
 
+describe('預覽上標出範例（`D-128`）', () => {
+  it('{ mark: true }：範例值前後夾記號，切開來那一段標成 mark；不帶就跟以前一樣', () => {
+    const r = renderPreviewVariablesInText('Hi {{displayName}}，{{phone}}', { mark: true })
+    expect(splitPreviewMarks(r.value)).toEqual([
+      { text: 'Hi ', mark: false },
+      { text: PREVIEW_SAMPLE_DISPLAY_NAME, mark: true },
+      { text: '，', mark: false },
+      { text: '（phone）', mark: true },
+    ])
+    expect(renderPreviewVariablesInText('Hi {{displayName}}').value).toBe(`Hi ${PREVIEW_SAMPLE_DISPLAY_NAME}`)
+  })
+
+  it('整包訊息也帶得到記號；網址照樣不動', () => {
+    const r = renderPreviewVariablesDeep<any[]>([{ type: 'text', text: '{{displayName}}', uri: 'https://x/{{displayName}}' }], { mark: true })
+    expect(splitPreviewMarks(r.value[0]!.text)).toEqual([{ text: PREVIEW_SAMPLE_DISPLAY_NAME, mark: true }])
+    expect(r.value[0]!.uri).toBe('https://x/{{displayName}}')
+  })
+
+  it('記號被字數截斷剩一半也不壞（有按鈕時只畫前 160 字）', () => {
+    const r = renderPreviewVariablesInText('{{displayName}}', { mark: true }).value
+    expect(splitPreviewMarks(r.slice(0, 2))).toEqual([{ text: PREVIEW_SAMPLE_DISPLAY_NAME[0], mark: true }])
+    expect(splitPreviewMarks('沒有記號')).toEqual([{ text: '沒有記號', mark: false }])
+  })
+})
+
 describe('previewVariableNote', () => {
   it('沒換東西就不要多講一句廢話', () => {
     expect(previewVariableNote([])).toBe('')
   })
 
   /** ⛔ 一定要講「取不到會是空白」——寫成「嗨 {{displayName}}！」的人，那些客人收到的是「嗨 ！」 */
-  it('講清楚是範例、而且取不到會空白', () => {
+  it('講清楚是範例（`D-128` 範例標黃色，從「標黃色的」講起）、客人看到他自己的 LINE 名稱、取不到會空白', () => {
     const s = previewVariableNote(['displayName'])
-    expect(s).toContain(PREVIEW_SAMPLE_DISPLAY_NAME)
-    expect(s).toContain('範例')
-    expect(s).toContain('空白')
+    expect(s).toBe('標黃色的是範例：客人看到的是他自己的 LINE 名稱。取不到的話那一格會是空白。')
   })
 
   it('自訂屬性也講', () => {

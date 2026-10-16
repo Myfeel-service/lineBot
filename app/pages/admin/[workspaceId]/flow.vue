@@ -338,9 +338,10 @@
                     回覆文字 <span class="text-muted">{{ textLimitHint(msg) }}</span>
                   </AdminFieldLabel>
                   <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                    <el-input
+                    <VariableTextField
                       v-model="msg.text"
                       type="textarea"
+                      :known-keys="variableKeys"
                       :rows="3"
                       placeholder="輸入回覆文字..."
                       :maxlength="lineTextLimit(messageHasButtons(msg))"
@@ -568,9 +569,10 @@
                       搭配的文字內容 <span class="text-muted">(必需輸入，最多 5000 字)</span>
                     </AdminFieldLabel>
                     <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                      <el-input
+                      <VariableTextField
                         v-model="msg.text"
                         type="textarea"
+                        :known-keys="variableKeys"
                         :rows="2"
                         placeholder="請輸入主要回覆文字..."
                         maxlength="5000"
@@ -650,9 +652,10 @@
                     向用戶提問 <span class="text-muted">(必填，最多 500 字)</span>
                   </AdminFieldLabel>
                   <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset flow-textarea-wrapper--no-resize">
-                    <el-input
+                    <VariableTextField
                       v-model="msg.text"
                       type="textarea"
+                      :known-keys="variableKeys"
                       :rows="3"
                       placeholder="請輸入你的問題 (必需輸入)"
                       maxlength="500"
@@ -758,8 +761,9 @@
                       訊息提醒文字 <span class="text-muted">(最多 400 字)</span>
                     </AdminFieldLabel>
                     <div class="flow-input-inset-wrap control-full">
-                      <el-input
+                      <VariableTextField
                         v-model="msg.altText"
+                        :known-keys="variableKeys"
                         :placeholder="msg.type === 'carousel' ? '訊息提醒文字（客人裝置顯示不出卡片時，改顯示這行字，最多 400 字）' : '訊息提醒文字（最多 400 字）'"
                         maxlength="400"
                       />
@@ -846,7 +850,7 @@
                           標題 <span class="text-muted">(必填，最多 80 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-input-inset-wrap flow-input-inset-wrap--sm control-full">
-                          <el-input v-model="col.title" placeholder="標題（必填，最多 80 字）" maxlength="80" />
+                          <VariableTextField v-model="col.title" :known-keys="variableKeys" placeholder="標題（必填，最多 80 字）" maxlength="80" />
                           <FlowVariableInset
                             size="sm"
                             :options="variableTokenOptions"
@@ -859,7 +863,7 @@
                           內容 <span class="text-muted">(最多 300 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                          <el-input v-model="col.text" type="textarea" :rows="2" placeholder="副標題或內容（最多 300 字）" maxlength="300" />
+                          <VariableTextField v-model="col.text" type="textarea" :known-keys="variableKeys" :rows="2" placeholder="副標題或內容（最多 300 字）" maxlength="300" />
                           <FlowVariableInset
                             :options="variableTokenOptions"
                             @pick="(token, range) => insertVariableToken(col, 'text', String(token), range)"
@@ -979,8 +983,9 @@
                           標題 <span class="text-muted">({{ flexCarouselUsesImage(msg) ? '選填' : '必填' }}，最多 80 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-input-inset-wrap flow-input-inset-wrap--sm control-full">
-                          <el-input
+                          <VariableTextField
                             v-model="col.title"
+                            :known-keys="variableKeys"
                             :placeholder="flexCarouselUsesImage(msg) ? '標題（選填，最多 80 字）' : '標題（必填，最多 80 字）'"
                             maxlength="80"
                           />
@@ -996,7 +1001,7 @@
                           內文 <span class="text-muted">(選填，最多 300 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                          <el-input v-model="col.text" type="textarea" :rows="2" placeholder="內文（選填，最多 300 字）" maxlength="300" />
+                          <VariableTextField v-model="col.text" type="textarea" :known-keys="variableKeys" :rows="2" placeholder="內文（選填，最多 300 字）" maxlength="300" />
                           <FlowVariableInset
                             :options="variableTokenOptions"
                             @pick="(token, range) => insertVariableToken(col, 'text', String(token), range)"
@@ -1076,7 +1081,14 @@
           <!-- End rail -->
           </div>
           <Transition name="fmp">
-            <FlowMessagePreview v-if="previewOpen" :messages="form.messages" :rich-messages="richMessages" :oa-name="currentWorkspaceName" />
+            <!-- `D-128`：預覽裡的客人資料換成範例（王小明）、標黃色，底下一句講清楚是範例 -->
+            <FlowMessagePreview
+              v-if="previewOpen"
+              :messages="previewMessages.value"
+              :rich-messages="richMessages"
+              :oa-name="currentWorkspaceName"
+              :variable-note="previewVariableNote(previewMessages.keys)"
+            />
           </Transition>
         </div>
       </div>
@@ -1177,6 +1189,8 @@ import {
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
 import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+import { DISPLAY_NAME_VARIABLE_OPTION, displayTokenFor, toDisplayText, toStoredText } from '~~/shared/variable-tokens'
+import { previewVariableNote, renderPreviewVariablesDeep } from '~~/shared/preview-variables'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -1407,8 +1421,9 @@ function regularFlowIndex(id: string): number {
   return regularFlows.value.findIndex(f => f.id === id)
 }
 const isSystemFlow = computed(() => selectedFlow.value?.isSystem === true)
-const BUILTIN_VARIABLE_LABELS: Record<string, string> = {
-  displayName: '聯絡人名稱（使用者名字）',
+/** 插入選單上的名稱與小字（`D-128`：名稱跟輸入框裡的膠囊同一個字） */
+const BUILTIN_VARIABLE_LABELS: Record<string, { label: string; hint: string }> = {
+  displayName: { label: DISPLAY_NAME_VARIABLE_OPTION.label, hint: DISPLAY_NAME_VARIABLE_OPTION.hint },
 }
 const attributeOptions = computed(() => {
   const values = new Set<string>()
@@ -1449,17 +1464,28 @@ const variableTokenOptions = computed(() => {
 
   return Array.from(values).map((value) => ({
     value,
-    label: BUILTIN_VARIABLE_LABELS[value] ?? value,
-    token: `{{${value}}}`,
+    label: BUILTIN_VARIABLE_LABELS[value]?.label ?? value,
+    hint: BUILTIN_VARIABLE_LABELS[value]?.hint ?? '「用戶輸入」收集到的資料',
+    // `D-128`：插進輸入框的是膠囊的顯示用字（輸入框是 VariableTextField，存的時候換回 {{value}}）
+    token: displayTokenFor(value),
   }))
 })
+/** 這一頁「自己打括號也算」的變數名（LINE 名稱＋收集得到的欄位） */
+const variableKeys = computed(() => variableTokenOptions.value.map(o => o.value))
+/**
+ * 右邊預覽畫的內容：客人資料換成範例（王小明）並夾記號標黃色（`D-128`）。
+ * 以前直接畫 form.messages，預覽上印著「Hi {{displayName}}」（老闆 10-17 截圖：左右都一樣、像程式碼）。
+ * ⛔ 一律回新的物件（renderPreviewVariablesDeep 不就地改），範例值不會寫進正在編的模組
+ */
+const previewMessages = computed(() => renderPreviewVariablesDeep(form.value.messages ?? [], { mark: true }))
 
 /**
- * `range` 是使用者按下 `{{...}}` 當下的游標位置（由 FlowVariableInset 記下來），
+ * `range` 是使用者按下插入鈕當下的游標位置（由 FlowVariableInset 記下來），
  * 沒有值就退回舊行為接在最後面。規則與邊界都在 `insertTokenAtCaret`（有測試）。
+ * ⚠️ 游標位置是**輸入框裡顯示的字**（膠囊）上的位置，所以先換成顯示用的字、插完再換回存的格式（`D-128`）。
  */
 function insertVariableToken(target: Record<string, any>, key: string, token: string, range?: CaretRange | null) {
-  target[key] = insertTokenAtCaret(target[key], token, range).text
+  target[key] = toStoredText(insertTokenAtCaret(toDisplayText(target[key] ?? ''), token, range).text, 'send', variableKeys.value)
 }
 
 // 訊息類型可用性開關（共用於教學 agent，讓不可用功能的教學自動隱藏）

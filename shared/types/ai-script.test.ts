@@ -10,6 +10,7 @@ import {
   findStuckCollects,
   matchesScriptKeywords,
   matchesSemanticTrigger,
+  renderScriptTemplate,
   outgoingNodeIds,
   scriptCooldownMs,
   scriptTriggerEvent,
@@ -28,6 +29,21 @@ function buildScript(trigger: Partial<ScriptNode> & { id: string; type: 'trigger
     ],
   }
 }
+
+describe('renderScriptTemplate：回覆裡的客人資料', () => {
+  it('收集到的、客人屬性都換得到；中文欄位名也算', () => {
+    expect(renderScriptTemplate('{{姓名}} 您好，{{phone}}', { collected: { 姓名: '王小明' }, attributes: { phone: '0912' } })).toBe('王小明 您好，0912')
+  })
+
+  it('⛔ LINE 名稱取不到＝空白（畫面說會變空白），⛔ 不可以把「{{displayName}}」原字送給客人（`D-128`）', () => {
+    expect(renderScriptTemplate('{{displayName}} 您好', { attributes: { displayName: '' } })).toBe(' 您好')
+    expect(renderScriptTemplate('{{displayName}} 您好', {})).toBe(' 您好')
+  })
+
+  it('收集欄位找不到值照舊留原字（方便排查）', () => {
+    expect(renderScriptTemplate('訂單 {{order_id}}', {})).toBe('訂單 {{order_id}}')
+  })
+})
 
 describe('cosineSimilarity', () => {
   it('returns 1 for identical vectors and 0 for orthogonal', () => {

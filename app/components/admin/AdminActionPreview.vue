@@ -181,7 +181,8 @@ const rawPreviewMessages = computed(() => {
  */
 const renderedPreview = computed(() => (props.blankVariables
   ? renderBroadcastVariablesDeep(rawPreviewMessages.value)
-  : renderPreviewVariablesDeep(rawPreviewMessages.value)))
+  // `D-128`：範例值標黃色（FlowMessagePreview 用 PreviewText 畫），旁邊那句從「標黃色的是範例」講起
+  : renderPreviewVariablesDeep(rawPreviewMessages.value, { mark: true })))
 const previewMessages = computed(() => renderedPreview.value.value)
 const variableNote = computed(() => (props.blankVariables
   ? broadcastBlankVariableNote(renderedPreview.value.keys)

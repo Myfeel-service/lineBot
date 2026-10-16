@@ -1,5 +1,10 @@
 <template>
   <aside class="fmp" :class="{ 'fmp--bare': bare }" aria-label="訊息預覽">
+    <!--
+      `D-128`：預覽裡標黃色的是範例（王小明），這一句講清楚。呼叫端用 previewVariableNote 給。
+      ⛔ 放在手機**上面**：放底下會被右下角的小幫手浮鈕蓋住（實機截圖看到；推播頁那句也是這樣搬上去的）
+    -->
+    <p v-if="variableNote" class="fmp-var-note">{{ variableNote }}</p>
     <div class="fmp-frame">
       <!--
         `bare`：只畫泡泡，不要自己的聊天室外框（`C-256`）。
@@ -29,21 +34,21 @@
               ⚠️ 推播的純文字欄位沒有字數上限，所以這條路是真的走得到的。
             -->
             <template v-if="!hasButtons(msg)">
-              <div class="fmp-bubble">{{ keptText(msg) }}</div>
+              <div class="fmp-bubble"><PreviewText :text="keptText(msg)" /></div>
               <div v-if="droppedText(msg)" class="fmp-bubble-cut">
-                <span class="fmp-card-cut-label">↓ 以下 {{ droppedText(msg).length }} 字送不出去（LINE 單則文字只收 {{ LINE_TEXT_MESSAGE_MAX }} 字）</span>
-                <p class="fmp-card-cut-text">{{ droppedText(msg) }}</p>
+                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（LINE 單則文字只收 {{ LINE_TEXT_MESSAGE_MAX }} 字）</span>
+                <p class="fmp-card-cut-text"><PreviewText :text="droppedText(msg)" /></p>
               </div>
             </template>
             <div v-else class="fmp-card">
-              <p class="fmp-card-text">{{ keptText(msg) }}</p>
+              <p class="fmp-card-text"><PreviewText :text="keptText(msg)" /></p>
               <!-- 超過 160 字的部分：照樣顯示，但明講「送不出去」 -->
               <div v-if="droppedText(msg)" class="fmp-card-cut">
-                <span class="fmp-card-cut-label">↓ 以下 {{ droppedText(msg).length }} 字送不出去（有按鈕時 LINE 只收 160 字）</span>
-                <p class="fmp-card-cut-text">{{ droppedText(msg) }}</p>
+                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（有按鈕時 LINE 只收 160 字）</span>
+                <p class="fmp-card-cut-text"><PreviewText :text="droppedText(msg)" /></p>
               </div>
               <div class="fmp-btns">
-                <span v-for="(b, bi) in msg.buttons" :key="bi" class="fmp-btn">{{ b.label || '按鈕' }}</span>
+                <span v-for="(b, bi) in msg.buttons" :key="bi" class="fmp-btn"><PreviewText :text="b.label || '按鈕'" /></span>
               </div>
             </div>
           </template>
@@ -76,11 +81,11 @@
                 <div v-else class="fmp-media-ph"><el-icon><Picture /></el-icon></div>
               </div>
               <div class="fmp-cc-body">
-                <p class="fmp-cc-title">{{ col.title || '標題' }}</p>
-                <p v-if="col.text" class="fmp-cc-text">{{ col.text }}</p>
+                <p class="fmp-cc-title"><PreviewText :text="col.title || '標題'" /></p>
+                <p v-if="col.text" class="fmp-cc-text"><PreviewText :text="col.text" /></p>
               </div>
               <div class="fmp-cc-btns">
-                <span v-for="(a, ai) in (col.actions || [])" :key="ai" class="fmp-btn">{{ a.label || '按鈕' }}</span>
+                <span v-for="(a, ai) in (col.actions || [])" :key="ai" class="fmp-btn"><PreviewText :text="a.label || '按鈕'" /></span>
               </div>
             </div>
           </div>
@@ -103,28 +108,28 @@
                 <div v-else class="fmp-media-ph"><el-icon><Picture /></el-icon></div>
               </div>
               <div v-if="col.title || col.text" class="fmp-cc-body">
-                <p v-if="col.title" class="fmp-cc-title">{{ col.title }}</p>
-                <p v-if="col.text" class="fmp-cc-text">{{ col.text }}</p>
+                <p v-if="col.title" class="fmp-cc-title"><PreviewText :text="col.title" /></p>
+                <p v-if="col.text" class="fmp-cc-text"><PreviewText :text="col.text" /></p>
               </div>
               <div v-if="(col.actions || []).length" class="fmp-cc-btns">
-                <span v-for="(a, ai) in col.actions" :key="ai" class="fmp-btn">{{ a.label || '按鈕' }}</span>
+                <span v-for="(a, ai) in col.actions" :key="ai" class="fmp-btn"><PreviewText :text="a.label || '按鈕'" /></span>
               </div>
             </div>
           </div>
 
           <!-- 快速回覆（氣泡＋下方膠囊列） -->
           <template v-else-if="msg.type === 'quickReply'">
-            <div class="fmp-bubble">{{ msg.text || '（文字內容）' }}</div>
+            <div class="fmp-bubble"><PreviewText :text="msg.text || '（文字內容）'" /></div>
             <div class="fmp-qr">
               <span v-for="(q, qi) in (msg.quickReplies || [])" :key="qi" class="fmp-qr-pill">
                 <img v-if="q.imageUrl" :src="q.imageUrl" class="fmp-qr-icon" alt="">
-                {{ q.action?.label || '選項' }}
+                <PreviewText :text="q.action?.label || '選項'" />
               </span>
             </div>
           </template>
 
           <!-- 用戶輸入卡片（對用戶＝一則提問氣泡） -->
-          <div v-else-if="msg.type === 'userInput'" class="fmp-bubble">{{ msg.text || '（提問文字）' }}</div>
+          <div v-else-if="msg.type === 'userInput'" class="fmp-bubble"><PreviewText :text="msg.text || '（提問文字）'" /></div>
 
           <!-- 其他 -->
           <div v-else class="fmp-bubble fmp-bubble--muted">{{ msg.type }}</div>
@@ -143,11 +148,14 @@ import { ChatDotRound, Picture, Postcard, VideoCamera } from '@element-plus/icon
 import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
 import { LINE_TEXT_MESSAGE_MAX, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
+import { splitPreviewMarks } from '~~/shared/preview-variables'
 
 const props = defineProps<{
   messages: any[]
   richMessages?: any[]
   oaName?: string
+  /** 預覽底下那一句（「標黃色的是範例：…」）；空的就不畫 */
+  variableNote?: string
   /** 只畫泡泡：不要聊天室標題列、不要假的輸入列、不要外框（要嵌進別人的聊天室裡時用） */
   bare?: boolean
 }>()
@@ -173,6 +181,10 @@ function keptText(msg: any): string {
 }
 function droppedText(msg: any): string {
   return textMeasure(msg).dropped
+}
+/** 字數不算範例的標記（`D-128`：預覽的範例值前後夾了看不見的記號，`PreviewText` 用來標黃色） */
+function visibleLength(s: string): number {
+  return splitPreviewMarks(s).reduce((n, seg) => n + seg.text.length, 0)
 }
 function imgUrl(msg: any): string {
   return msg.previewImageUrl || msg.originalContentUrl || ''

@@ -35,12 +35,20 @@
       <template v-if="action.type === 'message'">
         <div class="admin-field-group">
           <AdminFieldLabel text="回覆文字" tight />
-          <el-input
-            :model-value="String(action?.text || '')"
-            placeholder="輸入代發文字"
-            :disabled="disabled"
-            @update:model-value="(v) => patchAction({ text: v })"
-          />
+          <div :class="['flow-input-inset-wrap', 'control-full']">
+            <VariableTextField
+              :model-value="String(action?.text || '')"
+              :known-keys="variableKeys"
+              placeholder="輸入代發文字"
+              :disabled="disabled"
+              @update:model-value="(v) => patchAction({ text: v })"
+            />
+            <FlowVariableInset
+              v-if="variableOptions.length && !disabled"
+              :options="variableOptions"
+              @pick="(token, range) => insertVariable('text', String(token), range)"
+            />
+          </div>
         </div>
       </template>
 
@@ -77,16 +85,24 @@
       <template v-if="enableCardCopy && actionSendsCard">
         <div class="admin-field-group">
           <AdminFieldLabel text="卡片上要寫什麼（選填）" tight />
-          <el-input
-            :model-value="String(action?.cardText || '')"
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 5 }"
-            :maxlength="LINE_BUTTONS_TEMPLATE_TEXT_MAX"
-            show-word-limit
-            :placeholder="LINE_CARD_BODY_DEFAULT"
-            :disabled="disabled"
-            @update:model-value="(v) => patchAction({ cardText: v })"
-          />
+          <div :class="variableOptions.length && !disabled ? ['flow-textarea-wrapper', 'flow-textarea-wrapper--var-inset', 'flow-textarea-wrapper--no-resize'] : []">
+            <VariableTextField
+              :model-value="String(action?.cardText || '')"
+              :known-keys="variableKeys"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 5 }"
+              :maxlength="LINE_BUTTONS_TEMPLATE_TEXT_MAX"
+              show-word-limit
+              :placeholder="LINE_CARD_BODY_DEFAULT"
+              :disabled="disabled"
+              @update:model-value="(v) => patchAction({ cardText: v })"
+            />
+            <FlowVariableInset
+              v-if="variableOptions.length && !disabled"
+              :options="variableOptions"
+              @pick="(token, range) => insertVariable('cardText', String(token), range)"
+            />
+          </div>
           <!--
             這一段是這兩格存在的全部理由：在 `C-228` 以前，這句話是系統替店家寫的，
             而他從來不知道有這句話（`D-87`）。所以**第一件事是先講「客人收到的不是網址」**。
@@ -98,8 +114,10 @@
         </div>
         <div class="admin-field-group">
           <AdminFieldLabel text="按鈕上要寫什麼（選填）" tight />
-          <el-input
+          <!-- 按鈕只收 20 字，名字放進去常被截掉：不給插入鈕，但自己打的照樣顯示成膠囊 -->
+          <VariableTextField
             :model-value="String(action?.buttonLabel || '')"
+            :known-keys="variableKeys"
             :maxlength="LINE_ACTION_LABEL_MAX"
             show-word-limit
             :placeholder="cardButtonPlaceholder"
@@ -167,6 +185,9 @@ import {
   LINE_CARD_BUTTON_LABEL_URI_DEFAULT,
 } from '~~/shared/line-card-copy'
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX } from '~~/shared/line-text-limits'
+import { toDisplayText, toStoredText } from '~~/shared/variable-tokens'
+import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+import type { VariableInsetOption } from '~/components/flow/FlowVariableInset.vue'
 
 /** 模組選項：後兩個由 `/api/flow/list?fields=picker` 帶回來，選模組那一格靠它們示警 */
 type EditorOption = {
@@ -209,7 +230,13 @@ const props = withDefaults(defineProps<{
   enableCardCopy?: boolean
   /** 唯讀（例如已發送推播僅檢視） */
   disabled?: boolean
+  /**
+   * 文字格旁邊的「＋ 插入客人資料」選單（`D-128`）。⛔ 預設空的＝不給插入鈕：
+   * 圖文選單點格子代客人送的那句話放客人名字沒有意義；推播會換成每位客人自己的，才開。
+   */
+  variableOptions?: VariableInsetOption[]
 }>(), {
+  variableOptions: () => [],
   tagOptions: () => [],
   taggableActionTypes: () => ['module', 'message', 'uri'],
   menuOptions: () => [],
@@ -257,6 +284,17 @@ const cardButtonPlaceholder = computed(() => LINE_CARD_BUTTON_LABEL_URI_DEFAULT)
 
 function patchAction(partial: Partial<ActionShape>) {
   emit('update:modelValue', { ...props.modelValue, ...partial } as ActionShape)
+}
+
+/** 「自己打括號也算」的變數名（`D-128`） */
+const variableKeys = computed(() => props.variableOptions.map(o => o.value))
+/**
+ * 插入鈕的退路（瀏覽器不給插時才走這裡，平常是瀏覽器自己打進去）：
+ * 游標位置是輸入框裡顯示的字（膠囊）上的位置，先換成顯示用的字、插完再換回存的格式。
+ */
+function insertVariable(key: 'text' | 'cardText', token: string, range: CaretRange | null) {
+  const current = String(props.modelValue?.[key] ?? '')
+  patchAction({ [key]: toStoredText(insertTokenAtCaret(toDisplayText(current), token, range).text, 'send', variableKeys.value) })
 }
 
 function taggingSnapshot(): { enabled: boolean; addTagIds: string[] } {

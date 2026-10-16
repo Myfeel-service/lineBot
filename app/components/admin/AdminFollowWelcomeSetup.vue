@@ -46,15 +46,26 @@
           :allow-create="false"
           placeholder="選一個機器人模組（可打字搜尋）"
         />
-        <el-input
-          v-else
-          v-model="text"
-          type="textarea"
-          :autosize="{ minRows: 3, maxRows: 8 }"
-          maxlength="500"
-          show-word-limit
-          placeholder="例如：謝謝你加入！有任何問題都可以直接在這裡問我們。"
-        />
+        <!--
+          `D-128`：歡迎詞最常放客人的名字（「嗨 ○○，謝謝加入」）。存成自動回應的回覆步驟（renderScriptTemplate 會換），
+          所以用 mode="script"；名字顯示成膠囊、旁邊一顆「＋ 插入客人資料」
+        -->
+        <div v-else class="flow-textarea-wrapper flow-textarea-wrapper--var-inset flow-textarea-wrapper--no-resize">
+          <VariableTextField
+            v-model="text"
+            type="textarea"
+            mode="script"
+            :known-keys="['displayName']"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+            maxlength="500"
+            show-word-limit
+            placeholder="例如：謝謝你加入！有任何問題都可以直接在這裡問我們。"
+          />
+          <FlowVariableInset
+            :options="[DISPLAY_NAME_VARIABLE_OPTION]"
+            @pick="insertWelcomeVariable"
+          />
+        </div>
         <p class="fws__hint">
           想要圖片、按鈕或多則訊息，就先到「機器人模組」做好，這裡選那個模組。
           之後要問客人問題、收電話、順手貼標籤，存好後在編輯器裡把它加上去就行。
@@ -80,6 +91,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { v4 as uuidv4 } from 'uuid'
+import { DISPLAY_NAME_VARIABLE_OPTION, toDisplayText, toStoredText } from '~~/shared/variable-tokens'
+import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
 import {
   LINE_BUILTIN_WELCOME_NOTE,
   buildFollowWelcomeScript,
@@ -104,6 +117,13 @@ const { showToast } = useAdminToast()
 const mode = ref<'module' | 'text'>('module')
 const moduleId = ref('')
 const text = ref('')
+/**
+ * 插入鈕的退路（瀏覽器不給插時才走這裡，平常是瀏覽器自己打進去）：
+ * 游標位置是輸入框裡顯示的字（膠囊）上的位置，先換成顯示用的字、插完再換回存的格式（`D-128`）
+ */
+function insertWelcomeVariable(token: string, range: CaretRange | null) {
+  text.value = toStoredText(insertTokenAtCaret(toDisplayText(text.value, 'script'), String(token), range).text, 'script', ['displayName'])
+}
 const saving = ref(false)
 const errorText = ref('')
 

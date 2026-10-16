@@ -417,7 +417,8 @@
                 <template v-else-if="node.type === 'collect'">
                   <div class="admin-field-group">
                     <AdminFieldLabel text="問題（要問使用者的話）" tight />
-                    <el-input v-model="node.question" placeholder="例：請輸入您的訂單編號" />
+                    <!-- `D-128`：問句裡的 {{displayName}} 也會換（renderScriptTemplate），顯示成膠囊 -->
+                    <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請輸入您的訂單編號" />
                   </div>
                   <!-- 這一題問的是什麼：選常用欄位就自動帶好問句、格式與代號，
                        不用開店的人自己想出 order_id 這種 snake_case 識別字 -->
@@ -434,7 +435,7 @@
                       @focus="fieldRenameFrom = node.fieldName"
                       @change="renameCollectField(node, fieldRenameFrom)"
                     />
-                    <p v-if="node.fieldName.trim()" class="scripts-section-hint">💡 之後在「回覆」步驟可以用 <b>{{ varLabel(node.fieldName) }}</b> 帶入客人的答案</p>
+                    <p v-if="node.fieldName.trim()" class="scripts-section-hint">💡 之後在「回覆」步驟按「＋ 插入客人資料」選 <b>{{ node.fieldName }}</b>，就會帶入客人的答案</p>
                   </div>
                   <div class="admin-field-group">
                     <AdminFieldLabel text="答案格式（系統會自動從客人訊息抓出答案；格式不對會再問一次）" tight />
@@ -503,10 +504,13 @@
                 <!-- Reply -->
                 <template v-else-if="node.type === 'reply'">
                   <div class="admin-field-group" data-tour="scr-reply">
-                    <AdminFieldLabel text="回覆文字（可插入收集到的欄位）" tight />
-                    <el-input
+                    <AdminFieldLabel text="回覆文字（可插入客人資料）" tight />
+                    <!-- `D-128`：{{displayName}}、{{收集欄位}} 顯示成膠囊；自動回應的欄位名可以是中文（mode="script"） -->
+                    <VariableTextField
                       v-model="node.text"
                       type="textarea"
+                      mode="script"
+                      :known-keys="scriptVariableKeys"
                       :rows="3"
                       placeholder="例：已收到您的訂單，將盡快為您處理 🙇"
                     />
@@ -523,7 +527,7 @@
                       class="scripts-var-insert"
                       @command="(f) => insertReplyVar(node, f)"
                     >
-                      <el-button size="small" plain>＋ 插入變數 ▾</el-button>
+                      <el-button size="small" plain>＋ 插入客人資料 ▾</el-button>
                       <template #dropdown>
                         <el-dropdown-menu>
                           <el-dropdown-item
@@ -531,7 +535,10 @@
                             :key="f.key"
                             :command="f.key"
                           >
-                            {{ varLabel(f.key) }}　{{ f.label }}
+                            <span class="flow-var-inset__item">
+                              <span class="flow-var-inset__item-label">{{ f.key === 'displayName' ? DISPLAY_NAME_VARIABLE_OPTION.label : f.label }}</span>
+                              <span v-if="f.key === 'displayName'" class="flow-var-inset__item-hint">{{ DISPLAY_NAME_VARIABLE_OPTION.hint }}</span>
+                            </span>
                           </el-dropdown-item>
                           <el-dropdown-item
                             v-for="(f, i) in collectFieldOptions"
@@ -539,7 +546,10 @@
                             :command="f.value"
                             :divided="i === 0"
                           >
-                            {{ varLabel(f.value) }}
+                            <span class="flow-var-inset__item">
+                              <span class="flow-var-inset__item-label">{{ f.value }}</span>
+                              <span class="flow-var-inset__item-hint">這個流程收集到的答案</span>
+                            </span>
                           </el-dropdown-item>
                         </el-dropdown-menu>
                       </template>
@@ -613,7 +623,7 @@
                 <template v-else-if="node.type === 'quickReply'">
                   <div class="admin-field-group">
                     <AdminFieldLabel text="問句（出選項時一起送）" tight />
-                    <el-input v-model="node.question" placeholder="例：請問需要哪項服務？" />
+                    <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請問需要哪項服務？" />
                   </div>
                   <p class="scripts-section-hint">客人點按鈕即走對應路線（按鈕文字就是送出的文字）。</p>
                   <div v-for="(o, oi) in node.options" :key="oi" class="scripts-branch-case scripts-branch-case--route">
@@ -812,6 +822,7 @@ import {
   FOLLOW_WELCOME_LABEL,
   followWelcomeRow,
 } from '~~/shared/follow-welcome'
+import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import type {
   BranchOp,
   CollectFormat,
@@ -1645,10 +1656,11 @@ function insertReplyVar(node: ScriptReplyNode, field: string) {
   if (!field) return
   node.text = `${node.text || ''}{{${field}}}`
 }
-/** 變數插入選單的顯示文字（用函式回傳，避免在 template mustache 裡寫巢狀大括號被誤解析） */
-function varLabel(field: string): string {
-  return `{{ ${field} }}`
-}
+/** 回覆文字「自己打括號也算」的變數名：LINE 名稱＋這個流程收集的欄位（`D-128`） */
+const scriptVariableKeys = computed(() => [
+  ...BUILTIN_SCRIPT_VARIABLES.map(f => f.key as string),
+  ...collectFieldOptions.value.map(f => f.value),
+])
 
 function addSaveLeadField(node: ScriptSaveLeadNode) {
   node.fieldMap.push({ fromField: '', attrKey: '' })

@@ -260,6 +260,7 @@
               :model-value="form.contentAction"
               :module-options="flowOptions"
               :enable-card-copy="true"
+              :variable-options="[DISPLAY_NAME_VARIABLE_OPTION]"
               :disabled="isLocked"
               @update:model-value="onContentActionUpdate"
             />
@@ -728,6 +729,8 @@ import {
   renderBroadcastVariablesDeep,
   renderPreviewVariablesDeep,
 } from '~~/shared/preview-variables'
+// `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
+import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import { taipeiDate, taipeiDateTime } from '~~/shared/time'
 import { festivalHint } from '~/utils/festival-hint'
 
@@ -1059,7 +1062,8 @@ const sentWithBlankVariables = computed(() => {
 })
 const renderForPreview = (messages: any[]) => (sentWithBlankVariables.value
   ? renderBroadcastVariablesDeep(messages)
-  : renderPreviewVariablesDeep(messages))
+  // `D-128`：範例值標黃色（FlowMessagePreview 用 PreviewText 畫）
+  : renderPreviewVariablesDeep(messages, { mark: true }))
 const noteForPreview = (keys: string[]) => (sentWithBlankVariables.value
   ? broadcastBlankVariableNote(keys)
   : previewVariableNote(keys))

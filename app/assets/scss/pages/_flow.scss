@@ -379,7 +379,8 @@
   &.flow-textarea-wrapper--var-inset .el-textarea .el-input__count {
     position: absolute;
     left: 0.55rem;
-    right: 4.25rem;
+    /* 右邊留給「＋ 插入客人資料」（`D-128` 以前是短的「{{...}}」，只留 4.25rem） */
+    right: 6.75rem;
     bottom: 0.38rem;
     margin: 0;
     padding: 0;
@@ -387,7 +388,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    max-width: calc(100% - 4.75rem);
+    max-width: calc(100% - 7.25rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -412,12 +413,13 @@
   display: block;
   width: 100%;
 
+  /* 右邊留給插入鈕（`D-128`：「＋ 插入客人資料」／小框「＋ 客人資料」，比以前的「{{...}}」長） */
   .el-input__wrapper {
-    padding-right: 3.75rem;
+    padding-right: 6.6rem;
   }
 
   &--sm .el-input__wrapper {
-    padding-right: 3.35rem;
+    padding-right: 4.75rem;
   }
 
   .flow-var-inset {
@@ -446,7 +448,7 @@
   letter-spacing: 0.02em;
   line-height: 1;
   cursor: pointer;
-  font-family: ui-monospace, monospace;
+  white-space: nowrap;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
 
   &:hover {
@@ -466,6 +468,20 @@
     font-size: 0.6rem;
     padding: 0 0.35rem;
   }
+}
+
+/* 插入選單每一項：名稱＋底下一行小字講它是什麼（`D-128`） */
+.flow-var-inset__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  line-height: 1.35;
+  padding-block: 0.15rem;
+}
+
+.flow-var-inset__item-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .carousel-block-bar {
