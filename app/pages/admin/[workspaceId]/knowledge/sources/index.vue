@@ -2870,6 +2870,8 @@ interface HealthResponse {
   /** 每輪抓到的內容都不一樣＝變動偵測形同關閉（抓得到內容，所以不算同步失敗） */
   stalledSources: Array<{ id: string; name: string }>
   noProductSources: Array<{ id: string; name: string; chunkCount: number }>
+  /** 商品名換了、AI 還沒重新學（`D-127`：改組名／合成一組之後畫面中途關掉）。舊伺服器沒這格 */
+  relearnPendingSources?: Array<{ id: string; name: string }>
   shortChunks: HealthChunkGroup
   failedChunks: HealthChunkGroup
   expiredChunks: HealthChunkGroup
@@ -3120,6 +3122,32 @@ const todoItems = computed<TodoItem[]>(() => {
         : {}),
     })
   }
+  /**
+   * 商品名換了、AI 還沒重新學（`D-127` /code-review 第 4 條）：改組名、合成一組之後，重新學習是畫面一份份打的，
+   * 中途關掉頁面就停在一半——那幾份卡片上還是舊名字。以前沒有任何地方找得到它們。
+   * 正在學的那幾份（左邊標「搬移中」）不算：學完會自己消失
+   */
+  const pendingRelearn = (h.relearnPendingSources ?? []).filter(s => !movingSourceIds.value.has(s.id))
+  if (pendingRelearn.length) {
+    items.push({
+      id: 'relearnPending',
+      tone: 'warning',
+      title: `有 ${pendingRelearn.length} 份資料換了商品名，AI 還沒重新學`,
+      why: '學好之前，AI 還是用舊的商品名找這幾份的內容。',
+      ...(canEditSources.value
+        ? {
+            cta: '重新學習',
+            loading: relearningPending.value,
+            action: () => {
+              if (relearningPending.value) return
+              relearningPending.value = true
+              void relearnSourcesAfterGroupChange(pendingRelearn.map(s => s.id))
+                .finally(() => { relearningPending.value = false })
+            },
+          }
+        : {}),
+    })
+  }
   // ⛔「內容較短」刻意不在這裡：它不是待辦，判準見 healthIssueCount 上面那段。
   // 別名候選原本只藏在「⋯」選單展開後的項目文字裡,⋯ 按鈕本身沒有徽章——
   // 等於一個看不見的異常。它會讓 AI 把同一台機器當成兩台,該進待辦。
@@ -3331,7 +3359,7 @@ async function loadAliases(): Promise<boolean> {
     const res = await apiFetch<{ candidates: AliasCandidate[]; pairs: AliasPair[]; productNames?: string[] }>(
       '/api/ai/knowledge/product-aliases',
     )
-    aliasCandidates.value = res.candidates ?? []
+    aliasCandidates.value = (res.candidates ?? []).map(groupNameFirst)
     aliasPairs.value = res.pairs ?? []
     aliasProductNames.value = (res.productNames ?? []).slice().sort((a: string, b: string) => a.localeCompare(b, 'zh-TW'))
     return true
@@ -3355,7 +3383,7 @@ function sameAliasPair(x: { a: string; b: string }, y: { a: string; b: string })
 async function openAliasDialog(extra?: AliasCandidate) {
   aliasOpen.value = true
   await loadAliases()
-  if (extra) aliasCandidates.value = [extra, ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
+  if (extra) aliasCandidates.value = [groupNameFirst(extra), ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
 }
 
 /** 名字就是這個的商品分組（`D-127`：組名＝商品名） */
@@ -3364,21 +3392,30 @@ function productGroupNamed(name: string): FolderRow | null {
 }
 
 /**
+ * 兩個名字只有一個是商品分組的組名 → 組名排前面＝合併後的正式名（`D-127` 組名就是商品名；/code-review 第 6 條）。
+ * 以前一律拿比較長的當正式名，較長的常是沒有分組的舊全名：按「是同一台」反而把組名收成舊名字的別名，
+ * 那一組的卡片全被收斂回舊名字、編輯分組裡的叫法也全看不到
+ */
+function groupNameFirst<T extends { a: string; b: string }>(c: T): T {
+  return !productGroupNamed(c.a) && productGroupNamed(c.b) ? { ...c, a: c.b, b: c.a } : c
+}
+
+/**
  * 兩組其實是同一台 → 合成一組（`D-127` 分組就是商品：同一台只能有一組）。
- * 把 from 那一組的每一份搬進 keep（伺服器換商品名、當場重新學，一份一份來）、舊組名收成 keep 的別名（客人照舊那樣叫也認得）、
- * 刪掉變空的 from。搬到一半失敗就停：已經搬過去的留在 keep，from 不刪（還有東西），講一句讓他再按一次
+ * 一個請求做完搬家（PUT {mergeInto}，/code-review 第 9、10 條）：伺服器照分組查**全部**資料搬進 keep——
+ * 以前畫面照自己的清單一份份搬，清單被截斷時看不到的那幾份會被接著的「刪分組」丟到未分類；
+ * 別名失敗被吞掉也看不出來。搬完只改了名字，回 relearnSourceIds 再一份份重新學（同改組名）
  */
 async function mergeProductGroups(keep: FolderRow, from: FolderRow): Promise<void> {
-  const ids = sources.value.filter(s => s.folderId === from.id).map(s => s.id)
-  for (const id of ids) {
-    if (!(await moveSourceToFolder(id, keep.id))) throw new Error(`搬到一半沒成（${keep.name}）`)
-  }
-  // 太短的舊名（「鍋」）伺服器不收成別名（400）——合成一組照樣算成功
-  await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: keep.name, alias: from.name } })
-    .catch(() => {})
-  await apiFetch(`/api/ai/folders/${from.id}`, { method: 'DELETE' })
+  const res = await apiFetch<{ moved: number; relearnSourceIds?: string[]; aliasFrom?: string }>(
+    `/api/ai/folders/${from.id}`,
+    { method: 'PUT', body: { mergeInto: keep.id } },
+  )
   folders.value = folders.value.filter(f => f.id !== from.id)
-  showToast(`已合成一組「${keep.name}」${ids.length ? `（搬了 ${ids.length} 份）` : ''}，AI 把它們當成同一台；舊名字留成客人的叫法`, 'success')
+  showToast(`已合成一組「${keep.name}」${res.moved ? `（搬了 ${res.moved} 份）` : ''}，AI 把它們當成同一台`
+    + (res.aliasFrom ? `；「${res.aliasFrom}」留成客人的叫法` : ''), 'success')
+  await loadSources(true)
+  void relearnSourcesAfterGroupChange(res.relearnSourceIds ?? [])
 }
 
 async function decideAlias(c: AliasCandidate, action: 'confirm' | 'dismiss') {
@@ -3578,14 +3615,27 @@ async function saveFolderName() {
     for (const row of groupAliasRows.value) if (!addGroupAlias(row)) return
   }
   const aliasChanges = groupAliasChanges.value
+  /*
+   * 挑的是另一個現有商品分組的名字＝那一組其實就是這一台 → 合成一組（`D-127` /code-review 第 10 條）：
+   * 以前只記一條別名，左邊照樣兩組、那一組的資料商品名還是自己的組名，下次改名又分家。
+   */
+  const mergeGroups = aliasChanges.flatMap(x => x.added)
+    .map(a => productGroupNamed(a))
+    .filter((g): g is FolderRow => !!g && g.id !== target.id)
+    .filter((g, i, all) => all.findIndex(o => o.id === g.id) === i)
+  const mergeIds = new Set(mergeGroups.map(g => g.id))
   // 挑的是另一個現有商品名＝兩台當成同一台。沒有系統證據背書，最常見的誤用是把同系列不同型號併掉——存之前講清楚
   const existing = new Set(aliasProductNames.value.map(normalizeProductName))
   const merges = aliasChanges.flatMap(x =>
-    x.added.filter(a => existing.has(normalizeProductName(a))).map(a => `「${a}」`))
-  if (merges.length) {
+    x.added.filter(a => existing.has(normalizeProductName(a)) && !productGroupNamed(a)).map(a => `「${a}」`))
+  if (merges.length || mergeGroups.length) {
     try {
       await ElMessageBox.confirm(
-        `${merges.join('、')}現在是別的商品名，存了之後 AI 會把它當成這一台。同系列的不同型號（例如 ULTRA 版、12L 與 16L）是兩台不同機器，不要這樣加。`,
+        [
+          mergeGroups.length ? `${mergeGroups.map(g => `「${g.name}」`).join('、')}那一組的資料會搬進這一組，合成一組。` : '',
+          merges.length ? `${merges.join('、')}現在是別的商品名，存了之後 AI 會把它當成這一台。` : '',
+          '同系列的不同型號（例如 ULTRA 版、12L 與 16L）是兩台不同機器，不要這樣加。',
+        ].join(''),
         '確認是同一台？',
         { confirmButtonText: '是同一台，儲存', cancelButtonText: '再想想', type: 'warning' },
       )
@@ -3597,15 +3647,17 @@ async function saveFolderName() {
   folderSaving.value = true
   let relearnIds: string[] = []
   let aliasFrom = ''
+  let syncFailed = false
   try {
     if (body.name !== undefined || body.general !== undefined) {
       // `D-127`：改組名、改成／取消通用＝底下每份換商品名；回要重新學的那幾份、舊組名收成了哪個別名。同名的商品分組＝400（講原因）
-      const res = await apiFetch<FolderRow & { relearnSourceIds?: string[], aliasFrom?: string }>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
+      const res = await apiFetch<FolderRow & { relearnSourceIds?: string[], aliasFrom?: string, syncFailed?: boolean }>(`/api/ai/folders/${target.id}`, { method: 'PUT', body })
       const idx = folders.value.findIndex(f => f.id === target.id)
       // 舊伺服器回的沒有 general：照這次送的補上，畫面上的排序才對得上
       if (idx >= 0) folders.value[idx] = { id: res.id, name: res.name, order: res.order, createdAtMs: res.createdAtMs, general: res.general ?? (body.general ?? target.general === true) }
       relearnIds = res.relearnSourceIds ?? []
       aliasFrom = res.aliasFrom ?? ''
+      syncFailed = res.syncFailed === true
     }
     // 叫法一個一個存（各自有操作紀錄）。中途失敗就停、前面存好的不回滾，catch 裡重讀一次讓畫面等於真的存進去的。
     // 指向的是**改完之後**的組名（同一個視窗裡又改名又加叫法時，加的要跟著新名字）
@@ -3614,12 +3666,24 @@ async function saveFolderName() {
         await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'remove', alias } })
       }
       for (const alias of x.added) {
+        // 是另一個商品分組的名字：下面合成一組時伺服器會收成別名，這裡不另外記
+        if (mergeIds.has(productGroupNamed(alias)?.id ?? '')) continue
         await apiFetch('/api/ai/knowledge/product-aliases', { method: 'POST', body: { action: 'confirm', canonical: newName, alias } })
       }
     }
+    const keep = folders.value.find(f => f.id === target.id)
+    if (keep) {
+      for (const from of mergeGroups) await mergeProductGroups(keep, from)
+    }
     // 「可能是同一台」那一列的數字可能跟著變
-    if (aliasChanges.length || relearnIds.length || aliasFrom) void loadHealth(true)
-    showToast(aliasFrom ? `已儲存；舊名字「${aliasFrom}」留成客人的叫法` : '已儲存', 'success')
+    if (aliasChanges.length || relearnIds.length || aliasFrom || syncFailed) void loadHealth(true)
+    if (syncFailed) {
+      // 組名存好了、底下資料的商品名沒跟上：體檢會列進「還沒重新學」，按一次就對齊（folders PUT 那段）
+      showToast('組名改好了，但底下資料的商品名沒跟上——到「要處理的事」按「重新學習」補上', 'warning')
+    }
+    else if (!mergeGroups.length) {
+      showToast(aliasFrom ? `已儲存；舊名字「${aliasFrom}」留成客人的叫法` : '已儲存', 'success')
+    }
     folderEditOpen.value = false
     // 底下每份換了商品名：一份份重新學（不等；左邊那幾列標「搬移中」，學完講一句）
     void relearnSourcesAfterGroupChange(relearnIds)
@@ -3893,8 +3957,9 @@ async function relearnSelectedSource() {
 /**
  * 改組名、改成／取消通用、刪分組之後（`D-127`）：底下商品名換掉的那幾份，一份份重新學（一個請求學不完一整組）。
  * 不等它：視窗先關，左邊那幾列標「搬移中」、學完講一句。中途離開頁面的話沒學到的那幾份 AI 暫時還用舊名字——
- * 改組名時舊名字收成了別名，照樣認得是這一台；沒學成的點開那一份按「⋯ → 重新學習這一份」
+ * 改組名時舊名字收成了別名，照樣認得是這一台；資料上留了「還沒重新學」的記號，「要處理的事」會列出來一鍵補學（relearnPending）
  */
+const relearningPending = ref(false)
 async function relearnSourcesAfterGroupChange(ids: string[]) {
   if (!ids.length) return
   movingSourceIds.value = new Set([...movingSourceIds.value, ...ids])
@@ -3912,8 +3977,8 @@ async function relearnSourcesAfterGroupChange(ids: string[]) {
     movingSourceIds.value = next
   }
   showToast(failed
-    ? `AI 重新學好了 ${ids.length - failed} 份，${failed} 份沒學成：點開那一份，按右上「⋯ → 重新學習這一份」`
-    : `AI 重新學好了這一組的 ${ids.length} 份資料`, failed ? 'warning' : 'success')
+    ? `AI 重新學好了 ${ids.length - failed} 份，${failed} 份沒學成，可以從「要處理的事」再按一次`
+    : `AI 重新學好了 ${ids.length} 份資料`, failed ? 'warning' : 'success')
   await loadSources(true)
   if (selectedId.value && ids.includes(selectedId.value)) await loadSourceDetail(selectedId.value)
   void loadHealth(true)

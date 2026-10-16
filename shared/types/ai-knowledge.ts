@@ -96,6 +96,11 @@ export interface KnowledgeFolderDoc {
    * 通用分組裡的資料本來就橫跨好幾個商品，補了反而讓 AI 把整份認成某一台。
    */
   general?: boolean
+  /**
+   * 改了組名（或通用）、底下資料的商品名卻沒跟上（寫入失敗，`D-127` /code-review 第 14 條）。
+   * 體檢照這一格把那幾份列進「還沒重新學」，按重新學習會先對齊組名再學；下次整組跟上了就拿掉。
+   */
+  productSyncPending?: boolean
   createdAt: Timestamp | FieldValue
   updatedAt: Timestamp | FieldValue
 }

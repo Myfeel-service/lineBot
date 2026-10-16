@@ -13,6 +13,8 @@ import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from '~~/server/utils/ai-knowledge-s
 import { isShortChunkContent, needsProductName } from '~~/shared/types/ai-knowledge'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
+import { listFolders, type FolderSummary } from '~~/server/utils/ai-knowledge-folders'
+import { productNameForGroup } from '~~/shared/knowledge-product-group'
 
 /** 掃描上限:健檢是彙總訊號,不是完整報表;超大知識庫掃前 N 張已足以暴露問題 */
 const CHUNK_SCAN_LIMIT = 1500
@@ -50,7 +52,7 @@ export default defineEventHandler(async (event) => {
 
   const feedbackCutoff = Timestamp.fromMillis(Date.now() - FEEDBACK_WINDOW_DAYS * 86_400_000)
 
-  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap, dupScanSnap, pendingSuggestions] = await Promise.all([
+  const [sourcesSnap, chunksSnap, indexNames, aliasMap, feedbackSnap, dupScanSnap, pendingSuggestions, folders] = await Promise.all([
     db.collection(KNOWLEDGE_SOURCES_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .limit(300)
@@ -95,6 +97,8 @@ export default defineEventHandler(async (event) => {
         console.warn('[kb-health] pending suggestions count failed:', (e as Error)?.message)
         return null
       }),
+    // 哪幾組是「通用」（`D-127`：放在通用的檔案不算「還沒放進商品分組」）。讀不到＝當成沒有通用，照舊列
+    listFolders(db, workspaceId).catch((): FolderSummary[] => []),
   ])
 
   // reason 一併帶回:清單上直接看得到「為什麼失敗」(最常見是試算表沒分享給服務帳號),
@@ -108,6 +112,15 @@ export default defineEventHandler(async (event) => {
    */
   const stalledSources: Array<{ id: string; name: string }> = []
   const noProductSources: Array<{ id: string; name: string; chunkCount: number }> = []
+  /**
+   * 商品名換了、AI 還沒重新學（`D-127` /code-review 第 4 條）：改組名、改成通用、刪分組、合成一組時伺服器只改名字，
+   * 重新學習交給畫面一份份打——他中途關掉就停在一半。資料上留了記號（productRelearnPending），這裡列出來給他按一次補學。
+   * ⛔ 只看記號、不拿「資料商品名≠組名」去比：舊資料（`D-127` 搬家前）全部對不上，列出來叫他按＝跳過搬家把舊名字收成別名那一步。
+   *    唯一例外：分組上有「沒跟上」記號的（改組名時寫入失敗，資料上的記號跟著沒寫進去），那一組才拿組名比
+   */
+  const relearnPendingSources: Array<{ id: string; name: string }> = []
+  const generalFolderIds = new Set(folders.filter(f => f.general).map(f => f.id))
+  const syncPendingFolders = new Map(folders.filter(f => f.productSyncPending).map(f => [f.id, f]))
   for (const d of sourcesSnap.docs) {
     const s = d.data() as any
     /**
@@ -125,10 +138,16 @@ export default defineEventHandler(async (event) => {
     if (s?.status === 'failed') failedSources.push({ id: d.id, name, reason: String(s?.failureReason ?? '').slice(0, 120) })
     if (s?.outdatedAt) outdatedSources.push({ id: d.id, name })
     if (s?.detectStalledAt) stalledSources.push({ id: d.id, name })
-    // 「多卡的檔案來源沒設產品名」= 說明書無主卡事故的源頭;判定與資料列表共用 needsProductName
-    if (needsProductName(s)) {
+    // 「多卡的檔案來源沒設產品名」= 說明書無主卡事故的源頭;判定與資料列表共用 needsProductName。
+    // `D-127`：放在「通用」分組的本來就不講單一商品、本來就沒有商品名——不催他放進商品分組（/code-review 第 7 條：
+    // 不然 FAQ PDF 放對了地方，這一列還一直掛著、唯一能讓它消失的做法是把 FAQ 放進某一台）
+    if (needsProductName(s) && !generalFolderIds.has(String(s?.folderId ?? ''))) {
       noProductSources.push({ id: d.id, name, chunkCount: Number(s?.chunkCount ?? 0) })
     }
+    const pendingGroup = syncPendingFolders.get(String(s?.folderId ?? ''))
+    const groupNotSynced = !!pendingGroup && String(s?.productName ?? '').trim()
+      !== productNameForGroup(pendingGroup, { isCatalog: s?.generateOverview === true, isSheet: s?.type === 'gsheet' })
+    if (s?.productRelearnPending === true || groupNotSynced) relearnPendingSources.push({ id: d.id, name })
   }
 
   /**
@@ -219,6 +238,8 @@ export default defineEventHandler(async (event) => {
     outdatedSources,
     stalledSources,
     noProductSources,
+    /** 商品名換了、AI 還沒重新學的資料（`D-127`）：畫面一鍵逐份重新學習 */
+    relearnPendingSources,
     shortChunks: { count: shortCount, items: shortItems },
     failedChunks: { count: failedCount, items: failedItems },
     expiredChunks: { count: expiredCount, items: expiredItems },

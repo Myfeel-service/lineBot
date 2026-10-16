@@ -3,6 +3,8 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { detectProductName, settleDetectedProductName } from '~~/server/utils/ai-knowledge-chunker'
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { canonicalProductName, getProductAliases } from '~~/server/utils/ai-product-alias'
+import { listFolders } from '~~/server/utils/ai-knowledge-folders'
+import { normalizeProductName } from '~~/shared/product-name-similarity'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
 import {
@@ -204,11 +206,21 @@ export async function advancePreviewJob(
           try {
             const sample = work.segments[0]
               || work.chunks.slice(0, 5).map(c => `${c.title}\n${c.content}`).join('\n')
-            // `D-127`：給 AI 看現有的商品（分組名＝商品名），講的是其中一台就照抄；回來再對一次寫法與別名（settleDetectedProductName）
-            const [existing, aliasMap] = await Promise.all([
+            // `D-127`：給 AI 看現有的商品（分組名＝商品名），講的是其中一台就照抄；回來再對一次寫法與別名（settleDetectedProductName）。
+            // 商品分組的組名排前面、再補資料上在用的（還沒搬家的舊資料）——/code-review 第 8 條：以前只給資料上在用的，
+            // 剛建好的空分組 AI 看不到，照文件寫法回一個長名字、對不上那一組，又建一組新的＝同一台分兩組
+            const [inUse, groups, aliasMap] = await Promise.all([
               getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[]),
+              listFolders(db, workspaceId).catch(() => []),
               getProductAliases(db, workspaceId),
             ])
+            const seen = new Set<string>()
+            const existing = [...groups.filter(g => !g.general).map(g => g.name), ...inUse].filter((n) => {
+              const k = normalizeProductName(n)
+              if (!k || seen.has(k)) return false
+              seen.add(k)
+              return true
+            })
             const det = await detectProductName(sample, work.sourceName, existing)
             work.suggestedProductName = settleDetectedProductName(det.productName, existing, n => canonicalProductName(n, aliasMap.aliases))
             work.usage.inputTokens += det.inputTokens

@@ -356,8 +356,13 @@ export interface WorkspaceSourceScan {
   catalogIds: Set<string>
   productNames: string[]
 }
-/** 上限：答題熱路徑不做無上限讀取（以前型錄那一支是 200；這一支多拿商品名，放寬一點） */
-const SOURCE_SCAN_LIMIT = 300
+/**
+ * 上限：答題熱路徑不做無上限讀取（以前型錄那一支是 200）。
+ * `D-127` /code-review 第 11 條：以前 300、沒排序也沒講——整站加入幾百頁的帳號，第 301 份以後的商品名默默不在清單上，
+ * 客人點名那一台時產品鎖鎖不到、型錄也被當成同主題併掉。放到 1000（只讀四格、60 秒快取，讀取費只跟真的有幾份成正比），
+ * 碰到上限一定留 log
+ */
+const SOURCE_SCAN_LIMIT = 1000
 const wsSourceScanCache = new Map<string, { expiresAt: number; scan: WorkspaceSourceScan }>()
 
 /** 資料的商品名、型錄設定、刪除有變動時清掉（新增、改名、搬組、刪除都會走到） */
@@ -378,6 +383,9 @@ export async function getWorkspaceSourceScan(db: Firestore, workspaceId: string)
       .select('generateOverview', 'productName', 'isDeleted', 'deletedAt')
       .limit(SOURCE_SCAN_LIMIT)
       .get()
+    if (snap.size >= SOURCE_SCAN_LIMIT) {
+      console.warn(`[ai-knowledge-chunks] ${workspaceId} 資料超過 ${SOURCE_SCAN_LIMIT} 份，商品名／型錄清單只掃了前 ${SOURCE_SCAN_LIMIT} 份（產品鎖可能認不到後面的商品）`)
+    }
     for (const d of snap.docs) {
       const x = d.data() as { generateOverview?: boolean; productName?: string; isDeleted?: boolean; deletedAt?: unknown }
       if (x.isDeleted === true || x.deletedAt != null) continue

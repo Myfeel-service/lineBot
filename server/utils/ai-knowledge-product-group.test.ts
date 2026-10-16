@@ -33,9 +33,26 @@ vi.mock('./ai-knowledge-chunks', () => ({
 }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
 vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
+vi.mock('./ai-product-alias', () => ({
+  confirmAlias: vi.fn(async () => true),
+  invalidateProductAliases: vi.fn(),
+  promoteCanonicalName: vi.fn(async () => false),
+}))
+vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: string }) =>
+  Object.assign(new Error(opts.statusMessage ?? 'error'), opts))
 
 /** FieldValue.delete() 是哨兵物件：存進假資料庫時當成「這一格沒有了」 */
 const isDeleteSentinel = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v) && String((v as object).constructor?.name ?? '').includes('Delete')
+
+function applyUpdate(row: Doc, data: Doc) {
+  for (const [k, v] of Object.entries(data)) {
+    if (isDeleteSentinel(v)) delete row[k]
+    else row[k] = v
+  }
+}
+
+/** 每一個 batch commit 寫了幾筆（驗「一個 batch 最多 500 筆、要分批」） */
+const COMMITS: number[] = []
 
 function query(col: string, filters: Array<[string, unknown]> = [], fields: string[] | null = null): any {
   return {
@@ -43,6 +60,12 @@ function query(col: string, filters: Array<[string, unknown]> = [], fields: stri
     select: (...fs: string[]) => query(col, filters, fs),
     doc: (id: string) => ({
       get: async () => ({ exists: !!STORE[col]?.[id], data: () => (STORE[col]?.[id] ? { ...STORE[col]![id] } : undefined) }),
+      update: async (data: Doc) => {
+        const row = STORE[col]?.[id]
+        if (!row) throw new Error(`NOT_FOUND ${col}/${id}`)
+        applyUpdate(row, data)
+      },
+      delete: async () => { delete STORE[col]?.[id] },
     }),
     get: async () => {
       const rows = STORE[col] ?? {}
@@ -62,14 +85,12 @@ const db: any = {
   batch: () => {
     const ops: Array<() => void> = []
     return {
-      update: (ref: { col: string; id: string }, data: Doc) => ops.push(() => {
-        const row = STORE[ref.col]![ref.id]!
-        for (const [k, v] of Object.entries(data)) {
-          if (isDeleteSentinel(v)) delete row[k]
-          else row[k] = v
-        }
-      }),
-      commit: async () => { for (const op of ops) op() },
+      update: (ref: { col: string; id: string }, data: Doc) => ops.push(() => applyUpdate(STORE[ref.col]![ref.id]!, data)),
+      commit: async () => {
+        if (ops.length > 500) throw new Error('INVALID_ARGUMENT: maximum 500 writes allowed per request')
+        COMMITS.push(ops.length)
+        for (const op of ops) op()
+      },
     }
   },
 }
@@ -78,7 +99,15 @@ const { updateSourceSettings } = await import('./ai-knowledge-sources')
 const { runIndexOnChunk, invalidateSourceProductCache, invalidateWorkspaceProductNames } = await import('./ai-knowledge-chunks')
 const { recordAiUsage } = await import('./ai-usage')
 const { writeAuditLog } = await import('./audit-log')
-const { syncSourceProductWithGroup, syncGroupSourcesProduct } = await import('./ai-knowledge-product-group')
+const { confirmAlias, promoteCanonicalName } = await import('./ai-product-alias')
+const {
+  syncSourceProductWithGroup,
+  syncGroupSourcesProduct,
+  alignSourceProductWithGroup,
+  mergeProductGroupInto,
+  markGroupProductSyncPending,
+  RELEARN_PENDING_FIELD,
+} = await import('./ai-knowledge-product-group')
 
 const WS = 'ws1'
 const GROUP = '珈樂堤 小滑手全自動義式咖啡機'
@@ -104,6 +133,7 @@ function seed(opts: { folder?: Doc; me?: Doc } = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   for (const k of Object.keys(STORE)) delete STORE[k]
+  COMMITS.length = 0
 })
 
 describe('syncSourceProductWithGroup（換了分組，`D-127`）', () => {
@@ -168,6 +198,30 @@ describe('syncSourceProductWithGroup（換了分組，`D-127`）', () => {
     expect(res).toMatchObject({ changed: true, relearned: { indexed: 1, failed: 1, failures: [{ id: 'c2' }] } })
     expect(vi.mocked(writeAuditLog).mock.calls[0]![0].note).toContain('重新學習 1 條、失敗 1 條')
   })
+
+  it('學完拿掉「還沒重新學」的記號（/code-review 第 4 條）', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true } })
+    await syncSourceProductWithGroup(db, WS, 'me', { uid: 'u' })
+    expect(RELEARN_PENDING_FIELD in STORE.knowledgeSources!.me!).toBe(false)
+  })
+})
+
+describe('alignSourceProductWithGroup（「重新學習這一份」先對齊組名，/code-review 第 14 條）', () => {
+  it('商品名沒跟上組名 → 改成組名、留「還沒重新學」記號；⛔ 不學（學交給呼叫端）', async () => {
+    seed()
+    const res = await alignSourceProductWithGroup(db, WS, 'me')
+    expect(res).toMatchObject({ changed: true, productName: GROUP, previous: 'Giaretti 珈樂堤 小滑手全自動義式咖啡機 GL-5680' })
+    expect(STORE.knowledgeSources!.me!.productName).toBe(GROUP)
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBe(true)
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+  })
+
+  it('已經對上 → 什麼都不寫', async () => {
+    seed({ me: { productName: GROUP } })
+    expect(await alignSourceProductWithGroup(db, WS, 'me')).toEqual({ changed: false, productName: GROUP })
+    expect(updateSourceSettings).not.toHaveBeenCalled()
+    expect(RELEARN_PENDING_FIELD in STORE.knowledgeSources!.me!).toBe(false)
+  })
 })
 
 describe('syncGroupSourcesProduct（改組名、改成／取消通用，`D-127`）', () => {
@@ -197,5 +251,92 @@ describe('syncGroupSourcesProduct（改組名、改成／取消通用，`D-127`�
     seed({ folder: { workspaceId: 'ws2' } })
     expect(await syncGroupSourcesProduct(db, WS, 'f1')).toEqual([])
     expect(invalidateWorkspaceProductNames).not.toHaveBeenCalled()
+  })
+
+  it('改到的每一份留「還沒重新學」記號（畫面中途關掉，體檢找得到），沒改到的不留（/code-review 第 4 條）', async () => {
+    seed()
+    STORE.knowledgeFolders!.f1!.name = '小滑手'
+    await syncGroupSourcesProduct(db, WS, 'f1')
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBe(true)
+    expect(STORE.knowledgeSources!.sib![RELEARN_PENDING_FIELD]).toBe(true)
+    expect(RELEARN_PENDING_FIELD in STORE.knowledgeSources!.sheet!).toBe(false)
+  })
+
+  it('⛔ 一組超過 500 份也寫得進去：分批 commit（以前整批失敗、一份都沒改，/code-review 第 14 條）', async () => {
+    STORE.knowledgeFolders = { f1: { workspaceId: WS, name: GROUP, order: 0 } }
+    STORE.knowledgeSources = Object.fromEntries(Array.from({ length: 901 }, (_, i) => [`s${i}`, { workspaceId: WS, folderId: 'f1', productName: '舊名字' }]))
+    expect((await syncGroupSourcesProduct(db, WS, 'f1')).length).toBe(901)
+    expect(COMMITS).toEqual([400, 400, 101])
+    expect(Object.values(STORE.knowledgeSources).every(s => s.productName === GROUP)).toBe(true)
+  })
+
+  it('上一次沒跟上（分組上有記號）→ 這次整組跟上了就拿掉記號；寫失敗時 markGroupProductSyncPending 留記號', async () => {
+    seed()
+    await markGroupProductSyncPending(db, 'f1')
+    expect(STORE.knowledgeFolders!.f1!.productSyncPending).toBe(true)
+    await syncGroupSourcesProduct(db, WS, 'f1')
+    expect('productSyncPending' in STORE.knowledgeFolders!.f1!).toBe(false)
+
+    // 本來就都對上了（什麼都不用改）也拿掉
+    seed({ folder: { productSyncPending: true }, me: { productName: GROUP } })
+    expect(await syncGroupSourcesProduct(db, WS, 'f1')).toEqual([])
+    expect('productSyncPending' in STORE.knowledgeFolders!.f1!).toBe(false)
+  })
+})
+
+describe('mergeProductGroupInto（兩組是同一台 → 合成一組，/code-review 第 9、10 條）', () => {
+  const seedTwo = () => {
+    STORE.knowledgeFolders = {
+      keep: { workspaceId: WS, name: 'SHARP 零水鍋', order: 0 },
+      from: { workspaceId: WS, name: '零水鍋 KN-S10', order: 1 },
+      gen: { workspaceId: WS, name: '通用', order: 2, general: true },
+    }
+    STORE.knowledgeSources = {
+      a: { workspaceId: WS, folderId: 'from', productName: '零水鍋 KN-S10' },
+      // 畫面清單可能被截斷、沒列出來的那一份：伺服器照分組查，一樣搬
+      b: { workspaceId: WS, folderId: 'from', productName: '零水鍋 KN-S10' },
+      cat: { workspaceId: WS, folderId: 'from', productName: '', generateOverview: true },
+      k: { workspaceId: WS, folderId: 'keep', productName: 'SHARP 零水鍋' },
+      other: { workspaceId: 'ws2', folderId: 'from', productName: '別家的' },
+    }
+  }
+
+  it('那一組的每一份搬過來、商品名換成留下那一組的、留記號；舊組名收成別名；刪掉變空的那一組', async () => {
+    seedTwo()
+    const res = await mergeProductGroupInto(db, WS, 'from', 'keep')
+
+    expect(res).toMatchObject({ moved: 3, aliasFrom: '零水鍋 KN-S10', fromName: '零水鍋 KN-S10', intoName: 'SHARP 零水鍋' })
+    expect(res.relearnSourceIds.sort()).toEqual(['a', 'b'])
+    for (const id of ['a', 'b']) {
+      expect(STORE.knowledgeSources![id]).toMatchObject({ folderId: 'keep', productName: 'SHARP 零水鍋', [RELEARN_PENDING_FIELD]: true })
+    }
+    // 型錄搬過來、商品名照樣空的，不用重新學
+    expect(STORE.knowledgeSources!.cat).toMatchObject({ folderId: 'keep', productName: '' })
+    expect(RELEARN_PENDING_FIELD in STORE.knowledgeSources!.cat!).toBe(false)
+    expect(STORE.knowledgeSources!.other!.folderId).toBe('from')
+    expect(STORE.knowledgeFolders!.from).toBeUndefined()
+    expect(promoteCanonicalName).toHaveBeenCalledWith(db, WS, 'SHARP 零水鍋')
+    expect(confirmAlias).toHaveBeenCalledWith(db, WS, 'SHARP 零水鍋', '零水鍋 KN-S10')
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+  })
+
+  it('舊組名太短（「鍋」）不收成別名，照樣合', async () => {
+    seedTwo()
+    STORE.knowledgeFolders!.from!.name = '鍋'
+    const res = await mergeProductGroupInto(db, WS, 'from', 'keep')
+    expect(res.aliasFrom).toBe('')
+    expect(confirmAlias).not.toHaveBeenCalled()
+    expect(STORE.knowledgeFolders!.from).toBeUndefined()
+  })
+
+  it('⛔ 同一組、通用、找不到的 → 擋下來，什麼都不寫', async () => {
+    seedTwo()
+    await expect(mergeProductGroupInto(db, WS, 'keep', 'keep')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(mergeProductGroupInto(db, WS, 'from', 'gen')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(mergeProductGroupInto(db, WS, 'from', 'nope')).rejects.toMatchObject({ statusCode: 404 })
+    STORE.knowledgeFolders!.keep!.workspaceId = 'ws2'
+    await expect(mergeProductGroupInto(db, WS, 'from', 'keep')).rejects.toMatchObject({ statusCode: 404 })
+    expect(COMMITS).toEqual([])
+    expect(STORE.knowledgeFolders!.from).toBeDefined()
   })
 })

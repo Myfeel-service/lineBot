@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getSource } from '~~/server/utils/ai-knowledge-sources'
-import { relearnSourceChunks } from '~~/server/utils/ai-knowledge-product-group'
+import { alignSourceProductWithGroup, relearnSourceChunks } from '~~/server/utils/ai-knowledge-product-group'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -27,6 +27,8 @@ export default defineEventHandler(async (event) => {
   const source = await getSource(db, sourceId, workspaceId)
   if (!source) throw createError({ statusCode: 404, statusMessage: 'source not found' })
 
+  // `D-127`：先把商品名對齊它所在的分組再學（改組名到一半斷掉、資料上的商品名沒跟上組名的，按一次「重新學習」就好）
+  await alignSourceProductWithGroup(db, workspaceId, sourceId)
   const r = await relearnSourceChunks(db, workspaceId, sourceId)
 
   // 稽核（`C-254`）：會花 embedding 的錢，⛔ 失敗條數一定要一起記

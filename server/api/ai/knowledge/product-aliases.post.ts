@@ -1,9 +1,9 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { confirmAlias, dismissAliasPair, removeAlias } from '~~/server/utils/ai-product-alias'
-import { invalidateWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
+import { getWorkspaceProductNames, invalidateWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { writeAuditLog } from '~~/server/utils/audit-log'
-import { ALIAS_TOO_SHORT_TEXT, isUsableAlias } from '~~/shared/product-name-similarity'
+import { ALIAS_TOO_SHORT_TEXT, isUsableAlias, normalizeProductName } from '~~/shared/product-name-similarity'
 
 /**
  * POST /api/ai/knowledge/product-aliases
@@ -42,8 +42,15 @@ export default defineEventHandler(async (event) => {
     if (!canonical || !alias) {
       throw createError({ statusCode: 400, statusMessage: '需要 canonical 與 alias' })
     }
-    // `C-323`：分組裡可以自己打客人的叫法了。太短的會在不相干的句子裡命中、把對話鎖到錯的那一台（答題端整段比對）
-    if (!isUsableAlias(alias)) throw createError({ statusCode: 400, statusMessage: ALIAS_TOO_SHORT_TEXT })
+    // `C-323`：分組裡可以自己打客人的叫法了。太短的會在不相干的句子裡命中、把對話鎖到錯的那一台（答題端整段比對）。
+    // 例外：它本來就是資料上在用的商品名（「可能是同一台」候選裡的「W1」）——/code-review 第 15 條：
+    // 以前一樣擋，候選永遠清不掉、卡片上的「W1」一直被當成另一台。太短的別名答題端在客人的話裡本來就不拿來比（productsByAliasIn 跳過），
+    // 只用來把卡片上的名字收斂成正式名（建索引、產品鎖），收進來無害
+    if (!isUsableAlias(alias)) {
+      const inUse = await getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[])
+      const key = normalizeProductName(alias)
+      if (!inUse.some(n => normalizeProductName(n) === key)) throw createError({ statusCode: 400, statusMessage: ALIAS_TOO_SHORT_TEXT })
+    }
     if (alias.length > 50) throw createError({ statusCode: 400, statusMessage: '叫法最多 50 個字' })
     const changed = await confirmAlias(db, workspaceId, canonical, alias)
     // 正式名會 arrayUnion 進同一份文件的 names;那份清單另有 60 秒快取,

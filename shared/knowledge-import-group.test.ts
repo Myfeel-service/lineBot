@@ -152,6 +152,13 @@ describe('createImportGroupRegistry（一次開窗裡建過的分組）', () => 
     expect(a.id).toBe(b.id)
   })
 
+  it('只差符號、全形半形的也算同一個（跟伺服器判「同一台」一樣寬，/code-review 第 13 條）', async () => {
+    const { create, reg } = setup()
+    const [a, b, c] = await Promise.all([reg.ensure('W1-REGEN', []), reg.ensure('W1 REGEN', []), reg.ensure('Ｗ１（REGEN）', [])])
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(new Set([a.id, b.id, c.id]).size).toBe(1)
+  })
+
   it('頁面清單還沒重讀時，第二份也比得到第一份剛建的那一組；現有的同名分組直接用、不建', async () => {
     const { create, reg } = setup()
     const first = await reg.ensure('W1', [])

@@ -1867,12 +1867,30 @@ const localGroups = ref<ImportGroup[]>([])
 const removedGroupIds = ref<string[]>([])
 /** 這次標成「通用」的既有分組（手建的「通用」沒標，見 registry.ensure 的 general；`/code-review` ⑫） */
 const markedGeneralIds = ref<string[]>([])
+/**
+ * 標成通用、刪掉分組之後，商品名被清掉的那幾份一份份重新學（`D-127` /code-review 第 5 條）：伺服器只改名字、回 relearnSourceIds，
+ * 以前這裡沒接，卡片一直帶著舊商品名。不等、失敗不講——資料上留了「還沒重新學」的記號，知識庫頁「要處理的事」會列出來
+ */
+async function relearnInBackground(res: unknown): Promise<void> {
+  const ids = (res as { relearnSourceIds?: string[] } | null)?.relearnSourceIds ?? []
+  for (const id of ids) {
+    await apiFetch(`/api/ai/sources/${encodeURIComponent(id)}/reindex`, { method: 'POST' }).catch(() => {})
+  }
+}
 const groupRegistry = createImportGroupRegistry(
   {
     // general：選了「通用」、還沒有那一組（伺服器 `C-320` 起收這一格）
     create: (name, { general }) => apiFetch<ImportGroup>('/api/ai/folders', { method: 'POST', body: { name, ...(general ? { general: true } : {}) } }),
-    remove: id => apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    markGeneral: id => apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'PUT', body: { general: true } }),
+    remove: async (id) => {
+      const res = await apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      void relearnInBackground(res)
+      return res
+    },
+    markGeneral: async (id) => {
+      const res = await apiFetch(`/api/ai/folders/${encodeURIComponent(id)}`, { method: 'PUT', body: { general: true } })
+      void relearnInBackground(res)
+      return res
+    },
   },
   {
     onCreated: (g) => { localGroups.value = [...localGroups.value, g] },
@@ -2490,6 +2508,8 @@ async function runSiteImport() {
       /** 這一頁放進的分組、以及它是不是這一頁才建的（加入失敗時收掉這一頁建的空分組，同單份的 `/code-review` ⑥） */
       let heldPageGroupId: string | null = null
       let createdPageGroupId = ''
+      /** 加入的請求送出去了沒（之前的失敗＝什麼都沒寫進去，建的分組一定是空的） */
+      let bulkSent = false
       try {
         const created = await apiFetch<{ jobId?: string; duplicate?: DuplicateHit }>('/api/ai/knowledge/preview-jobs', {
           method: 'POST',
@@ -2537,6 +2557,7 @@ async function runSiteImport() {
         // 請求在路上的這段時間，別頁不可以把這一組當空的刪掉（見 registry.hold）
         if (pageFolderId) groupRegistry.hold(pageFolderId)
         heldPageGroupId = pageFolderId
+        bulkSent = true
         const bulk = await apiFetch<{ total: number; indexed: number; failed: number }>('/api/ai/knowledge/bulk-create', {
           method: 'POST',
           body: {
@@ -2579,7 +2600,11 @@ async function runSiteImport() {
         page.status = 'failed'
         // 這一頁沒加成：放的那一組不再「在路上」；是這一頁才建的、又沒有別頁在用 → 收掉（不留空分組）
         if (heldPageGroupId) groupRegistry.unhold(heldPageGroupId)
-        if (createdPageGroupId) void groupRegistry.discardIfUnused(createdPageGroupId)
+        // ⛔ 加入的請求斷線、逾時、閘道錯不收（/code-review 第 1 條，同單份那條）：伺服器可能其實加進去了，
+        //    刪了那一組會把這一頁又移出分組、商品名跟著清掉
+        if (createdPageGroupId && !(bulkSent && writeMayHaveLanded(apiErrorStatus(err)))) {
+          void groupRegistry.discardIfUnused(createdPageGroupId)
+        }
         /**
          * ⚠️ 逾時要單獨講（2026-09-03 code review 抓到）：整站這條路的 `bulk-create`
          * **只在這個 worker 裡呼叫**，所以這一頁的工作即使被排程做完，切好的知識也沒有人收

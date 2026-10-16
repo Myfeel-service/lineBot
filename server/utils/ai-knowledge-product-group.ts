@@ -12,7 +12,7 @@
  *  · 搬家腳本 scripts/migrate-kb-group-is-product.mjs
  * 商品名要進到每一條的向量裡才生效，只改資料上那一格，AI 照舊用舊的名字——所以一定要重新學習。
  */
-import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, type DocumentReference, type Firestore } from 'firebase-admin/firestore'
 import { getSource, updateSourceSettings, KNOWLEDGE_SOURCES_COLLECTION, type SourceSummary } from './ai-knowledge-sources'
 import { KNOWLEDGE_FOLDERS_COLLECTION } from './ai-knowledge-folders'
 import {
@@ -23,9 +23,11 @@ import {
   KNOWLEDGE_CHUNKS_COLLECTION,
   runIndexOnChunk,
 } from './ai-knowledge-chunks'
+import { confirmAlias, invalidateProductAliases, promoteCanonicalName } from './ai-product-alias'
 import { recordAiUsage } from './ai-usage'
 import { writeAuditLog } from './audit-log'
-import { productNameForGroup } from '~~/shared/knowledge-product-group'
+import { productNameForGroup, sameProductGroupName } from '~~/shared/knowledge-product-group'
+import { isUsableAlias } from '~~/shared/product-name-similarity'
 import type { KnowledgeFolderDoc } from '~~/shared/types/ai-knowledge'
 
 /** 與 reindex / bulk-create 一致的保守併發 */
@@ -81,12 +83,35 @@ export async function relearnSourceChunks(db: Firestore, workspaceId: string, so
   if (embeddingTokens > 0) await recordAiUsage(workspaceId, { buildEmbeddingTokens: embeddingTokens }, db)
 
   const failures = results.filter(r => r.status === 'failed')
+  // 學完了：「商品名換了、還沒重新學」的記號拿掉（體檢靠它找沒學完的，見 RELEARN_PENDING_FIELD）。
+  // 學失敗的那幾條另外有「AI 沒學起來」那一列在管。清不掉不擋（下次學再清）
+  try {
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({ [RELEARN_PENDING_FIELD]: FieldValue.delete() })
+  }
+  catch { /* 資料剛被刪掉、或假資料庫沒有 update */ }
   return {
     total: snap.size,
     skipped: snap.size - docs.length,
     indexed: results.length - failures.length,
     failed: failures.length,
     failures,
+  }
+}
+
+/**
+ * 「商品名換了、AI 還沒重新學」的記號（資料上的一格，`D-127` /code-review 第 4、14 條）。
+ * 改組名、改成通用、刪分組、合成一組時伺服器只改名字，重新學習交給畫面一份份打——他中途關掉頁面就停在一半，
+ * 卡片還帶舊商品名（產品鎖照舊名字擋）。有這個記號，體檢就找得到沒學完的、「要處理的事」叫他按一下補學。
+ * relearnSourceChunks 學完就拿掉。
+ */
+export const RELEARN_PENDING_FIELD = 'productRelearnPending'
+
+/** Firestore 一個 batch 最多 500 筆：分批寫（每批 400 留餘裕）。一組底下超過 500 份時，以前整批 commit 失敗、什麼都沒寫 */
+async function commitUpdatesInChunks(db: Firestore, updates: Array<{ ref: DocumentReference, data: Record<string, unknown> }>): Promise<void> {
+  for (let i = 0; i < updates.length; i += 400) {
+    const batch = db.batch()
+    for (const u of updates.slice(i, i + 400)) batch.update(u.ref, u.data)
+    await batch.commit()
   }
 }
 
@@ -137,19 +162,9 @@ export async function syncSourceProductWithGroup(
   /** actor 預設 human（搬組的人）；搬家腳本傳 system、uid 空字串（⛔ 不掛在任何人頭上） */
   ctx: { uid: string; actor?: 'human' | 'system' },
 ): Promise<SourceGroupSyncResult> {
-  const source = await getSource(db, sourceId, workspaceId)
-  if (!source) return { changed: false, productName: '', notFound: true }
-  const group = await readGroup(db, workspaceId, source.data.folderId)
-  const target = productNameForGroup(group, {
-    isCatalog: source.data.generateOverview === true,
-    isSheet: source.data.type === 'gsheet',
-  })
-  const previous = String(source.data.productName ?? '').trim()
-  if (previous === target) return { changed: false, productName: target }
-
-  // 跟以前「AI 認的商品名」存檔同一條路：updateSourceSettings 存名字（也會清快取），再重新學習
-  const updated = await updateSourceSettings(db, workspaceId, sourceId, { productName: target })
-  if (!updated) return { changed: false, productName: '', notFound: true }
+  const aligned = await alignSourceProductWithGroup(db, workspaceId, sourceId)
+  if (!aligned.changed) return aligned.notFound ? { changed: false, productName: '', notFound: true } : { changed: false, productName: aligned.productName }
+  const { source, group, previous, productName: target, updated } = aligned
   const relearned = await relearnSourceChunks(db, workspaceId, sourceId)
 
   // 稽核（`C-254`）：商品名換掉＝整份資料歸屬的商品換了（答錯台的老毛病），⛔ 失敗條數一定要一起記
@@ -189,19 +204,134 @@ export async function syncGroupSourcesProduct(
     .select('productName', 'generateOverview', 'type')
     .get()
   const changed: string[] = []
-  const batch = db.batch()
+  const updates: Array<{ ref: DocumentReference, data: Record<string, unknown> }> = []
   for (const d of snap.docs) {
     const s = d.data() as { productName?: string; generateOverview?: boolean; type?: string }
     const target = productNameForGroup(group, { isCatalog: s.generateOverview === true, isSheet: s.type === 'gsheet' })
     if (String(s.productName ?? '').trim() === target) continue
-    batch.update(d.ref, { productName: target || FieldValue.delete(), updatedAt: FieldValue.serverTimestamp() })
+    // 商品名換了、卡片還沒重新學 → 留記號（學完 relearnSourceChunks 拿掉；畫面中途關掉的話體檢找得到）
+    updates.push({ ref: d.ref, data: { productName: target || FieldValue.delete(), [RELEARN_PENDING_FIELD]: true, updatedAt: FieldValue.serverTimestamp() } })
     changed.push(d.id)
   }
-  if (!changed.length) return []
-  await batch.commit()
+  // 上一次沒跟上的這次整組跟上了 → 拿掉分組上的記號（見 KnowledgeFolderDoc.productSyncPending）
+  const clearGroupPending = async () => {
+    if (group.productSyncPending !== true) return
+    await db.collection(KNOWLEDGE_FOLDERS_COLLECTION).doc(folderId).update({ productSyncPending: FieldValue.delete() }).catch(() => {})
+  }
+  if (!changed.length) {
+    await clearGroupPending()
+    return []
+  }
+  await commitUpdatesInChunks(db, updates)
+  await clearGroupPending()
   for (const id of changed) invalidateSourceProductCache(id)
   invalidateWorkspaceProductNames(workspaceId)
   const name = productNameForGroup(group)
   if (name) await addWorkspaceProductName(db, workspaceId, name)
   return changed
+}
+
+/**
+ * 改了組名、底下資料的商品名卻沒跟上（寫入失敗）→ 在分組上留記號（`D-127` /code-review 第 14 條）。
+ * 資料上的「還沒重新學」記號跟商品名是同一筆寫入，寫失敗兩個都沒有；分組這一格讓體檢還找得到它們。
+ */
+export async function markGroupProductSyncPending(db: Firestore, folderId: string): Promise<void> {
+  await db.collection(KNOWLEDGE_FOLDERS_COLLECTION).doc(folderId).update({ productSyncPending: true })
+}
+
+/**
+ * 這份資料的商品名改成跟它所在分組一致，**不學**（`D-127`）。有變就留「還沒重新學」的記號。
+ * syncSourceProductWithGroup（換組當場學）和 POST /api/ai/sources/:id/reindex（「重新學習這一份」先對齊再學）都走這裡——
+ * 改組名到一半斷掉、資料上的商品名沒跟上組名的，按一次「重新學習」就對齊（/code-review 第 14 條）。
+ */
+export async function alignSourceProductWithGroup(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+): Promise<
+  | { changed: false; productName: string; notFound?: true }
+  | { changed: true; productName: string; previous: string; source: NonNullable<Awaited<ReturnType<typeof getSource>>>; group: Awaited<ReturnType<typeof readGroup>>; updated: SourceSummary }
+> {
+  const source = await getSource(db, sourceId, workspaceId)
+  if (!source) return { changed: false, productName: '', notFound: true }
+  const group = await readGroup(db, workspaceId, source.data.folderId)
+  const target = productNameForGroup(group, {
+    isCatalog: source.data.generateOverview === true,
+    isSheet: source.data.type === 'gsheet',
+  })
+  const previous = String(source.data.productName ?? '').trim()
+  if (previous === target) return { changed: false, productName: target }
+  // 跟以前「AI 認的商品名」存檔同一條路：updateSourceSettings 存名字（也會清快取）
+  const updated = await updateSourceSettings(db, workspaceId, sourceId, { productName: target })
+  if (!updated) return { changed: false, productName: '', notFound: true }
+  try {
+    await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({ [RELEARN_PENDING_FIELD]: true })
+  }
+  catch { /* 記號寫不進去不擋：接著就會學 */ }
+  return { changed: true, productName: target, previous, source, group, updated }
+}
+
+export interface GroupMergeResult {
+  /** 搬過去的份數 */
+  moved: number
+  /** 商品名換了、要重新學的那幾份（畫面一份份打 reindex） */
+  relearnSourceIds: string[]
+  /** 舊組名收成了留下那一組的別名（太短、或本來就是同一個名字＝''） */
+  aliasFrom: string
+}
+
+/**
+ * 兩組其實是同一台 → 把 from 合進 into（`D-127` 同一台只能有一組；/code-review 第 9、10 條）。
+ * 伺服器照 folderId 查**全部**資料搬（畫面清單可能被截斷、看不到的那幾份以前會被刪分組移到未分類），
+ * 商品名換成 into 的組名、留「還沒重新學」記號；舊組名收成別名；刪掉變空的 from。只改名字、不學（同 syncGroupSourcesProduct）。
+ */
+export async function mergeProductGroupInto(
+  db: Firestore,
+  workspaceId: string,
+  fromId: string,
+  intoId: string,
+): Promise<GroupMergeResult & { fromName: string; intoName: string }> {
+  if (fromId === intoId) throw createError({ statusCode: 400, statusMessage: '同一組不用合' })
+  const [from, into] = await Promise.all([readGroup(db, workspaceId, fromId), readGroup(db, workspaceId, intoId)])
+  if (!from || !into) throw createError({ statusCode: 404, statusMessage: '找不到要合的分組（可能已被刪除），請重新整理後再試' })
+  if (from.general === true || into.general === true) throw createError({ statusCode: 400, statusMessage: '通用的分組不講單一商品，不能合成一組' })
+
+  const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+    .where('workspaceId', '==', workspaceId)
+    .where('folderId', '==', fromId)
+    .select('productName', 'generateOverview', 'type')
+    .get()
+  const relearn: string[] = []
+  const updates: Array<{ ref: DocumentReference, data: Record<string, unknown> }> = []
+  for (const d of snap.docs) {
+    const s = d.data() as { productName?: string; generateOverview?: boolean; type?: string }
+    const target = productNameForGroup(into, { isCatalog: s.generateOverview === true, isSheet: s.type === 'gsheet' })
+    const productChanged = String(s.productName ?? '').trim() !== target
+    if (productChanged) relearn.push(d.id)
+    updates.push({
+      ref: d.ref,
+      data: {
+        folderId: intoId,
+        ...(productChanged ? { productName: target || FieldValue.delete(), [RELEARN_PENDING_FIELD]: true } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+    })
+  }
+  await commitUpdatesInChunks(db, updates)
+  for (const id of relearn) invalidateSourceProductCache(id)
+
+  // 留下那一組的名字當正式名，舊組名收成它的別名（客人照舊那樣叫也認得；太短的不收）
+  const intoName = String(into.name ?? '')
+  const fromName = String(from.name ?? '')
+  await promoteCanonicalName(db, workspaceId, intoName)
+  let aliasFrom = ''
+  if (fromName && !sameProductGroupName(fromName, intoName) && isUsableAlias(fromName)) {
+    await confirmAlias(db, workspaceId, intoName, fromName)
+    aliasFrom = fromName
+  }
+  // 現在是空的了（剛剛那一批之後才放進來的不算：⛔ 不要再查一次就刪——查完到刪之間又放進來的會掉回未分類）
+  await db.collection(KNOWLEDGE_FOLDERS_COLLECTION).doc(fromId).delete()
+  invalidateWorkspaceProductNames(workspaceId)
+  invalidateProductAliases(workspaceId)
+  return { moved: snap.size, relearnSourceIds: relearn, aliasFrom, fromName, intoName }
 }

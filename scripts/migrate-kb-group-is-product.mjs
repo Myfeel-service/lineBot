@@ -3,7 +3,8 @@
  *
  * 做什麼（一次一個帳號）：
  *   1. 商品分組裡每一份資料（試算表、型錄除外）的商品名改成**組名**，改到的那幾份重新學習
- *   2. 原本的商品名（含型號的全名、舊寫法）跟組名不一樣的 → 收成那一組的別名（AI 認得的字只多不少，`C-325` productVocabulary）
+ *   2. 原本的商品名（含型號的全名、舊寫法）跟組名不一樣的 → 收成那一組的別名（AI 認得的字只多不少，`C-325` productVocabulary）。
+ *      組名本來是別名的先改成正式名；對到**另一組組名**的不收、擋 --apply（放錯組的那一份要先用 --move 講清楚）
  *   3. 一組裡其實是兩款（只差型號尾巴：W1 REGEN／W1 REGEN ULTRA，shared isVariantPair）→ 拆：份數多的那一款留在原本那一組、
  *      組名改成它的商品名；其他款各建一組（組名＝它的商品名）。⛔ 拆的時候舊組名（「MATELASER」是兩款共用的品牌）不收成別名
  *   4. 通用分組、未分類裡還掛著商品名的 → 清掉（未分類＝不是講單一商品；要放進商品分組用 --move）
@@ -125,15 +126,17 @@ function buildPlan({ folders, sources, relearnCount, aliases }) {
   const flags = s => ({ isCatalog: s.isCatalog, isSheet: s.type === 'gsheet' })
   const groups = new Map(folders.map(f => [f.id, { key: f.id, folderId: f.id, name: f.name, general: f.general, oldName: f.name }]))
   const placement = new Map(sources.map(s => [s.id, s.folderId && groups.has(s.folderId) ? s.folderId : NONE]))
-  const plan = { splits: [], aliases: [], changes: [], cleared: [], moves: [], problems: [], duplicates: [] }
-  const aliasSeen = new Set()
-  const addAlias = (alias, target) => {
+  const plan = { splits: [], aliases: [], changes: [], cleared: [], moves: [], problems: [], duplicates: [], promotes: [] }
+  const aliasByKey = new Map()
+  /** sourceId：哪一份資料的商品名帶來這條別名（改組名帶來的沒有）——對到別組時要講是哪幾份 */
+  const addAlias = (alias, target, sourceId) => {
     if (!alias || !target || sameProductGroupName(alias, target)) return
     const k = `${normalizeProductName(alias)}→${normalizeProductName(target)}`
-    if (aliasSeen.has(k)) return
-    aliasSeen.add(k)
-    const already = normalizeProductName(canonical(alias)) === normalizeProductName(target)
-    plan.aliases.push({ alias, canonical: target, usable: isUsableAlias(alias), already })
+    const hit = aliasByKey.get(k)
+    if (hit) { if (sourceId) hit.sourceIds.push(sourceId); return }
+    const a = { alias, canonical: target, usable: isUsableAlias(alias), already: false, sourceIds: sourceId ? [sourceId] : [] }
+    aliasByKey.set(k, a)
+    plan.aliases.push(a)
   }
 
   // ── --rename：先改組名（後面的拆組、換商品名都照新名字）；舊組名收成別名，同畫面上改組名 ──
@@ -200,12 +203,44 @@ function buildPlan({ folders, sources, relearnCount, aliases }) {
     }
     if (!target && s.productName && (!g || g.general)) plan.cleared.push({ source: s, group: g?.name ?? NONE })
     // 舊名字收成這一台的別名（拆出來的兩款各自歸各自的組，不會互收）
-    if (target && s.productName) addAlias(s.productName, target)
+    if (target && s.productName) addAlias(s.productName, target, s.id)
   }
   // 改了名的組（沒拆的不會改名；拆的那一組改成份數多的那一款）
   plan.renames = [...groups.values()].filter(g => g.folderId && g.name !== g.oldName).map(g => ({ id: g.folderId, from: g.oldName, to: g.name }))
   plan.newGroups = [...groups.values()].filter(g => !g.folderId).map(g => g.name)
   plan.productGroupNames = [...groups.values()].filter(g => !g.general).map(g => g.name)
+
+  /*
+   * 組名一定是正式名（/code-review 第 2 條，同伺服器 promoteCanonicalName）：組名本來是某條別名的（MYFEEL「上好ㄟ抽取式除濕機」→「NWT 威技…」），
+   * 先把那條拿掉——不然組名被收斂回舊名字，下面「舊名字收成組名的別名」也會因為兩邊收斂成同一個而什麼都不寫（以前 dry-run 印「本來就是」）
+   */
+  const aliasesAfter = { ...aliases }
+  for (const name of plan.productGroupNames) {
+    const k = normalizeProductName(name)
+    if (k && Object.prototype.hasOwnProperty.call(aliasesAfter, k)) {
+      plan.promotes.push({ name, was: aliasesAfter[k] })
+      delete aliasesAfter[k]
+    }
+  }
+  const canonicalAfter = n => canonicalProductName(n, aliasesAfter)
+  /*
+   * 別名對到的是**另一組**的組名（/code-review 第 3 條）：組 A 裡誤放了一份商品名是「B」的，收成別名＝組 B 整台在 AI 眼裡併進 A。
+   * ⛔ 不收、擋 --apply：放錯組就 --move 到 B；確定放對就 --move 到 A（指定過＝商品名照組名改，舊名字不收成別名）
+   */
+  const groupByKey = new Map(plan.productGroupNames.map(n => [normalizeProductName(n), n]))
+  const movedIds = new Set(moves.map(m => m.id))
+  for (const a of plan.aliases) {
+    a.already = normalizeProductName(canonicalAfter(a.alias)) === normalizeProductName(a.canonical)
+    const owner = groupByKey.get(normalizeProductName(a.alias)) ?? groupByKey.get(normalizeProductName(canonicalAfter(a.alias)))
+    if (!owner || sameProductGroupName(owner, a.canonical)) continue
+    a.conflict = owner
+    const unresolved = a.sourceIds.filter(id => !movedIds.has(id))
+    for (const id of unresolved) {
+      const s = sources.find(x => x.id === id)
+      plan.problems.push(`${q(s?.name ?? id)} 放在 ${q(a.canonical)}，商品名 ${q(s?.productName ?? a.alias)} 卻是另一組 ${q(owner)}——收成別名會把兩台併成一台。`
+        + `放錯組：--move=${id}:${owner}；確定放對：--move=${id}:${a.canonical}`)
+    }
+  }
   plan.duplicates = findLikelyDuplicateGroups([...groups.values()].map(g => ({
     id: g.key, name: g.name, general: g.general,
     productNames: sources.filter(s => placement.get(s.id) === g.key).map(s => s.productName),
@@ -234,14 +269,17 @@ function printPlan(plan, state) {
     }
     console.log(`   ${q(c.source.name)}［${c.group}］：${c.from ? q(c.from) : '（空）'} → ${c.to ? q(c.to) : '（空，不是講單一商品）'}${c.relearn ? `，重新學 ${c.relearn} 條` : ''}`)
   }
-  const add = plan.aliases.filter(a => a.usable && !a.already)
-  console.log(`\n④ 舊名字收成別名：${add.length}`)
+  console.log(`\n④ 組名改成正式名（本來是別的名字的別名）：${plan.promotes.length}`)
+  for (const p of plan.promotes) console.log(`   ${q(p.name)}（以前收斂成 ${q(p.was)}）`)
+  const add = plan.aliases.filter(a => a.usable && !a.already && !a.conflict)
+  console.log(`\n⑤ 舊名字收成別名：${add.length}`)
   for (const a of add) console.log(`   ${q(a.alias)} → ${q(a.canonical)}`)
-  for (const a of plan.aliases.filter(x => x.already)) console.log(`   （已經是別名）${q(a.alias)} → ${q(a.canonical)}`)
-  for (const a of plan.aliases.filter(x => !x.usable)) console.log(`   ⚠️ 太短不收：${q(a.alias)}`)
-  console.log(`\n⑤ 通用／未分類裡清掉商品名：${plan.cleared.length}`)
+  for (const a of plan.aliases.filter(x => x.already && !x.conflict)) console.log(`   （已經是別名）${q(a.alias)} → ${q(a.canonical)}`)
+  for (const a of plan.aliases.filter(x => !x.usable && !x.conflict)) console.log(`   ⚠️ 太短不收：${q(a.alias)}`)
+  for (const a of plan.aliases.filter(x => x.conflict)) console.log(`   ⛔ 不收（是另一組 ${q(a.conflict)} 的名字）：${q(a.alias)} → ${q(a.canonical)}`)
+  console.log(`\n⑥ 通用／未分類裡清掉商品名：${plan.cleared.length}`)
   for (const c of plan.cleared) console.log(`   ${q(c.source.name)}［${c.group}］：${q(c.source.productName)}`)
-  console.log(`\n⑥ 商品名清單重建成 ${plan.productGroupNames.length} 個商品分組名`)
+  console.log(`\n⑦ 商品名清單重建成 ${plan.productGroupNames.length} 個商品分組名`)
   console.log(`\n建議（不會自動做）：名字看起來是同一台的兩組 ${plan.duplicates.length}`)
   for (const d of plan.duplicates) console.log(`   ${q(d.a)} ／ ${q(d.b)}（${d.why === 'name' ? '名字一個包含另一個' : '兩組有同一個商品名'}）`)
   if (plan.problems.length) {
@@ -254,7 +292,7 @@ async function applyPlan(plan) {
   const { createFolder, updateFolder } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-folders.ts'))
   const { updateSourceSettings } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-sources.ts'))
   const { syncSourceProductWithGroup } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-product-group.ts'))
-  const { confirmAlias } = await jiti.import(join(ROOT, 'server/utils/ai-product-alias.ts'))
+  const { confirmAlias, promoteCanonicalName } = await jiti.import(join(ROOT, 'server/utils/ai-product-alias.ts'))
   const { writeAuditLog } = await jiti.import(join(ROOT, 'server/utils/audit-log.ts'))
   if (!process.env.GEMINI_API_KEY) {
     console.error('\n⛔ 重新學習要 GEMINI_API_KEY：用 --env-file=.env --env-file=.env_myfeel')
@@ -284,13 +322,18 @@ async function applyPlan(plan) {
     await audit(`搬家（D-127）：${q(r.from)}${split ? ' 是兩款，留下的這一組' : ''}改名 ${q(r.to)}`, { targetId: r.id, after: { name: r.to } })
     console.log(`  改名 ${q(r.from)} → ${q(r.to)}`)
   }
-  // 3. 舊名字收成別名（在換商品名之前：學完之前卡片上還是舊名字，有別名就照樣認得）
+  // 3. 組名一定是正式名：本來是別名的先拿掉（不然下面收別名會被收斂回舊名字、什麼都不寫）
+  for (const p of plan.promotes) {
+    const promoted = await promoteCanonicalName(db, workspaceId, p.name)
+    console.log(`  正式名 ${q(p.name)}${promoted ? `（不再收斂成 ${q(p.was)}）` : '（本來就是）'}`)
+  }
+  // 4. 舊名字收成別名（在換商品名之前：學完之前卡片上還是舊名字，有別名就照樣認得）。⛔ 對到另一組組名的不收（dry-run 第 ⑤ 段）
   for (const a of plan.aliases) {
-    if (!a.usable || a.already) continue
+    if (!a.usable || a.already || a.conflict) continue
     const changed = await confirmAlias(db, workspaceId, a.canonical, a.alias)
     console.log(`  別名 ${q(a.alias)} → ${q(a.canonical)}${changed ? '' : '（本來就是）'}`)
   }
-  // 4. 每一份照它現在所在那一組換商品名、重新學習（同伺服器搬組那一支，稽核記成系統）
+  // 5. 每一份照它現在所在那一組換商品名、重新學習（同伺服器搬組那一支，稽核記成系統）
   let indexed = 0
   let failed = 0
   for (const c of plan.changes) {
@@ -302,10 +345,10 @@ async function applyPlan(plan) {
       console.log(`  ${q(c.source.name)}：${q(r.previous)} → ${q(r.productName)}，學 ${r.relearned.indexed} 條${r.relearned.failed ? `、失敗 ${r.relearned.failed}` : ''}`)
     }
   }
-  // 5. 商品名清單重建成現在的商品分組名
+  // 6. 商品名清單重建成現在的商品分組名
   await db.collection('knowledgeProductIndex').doc(workspaceId).set({ names: plan.productGroupNames }, { merge: true })
   await audit(`搬家（D-127 分組就是商品）做完：商品名改成組名 ${plan.changes.filter(c => c.to !== c.from).length} 份、重新學習 ${indexed} 條${failed ? `（失敗 ${failed} 條）` : ''}`)
-  console.log(`\n做完：重新學習 ${indexed} 條${failed ? `、失敗 ${failed} 條（點開那一份按「⋯ → 重新學習這一份」）` : '、0 失敗'}`)
+  console.log(`\n做完：重新學習 ${indexed} 條${failed ? `、失敗 ${failed} 條（知識庫頁「要處理的事」會列出來，按「重新學習」）` : '、0 失敗'}`)
 }
 
 const state = await readState()

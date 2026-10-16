@@ -3205,8 +3205,8 @@ try {
     if (folderPuts.length === 1 && folderPuts[0].id === 'c320-prod' && fput.general === true && !('name' in fput) && JSON.stringify(h2.map(h => h.name)) === '["乾淨方MAX","客服 FAQ","通用","C320 除濕機"]' && h2[0].general && editText.includes('刪除分組') && !editText.includes('資料夾')) pass('編輯分組勾「通用」→ 只送 general:true（名字沒改不送）、那一組排進最上面那一段；視窗講「分組」不講資料夾')
     else fail('編輯分組改成通用不對', JSON.stringify({ folderPuts, h2, editText: editText.replace(/\s+/g, ' ').slice(0, 160) }))
     // `D-127`：商品分組的名字那一格叫「商品名」；改成通用＝底下那一份不再是那一台 → 畫面一份份打重新學習、學完講一句
-    const relearnedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了這一組的 1 份資料')), null, 10_000)
-    if (/商品名/.test(editText) && reindexes.includes('c320-a') && relearnedToast) pass('`D-127` 商品分組的名字叫「商品名」；改成通用 → 伺服器回要重新學的那一份，畫面接著打重新學習、講「AI 重新學好了這一組的 1 份資料」')
+    const relearnedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    if (/商品名/.test(editText) && reindexes.includes('c320-a') && relearnedToast) pass('`D-127` 商品分組的名字叫「商品名」；改成通用 → 伺服器回要重新學的那一份，畫面接著打重新學習、講「AI 重新學好了 1 份資料」')
     else fail('改成通用之後沒有重新學', JSON.stringify({ label: /商品名/.test(editText), reindexes, relearnedToast, toasts: await toastsOf(pg) }))
 
     // 拖曳搬組照舊：沒分組的那一份拖到「客服 FAQ」→ PUT folderId；拖分組裡的那份時講「拖到這裡 = 移出分組」
@@ -3566,6 +3566,15 @@ try {
       if (fp && m === 'PUT') {
         const b = body()
         const f = folders.find(x => x.id === fp[1])
+        // 合成一組（/code-review 第 9 條）：一個請求，伺服器照分組搬全部、舊組名收成別名、刪掉那一組，回要重新學的那幾份
+        if (b.mergeInto) {
+          calls.push(`merge ${fp[1]}→${b.mergeInto}`)
+          const into = folders.find(x => x.id === b.mergeInto)
+          const movedSrc = all.filter(s => s.folderId === f.id)
+          for (const s of movedSrc) { s.folderId = into.id; s.productName = into.name }
+          folders.splice(folders.indexOf(f), 1)
+          return json({ merged: true, moved: movedSrc.length, relearnSourceIds: movedSrc.map(s => s.id), aliasFrom: f.name, fromName: f.name, intoName: into.name })
+        }
         const old = f.name
         if (b.name) f.name = b.name
         calls.push(`rename ${old}→${f.name}`)
@@ -3585,12 +3594,13 @@ try {
     await markShown(pg, { title: '這幾個商品名是同一台嗎？' })
     const candText = await pg.$eval(SHOWN, e => e.innerText.replace(/\s+/g, ' '))
     await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-alias-actions .el-button`)].find(b => b.innerText.includes('是同一台'))?.click(), SHOWN)
-    const mergedT = await waitFor(pg, k => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${k}」（搬了 1 份）`)), KEEP, 10_000)
-    await sleep(500)
+    const mergedT = await waitFor(pg, ([k, f]) => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${k}」（搬了 1 份），AI 把它們當成同一台；「${f}」留成客人的叫法`)), [KEEP, FROM], 10_000)
+    const mergeRelearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    await sleep(300)
     const groupsAfter = await pg.$$eval('.src-folder-header .src-folder-name', els => els.map(e => e.innerText.trim()))
     const mergeCalls = calls.join('｜')
-    if (candText.includes(`合成一組，留「${KEEP}」這一組`) && mergedT && mergeCalls === `move c327-b→c327-keep｜alias ${FROM}→${KEEP}｜delete c327-from` && groupsAfter.join('|') === KEEP) pass(`兩組是同一台 →「是同一台」＝合成一組：先講「合成一組，留「${KEEP}」這一組」，資料搬過去（伺服器換商品名）→ 舊組名收成別名 → 刪掉空的那組（${mergeCalls}）`)
-    else fail('合成一組不對', JSON.stringify({ candText: candText.slice(0, 200), mergedT, calls, groupsAfter, toasts: await toastsOf(pg) }))
+    if (candText.includes(`合成一組，留「${KEEP}」這一組`) && mergedT && mergeRelearnT && mergeCalls === 'merge c327-from→c327-keep｜relearn c327-b' && groupsAfter.join('|') === KEEP) pass(`兩組是同一台 →「是同一台」＝合成一組：先講「合成一組，留「${KEEP}」這一組」，一個請求搬全部（伺服器換商品名、舊組名收成別名、刪掉那一組）→ 搬過來的那份重新學（${mergeCalls}）`)
+    else fail('合成一組不對', JSON.stringify({ candText: candText.slice(0, 200), mergedT, mergeRelearnT, calls, groupsAfter, toasts: await toastsOf(pg) }))
     await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000).catch(() => {})
     await pg.keyboard.press('Escape')
     await sleep(600)
@@ -3605,9 +3615,9 @@ try {
     await sleep(200)
     await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.click(), SHOWN)
     const savedAlias = await waitFor(pg, k => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已儲存；舊名字「${k}」留成客人的叫法`)), KEEP, 8000)
-    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了這一組的 2 份資料')), null, 10_000)
+    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 2 份資料')), null, 10_000)
     const renameCalls = calls.join('｜')
-    if (savedAlias && relearnT && renameCalls === `rename ${KEEP}→C327 SHARP HEALSIO 2.4L 自動調理零水鍋｜relearn c327-a｜relearn c327-b`) pass(`改組名 → 講「舊名字「${KEEP}」留成客人的叫法」，底下兩份一份份重新學、學完講「AI 重新學好了這一組的 2 份資料」（${renameCalls}）`)
+    if (savedAlias && relearnT && renameCalls === `rename ${KEEP}→C327 SHARP HEALSIO 2.4L 自動調理零水鍋｜relearn c327-a｜relearn c327-b`) pass(`改組名 → 講「舊名字「${KEEP}」留成客人的叫法」，底下兩份一份份重新學、學完講「AI 重新學好了 2 份資料」（${renameCalls}）`)
     else fail('改組名之後沒有重新學或沒講舊名字', JSON.stringify({ savedAlias, relearnT, calls, toasts: await toastsOf(pg) }))
 
     // 新增分組打了已經有的名字（只差空白大小寫）→ 伺服器回那一組（existed）：講一句、⛔ 清單上不多一列
@@ -3625,6 +3635,86 @@ try {
     const rows = await pg.$$eval('.src-folder-header', els => els.length)
     if (promptText.includes('商品名就是分組的名字') && existedT && rows === 1) pass('新增分組講「商品名就是分組的名字」；打了已經有的名字 → 不另建、講「已經有「…」這一組了」，清單上不多一列')
     else fail('新增分組同名的處理不對', JSON.stringify({ promptText, existedT, rows, calls }))
+    await pg.close()
+  }
+
+  // ── 第四十七段（`D-127` /code-review 第 4、10 條）：「客人還會怎麼叫它」打的是另一組的組名 → 存之前講「那一組的資料會搬進這一組」、
+  //    說是同一台＝合成一組（⛔ 不是只記一條別名、左邊照樣兩組）；商品名換了 AI 還沒重新學的 →「要處理的事」列出來、一鍵補學 ──
+  if (CHECK_FROM <= 47) {
+    const A = 'C47 筋牌特務 W1 REGEN'
+    const B = 'C47 W1 紅光槍'
+    const folders = [
+      { id: 'c47-a', name: A, order: 0, createdAtMs: NOW, general: false },
+      { id: 'c47-b', name: B, order: 1, createdAtMs: NOW, general: false },
+    ]
+    const sa = fakeSource({ id: 'c47-sa', type: 'file', name: 'C47 說明書', folderId: 'c47-a', chunkCount: 1, productName: A, summary: ['說明'] })
+    const sb = fakeSource({ id: 'c47-sb', type: 'file', name: 'C47 紅光槍 FAQ', folderId: 'c47-b', chunkCount: 1, productName: B, summary: ['問答'] })
+    const sx = fakeSource({ id: 'c47-sx', type: 'file', name: 'C47 沒學完的那份', folderId: 'c47-a', chunkCount: 1, productName: A, summary: ['說明'] })
+    const all = [sa, sb, sx]
+    const pageFake = fakeSourcesPage(all, { 'c47-sa': [fakeChunk({ id: 'a1', title: '保固' })], 'c47-sb': [fakeChunk({ id: 'b1', title: '充電' })], 'c47-sx': [fakeChunk({ id: 'x1', title: '尺寸' })] })
+    let pending = [{ id: 'c47-sx', name: sx.name }]
+    const calls = []
+    const fake = async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      const body = () => { const b = JSON.parse(req.postData() || '{}'); delete b.workspaceId; return b }
+      if (url.pathname === '/api/ai/folders' && m === 'GET') return json({ items: folders })
+      if (url.pathname === '/api/ai/knowledge/health' && m === 'GET') return json({ ...emptyHealthFake(), relearnPendingSources: pending })
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'GET') return json({ pairs: [], candidates: [], productNames: [A, B] })
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'POST') { const b = body(); calls.push(`alias ${b.alias}→${b.canonical}`); return json({ ok: true, changed: true }) }
+      const ri = url.pathname.match(/^\/api\/ai\/sources\/(c47-s[abx])\/reindex$/)
+      if (ri && m === 'POST') {
+        calls.push(`relearn ${ri[1]}`)
+        pending = pending.filter(p => p.id !== ri[1])
+        return json({ indexed: 1, failed: 0 })
+      }
+      const fp = url.pathname.match(/^\/api\/ai\/folders\/(c47-[ab])$/)
+      if (fp && m === 'PUT') {
+        const b = body()
+        const f = folders.find(x => x.id === fp[1])
+        if (!b.mergeInto) { calls.push(`put ${JSON.stringify(b)}`); return json({ ...f, relearnSourceIds: [], aliasFrom: '' }) }
+        calls.push(`merge ${fp[1]}→${b.mergeInto}`)
+        const into = folders.find(x => x.id === b.mergeInto)
+        const movedSrc = all.filter(s => s.folderId === f.id)
+        for (const s of movedSrc) { s.folderId = into.id; s.productName = into.name }
+        folders.splice(folders.indexOf(f), 1)
+        return json({ merged: true, moved: movedSrc.length, relearnSourceIds: movedSrc.map(s => s.id), aliasFrom: f.name, fromName: f.name, intoName: into.name })
+      }
+      return pageFake(req)
+    }
+    const pg = await openImportDialog(fake, SOURCES_PAGE)
+    await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
+
+    // 商品名換了、AI 還沒重新學 →「要處理的事」列出來；按「重新學習」一份份學、學完那一列消失
+    const todoShown = await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('有 1 份資料換了商品名，AI 還沒重新學')), null, 15_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('還沒重新學'))?.querySelector('.el-button')?.click())
+    const pendT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    const todoGone = await waitFor(pg, () => ![...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('還沒重新學')), null, 10_000)
+    const pendCalls = calls.join('｜')
+    if (todoShown && pendT && todoGone && pendCalls === 'relearn c47-sx') pass('商品名換了 AI 還沒重新學 →「要處理的事」講「有 1 份資料換了商品名，AI 還沒重新學」；按「重新學習」→ 學完講一句、那一列消失')
+    else fail('「還沒重新學」那一列不對', JSON.stringify({ todoShown, pendT, todoGone, calls, todos: await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.trim())) }))
+
+    // 在 A 的「客人還會怎麼叫它」打 B 的組名 → 存之前講「那一組的資料會搬進這一組」；說是同一台 → 合成一組（⛔ 不送別名）
+    calls.length = 0
+    await sleep(500)
+    await pg.evaluate(n => [...document.querySelectorAll('.src-folder-header')].find(e => e.querySelector('.src-folder-name')?.innerText.trim() === n)?.querySelector('.src-folder-icon-btn')?.click(), A)
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    await markShown(pg, { title: '編輯分組' })
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__input`), SHOWN, 10_000)
+    await typeInto(pg, `${SHOWN} .src-group-alias__input input`, B)
+    await pg.evaluate(s => document.querySelector(`${s} .el-dialog__title`)?.click(), SHOWN)
+    await sleep(300)
+    await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.click(), SHOWN)
+    const box = await waitFor(pg, () => [...document.querySelectorAll('.el-message-box')].some(b => b.offsetParent !== null), null, 5000)
+    const boxTxt = await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button--primary')?.click())
+    const mergedT = await waitFor(pg, ([a, b]) => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${a}」（搬了 1 份），AI 把它們當成同一台；「${b}」留成客人的叫法`)), [A, B], 10_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    await sleep(300)
+    const groupsAfter = await pg.$$eval('.src-folder-header .src-folder-name', els => els.map(e => e.innerText.trim()))
+    const aliasCalls = calls.join('｜')
+    if (box && boxTxt.includes(`「${B}」那一組的資料會搬進這一組，合成一組`) && mergedT && aliasCalls === 'merge c47-b→c47-a｜relearn c47-sb' && groupsAfter.join('|') === A) pass(`叫法打了另一組的組名 → 先講「「${B}」那一組的資料會搬進這一組」，說是同一台＝合成一組、⛔ 不只記別名（${aliasCalls}）`)
+    else fail('叫法打了另一組的組名沒有合成一組', JSON.stringify({ box, boxTxt, mergedT, calls, groupsAfter, toasts: await toastsOf(pg) }))
     await pg.close()
   }
 }

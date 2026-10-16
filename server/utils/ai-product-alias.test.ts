@@ -8,6 +8,7 @@ import {
   aliasPairKey,
   productsByAliasIn,
   productVocabulary,
+  promoteCanonicalName,
   type ProductAliasMap,
 } from './ai-product-alias'
 import { isUsableAlias } from '~~/shared/product-name-similarity'
@@ -269,8 +270,17 @@ describe('confirmAlias', () => {
           get: async () => ({ data: () => doc }),
           set: async (data: any) => {
             writes.push(data)
-            doc.aliases = { ...(doc.aliases ?? {}), ...(data.aliases ?? {}) }
-            doc.aliasLabels = { ...(doc.aliasLabels ?? {}), ...(data.aliasLabels ?? {}) }
+            // FieldValue.delete() 是哨兵物件：當成「這一格拿掉」（removeAlias 走這條）
+            const merge = (base: Record<string, any> = {}, patch: Record<string, any> = {}) => {
+              const out = { ...base }
+              for (const [k, v] of Object.entries(patch)) {
+                if (v && typeof v === 'object' && String(v.constructor?.name ?? '').includes('Delete')) delete out[k]
+                else out[k] = v
+              }
+              return out
+            }
+            doc.aliases = merge(doc.aliases, data.aliases)
+            doc.aliasLabels = merge(doc.aliasLabels, data.aliasLabels)
           },
         }),
       }),
@@ -319,6 +329,21 @@ describe('confirmAlias', () => {
     const { db, writes } = fakeDb()
     expect(await confirmAlias(db, 'ws5', 'SHARP iBarista 智慧咖啡機', '「」・ -')).toBe(false)
     expect(writes).toHaveLength(0)
+  })
+
+  it('`D-127` 組名本來是別名：先 promoteCanonicalName 改成正式名，舊名字才收得成它的別名（/code-review 第 2 條）', async () => {
+    const GROUP = '上好ㄟ抽取式除濕機'
+    const OLD = 'NWT 威技 新一級能效 16L 抽取式除濕機'
+    const { db, doc } = fakeDb({ aliases: { [normalizeProductName(GROUP)]: OLD } })
+    // 沒有先改成正式名：組名收斂回舊名字，兩邊一樣 → 什麼都不寫（以前搬家 dry-run 印「本來就是」的那一條）
+    expect(await confirmAlias(db, 'ws6', GROUP, OLD)).toBe(false)
+
+    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe(true)
+    expect(normalizeProductName(GROUP) in doc.aliases).toBe(false)
+    expect(await confirmAlias(db, 'ws6', GROUP, OLD)).toBe(true)
+    expect(doc.aliases[normalizeProductName(OLD)]).toBe(GROUP)
+    // 本來就是正式名＝不用動
+    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe(false)
   })
 })
 

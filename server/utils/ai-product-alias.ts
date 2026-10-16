@@ -413,6 +413,23 @@ export async function confirmAlias(
   return true
 }
 
+/**
+ * 讓這個名字當正式名（`D-127`：商品分組的組名一定是正式名）：它如果是某條別名，就把那條拿掉。
+ *
+ * 為什麼：組名要是別名（「上好ㄟ抽取式除濕機」→「NWT 威技 新一級能效 16L…」），canonicalProductName 會把組名收斂回舊名字——
+ * 建索引、產品鎖都照舊名字走；之後 confirmAlias(組名, 舊名) 也會因為兩邊收斂成同一個而什麼都不寫；
+ * 編輯分組的「客人還會怎麼叫它」只列指向組名的別名，這一組的叫法全看不到。（2026-10-16 /code-review 第 2 條）
+ * 建商品分組、改組名、改回商品分組、合成一組、搬家腳本都要先叫這一支。回 true＝真的拿掉了一條。
+ */
+export async function promoteCanonicalName(db: Firestore, workspaceId: string, name: string): Promise<boolean> {
+  const key = normalizeProductName(name)
+  if (!key) return false
+  const current = await getProductAliases(db, workspaceId, { fresh: true })
+  if (!Object.prototype.hasOwnProperty.call(current.aliases, key)) return false
+  await removeAlias(db, workspaceId, name)
+  return true
+}
+
 /** 「不是同一台」：記下來不再詢問 */
 export async function dismissAliasPair(
   db: Firestore,

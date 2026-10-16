@@ -21,6 +21,8 @@ export interface FolderSummary {
    * `D-127` 起商品分組就是一台商品：組名＝底下每份資料的商品名；通用的底下沒有商品名（見 ai-knowledge-product-group）。
    */
   general: boolean
+  /** 底下資料的商品名沒跟上組名（見 KnowledgeFolderDoc.productSyncPending） */
+  productSyncPending: boolean
   createdAtMs: number
 }
 
@@ -54,6 +56,7 @@ export function docToFolderSummary(id: string, raw: Partial<KnowledgeFolderDoc>)
     name: String(raw.name ?? ''),
     order: Number(raw.order ?? 0),
     general: raw.general === true,
+    productSyncPending: raw.productSyncPending === true,
     createdAtMs: tsToMs(raw.createdAt),
   }
 }
@@ -236,18 +239,26 @@ export async function deleteFolderCascade(
     .get()
 
   const cleared: string[] = []
-  const batch = db.batch()
-  for (const child of childrenSnap.docs) {
+  const updates = childrenSnap.docs.map((child) => {
     const hadProduct = !!String(child.data()?.productName ?? '').trim()
     if (hadProduct) cleared.push(child.id)
-    batch.update(child.ref, {
-      folderId: null,
-      ...(hadProduct ? { productName: FieldValue.delete() } : {}),
-      updatedAt: FieldValue.serverTimestamp(),
-    })
+    return {
+      ref: child.ref,
+      data: {
+        folderId: null,
+        // 商品名清掉、卡片還沒重新學 → 留記號（同 ai-knowledge-product-group 的 RELEARN_PENDING_FIELD；這裡不 import 那支，會繞成一圈）
+        ...(hadProduct ? { productName: FieldValue.delete(), productRelearnPending: true } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+    }
+  })
+  // 一個 batch 最多 500 筆：分批（/code-review 第 14 條同一件事）。刪分組本身放最後一批，前面搬到一半斷掉時分組還在、重按一次就好
+  for (let i = 0; i < updates.length; i += 400) {
+    const batch = db.batch()
+    for (const u of updates.slice(i, i + 400)) batch.update(u.ref, u.data)
+    await batch.commit()
   }
-  batch.delete(ref)
-  await batch.commit()
+  await ref.delete()
 
   return { movedSources: childrenSnap.size, clearedProductSourceIds: cleared }
 }

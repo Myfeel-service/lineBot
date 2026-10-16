@@ -14,6 +14,7 @@
  * AI 認的商品名在這裡只用來挑分組、或當新分組的名字；加入時 AI 看得到現有的分組名，講的是其中一台就照抄，①比得到的機會大很多。
  */
 import { pickFolderForSource } from './knowledge-folder-match'
+import { normalizeProductName } from './product-name-similarity'
 
 export interface ImportGroup {
   id: string
@@ -39,12 +40,14 @@ export interface ImportGroupHints {
 /** 跟伺服器建資料夾時截的長度一樣（server/utils/ai-knowledge-folders 的 createFolder） */
 export const GROUP_NAME_MAX = 50
 
-/** 判斷「同一個名字」用：全形轉半形、英文轉小寫、空白全拿掉（「W1 智慧手錶」＝「w1智慧手錶」） */
+/**
+ * 判斷「同一個名字」用：全形轉半形，再照伺服器判「同一台」那一把尺（normalizeProductName：去空白、去符號、小寫）。
+ * 「W1 智慧手錶」＝「w1智慧手錶」＝「W1-智慧手錶」。
+ * ⛔ 至少要跟伺服器一樣寬（/code-review 第 13 條）：以前只去空白，「W1-REGEN」「W1 REGEN」這裡算兩個名字、
+ *    整站加入兩頁同時各送一次建立，伺服器兩次都還沒看到對方（先查再寫、不是交易）＝建出兩組同一台
+ */
 export function normGroupName(s: string): string {
-  return String(s ?? '')
-    .replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .toLowerCase()
-    .replace(/\s+/g, '')
+  return normalizeProductName(String(s ?? '').replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)))
 }
 
 /** AI 認的商品名 → 新分組的名字（收掉多餘空白、截到伺服器收的長度）；'' ＝沒有商品名 */
