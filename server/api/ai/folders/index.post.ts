@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { createFolder } from '~~/server/utils/ai-knowledge-folders'
-import { promoteCanonicalName } from '~~/server/utils/ai-product-alias'
+import { makeGroupNameCanonical } from '~~/server/utils/ai-knowledge-product-group'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -21,9 +21,9 @@ export default defineEventHandler(async (event) => {
   const folder = await createFolder(db, workspaceId, name, { general: body?.general === true })
   // `D-127`：已經有同一台的商品分組＝回那一組（existed: true），沒有新建、不記「建了一組」
   if (folder.existed) return folder
-  // 新的商品分組：組名一定是正式名——它要是某條別名就拿掉（/code-review 第 2 條：不然放進來的資料建索引時會被收斂回舊名字）
+  // 新的商品分組：組名一定是正式名——它要是某條別名就拿掉、原本指向的名字收成它的別名（/code-review 第 2 條：不然放進來的資料建索引時會被收斂回舊名字）
   if (!folder.general) {
-    await promoteCanonicalName(db, workspaceId, folder.name).catch((e) => {
+    await makeGroupNameCanonical(db, workspaceId, folder.name, folder.id).catch((e) => {
       console.warn(`[folders] ${folder.id} 組名改成正式名失敗:`, (e as Error)?.message)
     })
   }

@@ -36,7 +36,7 @@ vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./ai-product-alias', () => ({
   confirmAlias: vi.fn(async () => true),
   invalidateProductAliases: vi.fn(),
-  promoteCanonicalName: vi.fn(async () => false),
+  promoteCanonicalName: vi.fn(async () => ''),
 }))
 vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: string }) =>
   Object.assign(new Error(opts.statusMessage ?? 'error'), opts))
@@ -104,6 +104,7 @@ const {
   syncSourceProductWithGroup,
   syncGroupSourcesProduct,
   alignSourceProductWithGroup,
+  makeGroupNameCanonical,
   mergeProductGroupInto,
   markGroupProductSyncPending,
   RELEARN_PENDING_FIELD,
@@ -281,6 +282,44 @@ describe('syncGroupSourcesProduct（改組名、改成／取消通用，`D-127`�
     seed({ folder: { productSyncPending: true }, me: { productName: GROUP } })
     expect(await syncGroupSourcesProduct(db, WS, 'f1')).toEqual([])
     expect('productSyncPending' in STORE.knowledgeFolders!.f1!).toBe(false)
+  })
+})
+
+describe('makeGroupNameCanonical（組名一定是正式名，原本指向的名字收成它的別名）', () => {
+  const groups = () => {
+    STORE.knowledgeFolders = {
+      pk: { workspaceId: WS, name: 'Poketomo 口袋同萌', order: 0 },
+      pot: { workspaceId: WS, name: 'SHARP 自動調理零水鍋', order: 1 },
+      gen: { workspaceId: WS, name: '客服', order: 2, general: true },
+      other: { workspaceId: 'ws2', name: 'SHARP 小獴友 Poketomo 口袋同萌', order: 0 },
+    }
+  }
+
+  it('組名本來指向一個舊全名 → 舊全名收成組名的別名（不然「小獴友」就沒人認）', async () => {
+    groups()
+    vi.mocked(promoteCanonicalName).mockResolvedValueOnce('SHARP 小獴友 Poketomo 口袋同萌')
+    expect(await makeGroupNameCanonical(db, WS, 'Poketomo 口袋同萌', 'pk')).toBe('SHARP 小獴友 Poketomo 口袋同萌')
+    expect(confirmAlias).toHaveBeenCalledWith(db, WS, 'Poketomo 口袋同萌', 'SHARP 小獴友 Poketomo 口袋同萌')
+  })
+
+  it('⛔ 原本指向的是另一個商品分組的組名 → 不收（他另外建這一組就是要分成兩台）；通用、別家同名的不算', async () => {
+    groups()
+    vi.mocked(promoteCanonicalName).mockResolvedValueOnce('SHARP 自動調理零水鍋')
+    expect(await makeGroupNameCanonical(db, WS, '零水鍋', 'new')).toBe('')
+    expect(confirmAlias).not.toHaveBeenCalled()
+
+    // 跟通用那一組、別家那一組同名不算「另一台」
+    vi.mocked(promoteCanonicalName).mockResolvedValueOnce('客服')
+    await makeGroupNameCanonical(db, WS, '客服專線', 'new')
+    expect(confirmAlias).toHaveBeenCalledWith(db, WS, '客服專線', '客服')
+  })
+
+  it('本來就是正式名、原本指向的太短 → 什麼都不收', async () => {
+    groups()
+    expect(await makeGroupNameCanonical(db, WS, 'Poketomo 口袋同萌', 'pk')).toBe('')
+    vi.mocked(promoteCanonicalName).mockResolvedValueOnce('鍋')
+    expect(await makeGroupNameCanonical(db, WS, '零水鍋', 'new')).toBe('')
+    expect(confirmAlias).not.toHaveBeenCalled()
   })
 })
 

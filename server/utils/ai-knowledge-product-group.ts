@@ -271,6 +271,25 @@ export async function alignSourceProductWithGroup(
   return { changed: true, productName: target, previous, source, group, updated }
 }
 
+/**
+ * 組名一定是正式名（`D-127`）：組名本來是某條別名的，拿掉那一條（promoteCanonicalName），
+ * 它原本指向的名字收成這一組的別名——兩個名字本來就被當成同一台，只是換個方向；不收的話那個舊名字跟這一組就斷了，
+ * 客人那樣叫 AI 認不得（MYFEEL「Poketomo 口袋同萌」原本指向「SHARP 小獴友 Poketomo 口袋同萌」，拿掉之後「小獴友」就沒人認）。
+ * ⛔ 原本指向的是**另一個商品分組**的組名＝不收：他另外建了這一組，就是要分成兩台（收了等於又併回去）。太短的也不收（同 C-323）。
+ * 建商品分組、改組名、改回商品分組、合成一組都走這裡。回收回來的那個名字（''＝沒有）。
+ */
+export async function makeGroupNameCanonical(db: Firestore, workspaceId: string, name: string, folderId: string): Promise<string> {
+  const previous = await promoteCanonicalName(db, workspaceId, name)
+  if (!previous || sameProductGroupName(previous, name) || !isUsableAlias(previous)) return ''
+  const groups = await db.collection(KNOWLEDGE_FOLDERS_COLLECTION).where('workspaceId', '==', workspaceId).get()
+  const otherGroup = groups.docs.some((d) => {
+    const g = d.data() as Partial<KnowledgeFolderDoc>
+    return d.id !== folderId && g.general !== true && sameProductGroupName(String(g.name ?? ''), previous)
+  })
+  if (otherGroup) return ''
+  return (await confirmAlias(db, workspaceId, name, previous)) ? previous : ''
+}
+
 export interface GroupMergeResult {
   /** 搬過去的份數 */
   moved: number
@@ -323,7 +342,7 @@ export async function mergeProductGroupInto(
   // 留下那一組的名字當正式名，舊組名收成它的別名（客人照舊那樣叫也認得；太短的不收）
   const intoName = String(into.name ?? '')
   const fromName = String(from.name ?? '')
-  await promoteCanonicalName(db, workspaceId, intoName)
+  await makeGroupNameCanonical(db, workspaceId, intoName, intoId)
   let aliasFrom = ''
   if (fromName && !sameProductGroupName(fromName, intoName) && isUsableAlias(fromName)) {
     await confirmAlias(db, workspaceId, intoName, fromName)

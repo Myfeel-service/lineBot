@@ -419,15 +419,19 @@ export async function confirmAlias(
  * 為什麼：組名要是別名（「上好ㄟ抽取式除濕機」→「NWT 威技 新一級能效 16L…」），canonicalProductName 會把組名收斂回舊名字——
  * 建索引、產品鎖都照舊名字走；之後 confirmAlias(組名, 舊名) 也會因為兩邊收斂成同一個而什麼都不寫；
  * 編輯分組的「客人還會怎麼叫它」只列指向組名的別名，這一組的叫法全看不到。（2026-10-16 /code-review 第 2 條）
- * 建商品分組、改組名、改回商品分組、合成一組、搬家腳本都要先叫這一支。回 true＝真的拿掉了一條。
+ * 建商品分組、改組名、改回商品分組、合成一組、搬家腳本都要先叫這一支。
+ * 回它**原本指向的那個名字**（''＝本來就是正式名、什麼都沒改）——⚠️ 拿掉之後那個舊名字跟這一組就斷了，
+ * 要不要把它收回來當這一組的別名由呼叫端決定（ai-knowledge-product-group 的 makeGroupNameCanonical：是別的商品分組就不收）。
  */
-export async function promoteCanonicalName(db: Firestore, workspaceId: string, name: string): Promise<boolean> {
+export async function promoteCanonicalName(db: Firestore, workspaceId: string, name: string): Promise<string> {
   const key = normalizeProductName(name)
-  if (!key) return false
+  if (!key) return ''
   const current = await getProductAliases(db, workspaceId, { fresh: true })
-  if (!Object.prototype.hasOwnProperty.call(current.aliases, key)) return false
+  if (!Object.prototype.hasOwnProperty.call(current.aliases, key)) return ''
+  // 指向的名字自己又是別名（A→B→C）：回最終那一層（C），收回來才是原本「同一台」的那個名字
+  const previous = canonicalProductName(String(current.aliases[key] ?? ''), current.aliases)
   await removeAlias(db, workspaceId, name)
-  return true
+  return previous
 }
 
 /** 「不是同一台」：記下來不再詢問 */

@@ -1,8 +1,8 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { updateFolder } from '~~/server/utils/ai-knowledge-folders'
-import { markGroupProductSyncPending, mergeProductGroupInto, syncGroupSourcesProduct } from '~~/server/utils/ai-knowledge-product-group'
-import { confirmAlias, promoteCanonicalName } from '~~/server/utils/ai-product-alias'
+import { makeGroupNameCanonical, markGroupProductSyncPending, mergeProductGroupInto, syncGroupSourcesProduct } from '~~/server/utils/ai-knowledge-product-group'
+import { confirmAlias } from '~~/server/utils/ai-product-alias'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { isUsableAlias } from '~~/shared/product-name-similarity'
 import { sameProductGroupName } from '~~/shared/knowledge-product-group'
@@ -60,10 +60,10 @@ export default defineEventHandler(async (event) => {
 
   const renamed = before.name !== after.name
   const generalChanged = before.general !== after.general
-  // 改完是商品分組：組名一定是正式名——它要是某條別名就先拿掉（/code-review 第 2 條：不然組名被收斂回舊名字，
-  // 下面舊名字收成別名那一步也會因為兩邊收斂成同一個而什麼都不寫）
+  // 改完是商品分組：組名一定是正式名——它要是某條別名就先拿掉、原本指向的名字收成它的別名（/code-review 第 2 條：
+  // 不然組名被收斂回舊名字，下面舊名字收成別名那一步也會因為兩邊收斂成同一個而什麼都不寫）
   if (!after.general && (renamed || generalChanged)) {
-    await promoteCanonicalName(db, workspaceId, after.name).catch((e) => {
+    await makeGroupNameCanonical(db, workspaceId, after.name, folderId).catch((e) => {
       console.warn(`[folders] ${folderId} 組名改成正式名失敗:`, (e as Error)?.message)
     })
   }

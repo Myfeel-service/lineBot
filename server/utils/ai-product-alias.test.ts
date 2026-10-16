@@ -338,12 +338,23 @@ describe('confirmAlias', () => {
     // 沒有先改成正式名：組名收斂回舊名字，兩邊一樣 → 什麼都不寫（以前搬家 dry-run 印「本來就是」的那一條）
     expect(await confirmAlias(db, 'ws6', GROUP, OLD)).toBe(false)
 
-    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe(true)
+    // 回原本指向的名字（呼叫端決定要不要收回來當別名）
+    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe(OLD)
     expect(normalizeProductName(GROUP) in doc.aliases).toBe(false)
     expect(await confirmAlias(db, 'ws6', GROUP, OLD)).toBe(true)
     expect(doc.aliases[normalizeProductName(OLD)]).toBe(GROUP)
     // 本來就是正式名＝不用動
-    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe(false)
+    expect(await promoteCanonicalName(db, 'ws6', GROUP)).toBe('')
+  })
+
+  it('原本指向的名字自己又是別名（A→B→C）：回最終那一層 C', async () => {
+    const { db } = fakeDb({
+      aliases: {
+        [normalizeProductName('Poketomo')]: 'Poketomo 口袋同萌',
+        [normalizeProductName('Poketomo 口袋同萌')]: 'SHARP 小獴友 Poketomo 口袋同萌',
+      },
+    })
+    expect(await promoteCanonicalName(db, 'ws7', 'Poketomo')).toBe('SHARP 小獴友 Poketomo 口袋同萌')
   })
 })
 

@@ -214,20 +214,29 @@ function buildPlan({ folders, sources, relearnCount, aliases }) {
    * 組名一定是正式名（/code-review 第 2 條，同伺服器 promoteCanonicalName）：組名本來是某條別名的（MYFEEL「上好ㄟ抽取式除濕機」→「NWT 威技…」），
    * 先把那條拿掉——不然組名被收斂回舊名字，下面「舊名字收成組名的別名」也會因為兩邊收斂成同一個而什麼都不寫（以前 dry-run 印「本來就是」）
    */
+  const groupByKey = new Map(plan.productGroupNames.map(n => [normalizeProductName(n), n]))
   const aliasesAfter = { ...aliases }
   for (const name of plan.productGroupNames) {
     const k = normalizeProductName(name)
     if (k && Object.prototype.hasOwnProperty.call(aliasesAfter, k)) {
-      plan.promotes.push({ name, was: aliasesAfter[k] })
+      plan.promotes.push({ name, was: canonical(aliasesAfter[k]) })
       delete aliasesAfter[k]
     }
+  }
+  /*
+   * 原本指向的名字收成組名的別名（同伺服器 makeGroupNameCanonical）：兩個名字本來就是同一台，只是換方向；
+   * 不收的話舊名字跟這一組就斷了（MYFEEL「Poketomo 口袋同萌」原本指向「SHARP 小獴友 Poketomo 口袋同萌」，拿掉之後「小獴友」沒人認）。
+   * ⛔ 原本指向的是另一組的組名＝不收（那是另一台）
+   */
+  for (const p of plan.promotes) {
+    const owner = groupByKey.get(normalizeProductName(p.was))
+    if (!owner || sameProductGroupName(owner, p.name)) addAlias(p.was, p.name)
   }
   const canonicalAfter = n => canonicalProductName(n, aliasesAfter)
   /*
    * 別名對到的是**另一組**的組名（/code-review 第 3 條）：組 A 裡誤放了一份商品名是「B」的，收成別名＝組 B 整台在 AI 眼裡併進 A。
    * ⛔ 不收、擋 --apply：放錯組就 --move 到 B；確定放對就 --move 到 A（指定過＝商品名照組名改，舊名字不收成別名）
    */
-  const groupByKey = new Map(plan.productGroupNames.map(n => [normalizeProductName(n), n]))
   const movedIds = new Set(moves.map(m => m.id))
   for (const a of plan.aliases) {
     a.already = normalizeProductName(canonicalAfter(a.alias)) === normalizeProductName(a.canonical)
@@ -322,10 +331,10 @@ async function applyPlan(plan) {
     await audit(`搬家（D-127）：${q(r.from)}${split ? ' 是兩款，留下的這一組' : ''}改名 ${q(r.to)}`, { targetId: r.id, after: { name: r.to } })
     console.log(`  改名 ${q(r.from)} → ${q(r.to)}`)
   }
-  // 3. 組名一定是正式名：本來是別名的先拿掉（不然下面收別名會被收斂回舊名字、什麼都不寫）
+  // 3. 組名一定是正式名：本來是別名的先拿掉（不然下面收別名會被收斂回舊名字、什麼都不寫）；原本指向的名字在下一步收成它的別名
   for (const p of plan.promotes) {
-    const promoted = await promoteCanonicalName(db, workspaceId, p.name)
-    console.log(`  正式名 ${q(p.name)}${promoted ? `（不再收斂成 ${q(p.was)}）` : '（本來就是）'}`)
+    const previous = await promoteCanonicalName(db, workspaceId, p.name)
+    console.log(`  正式名 ${q(p.name)}${previous ? `（不再收斂成 ${q(previous)}）` : '（本來就是）'}`)
   }
   // 4. 舊名字收成別名（在換商品名之前：學完之前卡片上還是舊名字，有別名就照樣認得）。⛔ 對到另一組組名的不收（dry-run 第 ⑤ 段）
   for (const a of plan.aliases) {
