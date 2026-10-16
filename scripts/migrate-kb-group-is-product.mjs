@@ -73,6 +73,13 @@ if (!projectId || !clientEmail || !privateKey) {
 }
 initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, '\n') }) })
 const db = getFirestore()
+/*
+ * 伺服器程式裡的 Nuxt 自動匯入，站外跑腳本時沒有（2026-10-16 MYFEEL 搬家第一次 --apply 就是這樣：
+ * 名字、分組、別名都寫進去了，重新學習 261 條全部失敗「useRuntimeConfig is not defined」，那幾條被標成 failed、AI 用不到）。
+ * 重新學習會打 Gemini（gemini.ts 讀 useRuntimeConfig().geminiApiKey），錯誤用 createError
+ */
+globalThis.useRuntimeConfig ??= () => ({ geminiApiKey: process.env.GEMINI_API_KEY ?? '' })
+globalThis.createError ??= o => Object.assign(new Error(o?.statusMessage ?? 'error'), o)
 
 const { distinctGroupProductNames, findLikelyDuplicateGroups, isVariantPair, productNameForGroup, sameProductGroupName } =
   await jiti.import(join(ROOT, 'shared/knowledge-product-group.ts'))
@@ -358,6 +365,41 @@ async function applyPlan(plan) {
   await db.collection('knowledgeProductIndex').doc(workspaceId).set({ names: plan.productGroupNames }, { merge: true })
   await audit(`搬家（D-127 分組就是商品）做完：商品名改成組名 ${plan.changes.filter(c => c.to !== c.from).length} 份、重新學習 ${indexed} 條${failed ? `（失敗 ${failed} 條）` : ''}`)
   console.log(`\n做完：重新學習 ${indexed} 條${failed ? `、失敗 ${failed} 條（知識庫頁「要處理的事」會列出來，按「重新學習」）` : '、0 失敗'}`)
+}
+
+/*
+ * --relearn-failed=<失敗原因裡的一段字>：只把「這個原因失敗的那幾條」所在的資料重新學一次（搬家重新學習失敗之後補救用）。
+ * 不帶 --apply＝只列出會重學哪幾份、幾條。⛔ 一定要給原因：不相干、本來就壞掉的那幾條不要順手重算
+ */
+const relearnFailedReason = optValues('relearn-failed')[0] ?? ''
+if (relearnFailedReason) {
+  const snap = await db.collection('knowledgeChunks').where('workspaceId', '==', workspaceId).where('status', '==', 'failed')
+    .select('sourceId', 'failureReason').get()
+  const bySource = new Map()
+  for (const c of snap.docs) {
+    if (!String(c.get('failureReason') ?? '').includes(relearnFailedReason)) continue
+    const sid = String(c.get('sourceId') ?? '')
+    if (sid) bySource.set(sid, (bySource.get(sid) ?? 0) + 1)
+  }
+  const total = [...bySource.values()].reduce((a, b) => a + b, 0)
+  console.log(`\n失敗原因含「${relearnFailedReason}」：${bySource.size} 份、${total} 條${apply ? '' : '（只讀，加 --apply 才重新學）'}`)
+  if (apply) {
+    if (!process.env.GEMINI_API_KEY) {
+      console.error('⛔ 重新學習要 GEMINI_API_KEY：用 --env-file=.env --env-file=.env_myfeel')
+      process.exit(1)
+    }
+    const { relearnSourceChunks } = await jiti.import(join(ROOT, 'server/utils/ai-knowledge-product-group.ts'))
+    let indexed = 0
+    let failed = 0
+    for (const sid of bySource.keys()) {
+      const r = await relearnSourceChunks(db, workspaceId, sid)
+      indexed += r.indexed
+      failed += r.failed
+      console.log(`  ${sid}：學 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed}（${r.failures[0]?.failureReason ?? ''}）` : ''}`)
+    }
+    console.log(`\n做完：重新學習 ${indexed} 條、失敗 ${failed} 條`)
+  }
+  process.exit(0)
 }
 
 const state = await readState()
