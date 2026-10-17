@@ -234,7 +234,7 @@ describe('maybeNotifyQuotaExhausted', () => {
     expect(pushMessage).not.toHaveBeenCalled()
   })
 
-  it('首次用完:記「嘗試過」→推播→送達才記「這期已發」,handoff 策略講「全部轉真人」', async () => {
+  it('首次用完:記「嘗試過」→推播→送達才記「這期已發」,handoff 講「需要 AI 回答的才轉真人、自動回應照常」', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     const { db, set } = makeAlertsDb(undefined)
     await maybeNotifyQuotaExhausted({
@@ -248,7 +248,10 @@ describe('maybeNotifyQuotaExhausted', () => {
     expect(pushMessage).toHaveBeenCalledTimes(2)
     const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
     expect(text).toContain('🚫 AI 額度已用完')
-    expect(text).toContain('全部轉給真人客服')
+    expect(text).toContain('需要 AI 回答的客人訊息會轉給真人客服')
+    expect(text).toContain('自動回應照常')
+    // ⛔ 2026-10-17 前寫「客人訊息會全部轉給真人客服」＝誇大（自動回應照常運作）
+    expect(text).not.toContain('全部轉')
   })
 
   // C-89:原本「先寫標記再推播」,推播全滅只留 log → 每期一次的警報這期永遠沉默
@@ -287,7 +290,7 @@ describe('maybeNotifyQuotaExhausted', () => {
 
 describe('maybeWarnQuotaThreshold(80% 預警)', () => {
   it('低於 80% 直接返回,連設定都不讀(熱路徑零額外讀取)', async () => {
-    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.5, periodKey: 'p_2026-08-01', usageText: 'x', db: makeAlertsDb(undefined).db })
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.5, periodKey: 'p_2026-08-01', usageText: 'x', onExhausted: 'handoff', db: makeAlertsDb(undefined).db })
     expect(getAiSettings).not.toHaveBeenCalled()
     expect(pushMessage).not.toHaveBeenCalled()
   })
@@ -295,18 +298,31 @@ describe('maybeWarnQuotaThreshold(80% 預警)', () => {
   it('首次跨 80%:記「嘗試過」→推播→送達才記「這期已警告」', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     const { db, set } = makeAlertsDb(undefined)
-    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.81, periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 812/1000', db })
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.81, periodKey: 'p_2026-08-01', usageText: '本期 AI 回覆則數 812/1000', onExhausted: 'handoff', db })
     expect(set).toHaveBeenCalledTimes(2)
     expect(set.mock.calls[0]![0]).toHaveProperty('warnAttemptKey', 'p_2026-08-01')
     expect(set.mock.calls[1]![0]).toHaveProperty('periodKey', 'p_2026-08-01')
     expect(pushMessage).toHaveBeenCalledTimes(2)
-    expect((pushMessage.mock.calls[0]![1] as any)[0].text).toContain('⚠️ AI 用量預警')
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('⚠️ AI 用量預警')
+    // 有則數上限的方案一律轉真人：只講那一種，⛔ 不再寫「轉真人或降級模型(依設定)」（設定對它們是藏起來的）
+    expect(text).toContain('需要 AI 回答的客人訊息會改轉真人客服')
+    expect(text).not.toContain('依設定')
+  })
+
+  it('沒有則數上限、用完會降級的帳號：預警講降級，不講轉真人', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db } = makeAlertsDb(undefined)
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 't_2026-10', usageText: '本月 AI 用量已接近「AI 設定」裡的每月用量上限', onExhausted: 'downgrade', db })
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('較精簡的模型')
+    expect(text).not.toContain('轉真人')
   })
 
   it('同期已警告過 → 不再推', async () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     const { db, set } = makeAlertsDb({ periodKey: 'p_2026-08-01' })
-    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.9, periodKey: 'p_2026-08-01', usageText: 'x', db })
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.9, periodKey: 'p_2026-08-01', usageText: 'x', onExhausted: 'handoff', db })
     expect(set).not.toHaveBeenCalled()
     expect(pushMessage).not.toHaveBeenCalled()
   })
@@ -315,7 +331,7 @@ describe('maybeWarnQuotaThreshold(80% 預警)', () => {
     getAiSettings.mockResolvedValue(settingsWith('always'))
     pushMessage.mockRejectedValue(new Error('blocked'))
     const { db, set, recorded } = makeAlertsDb(undefined)
-    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 'p_2026-08-01', usageText: 'x', db })
+    await maybeWarnQuotaThreshold({ workspaceId: 'WS', ratio: 0.85, periodKey: 'p_2026-08-01', usageText: 'x', onExhausted: 'handoff', db })
     expect(set).toHaveBeenCalledTimes(1)
     expect(set.mock.calls[0]![0]).not.toHaveProperty('periodKey')
     // `C-270`⑥：每一位的結果都要記下來。這裡的錯誤不是 LINE 回的 HTTP 錯（連不上），

@@ -32,9 +32,12 @@
             <div class="ai-status-row">
               <span :class="['badge', statusBadgeClass]">{{ statusLabel }}</span>
               <!-- ⛔「本期」不是「本月」：planState 讀的是額度攔截那顆計數器,按續約錨定日一期。
+                   沒有上限的方案沒有「本期」可言，改講「這個月」，跟 AI 表現頁同一個數（`G-87`，2026-10-17 補上）。
                    ⓘ 講清楚「則」是什麼——這一行是很多人第一次看到這個單位的地方。 -->
               <span v-if="planView" class="ai-status-usage">
-                本期已用 {{ planState.used.toLocaleString() }}<template v-if="planState.limit != null"> / {{ planState.limit.toLocaleString() }}</template> 則
+                <template v-if="planState.limit != null">本期已用 {{ planState.used.toLocaleString() }} / {{ planState.limit.toLocaleString() }} 則</template>
+                <template v-else-if="planMonthBillable != null">這個月 {{ planMonthBillable.toLocaleString() }} 則</template>
+                <template v-else>本期已用 {{ planState.used.toLocaleString() }} 則</template>
                 <el-tooltip placement="top" :content="REPLY_UNIT_TIP">
                   <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
                 </el-tooltip>
@@ -861,7 +864,7 @@ const statusLabel = computed(() => {
 })
 
 // 方案（則數）摘要：已開通方案的帳號以「則數」為上限，token 上限不生效
-const { plan: planView, state: planState, load: loadPlanSummary } = usePlanSummary()
+const { plan: planView, state: planState, monthBillable: planMonthBillable, load: loadPlanSummary } = usePlanSummary()
 
 const statusBadgeClass = computed(() => {
   if (!form.value.enabled) return 'badge-gray'

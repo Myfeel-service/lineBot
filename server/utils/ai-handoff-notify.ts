@@ -206,7 +206,7 @@ export async function notifyOverdueHandoffBatch(params: {
 }
 
 // ── AI 額度 80% 預警 ────────────────────────────────────────────────
-// 額度用完的瞬間所有客人訊息會轉真人(懸崖式)——在 80% 先通知管理員,留反應時間。
+// 額度用完的瞬間需要 AI 回答的客人訊息會改轉真人(懸崖式)——在 80% 先通知管理員,留反應時間。
 // 每個「額度期間」只警告一次(標記存 aiQuotaAlerts/{workspaceId},換期自動重新警戒);
 // 收件人沿用轉真人通知名單(名單沒設就發不出去——那本來就是最優先待辦)。
 
@@ -220,6 +220,11 @@ export async function maybeWarnQuotaThreshold(params: {
   periodKey: string
   /** 通知內容的用量描述(例「本期 AI 回覆則數 812/1000」) */
   usageText: string
+  /**
+   * 用完之後實際會怎樣(呼叫端算好傳進來)。⛔ 不要寫「轉真人或降級模型(依設定)」:
+   * 有則數上限的方案一律轉真人、根本看不到那個設定,把兩種都講等於講錯一半(2026-10-17)。
+   */
+  onExhausted: 'handoff' | 'downgrade'
   db: Firestore
 }): Promise<void> {
   if (params.ratio < 0.8) return
@@ -240,7 +245,9 @@ export async function maybeWarnQuotaThreshold(params: {
 
   const msg: messagingApi.TextMessage = {
     type: 'text',
-    text: `⚠️ AI 用量預警\n${params.usageText}(約 ${Math.round(params.ratio * 100)}%)。\n額度用完後,客人訊息將全部轉真人或降級模型(依設定)。請留意用量或調整方案。`,
+    text: `⚠️ AI 用量預警\n${params.usageText}(約 ${Math.round(params.ratio * 100)}%)。\n${params.onExhausted === 'handoff'
+      ? '用完後,需要 AI 回答的客人訊息會改轉真人客服(自動回應不受影響)。'
+      : '用完後會改用較精簡的模型繼續回覆,品質可能略降。'}請留意用量或調整方案。`,
   }
   const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
   results.forEach((r, i) => {
@@ -256,7 +263,7 @@ export async function maybeWarnQuotaThreshold(params: {
 }
 
 // ── AI 額度 100% 用完通知 ──────────────────────────────────────────
-// 80% 是預告,100% 是事故現場:AI 已停止回覆,客人訊息開始全轉真人(或降級模型)。
+// 80% 是預告,100% 是事故現場:AI 已停止回覆,需要 AI 回答的客人訊息開始轉真人(或降級模型)。
 // 這件事等不了「下次有人打開後台」——每期最多一則,是全系統資訊價值最高的一則錢。
 // 標記與 80% 預警共用 aiQuotaAlerts doc,各記各的鍵(兩者一期各發一次)。
 export async function maybeNotifyQuotaExhausted(params: {
@@ -282,7 +289,8 @@ export async function maybeNotifyQuotaExhausted(params: {
   await ref.set({ exhaustedAttemptKey: params.periodKey, exhaustedAttemptAtMs: Date.now() }, { merge: true })
 
   const consequence = params.action === 'handoff'
-    ? '從現在起,客人訊息會全部轉給真人客服,請盯緊後台「對話」頁。'
+    // ⛔ 不是「全部」:自動回應照常,只有需要 AI 回答的才轉(跟後台 AdminQuotaBanner 同一句)
+    ? '從現在起,需要 AI 回答的客人訊息會轉給真人客服(自動回應照常),請盯緊後台「對話」頁。'
     : '已自動改用較精簡的模型繼續回覆,品質可能略降。'
   const msg: messagingApi.TextMessage = {
     type: 'text',

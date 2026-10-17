@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { getQuotaAnswered } from '~~/server/utils/ai-usage'
+import { getCurrentMonthUsageCounts, getQuotaAnswered } from '~~/server/utils/ai-usage'
 import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
 
 /**
@@ -23,5 +23,15 @@ export default defineEventHandler(async (event) => {
     ? await getQuotaAnswered(workspaceId, sub.currentPeriodStart, db)
     : 0
 
-  return { plan, answered }
+  /**
+   * 沒有則數上限的方案（內部／客製）另外回「這個月」的計費則數（`G-87`）：沒有上限就沒有「本期」可言，
+   * AI 表現頁與小幫手講的都是台北日曆月。⛔ 只回 `answered`（按續約日算的額度桶）的話，
+   * AI 設定頁寫「本期已用 93 則」、AI 表現頁寫「這個月 374 則」，同一個帳號兩頁對不起來（2026-10-17 全站對過）。
+   * 有上限的方案不多讀這一筆（外殼每一頁都會打這支）。
+   */
+  const monthBillable = plan && plan.answeredQuota == null
+    ? (await getCurrentMonthUsageCounts(workspaceId, db)).billable
+    : null
+
+  return { plan, answered, monthBillable }
 })

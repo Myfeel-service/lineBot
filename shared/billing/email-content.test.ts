@@ -105,15 +105,22 @@ describe('quotaEmail', () => {
     brandName: 'MYFEEL', workspaceName: '小福商店', planName: '免費',
     used: 200, quota: 200, manageUrl: 'https://app.example.com/b',
   }
-  it('over：主旨為已用完、內文提到暫停自動回覆', () => {
-    const { subject, html } = quotaEmail({ ...base, kind: 'over' })
+  it('over：主旨為已用完、內文講 AI 停止自動回覆，而且跟後台橫幅同一個後果', () => {
+    const { subject, html, text } = quotaEmail({ ...base, kind: 'over' })
     expect(subject).toContain('已用完')
-    expect(html).toContain('暫停自動回覆')
+    expect(html).toContain('AI 已停止自動回覆')
     expect(html).toContain('200 / 200 則')
+    // ⛔ 2026-10-17 前寫「之後的訊息會轉由真人客服處理」＝誇大成全部轉真人；自動回應其實照常
+    for (const body of [html, text]) {
+      expect(body).toContain('自動回應仍正常運作')
+      expect(body).toContain('需要 AI 回答的問題')
+      expect(body).not.toContain('之後的訊息會轉由真人')
+    }
   })
-  it('near：主旨為即將用完', () => {
-    const { subject } = quotaEmail({ ...base, used: 170, kind: 'near' })
+  it('near：主旨為即將用完，後果也講「需要 AI 回答的才轉、自動回應不受影響」', () => {
+    const { subject, text } = quotaEmail({ ...base, used: 170, kind: 'near' })
     expect(subject).toContain('即將用完')
+    expect(text).toContain('自動回應不受影響')
   })
 })
 

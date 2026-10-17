@@ -277,7 +277,8 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'quotaExceeded',
     icon: Odometer,
-    impact: 'AI 已經停止回覆，現在客人的訊息會直接轉給真人處理。',
+    // ⛔ 不是「客人的訊息」全部：自動回應照常，只有需要 AI 回答的才轉（跟 AdminQuotaBanner 同一句）
+    impact: 'AI 已經停止回覆，需要 AI 回答的客人訊息現在會轉給真人處理（自動回應照常）。',
     cta: '去升級方案',
     // 落點「訂閱與付款」那一頁的進入門檻＝`billing.manage`（下面幾顆帳單類同一項）
     requires: 'billing.manage',

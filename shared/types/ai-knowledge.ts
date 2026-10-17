@@ -973,7 +973,8 @@ export const HANDOFF_REASON_LABELS: Record<HandoffReason, string> = {
   low_confidence: '信心不足',
   sensitive_topic: '敏感主題',
   no_grounding: '知識庫無依據',
-  quota_exceeded: '本月用量已滿',
+  // ⛔ 不寫「本月」：有則數上限的方案是「本期」（按續約日），只有沒上限的才是每月——兩種都會走到這裡
+  quota_exceeded: 'AI 額度已用完',
   llm_error: 'AI 服務暫時失敗',
   manual: '人工指定',
   user_request: '客人要求真人',

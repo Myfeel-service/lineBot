@@ -176,7 +176,7 @@
                     命中敏感主題，依設定直接轉真人。
                   </p>
                   <p v-else-if="turn.result.handoffReason === 'quota_exceeded'" class="text-muted">
-                    本月 token 用量已達上限，依設定全部轉真人。
+                    AI 回覆額度已用完，需要 AI 回答的問題會轉真人（自動回應照常）。
                   </p>
                 </div>
 

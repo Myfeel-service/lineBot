@@ -31,7 +31,7 @@ const WHY: Partial<Record<HandoffReason, string>> = {
   no_grounding: '知識庫裡沒有這題的答案',
   low_confidence: '有找到相關的，但 AI 沒把握',
   sensitive_topic: '這類問題設定成交給真人',
-  quota_exceeded: '這個月的 AI 回覆用完了',
+  quota_exceeded: 'AI 回覆額度用完了',
   user_request: '客人說要找真人',
 }
 

@@ -10,7 +10,7 @@ import { applySuperSubscriptionEdit, SubscriptionEditError } from '~~/shared/bil
  * 更新 workspace 名稱、所屬組織或計費訂閱。Body: { name?, organizationId?, subscription? }
  *
  * subscription：{ planId, status?, currentPeriodStart?/End?, anchorDay?, quotaOverride?, note? }
- *   - null → 刪掉訂閱欄位。該帳號會被**當成免費層（200 則）並照常攔截**——
+ *   - null → 刪掉訂閱欄位。該帳號會被**當成免費層（`G-49` 起 50 則）並照常攔截**——
  *     沒有「未開通就不攔截」這種後門了（見 server/utils/billing.ts）。
  *   - 非 null → **只覆寫表單欄位**，綁卡／折抵／續扣狀態原樣保留
  *     （applySuperSubscriptionEdit；2026-08-16 稽核前是整包取代，超管改個備註

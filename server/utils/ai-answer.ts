@@ -1647,7 +1647,10 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           .catch(e => console.error('[quota-exhausted] failed:', e))
       }
       else if (ratio >= 0.8) {
-        void maybeWarnQuotaThreshold({ workspaceId, ratio, periodKey, usageText, db })
+        // 用完之後會發生什麼要講對：有則數上限＝一律轉真人（resolveQuotaAction 不看設定），
+        // 只有沒則數上限、靠 token 護欄的帳號才照 onExceed 設定轉真人或降級
+        const onExhausted = hasCountQuota || settings.quota.onExceed === 'handoff_all' ? 'handoff' : 'downgrade'
+        void maybeWarnQuotaThreshold({ workspaceId, ratio, periodKey, usageText, onExhausted, db })
           .catch(e => console.error('[quota-warn] failed:', e))
       }
     }
