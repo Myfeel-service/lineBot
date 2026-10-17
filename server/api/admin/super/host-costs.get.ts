@@ -55,8 +55,16 @@ export default defineEventHandler(async (event) => {
   const now = new Date()
   const fallbackPeriod = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}`
   const period = String(query.period ?? fallbackPeriod).replace(/\D/g, '').slice(0, 6) || fallbackPeriod
+  /**
+   * `?itemize=0`：只要總額、不要 Amplify 拆項。成本頁拿「上個月」只是為了算「較上月」，
+   * 拆項那支查詢對它沒有用，卻一樣要付 US$0.01。完整版的快取照樣拿來用（它本來就含總額）。
+   */
+  const itemize = query.itemize !== '0'
 
-  const cached = cache.get(period)
+  const cachedFull = cache.get(period)
+  if (cachedFull && Date.now() - cachedFull.at < CACHE_TTL_MS) return cachedFull.data
+  const cacheKey = itemize ? period : `${period}:summary`
+  const cached = cache.get(cacheKey)
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data
 
   const base = { period, usdToTwd: USD_TO_TWD }
@@ -68,13 +76,15 @@ export default defineEventHandler(async (event) => {
     // 但也不可以靜靜消失——失敗時把原因一起回給畫面講。
     const [res, usage] = await Promise.all([
       fetchAwsCost(start, end),
-      fetchAwsServiceUsage(ITEMIZED_SERVICE, start, end)
-        .then(items => ({ items, reason: '' }))
-        .catch((e: unknown) => {
-          const reason = e instanceof AwsCostUnavailableError ? e.message : String((e as Error)?.message ?? e).slice(0, 200)
-          console.warn('[host-costs] 讀取 Amplify 逐項用量失敗:', reason)
-          return { items: null as AwsUsageItem[] | null, reason }
-        }),
+      itemize
+        ? fetchAwsServiceUsage(ITEMIZED_SERVICE, start, end)
+            .then(items => ({ items, reason: '' }))
+            .catch((e: unknown) => {
+              const reason = e instanceof AwsCostUnavailableError ? e.message : String((e as Error)?.message ?? e).slice(0, 200)
+              console.warn('[host-costs] 讀取 Amplify 逐項用量失敗:', reason)
+              return { items: null as AwsUsageItem[] | null, reason }
+            })
+        : Promise.resolve({ items: null as AwsUsageItem[] | null, reason: '這次只查總額，沒有拆項' }),
     ])
     const data = {
       ...base,
@@ -93,7 +103,7 @@ export default defineEventHandler(async (event) => {
       amplifyUsage: usage.items,
       amplifyUsageReason: usage.reason,
     }
-    cache.set(period, { at: Date.now(), data })
+    cache.set(cacheKey, { at: Date.now(), data })
     return data
   }
   catch (e) {

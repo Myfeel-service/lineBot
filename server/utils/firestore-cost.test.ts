@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { computeFirebaseCost, FIRESTORE_FREE_TIER, GIB, type DayUsage } from './firestore-cost'
+import { computeFirebaseCost, FIRESTORE_FREE_TIER, FREE_EGRESS_GIB_PER_MONTH, GIB, type DayUsage } from './firestore-cost'
 
 const day = (d: string, over: Partial<DayUsage> = {}): DayUsage => ({
   day: d, reads: 0, writes: 0, deletes: 0, storageBytes: 0, fileBytes: 0, ...over,
 })
 
+/** 每筆 1 KB 時，讀幾次剛好傳出 n GiB */
+const readsForGib = (n: number) => n * GIB / 1024
+
 describe('computeFirebaseCost', () => {
-  it('免費額度內量測費用是 0（但流量費仍要算：讀第一筆就在傳資料出去）', () => {
+  it('免費額度內全部是 0：每日讀寫刪＋存量＋每月 10 GiB 流量都沒超過', () => {
     const r = computeFirebaseCost([
       day('2026-08-01', {
         reads: FIRESTORE_FREE_TIER.readsPerDay,
@@ -18,20 +21,41 @@ describe('computeFirebaseCost', () => {
 
     expect(r.totals.measuredCostUsd).toBe(0)
     expect(r.totals.billableReads).toBe(0)
-    expect(r.totals.egressCostUsd).toBeGreaterThan(0)
-    expect(r.totals.totalCostUsd).toBe(r.totals.egressCostUsd)
+    // 流量照樣算出量來（畫面要講「傳了多少」），只是落在每月免費額內
+    expect(r.totals.egressGib).toBeGreaterThan(0)
+    expect(r.totals.billableEgressGib).toBe(0)
+    expect(r.totals.egressCostUsd).toBe(0)
+    expect(r.totals.totalCostUsd).toBe(0)
   })
 
-  it('流量費＝讀取次數 × 每筆大小 × 單價，且不受免費額度影響', () => {
-    const oneGib = { reads: GIB / 1024, storageBytes: 0 } // 每筆 1 KB → 剛好 1 GiB
-    const r = computeFirebaseCost([day('2026-08-01', oneGib)], { multiRegion: true, daysInMonth: 31 })
+  it('流量費＝超過每月 10 GiB 的部分 × 單價；免費的 5 萬次讀取一樣在傳資料，不能拿來扣流量', () => {
+    // 一天傳 11 GiB → 超過 1 GiB → US$0.12
+    const r = computeFirebaseCost([day('2026-08-01', { reads: readsForGib(FREE_EGRESS_GIB_PER_MONTH + 1) })], { multiRegion: true, daysInMonth: 31 })
+    expect(r.totals.egressGib).toBeCloseTo(11, 6)
+    expect(r.totals.billableEgressGib).toBeCloseTo(1, 6)
     expect(r.totals.egressCostUsd).toBeCloseTo(0.12, 6)
 
-    // 假設值可調高以估得更保守：每筆 2 KB → 流量費翻倍
-    const conservative = computeFirebaseCost([day('2026-08-01', oneGib)], { multiRegion: true, daysInMonth: 31, bytesPerRead: 2048 })
-    expect(conservative.totals.egressCostUsd).toBeCloseTo(0.24, 6)
+    // 假設值可調高以估得更保守：每筆 2 KB → 同樣讀取次數傳出 22 GiB、超過 12 GiB
+    const conservative = computeFirebaseCost([day('2026-08-01', { reads: readsForGib(FREE_EGRESS_GIB_PER_MONTH + 1) })], { multiRegion: true, daysInMonth: 31, bytesPerRead: 2048 })
+    expect(conservative.totals.egressCostUsd).toBeCloseTo(12 * 0.12, 6)
     // 量測的部分不會因為假設變動而改變
     expect(conservative.totals.measuredCostUsd).toBe(r.totals.measuredCostUsd)
+  })
+
+  it('流量免費額是「每月」累計、不是每天重置：月初那幾天吃掉免費額，之後每天都要錢', () => {
+    // 每天 4 GiB × 4 天＝16 GiB：前兩天半吃掉 10 GiB，第 3 天收 2 GiB、第 4 天收 4 GiB
+    const days = ['2026-08-01', '2026-08-02', '2026-08-03', '2026-08-04']
+      .map(d => day(d, { reads: readsForGib(4) }))
+    const r = computeFirebaseCost(days, { multiRegion: true, daysInMonth: 31 })
+    expect(r.totals.billableEgressGib).toBeCloseTo(6, 6)
+    expect(r.totals.egressCostUsd).toBeCloseTo(6 * 0.12, 6)
+    // 流量錢落在後面那兩天，不是平均攤在四天（長條圖上的金額標籤靠這個）
+    const readCost = (readsForGib(4) - FIRESTORE_FREE_TIER.readsPerDay) / 100_000 * 0.06
+    const daily = r.days.map(d => d.costUsd)
+    expect(daily[0]).toBeCloseTo(readCost, 5)
+    expect(daily[1]).toBeCloseTo(readCost, 5)
+    expect(daily[2]).toBeCloseTo(readCost + 2 * 0.12, 5)
+    expect(daily[3]).toBeCloseTo(readCost + 4 * 0.12, 5)
   })
 
   it('免費額度逐日扣、不是整月加總後才扣', () => {
@@ -45,7 +69,8 @@ describe('computeFirebaseCost', () => {
   })
 
   it('measuredCostUsd 只含量測、totalCostUsd 才含估算流量（前端要能分開講）', () => {
-    const r = computeFirebaseCost([day('2026-08-01', { reads: 150_000 })], { multiRegion: true, daysInMonth: 31 })
+    // 讀到流量超過每月免費額，估算那一格才會是正數
+    const r = computeFirebaseCost([day('2026-08-01', { reads: readsForGib(12) })], { multiRegion: true, daysInMonth: 31 })
     expect(r.totals.measuredCostUsd).toBeCloseTo(r.totals.readCostUsd, 6)
     expect(r.totals.totalCostUsd).toBeCloseTo(r.totals.measuredCostUsd + r.totals.egressCostUsd, 6)
     expect(r.totals.totalCostUsd).toBeGreaterThan(r.totals.measuredCostUsd)
@@ -102,10 +127,13 @@ describe('computeFirebaseCost', () => {
     expect(r.totals.fileStorageCostUsd).toBe(0)
     expect(r.totals.measuredCostUsd).toBeCloseTo(0.8236, 3)
 
-    // 校準：量測 0.82 ＋ 估算流量 0.21 ＝ 1.03，對照主控台當時顯示 NT$31.76
-    // （帳單幣別為台幣，約當 US$1.03）→ 誤差 5% 內，證明「1 KB／筆」的假設站得住
-    expect(r.totals.egressCostUsd).toBeCloseTo(0.2086, 3)
-    expect(r.totals.totalCostUsd).toBeCloseTo(1.032, 2)
+    // 九天傳出約 1.74 GiB，整個落在每月 10 GiB 的免費流量內 → 流量 0 元。
+    // ⛔ 2026-08-10 這裡曾斷言「量測 0.82 ＋ 流量 0.21 ＝ 1.03 ≈ 主控台 NT$31.76，誤差 5% 內」，
+    //    拿來證明流量假設站得住——那是巧合：這 1.74 GiB 主控台根本不會收錢。
+    //    9/7 那次對帳才看出來（扣掉流量後與主控台幾乎一致），見 FREE_EGRESS_GIB_PER_MONTH。
+    expect(r.totals.egressGib).toBeCloseTo(1.738, 3)
+    expect(r.totals.egressCostUsd).toBe(0)
+    expect(r.totals.totalCostUsd).toBeCloseTo(0.8236, 3)
 
     // 錢是哪幾天花的：8/4 > 8/7 > 8/5（與主控台曲線的陡升段吻合）
     expect(r.topDays.map(d => d.day)).toEqual(['2026-08-04', '2026-08-07', '2026-08-05'])

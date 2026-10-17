@@ -539,6 +539,11 @@ $cost-host: #8a6f5a;
   b { font-weight: 700; }
 }
 
+// ⛔ 要寫在 .sa-infra-warn 後面：同權重時後寫的贏，寫在前面 margin-top 會被蓋回 1rem
+.sa-infra-warn--above-grid {
+  margin: 0 0 1.1rem; // 跟上面的口徑說明框、下面的數字格各留一樣的距離
+}
+
 /* 各格相加＝資料庫總花費（auto-fit：格數變動也不會留孤兒） */
 .sa-infra-grid {
   display: grid;
@@ -665,6 +670,15 @@ $cost-host: #8a6f5a;
 .sa-infra-col__paid {
   width: 100%;
   background: $cost-infra; // 超出免費額度＝真的要付錢
+}
+
+/* Google 那邊整天查不到資料的那幾天：畫一格虛線框，不要讓它看起來像「那天讀 0 次」 */
+.sa-infra-col__nodata {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed #c4c9d0;
+  border-bottom: 0;
+  border-radius: 2px 2px 0 0;
 }
 
 .sa-infra-col__tag {

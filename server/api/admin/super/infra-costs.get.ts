@@ -7,6 +7,7 @@ import {
   FILE_STORAGE_FREE_GIB,
   FIRESTORE_PRICING,
   EGRESS_PER_GIB,
+  FREE_EGRESS_GIB_PER_MONTH,
   ASSUMED_BYTES_PER_READ,
   type DayUsage,
 } from '~~/server/utils/firestore-cost'
@@ -122,6 +123,17 @@ export default defineEventHandler(async (event) => {
       return { ...base, status: 'unavailable' as const, reason: '這個月份查不到用量資料（可能超出 Google 的指標保留期）' }
     }
 
+    /**
+     * 哪幾天 Google 那邊**整天沒有讀取資料點**。
+     *
+     * ⛔ 上面把缺的天當 0 次讀取算，那幾天在長條圖上是空的、總額也少了那幾天——
+     * 不講出來就是「查不到」被演成「沒用量」。2026-10-17 實測八月有 10 天整天查不到
+     * （8/1～8/4、8/13～8/18；當初 8/9 查的時候 8/4 還有 46 萬次），月總額因此偏低。
+     * 本月「今天」還沒過完、Google 可能還沒送點，不算缺。
+     */
+    const lastDay = dayKeys[dayKeys.length - 1]
+    const missingDays = dayKeys.filter(d => !reads.has(d) && !(isCurrentMonth && d === lastDay))
+
     const result = computeFirebaseCost(usage, { multiRegion: location.multiRegion, daysInMonth })
     const price = location.multiRegion ? FIRESTORE_PRICING.multiRegion : FIRESTORE_PRICING.regional
 
@@ -135,13 +147,15 @@ export default defineEventHandler(async (event) => {
       isCurrentMonth,
       daysInMonth,
       daysCounted: dayKeys.length,
+      /** Google 那邊整天沒有讀取資料的帳單日；畫面要講「總額少了這幾天」，⛔ 不可當成沒用量 */
+      missingDays,
       /**
        * 「Google 的一天」在台灣是幾點換日——夏令／冬令時不一樣（下午 3 點／4 點），
        * 所以由後端當場算、不要在前端寫死一個季節才對的數字。
        */
       dayBoundaryTaipei: billingDayTaipeiSpan(dayKeys[dayKeys.length - 1] ?? billingDateKey(now)).from
         .replace(/^\d+\/\d+\s*/, ''),
-      pricing: { ...price, egressPerGib: EGRESS_PER_GIB },
+      pricing: { ...price, egressPerGib: EGRESS_PER_GIB, freeEgressGibPerMonth: FREE_EGRESS_GIB_PER_MONTH },
       days: result.days,
       totals: result.totals,
       topDays: result.topDays,

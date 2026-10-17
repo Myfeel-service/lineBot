@@ -42,6 +42,10 @@
                 >
                   較上月 {{ grandDeltaPct > 0 ? '▲' : (grandDeltaPct < 0 ? '▼' : '＝') }} {{ Math.abs(grandDeltaPct) }}%
                 </span>
+                <!-- 本月還沒過完：拿「到今天」跟上月整月比百分比，月初永遠是大跌，所以只並列上月整月 -->
+                <span v-else-if="isCurrentPeriod && prevGrandTwd" class="sa-cost-delta is-flat">
+                  上月整月 {{ ntTwd(prevGrandTwd) }}
+                </span>
               </div>
               <div class="sa-cost-hero__sub">{{ grandSubText }}</div>
             </div>
@@ -76,6 +80,9 @@
             <div v-if="missingParts.length" class="sa-infra-warn">
               ⚠ 上面的總額<b>不含{{ missingParts.join('、') }}</b>（讀不到，見下方各區塊說明）。
             </div>
+            <div v-else-if="infraMissingDays.length" class="sa-infra-warn">
+              ⚠ 上面的總額<b>少算了資料庫 {{ infraMissingDays.length }} 天</b>（Google 那邊查不到，見下方資料庫區塊）。
+            </div>
           </div>
         </div>
 
@@ -90,6 +97,9 @@
                 :class="deltaPct > 0 ? 'is-up' : (deltaPct < 0 ? 'is-down' : 'is-flat')"
               >
                 較上月 {{ deltaPct > 0 ? '▲' : (deltaPct < 0 ? '▼' : '＝') }} {{ Math.abs(deltaPct) }}%
+              </span>
+              <span v-else-if="isCurrentPeriod && prevTotalCostUsd > 0" class="sa-cost-delta is-flat">
+                上月整月 {{ ntdSoft(prevTotalCostUsd) }}
               </span>
             </div>
           </div>
@@ -193,10 +203,14 @@
                   <li><b>試打 AI</b>：在設定頁重演一句話，看它會怎麼答 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <li><b>知識庫試答</b>：存完卡片按試答，確認現在答得出來 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <li><b>採用建議後自動驗證</b>：系統用代表問句再試答一次 <span class="sa-cost-guide__price">同回答客人</span></li>
-                  <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <!-- ⛔ 不是「同回答客人」：問一句它可能查好幾輪資料、每輪都叫一次 AI，記帳卻只算一次 -->
+                  <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">一句可能跑好幾輪</span></li>
                   <li><b>一句話生成自動回應</b>：吐出一整份流程，比一則回覆貴 <span class="sa-cost-guide__price">約 8～10 倍</span></li>
                 </ul>
-                <div class="sa-cost-guide__foot">一次跟回答客人一樣價，不算到客人頭上</div>
+                <div class="sa-cost-guide__foot">
+                  <template v-if="testPerCallText">這個月平均一次 <b>{{ testPerCallText }}</b>，不算到客人頭上</template>
+                  <template v-else>不算到客人頭上</template>
+                </div>
               </div>
             </div>
           </div>
@@ -274,9 +288,14 @@
             </div>
           </div>
           <div v-else class="sa-cost-body">
+            <!--
+              ⛔ 這段原本寫死「平常幾乎不用錢，只有某天大量讀取才會花錢」——2026-09 起每天都讀 50～100 萬次、
+              天天超過免費額，那句話變成反話。所以改成照這個月的實際天數講。
+            -->
             <p class="sa-cost-guide__intro">
               資料庫是<b>按次計費</b>的：每讀一筆資料、每寫一筆資料都算錢，但<b>每天前 5 萬次讀取、2 萬次寫入免費</b>。
-              所以平常幾乎不用錢，<b>只有「某天大量讀取」才會產生費用</b>（例如整批稽核、回填腳本、大量重整報表）。
+              <template v-if="readOverDays > 0">這個月 {{ countedDays }} 天裡有 <b>{{ readOverDays }} 天</b>讀取超過免費額。</template>
+              <template v-else>這個月每天的讀取都在免費額度內。</template>
             </p>
             <!--
               口徑聲明擺在數字前面：這張卡的「一天／一個月」跟台灣的日曆差 15 小時。
@@ -289,6 +308,12 @@
               「{{ periodLabel }}」也是從台灣 1 號{{ infra.dayBoundaryTaipei }}起算——這樣才對得上 Firebase 主控台。
               （上面 AI 那張卡用的是台灣的月份，兩張卡的月界本來就不一樣。）
             </p>
+
+            <!-- 緊貼在它影響的數字上面：查不到的天被當 0 算，下面每一格都偏低 -->
+            <div v-if="infraMissingDays.length" class="sa-infra-warn sa-infra-warn--above-grid">
+              ⚠ Google 那邊有 <b>{{ infraMissingDays.length }} 天</b>查不到資料（{{ missingDayRanges }}），
+              那幾天沒算進來，這個月的數字會偏低。長條圖上虛線框的就是這幾天。
+            </div>
 
             <!-- 四項相加＝資料庫總花費，才並排 -->
             <div class="sa-infra-grid">
@@ -330,7 +355,7 @@
                 <div class="sa-infra-cell__label">跨雲流量 <span class="sa-infra-est-tag">估算</span></div>
                 <div class="sa-infra-cell__val">{{ ntdSoft(infra.totals.egressCostUsd) }}</div>
                 <div class="sa-infra-cell__sub">
-                  {{ times(infra.totals.reads) }} × 每筆約 {{ Math.round(infra.bytesPerRead / 1024 * 10) / 10 }} KB
+                  約 {{ gib(infra.totals.egressGib) }}，每月前 {{ infra.pricing.freeEgressGibPerMonth }} GB 免費
                 </div>
               </div>
             </div>
@@ -350,12 +375,17 @@
                   v-for="d in infra.days"
                   :key="d.day"
                   class="sa-infra-col"
-                  :title="`${dayTitle(d.day)}：讀取 ${d.reads.toLocaleString()} 次、寫入 ${d.writes.toLocaleString()} 次 → ${ntdSoft(d.costUsd)}`"
+                  :title="missingDaySet.has(d.day)
+                    ? `${dayTitle(d.day)}：Google 那邊查不到這天的資料，沒算進來`
+                    : `${dayTitle(d.day)}：讀取 ${d.reads.toLocaleString()} 次、寫入 ${d.writes.toLocaleString()} 次 → ${ntdSoft(d.costUsd)}`"
                 >
-                  <span v-if="labelledDays.has(d.day)" class="sa-infra-col__tag">{{ ntdSoft(d.costUsd) }}</span>
-                  <span class="sa-infra-col__bar" :style="{ height: barPct(d.reads) + '%' }">
-                    <span class="sa-infra-col__paid" :style="{ height: paidPct(d) + '%' }" />
-                  </span>
+                  <span v-if="missingDaySet.has(d.day)" class="sa-infra-col__nodata" />
+                  <template v-else>
+                    <span v-if="labelledDays.has(d.day)" class="sa-infra-col__tag">{{ ntdSoft(d.costUsd) }}</span>
+                    <span class="sa-infra-col__bar" :style="{ height: barPct(d.reads) + '%' }">
+                      <span class="sa-infra-col__paid" :style="{ height: paidPct(d) + '%' }" />
+                    </span>
+                  </template>
                 </div>
               </div>
               <div class="sa-infra-chart__axis">
@@ -368,15 +398,16 @@
               <b v-for="(d, i) in infra.topDays" :key="d.day" :title="dayTitle(d.day)">
                 {{ i ? '、' : '' }}{{ Number(d.day.slice(5, 7)) }}/{{ Number(d.day.slice(8, 10)) }}（{{ ntdSoft(d.costUsd) }}）
               </b>
-              。單日讀取暴增通常是整批稽核、回填腳本或反覆重整報表造成的，不是客人來訊。
+              。
               <span class="text-muted">（日期是 Google 的日曆，滑上去看對應台灣的幾點到幾點）</span>
             </div>
 
             <p class="sa-cost-est__foot">
               讀寫與儲存＝<b>實際用量</b>依 Google 公開單價換算（{{ locationLabel }}：讀取每 10 萬次 US${{ infra.pricing.readPer100k }}、寫入 US${{ infra.pricing.writePer100k }}、儲存每 GB 每月 US${{ infra.pricing.storagePerGibMonth }}，US$1＝NT${{ infra.usdToTwd }}）。
-              跨雲流量<b>是唯一估算的一項</b>：資料庫在 Google、主機在 AWS，每次讀取都要付對外流量費，但這筆沒有任何用量指標可查，
-              只能用「讀取次數 × 每筆平均大小」推估（每 GB US${{ infra.pricing.egressPerGib }}）。
-              每筆 {{ Math.round(infra.bytesPerRead / 1024 * 10) / 10 }} KB 是量測各集合實際大小後取的保守值，回推金額與 Google 帳單相符（誤差 5% 內）。
+              跨雲流量<b>是唯一估算的一項</b>：資料庫在 Google、主機在 AWS，讀出去的資料算對外流量，但這筆沒有用量指標可查，
+              只能用「讀取次數 × 每筆約 {{ Math.round(infra.bytesPerRead / 1024 * 10) / 10 }} KB」推估；
+              每月前 {{ infra.pricing.freeEgressGibPerMonth }} GB 免費，超過的每 GB US${{ infra.pricing.egressPerGib }}。
+              每筆的大小是量過各集合實際大小取的，還沒有跟帳單逐項對過。
               另外這是<b>整個系統</b>的用量，Google 不會依官方帳號分開記，因此無法像 AI 那樣分攤到各帳號。
               <br>
               <b>跟主控台的「專案費用」比對時</b>：這裡算到<b>剛剛這一分鐘</b>，主控台的金額<b>會落後一到兩天</b>；
@@ -413,7 +444,7 @@
               <p class="sa-host-setup__note">
                 完整逐步教學（含每一頁要點哪裡、權限 JSON、常見錯誤對照）放在 <b>docs/AWS-COST-SETUP.md</b>。
                 設好之後這裡會顯示 AWS 自己算的帳單金額（含 Amplify、Lightsail、寄信等各項），不需要任何估算。
-                查詢每次 US$0.01，已快取 6 小時，一個月大約一塊多台幣。
+                每次查詢 US$0.01（約 NT$0.3），已快取 12 小時，只有打開這頁才會查。
               </p>
             </div>
           </div>
@@ -574,6 +605,10 @@ interface InfraTotals {
   deleteCostUsd: number
   storageCostUsd: number
   fileStorageCostUsd: number
+  /** 估算的對外流量總量（GiB） */
+  egressGib: number
+  /** 其中超過每月免費額、要錢的部分 */
+  billableEgressGib: number
   /** 跨雲流量：唯一的估算項 */
   egressCostUsd: number
   /** 實際量測的部分（不含估算流量） */
@@ -594,6 +629,8 @@ interface InfraPricing {
   deletePer100k: number
   storagePerGibMonth: number
   egressPerGib: number
+  /** 對外流量每月免費幾 GiB */
+  freeEgressGibPerMonth: number
 }
 /** 前端一律拿到補齊預設值的完整物件，模板才不用到處 optional chaining */
 interface Infra {
@@ -612,6 +649,8 @@ interface Infra {
   dayBoundaryTaipei: string
   pricing: InfraPricing
   days: InfraDay[]
+  /** Google 那邊整天查不到讀取資料的帳單日（那幾天被當 0 算，總額偏低） */
+  missingDays: string[]
   totals: InfraTotals
   topDays: Array<{ day: string; costUsd: number; reads: number }>
 }
@@ -677,9 +716,10 @@ const EMPTY_INFRA_TOTALS: InfraTotals = {
   storageGib: 0, fileStorageGib: 0,
   readCostUsd: 0, writeCostUsd: 0, deleteCostUsd: 0,
   storageCostUsd: 0, fileStorageCostUsd: 0,
+  egressGib: 0, billableEgressGib: 0,
   egressCostUsd: 0, measuredCostUsd: 0, totalCostUsd: 0,
 }
-const DEFAULT_INFRA_PRICING: InfraPricing = { readPer100k: 0.06, writePer100k: 0.18, deletePer100k: 0.02, storagePerGibMonth: 0.18, egressPerGib: 0.12 }
+const DEFAULT_INFRA_PRICING: InfraPricing = { readPer100k: 0.06, writePer100k: 0.18, deletePer100k: 0.02, storagePerGibMonth: 0.18, egressPerGib: 0.12, freeEgressGibPerMonth: 10 }
 // 後端沒回時的保底：一年裡夏令時佔多數，且這個字串只出現在說明句、不參與任何計算
 const DEFAULT_DAY_BOUNDARY = '下午 3 點'
 
@@ -688,7 +728,7 @@ const infra = ref<Infra>({
   status: 'unavailable', reason: '', projectId: '', usdToTwd: USD_TO_TWD,
   location: '', multiRegion: true, bytesPerRead: 1024, dayBoundaryTaipei: DEFAULT_DAY_BOUNDARY,
   pricing: DEFAULT_INFRA_PRICING,
-  days: [], totals: EMPTY_INFRA_TOTALS, topDays: [],
+  days: [], missingDays: [], totals: EMPTY_INFRA_TOTALS, topDays: [],
 })
 /** 上月資料庫花費；null＝讀不到（此時不可與本月相減） */
 const prevInfraCostUsd = ref<number | null>(null)
@@ -806,22 +846,32 @@ const grandSubText = computed(() => {
 })
 
 /**
- * 較上月：本月與上月的**組成必須一模一樣**才能比。
- * 少了資料庫或主機那一筆卻照算百分比，會變成拿三筆比兩筆、跌幅純屬幻覺。
+ * 選的是不是「這個月」（還沒過完）。
+ * ⛔ 這個月只到今天，上月是整月：直接相除的話月初永遠是「▼ 七八成」，月中看起來也像在省錢。
+ * AI 用量只有月結桶、沒有逐日資料，湊不出「上月同期」，所以這個月一律不給百分比、只並列上月整月。
  */
-const grandDeltaPct = computed(() => {
+const isCurrentPeriod = computed(() => period.value === currentPeriod())
+
+/**
+ * 上月三筆加起來（台幣）。本月與上月的**組成必須一模一樣**才能比：
+ * 少了資料庫或主機那一筆卻照算，會變成拿三筆比兩筆、跌幅純屬幻覺 → 回 null。
+ */
+const prevGrandTwd = computed<number | null>(() => {
   const curInfra = infra.value.status === 'ok'
   const curHost = host.value.status === 'ok'
   if (curInfra !== (prevInfraCostUsd.value !== null)) return null
   if (curHost !== (prevHostCost.value !== null)) return null
-
-  const cur = totals.value.totalCostUsd * USD_TO_TWD
-    + (curInfra ? infra.value.totals.totalCostUsd * USD_TO_TWD : 0)
-    + (curHost ? hostToTwd(host.value.totalCost) : 0)
-  const prev = prevTotalCostUsd.value * USD_TO_TWD
+  return prevTotalCostUsd.value * USD_TO_TWD
     + (prevInfraCostUsd.value ?? 0) * USD_TO_TWD
     + (prevHostCost.value === null ? 0 : (host.value.currency === 'USD' ? prevHostCost.value * USD_TO_TWD : prevHostCost.value))
-  if (!prev) return null
+})
+
+const grandDeltaPct = computed(() => {
+  const prev = prevGrandTwd.value
+  if (!prev || isCurrentPeriod.value) return null
+  const cur = totals.value.totalCostUsd * USD_TO_TWD
+    + (infra.value.status === 'ok' ? infra.value.totals.totalCostUsd * USD_TO_TWD : 0)
+    + (host.value.status === 'ok' ? hostToTwd(host.value.totalCost) : 0)
   return Math.round(((cur - prev) / prev) * 100)
 })
 
@@ -840,6 +890,31 @@ function dayTitle(day: string) {
   const span = billingDayTaipeiSpan(day)
   return `Google 的 ${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}（台灣 ${span.from} ～ ${span.to}）`
 }
+
+/** 查不到資料的那幾天（hero 與資料庫卡都要講，長條圖畫虛線框） */
+const infraMissingDays = computed(() => infra.value.status === 'ok' ? infra.value.missingDays : [])
+const missingDaySet = computed(() => new Set(infraMissingDays.value))
+
+/** 連續的日子併成一段：8/1、8/2、8/3 → 「8/1～8/3」 */
+const missingDayRanges = computed(() => {
+  const md = (k: string) => `${Number(k.slice(5, 7))}/${Number(k.slice(8, 10))}`
+  const nextKey = (k: string) => new Date(Date.parse(`${k}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)
+  const out: string[] = []
+  let from = ''
+  let to = ''
+  for (const k of [...infraMissingDays.value].sort()) {
+    if (to && nextKey(to) === k) { to = k; continue }
+    if (from) out.push(from === to ? md(from) : `${md(from)}～${md(to)}`)
+    from = k
+    to = k
+  }
+  if (from) out.push(from === to ? md(from) : `${md(from)}～${md(to)}`)
+  return out.join('、')
+})
+
+/** 有資料的天數，與其中讀取超過每日免費額的天數 */
+const countedDays = computed(() => infra.value.days.filter(d => !missingDaySet.value.has(d.day)).length)
+const readOverDays = computed(() => infra.value.days.filter(d => d.billableReads > 0).length)
 
 const maxReads = computed(() => Math.max(0, ...infra.value.days.map(d => d.reads)))
 function barPct(reads: number) { return maxReads.value > 0 ? (reads / maxReads.value) * 100 : 0 }
@@ -918,12 +993,23 @@ function pct(usd: number) {
   return t > 0 ? Math.round((usd / t) * 100) : 0
 }
 
-// 較上月變化（%）；上月為 0 或無資料則不顯示，避免除以 0 或誤導
+// 較上月變化（%）；上月為 0 或無資料則不顯示，避免除以 0 或誤導。
+// 這個月還沒過完也不顯示（理由見 isCurrentPeriod），改並列上月整月
 const deltaPct = computed(() => {
   const cur = totals.value.totalCostUsd
   const prev = prevTotalCostUsd.value
-  if (!prev) return null
+  if (!prev || isCurrentPeriod.value) return null
   return Math.round(((cur - prev) / prev) * 100)
+})
+
+/**
+ * 後台自用平均一次多少錢。⛔ 不可以寫死成「跟回答客人一樣」：
+ * 小幫手問一句可能跑好幾輪 AI、記帳只算一次（2026-10 實測一次 NT$0.13，回答客人 NT$0.04）。
+ */
+const testPerCallText = computed(() => {
+  const n = totals.value.testInvocations
+  if (!n || totals.value.testCostUsd <= 0) return ''
+  return `NT$${(totals.value.testCostUsd * USD_TO_TWD / n).toFixed(2)}`
 })
 
 /** 上一個月份（YYYYMM），處理跨年 */
@@ -945,8 +1031,10 @@ function normalizeInfra(res: InfraResponse): Infra {
     multiRegion: res.multiRegion ?? true,
     bytesPerRead: res.bytesPerRead || 1024,
     dayBoundaryTaipei: res.dayBoundaryTaipei || DEFAULT_DAY_BOUNDARY,
-    pricing: res.pricing || DEFAULT_INFRA_PRICING,
+    // 逐欄補：舊版後端少回一格（例如 freeEgressGibPerMonth）時，畫面不能印出 undefined
+    pricing: { ...DEFAULT_INFRA_PRICING, ...(res.pricing || {}) },
     days: ok ? (res.days || []) : [],
+    missingDays: ok ? (res.missingDays || []) : [],
     totals: ok ? (res.totals || EMPTY_INFRA_TOTALS) : EMPTY_INFRA_TOTALS,
     topDays: ok ? (res.topDays || []) : [],
   }
@@ -1015,7 +1103,8 @@ async function loadHost() {
   try {
     const [cur, prev] = await Promise.all([
       apiFetch<HostResponse>(`/api/admin/super/host-costs?period=${period.value}`),
-      apiFetch<HostResponse>(`/api/admin/super/host-costs?period=${prevPeriod}`).catch(() => null),
+      // 上月只要總額：不拆 Amplify，省一次 US$0.01 的查詢
+      apiFetch<HostResponse>(`/api/admin/super/host-costs?period=${prevPeriod}&itemize=0`).catch(() => null),
     ])
     host.value = normalizeHost(cur)
     prevHostCost.value = prev?.status === 'ok' ? (prev.totalCost ?? 0) : null

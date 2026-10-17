@@ -40,20 +40,34 @@ export const FILE_STORAGE_PER_GIB_MONTH = 0.026
 
 /**
  * 跨雲流量（Google → 網際網路）單價，USD / GiB。
- * 資料庫在 Google、主機在 AWS，所以**每一次讀取都是對外流量**、都要錢。
+ * 資料庫在 Google、主機在 AWS，所以**每一次讀取都是對外流量**。
  * 這筆沒有任何用量指標可查（Firestore 沒有 egress 指標，serviceruntime 那支只涵蓋
  * 一小部分 REST 呼叫），只能用「讀取次數 × 每筆平均大小」推估。
  */
 export const EGRESS_PER_GIB = 0.12
 
 /**
+ * 對外流量的免費額：**每個月**前 10 GiB 不收錢（Firestore 定價頁免費額度表的
+ * 「Outbound data transfer 10 GiB per month」）。跟讀寫不同，這格是按月、不是按日。
+ *
+ * ⛔ 2026-08-10～10-17 這裡沒扣，整筆流量都算錢。2026-10-17 重查才對出來：
+ * 9/7 那次「頁面 NT$102、主控台 NT$81.14」的落差，扣掉頁面估的流量 NT$17 再換成實際匯率
+ * 就是 NT$81——主控台根本沒收這筆（9/1～9/6 只傳了約 4.5 GiB，整個落在免費額內）。
+ */
+export const FREE_EGRESS_GIB_PER_MONTH = 10
+
+/**
  * 每筆讀取假設傳出多少 bytes。
  *
  * 2026-08-10 實測 myfeel 各集合平均大小：對話事件 278 B、對話 447 B、會話 481 B
  * （高頻讀的都在 300–500 B），知識卡因為存了向量而高達 10.9 KB（但只有問答時才讀）。
- * 取 1 KB 是**高於高頻集合、低於知識卡**的折衷，且回推得到的金額與真實帳單吻合：
- * 八月前九天 182 萬次讀 → 估流量 US$0.21，加上實測讀寫 US$0.82 ＝ US$1.03，
- * 對照主控台 NT$31.76（帳單幣別為台幣）約當 US$1.03，誤差在 5% 內。
+ * 取 1 KB 是**高於高頻集合、低於知識卡**的折衷。
+ *
+ * ⚠️ 2026-08-10 曾用「八月前九天 182 萬次讀 → 估流量 US$0.21，加上讀寫 US$0.82 ≈ 主控台
+ * NT$31.76」當成這個假設的校準——那次其實是巧合：1.7 GiB 整個落在每月 10 GiB 免費額內，
+ * 主控台不會為它收錢，多出來的那兩成是別的東西（見 {@link FREE_EGRESS_GIB_PER_MONTH}）。
+ * 1 KB 這個數字本身仍然只是推估，要等哪個月流量超過 10 GiB、再翻 Google 帳單依品項拆的
+ * 報表（找 Firestore 的 Network Internet Egress）才驗得到。
  *
  * 調高這個值 → 估得更保守（金額更高）。
  */
@@ -98,7 +112,11 @@ export type FirestoreCostResult = {
     deleteCostUsd: number
     storageCostUsd: number
     fileStorageCostUsd: number
-    /** 跨雲流量：**估算值**（讀取次數 × 假設每筆大小），非量測 */
+    /** 估算的對外流量總量（GiB，讀取次數 × 假設每筆大小） */
+    egressGib: number
+    /** 其中超過每月免費額、要錢的部分（GiB） */
+    billableEgressGib: number
+    /** 跨雲流量：**估算值**（超過每月免費額的流量 × 單價），非量測 */
     egressCostUsd: number
     /** 實際量測的部分（讀寫刪＋儲存），不含估算流量 */
     measuredCostUsd: number
@@ -134,6 +152,8 @@ export function forwardFill(days: string[], series: Map<string, number>): Map<st
  *   「日」是 Google 的日，切法在 `shared/google-billing-day.ts`。
  * - 儲存：免費額是持續 1 GiB，費率是「每 GiB 每月」，故逐日攤提
  *   `(存量 - 免費額) × 月費率 ÷ 當月天數`。只跑了半個月就只算半個月，不會虛報。
+ * - 流量：免費額是**每月** 10 GiB，從月初往後累計，用完之後的那幾天才開始算錢。
+ *   ⛔ 所以 `days` 必須是**同一個帳單月**裡的日子（呼叫端一次只傳一個月）。
  */
 export function computeFirebaseCost(
   days: DayUsage[],
@@ -157,11 +177,14 @@ export function computeFirebaseCost(
     deleteCostUsd: 0,
     storageCostUsd: 0,
     fileStorageCostUsd: 0,
+    egressGib: 0,
+    billableEgressGib: 0,
     egressCostUsd: 0,
     measuredCostUsd: 0,
     totalCostUsd: 0,
   }
 
+  let freeEgressLeftGib = FREE_EGRESS_GIB_PER_MONTH
   const out: DayCost[] = days.map((d) => {
     const billableReads = Math.max(0, d.reads - FIRESTORE_FREE_TIER.readsPerDay)
     const billableWrites = Math.max(0, d.writes - FIRESTORE_FREE_TIER.writesPerDay)
@@ -175,8 +198,12 @@ export function computeFirebaseCost(
     const fileGib = d.fileBytes / GIB
     const storageCost = (Math.max(0, storageGib - FIRESTORE_FREE_TIER.storageGib) * price.storagePerGibMonth) / daysInMonth
     const fileCost = (Math.max(0, fileGib - FILE_STORAGE_FREE_GIB) * FILE_STORAGE_PER_GIB_MONTH) / daysInMonth
-    // 流量費沒有免費額度可扣（讀第一筆就在傳資料出去），也不受每日免費讀取影響
-    const egressCost = ((d.reads * bytesPerRead) / GIB) * EGRESS_PER_GIB
+    // 流量跟每日免費讀取無關（免費的那 5 萬次也在傳資料出去），扣的是另一格「每月 10 GiB」
+    const egressGib = (d.reads * bytesPerRead) / GIB
+    const freeToday = Math.min(freeEgressLeftGib, egressGib)
+    freeEgressLeftGib -= freeToday
+    const billableEgressGib = egressGib - freeToday
+    const egressCost = billableEgressGib * EGRESS_PER_GIB
 
     totals.reads += d.reads
     totals.writes += d.writes
@@ -189,6 +216,8 @@ export function computeFirebaseCost(
     totals.deleteCostUsd += deleteCost
     totals.storageCostUsd += storageCost
     totals.fileStorageCostUsd += fileCost
+    totals.egressGib += egressGib
+    totals.billableEgressGib += billableEgressGib
     totals.egressCostUsd += egressCost
 
     return {
@@ -215,7 +244,7 @@ export function computeFirebaseCost(
   totals.totalCostUsd = totals.measuredCostUsd + totals.egressCostUsd
 
   for (const k of ['readCostUsd', 'writeCostUsd', 'deleteCostUsd', 'storageCostUsd',
-    'fileStorageCostUsd', 'egressCostUsd', 'measuredCostUsd', 'totalCostUsd'] as const)
+    'fileStorageCostUsd', 'egressGib', 'billableEgressGib', 'egressCostUsd', 'measuredCostUsd', 'totalCostUsd'] as const)
     totals[k] = round6(totals[k])
 
   const topDays = out
