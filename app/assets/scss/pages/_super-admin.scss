@@ -469,6 +469,9 @@ $cost-test: #8a939b;
   font-variant-numeric: tabular-nums;
 }
 
+/* 「答出・反問」「轉真人」各自一行、行內不換行：斷在「轉／真人」中間就讀不出是哪個數（2026-10-17） */
+.sa-cost-calls-split { white-space: nowrap; }
+
 .sa-cost-off { margin-left: 0.4rem; }
 
 /* 卡片底部的口徑註記（換算依據、不含什麼） */

@@ -137,13 +137,13 @@
             </template>
             <div v-else class="sa-cost-empty">{{ emptyText }}</div>
 
-            <!-- 估算用的單一單價：客人與後台共用同一個數字，要算「多一倍訊息量要多少錢」就乘這個 -->
+            <!-- 估算用單價：只算客人那邊，要算「多一倍訊息量要多少錢」就乘這個（後台自用另計，見下方說明卡） -->
             <div v-if="planningPerCallText" class="sa-cost-rate">
               <span class="sa-cost-rate__label">估算抓這個數字</span>
-              <span class="sa-cost-rate__value">一次 {{ planningPerCallText }}</span>
+              <span class="sa-cost-rate__value">客人來一則 {{ planningPerCallText }}</span>
               <span class="sa-cost-rate__note">
-                客人每來一則訊息算一次（{{ totals.invocations.toLocaleString() }} 次）、後台自己操作也算一次（{{ totals.testInvocations.toLocaleString() }} 次）。
-                本月實測平均 {{ measuredPerCallText }}，<b>無條件進位</b>後給你估算用，只會高不會低。
+                「回答客人」那筆錢 ÷ 客人來訊叫了幾次 AI（{{ totals.invocations.toLocaleString() }} 次）。
+                本月實測平均 {{ measuredPerCallText }}，<b>無條件進位</b>後給你估算用，只會高不會低。後台自用不算在裡面。
               </span>
             </div>
           </div>
@@ -190,6 +190,8 @@
                   <li><b>掃描檔轉文字</b>：圖片型 PDF 先辨識成文字，最貴 <span class="sa-cost-guide__price">一份約 NT$5–10</span></li>
                   <li><b>補「客人會怎麼問」</b>：幫知識卡補上常見問法，之後才搜得到 <span class="sa-cost-guide__price">很少</span></li>
                   <li><b>每天掃知識缺口</b>：找出答不出來的問題、草擬補充建議 <span class="sa-cost-guide__price">很少</span></li>
+                  <!-- 2026-10 知識庫改版新增的幾項，錢都記在這一格（2026-10-17 對過程式） -->
+                  <li><b>重新學習、做總表、每份資料摘要</b>：資料改過後重新整理 <span class="sa-cost-guide__price">很少</span></li>
                 </ul>
                 <div class="sa-cost-guide__foot sa-cost-guide__foot--warn">⚠ 重傳沒改過的檔會重算重收</div>
               </div>
@@ -201,7 +203,7 @@
                 </div>
                 <ul class="sa-cost-guide__list">
                   <li><b>試打 AI</b>：在設定頁重演一句話，看它會怎麼答 <span class="sa-cost-guide__price">同回答客人</span></li>
-                  <li><b>知識庫試答</b>：存完卡片按試答，確認現在答得出來 <span class="sa-cost-guide__price">同回答客人</span></li>
+                  <li><b>知識庫試答、問 AI 一題</b>：在知識庫頁直接問問看答不答得出來 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <li><b>採用建議後自動驗證</b>：系統用代表問句再試答一次 <span class="sa-cost-guide__price">同回答客人</span></li>
                   <!-- ⛔ 不是「同回答客人」：問一句它可能查好幾輪資料、每輪都叫一次 AI，記帳卻只算一次 -->
                   <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">一句可能跑好幾輪</span></li>
@@ -243,7 +245,12 @@
                          原本寫「答出 82・後台 125」——後台根本不在 207 裡，卻排得像拆解，
                          而且實測資料剛好 82+125=207（沒答出=125、後台自用也=125，兩個 125
                          是不同的東西）——老闆當場被騙到。後台自用另起一行、寫明「另計」。 -->
-                    <div v-if="row.invocations" class="text-xs text-muted">答出 {{ row.answered.toLocaleString() }}・沒答出 {{ Math.max(0, row.invocations - row.answered).toLocaleString() }}</div>
+                    <!-- ⛔ 以前寫「沒答出＝呼叫−答出」，把已經收錢的反問也算成沒答出（2026-10-17 改三段）。
+                         三段擺一行這欄放不下（加寬會讓 1100 寬時「合計」被切掉），所以拆兩行、每行不換行 -->
+                    <template v-if="row.invocations">
+                      <div class="text-xs text-muted sa-cost-calls-split">答出 {{ row.answered.toLocaleString() }}・反問 {{ (row.disambiguations ?? 0).toLocaleString() }}</div>
+                      <div class="text-xs text-muted sa-cost-calls-split">轉真人 {{ Math.max(0, row.invocations - row.answered - (row.disambiguations ?? 0)).toLocaleString() }}</div>
+                    </template>
                     <div v-if="row.testInvocations" class="text-xs text-muted">後台另計 {{ row.testInvocations.toLocaleString() }} 次</div>
                   </template>
                   <span v-else class="text-xs text-muted">—</span>
@@ -563,6 +570,8 @@ interface CostRow {
   aiEnabled: boolean
   invocations: number
   answered: number
+  /** 反問了幾次（也收錢）；呼叫＝答出＋反問＋轉真人 */
+  disambiguations: number
   /** 計費則數（含反問）。⛔ 與 answered 不同，畫面講「則」一律用這個（`D-69`） */
   billable: number
   testInvocations: number
@@ -959,20 +968,23 @@ const periodLabel = computed(() => {
 })
 
 /**
- * 估算用單價：**客人與後台合成同一個數字**，因為兩邊跑的是同一條答題流程、同一個費率，
- * 實測差距只有幾個百分點（差在每題撈到多少參考資料），拆成兩個數字只會讓人以為有差別。
+ * 估算用單價：**只用「回答客人」那一桶**＝回答客人的錢 ÷ 客人來訊叫了幾次 AI。
  *
- * 分母是「AI 被呼叫幾次」＝客人每來一則訊息算一次（不論最後是答出來、轉真人還是反問），
- * 加上後台自己操作的次數。⛔ 別拿計費則數當分母，那只佔全部呼叫的一半上下（答不出的那些不計費，成本卻照付）。
+ * ⛔ 2026-08-10～10-17 曾經把後台自用一起併進來（當時兩邊每次只差幾個百分點）。小幫手變成
+ * 「問一句跑好幾輪」之後差到三倍（10 月：客人 NT$0.040、後台 NT$0.130），合成的數字比客人
+ * 實際高七成、還跟著我們自己用小幫手的次數跳——老闆 10-17 拍板改回只算客人（`D-130`①）。
+ * 後台自用的當月平均放在它自己那一欄（testPerCallText），不要再併回來。
+ *
+ * 分母是「AI 被呼叫幾次」＝客人每來一則訊息算一次（不論最後是答出來、轉真人還是反問）。
+ * ⛔ 別拿計費則數當分母，那只佔全部呼叫的一半上下（答不出的那些不計費，成本卻照付）。
  *
  * 再**無條件進位到分位**當估算值：一來好乘，二來順便蓋掉「有些呼叫其實沒花到錢」
  * （客人直接說找真人 → 直接轉接不呼叫 AI）造成的平均值稀釋，估出來只會偏高不會偏低。
  */
-const allAiCalls = computed(() => totals.value.invocations + totals.value.testInvocations)
 const measuredPerCallTwd = computed(() => {
-  const calls = allAiCalls.value
+  const calls = totals.value.invocations
   if (!calls) return 0
-  return (totals.value.conversationCostUsd + totals.value.testCostUsd) * USD_TO_TWD / calls
+  return totals.value.conversationCostUsd * USD_TO_TWD / calls
 })
 const planningPerCallTwd = computed(() => Math.ceil(measuredPerCallTwd.value * 100) / 100)
 const planningPerCallText = computed(() => planningPerCallTwd.value > 0 ? `NT$${planningPerCallTwd.value.toFixed(2)}` : '')

@@ -69,6 +69,8 @@ export default defineEventHandler(async (event) => {
       aiEnabled: enabledByWs.get(d.id) ?? false,
       invocations: Number(u?.invocations ?? 0),
       answered: Number(u?.answered ?? 0),
+      // 反問也叫了 AI、也收錢（`D-69`），畫面要把它從「轉真人」裡拆出來（呼叫＝答出＋反問＋轉真人）
+      disambiguations: Number(u?.disambiguations ?? 0),
       billable: monthlyBillable(u), // 計費則數（含反問）；answered 是品質數字，兩者自 `D-69` 起不同
       testInvocations: Number(u?.testInvocations ?? 0),
       conversationCostUsd: round4(c.conversation),
