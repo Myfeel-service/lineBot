@@ -192,6 +192,27 @@ export function taipeiDayKeysBetween(startDate: Date, endDate: Date): string[] {
   return keys
 }
 
+/**
+ * 把要算的日子切成「連續的幾段」：`[7/20, 10/14, 10/15, 10/16]` → `[[7/20], [10/14, 10/15, 10/16]]`。
+ *
+ * ⛔ 範圍查詢只能一段一段下，**不可以從最早那天直接查到最晚那天**——中間沒要算的日子
+ * 也會整段讀進來、照樣收讀取費。2026-10-17 查出來的：日結排程每輪要算「最近 3 天＋輪到的
+ * 一天舊日子（4～89 天前）」，合成一支查詢＝把中間 80 幾天的對話與新好友全讀一遍，
+ * MYFEEL 一輪最多讀 1.5 萬次、一天約 63 萬次，佔整個資料庫讀取的八成（`E-38`）。
+ * 連續的日子仍然併成一支（一天一支的話 30 天就是 30 趟往返）。
+ */
+export function contiguousDayRuns(dayKeys: string[]): string[][] {
+  const runs: string[][] = []
+  for (const key of [...new Set(dayKeys)].sort()) {
+    const run = runs[runs.length - 1]
+    const prev = run?.[run.length - 1]
+    // 台灣沒有日光節約，前一天＋24 小時一定是隔天
+    if (run && prev && taipeiDateKey(new Date(taipeiDayStart(prev)!.getTime() + 24 * 3600_000)) === key) run.push(key)
+    else runs.push([key])
+  }
+  return runs
+}
+
 export function dailyDocId(workspaceId: string, date: string): string {
   return `${workspaceId}_${date}`
 }
@@ -212,8 +233,8 @@ function sessionQuery(db: Firestore, workspaceId: string, fromMs: number, toMs: 
 /**
  * 這幾天各有幾位新朋友。
  *
- * ⛔ 用**一支**範圍查詢再分桶，不要一天一個 `count()`：後者查 30 天就是 30 趟往返
- *    （讀取數少一點，但延遲整整多 30 趟，退路會比原本更慢）。
+ * ⛔ 每段連續的日子用**一支**範圍查詢再分桶，不要一天一個 `count()`：後者查 30 天就是 30 趟往返
+ *    （讀取數少一點，但延遲整整多 30 趟，退路會比原本更慢）。不連續的日子分段查，理由見 `contiguousDayRuns`。
  * 查不到時回空 Map → 那幾天的 `newFriends` 維持 `null`（＝「查不到」，不是 0）。
  */
 async function friendsByDay(
@@ -221,20 +242,19 @@ async function friendsByDay(
   workspaceId: string,
   dayKeys: string[],
 ): Promise<Map<string, number>> {
-  const sorted = [...dayKeys].sort()
-  const start = taipeiDayStart(sorted[0]!)
-  const end = taipeiDayEnd(sorted[sorted.length - 1]!)
   const out = new Map<string, number>()
-  if (!start || !end) return out
+  const runs = contiguousDayRuns(dayKeys)
+  const ranges = runs.map(run => ({ start: taipeiDayStart(run[0]!), end: taipeiDayEnd(run[run.length - 1]!) }))
+  if (!ranges.length || ranges.some(r => !r.start || !r.end)) return out
   try {
-    const snap = await db.collection('users')
+    const snaps = await Promise.all(ranges.map(r => db.collection('users')
       .where('workspaceId', '==', workspaceId)
-      .where('createdAt', '>=', start)
-      .where('createdAt', '<=', end)
+      .where('createdAt', '>=', r.start!)
+      .where('createdAt', '<=', r.end!)
       .select('createdAt')
-      .get()
+      .get()))
     for (const key of dayKeys) out.set(key, 0)
-    for (const d of snap.docs) {
+    for (const d of snaps.flatMap(s => s.docs)) {
       const at = d.data().createdAt?.toDate?.()
       if (!at) continue
       const key = taipeiDateKey(at)
@@ -253,6 +273,7 @@ async function friendsByDay(
 /**
  * 現場算指定的那幾天（日結沒有／過期／是今天時走這條）。
  * 連續的日子併成一支查詢，不是一天一支——一天一支的話 30 天就是 30 趟往返。
+ * ⛔ 但不連續的日子要分段查，不可以從最早查到最晚（中間整段會被讀進來收錢，見 `contiguousDayRuns`）。
  */
 export async function liveBuildDays(
   db: Firestore,
@@ -261,12 +282,13 @@ export async function liveBuildDays(
   opts: { withFriends?: boolean } = {},
 ): Promise<Map<string, DayStats>> {
   if (!dayKeys.length) return new Map()
-  const sorted = [...dayKeys].sort()
-  const fromMs = taipeiDayStart(sorted[0]!)!.getTime()
-  const toMs = taipeiDayEnd(sorted[sorted.length - 1]!)!.getTime()
-
-  const snap = await sessionQuery(db, workspaceId, fromMs, toMs).get()
-  const built = buildDaysFromSessions(snap.docs.map(d => d.data()))
+  const snaps = await Promise.all(contiguousDayRuns(dayKeys).map(run => sessionQuery(
+    db,
+    workspaceId,
+    taipeiDayStart(run[0]!)!.getTime(),
+    taipeiDayEnd(run[run.length - 1]!)!.getTime(),
+  ).get()))
+  const built = buildDaysFromSessions(snaps.flatMap(s => s.docs.map(d => d.data())))
 
   // 要求的每一天都要有一格（那天沒有對話也是答案：0 場）
   const out = new Map<string, DayStats>()

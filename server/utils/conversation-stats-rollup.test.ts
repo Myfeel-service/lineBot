@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildDaysFromSessions,
+  contiguousDayRuns,
   emptyDayStats,
   foldSessionIntoDay,
+  liveBuildDays,
   mergeDays,
   taipeiDayKeysBetween,
 } from './conversation-stats-rollup'
@@ -129,5 +131,67 @@ describe('把幾天加起來', () => {
     // 全部都查得到才給數字
     b.newFriends = 0
     expect(mergeDays('range', [a, b]).newFriends).toBe(5)
+  })
+})
+
+describe('不連續的日子分段查（`E-38`：日結排程把中間 80 幾天整段讀進來）', () => {
+  it('切成連續的幾段：跨月、去重、亂序都照台北日曆接', () => {
+    expect(contiguousDayRuns(['2026-10-16', '2026-07-20', '2026-10-14', '2026-10-15', '2026-10-15']))
+      .toEqual([['2026-07-20'], ['2026-10-14', '2026-10-15', '2026-10-16']])
+    expect(contiguousDayRuns(['2026-08-31', '2026-09-01'])).toEqual([['2026-08-31', '2026-09-01']])
+    expect(contiguousDayRuns([])).toEqual([])
+  })
+
+  /** 假資料庫：記下每一支範圍查詢的起訖，回傳落在範圍內的文件 */
+  function fakeDb(rows: { sessions: Record<string, any>[], users: { createdAt: string }[] }) {
+    const ranges: Array<{ col: string, from: string, to: string }> = []
+    const db = {
+      collection(col: string) {
+        const conds: Record<string, Date> = {}
+        const q: any = {
+          where(field: string, op: string, v: any) {
+            if (op === '>=') conds.from = v
+            if (op === '<=') conds.to = v
+            return q
+          },
+          select() { return q },
+          async get() {
+            ranges.push({ col, from: conds.from!.toISOString(), to: conds.to!.toISOString() })
+            const inRange = (ms: number) => ms >= conds.from!.getTime() && ms <= conds.to!.getTime()
+            const docs = col === 'users'
+              ? rows.users.filter(u => inRange(Date.parse(u.createdAt))).map(u => ({ data: () => ({ createdAt: ts(u.createdAt) }) }))
+              : rows.sessions.filter(s => inRange(s.openedAt.toMillis())).map(s => ({ data: () => s }))
+            return { docs }
+          },
+        }
+        return q
+      },
+    }
+    return { db: db as any, ranges }
+  }
+
+  it('「最近 3 天＋一天舊日子」查兩段，不可以把中間那段讀進來；算出來的數字不變', async () => {
+    const { db, ranges } = fakeDb({
+      sessions: [
+        session({ openedAt: ts('2026-07-20T03:00:00Z') }),
+        session({ openedAt: ts('2026-08-20T03:00:00Z') }), // 中間那段：不該被讀到
+        session({ openedAt: ts('2026-10-15T03:00:00Z') }),
+      ],
+      users: [{ createdAt: '2026-07-20T05:00:00Z' }, { createdAt: '2026-09-01T05:00:00Z' }, { createdAt: '2026-10-16T05:00:00Z' }],
+    })
+    const days = await liveBuildDays(db, 'w1', ['2026-10-14', '2026-10-15', '2026-10-16', '2026-07-20'], { withFriends: true })
+
+    // 對話與新好友各兩段：7/20 一段、10/14～10/16 一段（台北日界＝前一天 16:00Z）
+    expect(ranges.filter(r => r.col === 'conversationSessions').map(r => [r.from.slice(0, 10), r.to.slice(0, 10)]))
+      .toEqual([['2026-07-19', '2026-07-20'], ['2026-10-13', '2026-10-16']])
+    expect(ranges.filter(r => r.col === 'users')).toHaveLength(2)
+    // 數字跟一支大查詢算的一樣：只有要的那幾天有格子，中間那場與那位新好友沒被算進任何一天
+    expect([...days.keys()].sort()).toEqual(['2026-07-20', '2026-10-14', '2026-10-15', '2026-10-16'])
+    expect(days.get('2026-07-20')!.total).toBe(1)
+    expect(days.get('2026-10-15')!.total).toBe(1)
+    expect(days.get('2026-10-14')!.total).toBe(0)
+    expect(days.get('2026-07-20')!.newFriends).toBe(1)
+    expect(days.get('2026-10-16')!.newFriends).toBe(1)
+    expect(days.get('2026-10-14')!.newFriends).toBe(0)
   })
 })
