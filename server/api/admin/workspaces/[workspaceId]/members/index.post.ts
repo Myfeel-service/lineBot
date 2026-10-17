@@ -79,7 +79,7 @@ export default defineEventHandler(async (event) => {
       if (used >= plan.seats) {
         throw createError({
           statusCode: 403,
-          statusMessage: planLimitMessage('團隊成員數', used, plan.seats, plan.name),
+          statusMessage: planLimitMessage('團隊成員數', used, plan.seats, plan.name, '人'),
         })
       }
     }

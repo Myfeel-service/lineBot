@@ -9,7 +9,7 @@ import {
   runIndexOnChunk,
 } from '~~/server/utils/ai-knowledge-chunks'
 import { countSourceChunks, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
-import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
+import { assertKnowledgeChunkQuota, chunkCountsTowardQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 
@@ -41,10 +41,13 @@ export default defineEventHandler(async (event) => {
    * 不擋的話「刪 100 條 → 匯入 100 條新的 → 把舊的還原回來」就繞過了上限。
    *
    * ⚠️ 擺在冪等早退之後：對「已經不在回收桶」的卡重按不該噴錯。
+   * ⚠️ 還原後仍是「等你看過」的不佔空間（採用才算，`chunkCountsTowardQuota`），不擋——
+   *    2026-10-17 全站對過：空間滿的時候連草稿都救不回來，但救回來它根本不佔位置。
    */
-  await assertKnowledgeChunkQuota(workspaceId, 1, db)
-
   const restored = resolveRestoredStatus(chunk.statusBeforeDelete, !!chunk.embedding)
+  if (chunkCountsTowardQuota({ status: restored, isDeleted: false })) {
+    await assertKnowledgeChunkQuota(workspaceId, 1, db)
+  }
   await ref.update({
     status: restored,
     isDeleted: false, // 與 deletedAt 成對維護（查詢層過濾靠它，見 countSourceChunks）

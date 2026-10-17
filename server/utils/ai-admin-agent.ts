@@ -22,7 +22,7 @@ import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 // 只讀：數條數、讀方案上限（`C-308`⑦，跟開通清單、方案額度同一把尺）
-import { countWorkspaceChunks, getKnowledgeChunkQuota } from './ai-knowledge-quota'
+import { countUsableChunks, getKnowledgeChunkQuota } from './ai-knowledge-quota'
 import { ALERT_LABELS, severityOf, type AlertSeverity } from '~~/shared/types/alerts'
 import type { WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import { SETUP_LABELS, SETUP_PAGE } from '~~/shared/types/setup'
@@ -301,7 +301,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     mutates: false,
     async run(db, workspaceId, args) {
       const raw = String(args?.month ?? '').trim()
-      const ym = /^\d{4}-\d{2}$/.test(raw) ? raw.replace('-', '') : new Date().toISOString().slice(0, 7).replace('-', '')
+      // ⛔ 預設月份要用台北日曆（記帳就是按台北月記的）：toISOString 是 UTC，每月 1 號早上 8 點前會讀到上個月
+      const ym = /^\d{4}-\d{2}$/.test(raw) ? raw.replace('-', '') : currentYyyyMm()
       const snap = await db.collection('aiUsage').doc(`${workspaceId}_${ym}`).get()
       const u = (snap.data() ?? {}) as any
       return {
@@ -419,13 +420,15 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       /*
        * `C-308`⑦（2026-10-13）：以前回「這個帳號一共幾條」——開帳整理出來還在「等你看過」的、回收桶裡的都算，
        * 新帳號一條都還沒採用，它就說「知識庫有 37 條」，打開 AI 一題都答不出來。
-       * 條數跟方案額度、開通清單同一把尺（countWorkspaceChunks）；等你看過的另外數、另外講。
+       * liveCount＝AI 回客人真的用得到的（已學好的卡，countUsableChunks，跟開通清單同一個數）；
+       * 空間（space）才用方案那把尺——⛔ 2026-10-17 前 liveCount 也用方案那把尺，停用／失敗的都算成「用得到」。
+       * 等你看過的另外數、另外講。
        * ⛔ 每一格查不到就照實講「這次查不到」，不當成 0。方案名不回（`G-103`：那是計費資訊，問知識的人不一定看得到）。
        */
       const NA = '這次查不到'
       const [listed, live, drafts, quota] = await Promise.all([
         listSources(db, workspaceId, 200),
-        countWorkspaceChunks(workspaceId, db).catch(() => null),
+        countUsableChunks(workspaceId, db).catch(() => null),
         db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
           .where('workspaceId', '==', workspaceId)
           .where('status', '==', 'draft')

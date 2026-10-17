@@ -16,6 +16,7 @@ vi.mock('./ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledg
 import {
   assertKnowledgeChunkQuota,
   chunkCountsTowardQuota,
+  countUsableChunks,
   countWorkspaceChunks,
   invalidateKnowledgeChunkCount,
 } from './ai-knowledge-quota'
@@ -48,6 +49,20 @@ function planWithChunkLimit(limit: number | null) {
 beforeEach(() => {
   vi.clearAllMocks()
   invalidateKnowledgeChunkCount()
+})
+
+describe('AI 用得到的條數（跟方案空間是兩個數）', () => {
+  it('只數已學好的卡（status == indexed）——停用、到期、失敗、處理中、等你看過都不算', async () => {
+    const wheres: Array<[string, string, unknown]> = []
+    const q: any = {
+      where: (f: string, op: string, v: unknown) => { wheres.push([f, op, v]); return q },
+      count: () => ({ get: async () => ({ data: () => ({ count: 34 }) }) }),
+    }
+    const db = { collection: () => q } as any
+    expect(await countUsableChunks('ws1', db)).toBe(34)
+    // ⛔ 跟回客人的檢索同一個條件；用方案空間那把尺會把停用／失敗的也算成「用得到」（2026-10-17 前的錯）
+    expect(wheres).toEqual([['workspaceId', '==', 'ws1'], ['status', '==', 'indexed']])
+  })
 })
 
 describe('數現有幾條', () => {

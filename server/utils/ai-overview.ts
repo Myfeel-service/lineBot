@@ -21,6 +21,7 @@ import {
   updateKnowledgeChunk,
 } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
+import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
 
 /**
  * 這一輪做了什麼。同步那兩條路不看；「匯入完才問要不要做總表」那支（`D-123`②）要靠它講結果——
@@ -89,6 +90,23 @@ export async function regenerateOverviewCard(
     return 'skipped'
   }
 
+  /**
+   * 要**新建**一張（不是改既有那張）＝多佔一條空間，先看空間、再花 AI 的錢。
+   * ⛔ 2026-10-17 全站對過：試算表同步、網址套用改動自動重做總表時沒檢查，滿了照樣長出來
+   *    （前面算空間時也沒預留這一條），每份型錄可以多收 1 條。手動「做一張總表」的端點本來就有擋。
+   * 空間滿了就這輪不做：子卡照收，等空出空間、下次同步有改動時會再試。
+   */
+  if (!existingOverview) {
+    try {
+      await assertKnowledgeChunkQuota(workspaceId, 1, db)
+    }
+    catch (e) {
+      if ((e as { statusCode?: number })?.statusCode !== 403) throw e
+      console.warn(`[overview] ${workspaceId}/${sourceId} 知識空間滿了，這輪不新建總表`)
+      return 'skipped'
+    }
+  }
+
   const ov = await summarizeAsOverviewCard(
     childCards.map(c => ({ ...c, sourceId: null })),
   )
@@ -123,5 +141,7 @@ export async function regenerateOverviewCard(
     isOverview: true,
     sourceId,
   })
+  // 條數快取 60 秒：不作廢的話，緊接著的空間檢查會少算剛長出來的這一條
+  invalidateKnowledgeChunkCount(workspaceId)
   return 'created'
 }

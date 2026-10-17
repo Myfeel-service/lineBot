@@ -16,7 +16,7 @@ vi.mock('~~/server/utils/workspace-alerts', () => ({ checkLineWebhook: vi.fn() }
 vi.mock('~~/server/utils/ai-settings', () => ({ getAiSettings: vi.fn(async () => ({ enabled: false })) }))
 vi.mock('~~/server/utils/ai-scripts', () => ({ loadActiveScripts: vi.fn(async () => []), SCRIPTS_COLLECTION: 'scripts' }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
-vi.mock('~~/server/utils/ai-knowledge-quota', () => ({ countWorkspaceChunks: vi.fn(async () => 0) }))
+vi.mock('~~/server/utils/ai-knowledge-quota', () => ({ countUsableChunks: vi.fn(async () => 0) }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: string }) =>
@@ -27,7 +27,7 @@ vi.stubGlobal('getQuery', () => query)
 const { default: handler } = await import('./setup-status.get')
 const { getDb } = await import('~~/server/utils/firebase')
 const { checkLineWebhook } = await import('~~/server/utils/workspace-alerts')
-const { countWorkspaceChunks } = await import('~~/server/utils/ai-knowledge-quota')
+const { countUsableChunks } = await import('~~/server/utils/ai-knowledge-quota')
 
 /** 「等你看過」幾條（假 Firestore 的 count() 回這個數） */
 let draftCount = 0
@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   query = {}
   draftCount = 0
-  vi.mocked(countWorkspaceChunks).mockResolvedValue(0)
+  vi.mocked(countUsableChunks).mockResolvedValue(0)
   stubDb(CREDS)
 })
 
@@ -75,27 +75,33 @@ describe('開通就緒度：建立知識庫', () => {
 
   it('🔴 只有「等你看過」的（開帳整理出來還沒採用）→ 還沒做，⛔ 不可以打勾', async () => {
     draftCount = 37
-    vi.mocked(countWorkspaceChunks).mockResolvedValue(0)
+    vi.mocked(countUsableChunks).mockResolvedValue(0)
     await expect(kbStatus()).resolves.toBe('incomplete')
     expect((await run()).knowledge).toEqual({ live: 0, drafts: 37 })
   })
 
-  it('有一條 AI 拿得到的就算完成；條數跟方案額度同一把尺（countWorkspaceChunks）', async () => {
-    vi.mocked(countWorkspaceChunks).mockResolvedValue(3)
+  it('有一條 AI 拿得到的（已學好的卡，countUsableChunks）就算完成', async () => {
+    vi.mocked(countUsableChunks).mockResolvedValue(3)
     await expect(kbStatus()).resolves.toBe('done')
-    expect(countWorkspaceChunks).toHaveBeenCalledWith('ws1', expect.anything())
+    expect(countUsableChunks).toHaveBeenCalledWith('ws1', expect.anything())
     expect((await run()).knowledge).toEqual({ live: 3, drafts: 0 })
   })
 
+  it('🔴 知識都停用／處理失敗（佔空間但 AI 用不到）→ 還沒做，⛔ 不可以打勾（2026-10-17 前會勾）', async () => {
+    // countUsableChunks 只數已學好的卡；停用、失敗的不算，所以是 0
+    vi.mocked(countUsableChunks).mockResolvedValue(0)
+    await expect(kbStatus()).resolves.toBe('incomplete')
+  })
+
   it('查不到 → 「查不到」與 null，⛔ 不可以當成 0 條', async () => {
-    vi.mocked(countWorkspaceChunks).mockRejectedValue(new Error('quota exceeded'))
+    vi.mocked(countUsableChunks).mockRejectedValue(new Error('quota exceeded'))
     await expect(kbStatus()).resolves.toBe('unknown')
     expect((await run()).knowledge).toBeNull()
   })
 
   it('only=knowledge：只回這一項、不去問 LINE', async () => {
     query = { only: 'knowledge' }
-    vi.mocked(countWorkspaceChunks).mockResolvedValue(5)
+    vi.mocked(countUsableChunks).mockResolvedValue(5)
     draftCount = 2
     const res = await run()
     expect(res.items).toEqual([{ id: 'knowledgeReady', status: 'done' }])

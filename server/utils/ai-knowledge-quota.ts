@@ -75,6 +75,29 @@ export async function countWorkspaceChunks(
   return count
 }
 
+/**
+ * **AI 回客人時真的用得到**的條數＝已學好（`indexed`）的卡；回客人的檢索就只查這一種
+ * （`ai-knowledge-chunks.ts` 的 findSimilarChunks／標籤索引都是 `status == 'indexed'`）。
+ *
+ * ⛔ 不要拿 countWorkspaceChunks 頂替：那是**方案空間**的尺，停用、到期下架、處理失敗、處理中的都算
+ * （它們確實佔空間）。2026-10-17 全站對過：開通清單「建立知識庫」、AI 設定頁「目前 N 條」、
+ * 小幫手的 liveCount 都寫成「AI 拿得到的」卻用空間那把尺——全部停用或失敗時照樣打勾、
+ * 照樣說「AI 用得到 N 條」，跟知識庫頁的「可用」對不起來。兩個數字各有用途，分開數、分開講。
+ * 回收桶的卡軟刪除時 status 會改成 disabled，所以不會被數進來。
+ */
+export async function countUsableChunks(
+  workspaceId: string,
+  db: Firestore = getDb(),
+): Promise<number> {
+  const wid = String(workspaceId || '').trim()
+  const agg = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('workspaceId', '==', wid)
+    .where('status', '==', 'indexed')
+    .count()
+    .get()
+  return agg.data().count
+}
+
 /** 本地把快取往上加，省掉「剛建完又重數一次」的聚合查詢。 */
 export function bumpKnowledgeChunkCount(workspaceId: string, delta: number) {
   const wid = String(workspaceId || '').trim()
@@ -138,7 +161,7 @@ export async function assertKnowledgeChunkQuota(
   throw createError({
     statusCode: 403,
     statusMessage: adding === 1
-      ? planLimitMessage('AI 知識量', status.used, status.limit, status.planName)
+      ? planLimitMessage('AI 知識量', status.used, status.limit, status.planName, '條')
       : `AI 知識量不夠了：目前 ${status.used} 條，這批要再加 ${adding} 條，`
         + `超過${status.planName}方案上限 ${status.limit} 條。刪掉不需要的，或升級方案以取得更多額度。`,
   })

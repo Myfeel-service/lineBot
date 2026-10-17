@@ -29,9 +29,11 @@ vi.mock('~~/server/utils/audit-log', () => ({
   writeAuditLog: vi.fn(async () => {}),
   auditTimeText: (v: unknown) => (v == null ? null : String(v)),
 }))
-vi.mock('~~/server/utils/ai-knowledge-quota', () => ({
+vi.mock('~~/server/utils/ai-knowledge-quota', async importOriginal => ({
   assertKnowledgeChunkQuota: vi.fn(async () => {}),
   invalidateKnowledgeChunkCount: vi.fn(),
+  // 「算不算進空間」用真的那一把尺（還原時要靠它決定擋不擋）
+  chunkCountsTowardQuota: (await importOriginal<typeof import('~~/server/utils/ai-knowledge-quota')>()).chunkCountsTowardQuota,
 }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', async importOriginal => ({
   // 整理 body 那一套用真的（「沒改」要照同一套比），會寫庫、會算向量的換成假的
@@ -80,7 +82,7 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 
 const { updateKnowledgeChunk } = await import('~~/server/utils/ai-knowledge-chunks')
 const { writeAuditLog } = await import('~~/server/utils/audit-log')
-const { invalidateKnowledgeChunkCount } = await import('~~/server/utils/ai-knowledge-quota')
+const { invalidateKnowledgeChunkCount, assertKnowledgeChunkQuota } = await import('~~/server/utils/ai-knowledge-quota')
 const { default: putHandler } = await import('./[chunkId].put')
 const { default: deleteHandler } = await import('./[chunkId].delete')
 const { default: settingsHandler } = await import('./[chunkId]/settings.post')
@@ -209,6 +211,22 @@ describe('在後台刪掉試算表來的一條（`D-125`②、`C-308`⑧）', ()
     STORE.knowledgeSources!.s1!.gsheetExcludedTitles = ['出貨 時間', '別的那一列']
     await run(restoreHandler)
     expect(STORE.knowledgeSources!.s1!.gsheetExcludedTitles).toEqual(['別的那一列'])
+    expect(STORE.knowledgeChunks!.c1!.isDeleted).toBe(false)
+  })
+})
+
+describe('從回收桶還原要不要看空間（2026-10-17 全站對過）', () => {
+  it('還原一般的卡 → 會佔一條空間，照樣先檢查', async () => {
+    STORE.knowledgeChunks!.c1 = chunk({ isDeleted: true, deletedAt: '__ts__', status: 'disabled', statusBeforeDelete: 'indexed' })
+    await run(restoreHandler)
+    expect(assertKnowledgeChunkQuota).toHaveBeenCalledWith(WS, 1, expect.anything())
+  })
+
+  it('還原「等你看過」的 → 回來還是草稿、不佔空間，⛔ 不可以因為空間滿了救不回來', async () => {
+    STORE.knowledgeChunks!.c1 = chunk({ isDeleted: true, deletedAt: '__ts__', status: 'disabled', statusBeforeDelete: 'draft' })
+    await run(restoreHandler)
+    expect(assertKnowledgeChunkQuota).not.toHaveBeenCalled()
+    expect(STORE.knowledgeChunks!.c1!.status).toBe('draft')
     expect(STORE.knowledgeChunks!.c1!.isDeleted).toBe(false)
   })
 })

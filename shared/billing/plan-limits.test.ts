@@ -89,4 +89,8 @@ describe('撞上限的訊息', () => {
     expect(msg).toContain('輕量')
     expect(msg).toMatch(/升級/)
   })
+
+  it('帶量詞時數字後面接單位（知識量「50／50 條」，2026-10-17 前少了「條」）', () => {
+    expect(planLimitMessage('AI 知識量', 50, 50, '免費', '條')).toContain('（50／50 條）')
+  })
 })
