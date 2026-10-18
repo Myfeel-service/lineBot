@@ -27,8 +27,10 @@ import {
   DEFAULT_COLLECT_REASK,
   DEFAULT_REPLY_LINK_LABEL,
   collectSkipLabel,
+  consumePrefilledCollect,
   extractCollectValue,
   isHumanRequestText,
+  prefillCollectFields,
   renderScriptTemplate,
   resolveBranchNext,
   scriptTriggerEvent,
@@ -161,6 +163,29 @@ function findNode(script: ScriptDoc, id: string): ScriptNode | undefined {
 }
 
 /**
+ * 換掉 prefilled 名單；名單空了就整格拿掉——寫進 Firestore 的狀態不能帶 undefined
+ * （firebase-admin 沒開 ignoreUndefinedProperties，整筆會寫失敗）。
+ */
+function withPrefilled(state: ActiveScriptState, list: string[]): ActiveScriptState {
+  const { prefilled: _drop, ...rest } = state
+  return list.length ? { ...rest, prefilled: list } : rest
+}
+
+/**
+ * 把客人這句話裡、流程後面要問的資料先撿起來（見 prefillCollectFields）。
+ * 撿到的值進 collected、欄位名進 prefilled，走到那一題時跳過。
+ */
+function prefillFromText(script: ScriptDoc, state: ActiveScriptState, text: string): ActiveScriptState {
+  const found = prefillCollectFields(script.nodes, text, state.collected)
+  const fields = Object.keys(found)
+  if (!fields.length) return state
+  return withPrefilled(
+    { ...state, collected: { ...state.collected, ...found } },
+    [...new Set([...(state.prefilled ?? []), ...fields])],
+  )
+}
+
+/**
  * 流程走訪過程中累積的「待執行副作用」。走訪本身保持純函式、不碰 db；
  * 由 async 的 startScript/advanceScript 在走訪「結束後」一次執行。
  *
@@ -230,6 +255,13 @@ function runNonInteractiveSteps(
     }
 
     if (node.type === 'collect') {
+      // 客人前面已經講過這一項（例：觸發流程那句就寫了訂單編號）→ 不再問，直接往下走（`C-343`）
+      const remaining = consumePrefilledCollect(node.fieldName, nextState!)
+      if (remaining) {
+        cursor = node.next
+        nextState = withPrefilled({ ...nextState!, currentNodeId: cursor }, remaining)
+        continue
+      }
       // 問問題給使用者；停在這裡等下一則訊息。
       // 有設跳過出口（skipLabel+skipNext）→ 問句附一顆跳過按鈕，客人「沒有這個資料」也有路可走
       const skipLabel = collectSkipLabel(node)
@@ -305,23 +337,27 @@ function runNonInteractiveSteps(
 
 /**
  * 啟動腳本：寫入 activeScript 並執行第一步。
+ *
+ * @param triggerText 觸發流程的那句話（加好友觸發的沒有）。裡面已經有的訂單編號／電話／Email
+ *   先撿起來，走到那一題就不再問（`C-343`）。
  */
 export async function startScript(
   script: ScriptDoc & { id: string },
   userDocId: string,
   attributes: Record<string, string>,
   db: Firestore = getDb(),
+  triggerText = '',
 ): Promise<ScriptStepResult> {
   const trigger = script.nodes.find(n => n.id === script.rootNodeId) as ScriptTriggerNode | undefined
   if (!trigger) return EMPTY_RESULT
 
-  const state: ActiveScriptState = {
+  const state: ActiveScriptState = prefillFromText(script, {
     scriptId: script.id,
     currentNodeId: script.rootNodeId,
     collected: {},
     startedAt: Date.now(),
     expiresAt: Date.now() + 60 * 60 * 1000, // 預設一小時 TTL
-  }
+  }, triggerText)
   const { nextState, result, actions } = runNonInteractiveSteps(script, trigger.next, state, attributes)
   await persistActiveScript(db, userDocId, nextState)
   await executeScriptActions(db, userDocId, script.workspaceId, script.id, actions)
@@ -368,8 +404,13 @@ export async function advanceScript(
   }
 
   // 推進到下一個節點的共用收尾
-  const advanceFrom = async (collected: Record<string, string>, fromNodeId: string): Promise<ScriptStepResult> => {
-    const newState: ActiveScriptState = { ...state, collected, currentNodeId: current.id }
+  const advanceFrom = async (
+    collected: Record<string, string>,
+    fromNodeId: string,
+    /** 客人這次回答的整句：裡面若順便帶了後面要問的資料（「M2026…／電話 09…」），先撿起來（`C-343`） */
+    answerText = '',
+  ): Promise<ScriptStepResult> => {
+    const newState = prefillFromText(script, { ...state, collected, currentNodeId: current.id }, answerText)
     const { nextState, result, actions } = runNonInteractiveSteps(script, fromNodeId, newState, attributes)
     await persistActiveScript(db, userDocId, nextState)
     await executeScriptActions(db, userDocId, script.workspaceId, state.scriptId, actions)
@@ -438,7 +479,7 @@ export async function advanceScript(
     ...state.collected,
     [collectNode.fieldName]: extracted.value,
   }
-  return advanceFrom(collected, collectNode.next)
+  return advanceFrom(collected, collectNode.next, userMessage)
 }
 
 async function loadScript(db: Firestore, scriptId: string): Promise<ScriptDoc | null> {

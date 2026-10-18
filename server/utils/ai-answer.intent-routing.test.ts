@@ -63,7 +63,7 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
 const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder, socialCannedReply } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { generateJson } = await import('./gemini')
-const { searchSimilarChunks } = await import('./ai-knowledge-chunks')
+const { searchSimilarChunks, getWorkspaceProductNames } = await import('./ai-knowledge-chunks')
 const { recordAiUsage } = await import('./ai-usage')
 const { logHandoffEvent } = await import('./ai-handoff-events')
 
@@ -435,5 +435,95 @@ describe('婉拒：客人說「沒事了」不算答不出來', () => {
 
     expect(route?.intent).toBe('question')
     expect(route?.noNeedDemoted).toBe(false)
+  })
+})
+
+/**
+ * 出貨時程題（`C-343`，2026-10-09 正式站三場）：客人問「他訂的商品什麼時候出貨」、看得出是哪個商品，
+ * 知識庫有這個商品的出貨時程 → AI 直接答、附「找真人」按鈕，不再「規則答完一定轉真人」。
+ * 連假期間轉真人＝客人收到「非客服服務時間」然後等好幾天，只為了一句知識庫早就有的話。
+ */
+describe('出貨時程題：認得出商品就直接答，不強制轉真人', () => {
+  const PRODUCT = 'CHIMEI 靜電集塵空氣清淨機 AP-08SPFG (電淨艙)'
+  const shipCard = card({
+    id: 'ship_ap08', title: '奇美 靜電集塵空氣清淨機 AP-08SPFG 電淨艙', productName: PRODUCT, similarity: 0.82,
+    content: '出貨時間：依原廠公告：商品將於 10 月底 依照訂單順序陸續出貨，實際到貨時間仍需以廠商實際出貨日為準。',
+  })
+
+  beforeEach(() => {
+    vi.mocked(getWorkspaceProductNames).mockResolvedValue([PRODUCT])
+    vi.mocked(searchSimilarChunks).mockResolvedValue([shipCard])
+    vi.mocked(generateJson).mockResolvedValue({
+      data: { answer: '依原廠公告，奇美電淨艙將於 10 月底依訂單順序陸續出貨喔！', hasInfo: true },
+      inputTokens: 20, outputTokens: 30,
+    } as any)
+  })
+
+  /** 答題那一次 generateJson 收到的 prompt */
+  function answerPrompt(): string {
+    return String(vi.mocked(generateJson).mock.calls.at(-1)?.[0] ?? '')
+  }
+
+  it('句子裡點名商品（10-09 釋戒乘）→ 答完就結案、附找真人、記 answered', async () => {
+    const res = await ask('訂單編號：M20261006142003LDEW，奇美電淨艙雙入組，請問何時才能出貨？', 'order_status')
+
+    expect(res.decision).toBe('answered')
+    expect(res.handoffReason).toBeNull()
+    expect(res.answer).toContain('10 月底')
+    expect(res.offerFindHuman).toBe(true)
+    expect(deltas().some(d => d.answered === 1)).toBe(true)
+    expect(deltas().some(d => d.handoffs)).toBe(false)
+    // 不轉真人，就不能讓 AI 講「稍後由專員為您查詢」——那是空頭支票
+    expect(answerPrompt()).toContain('也**不要**說會有專人跟進')
+    expect(answerPrompt()).not.toContain('系統稍後會把他轉給真人專員查詢')
+  })
+
+  it('商品只出現在圖片說明裡（10-09 Chang Hsu Jui 傳付款完成頁）→ 一樣認得', async () => {
+    const res = await answerWithAi({
+      workspaceId: 'ws1',
+      query: '請問這個什麼時候會寄貨？',
+      precomputedIntent: intent('order_status', '請問這個什麼時候會寄貨？'),
+      history: [
+        { role: 'user', text: '[客人傳了一張圖片，AI 讀到：付款完成頁面，商品為奇美電淨艙雙入優惠 NT$17,380]' },
+        { role: 'bot', text: '收到您的照片了 📷 請問想了解什麼呢？' },
+      ],
+    })
+
+    expect(res.decision).toBe('answered')
+    expect(res.offerFindHuman).toBe(true)
+  })
+
+  it('看不出是哪個商品 → 照舊：規則先答、再轉真人', async () => {
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'ship_generic', title: '出貨時程是否能提前', content: '商品的出貨時間會依照商品頁面公告的資訊為主。', similarity: 0.82 }),
+    ])
+    const res = await ask('我的訂單什麼時候出貨？', 'order_status')
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
+    expect(res.offerFindHuman).toBeUndefined()
+  })
+
+  it('抱怨延遲（過了日子還沒出貨）→ 照舊轉真人，這一筆可能出狀況', async () => {
+    const res = await ask('電淨艙都10月了還沒出貨，請問要等到什麼時候？', 'order_status')
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
+  })
+
+  it('知識庫沒有這個商品的出貨時程 → 轉真人，而且沒有可以先送的規則', async () => {
+    vi.mocked(generateJson).mockResolvedValue({ data: { answer: '', hasInfo: false }, inputTokens: 20, outputTokens: 5 } as any)
+    const res = await ask('訂單編號：M20261006142003LDEW，奇美電淨艙雙入組，請問何時才能出貨？', 'order_status')
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
+    expect(res.answer).toBe('')
+  })
+
+  it('問「這筆寄了沒」不是問時程（要查他那一筆的狀態）→ 照舊轉真人', async () => {
+    const res = await ask('奇美電淨艙這筆出貨了嗎', 'order_status')
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
   })
 })

@@ -48,7 +48,8 @@ import {
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
-import { answerWithAi, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
+import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
+import { isShipTimingQuestion } from '~~/shared/ship-timing-question'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
@@ -2893,6 +2894,32 @@ function triggerHints(script: ScriptDoc & { id: string }): string[] {
 }
 
 /**
+ * 問「某個商品什麼時候出貨」、而且看得出是哪個商品 → 不進任何流程，直接交給 AI（`C-343`）。
+ *
+ * 為什麼要繞過流程：「查詢訂單」這類流程靠關鍵字（「訂單」）觸發，客人只要寫了「訂單編號：…」就被攔去
+ * 再問一次編號、然後轉真人。可是預購商品的出貨時程是整批共用的、知識庫早就有，真人查完回的也是同一句；
+ * 2026-10-09 雙十連假就有客人卡在這裡，收到「非客服服務時間」只能等。
+ * AI 答得出就答完（附「找真人」），答不出照舊轉真人——最壞是回到修正前的結局，只是少了先收編號那一步。
+ *
+ * 只在 AI 會真的回客人時才繞：AI 沒開、或草稿模式（AI 不對客人講話）時繞過流程＝這句話沒人回。
+ * 對話脈絡（含圖片說明、機器人剛講過的話）跟後面 AI 答題共用同一次讀取。
+ */
+async function shipTimingGoesToAi(
+  textContent: string,
+  workspaceId: string,
+  getHistory?: () => Promise<AiChatTurn[]>,
+): Promise<boolean> {
+  if (!getHistory || !isShipTimingQuestion(textContent)) return false
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  if (!settings?.enabled || settings.replyMode === 'draft') return false
+  const history = await getHistory().catch(() => [] as AiChatTurn[])
+  const products = await productsInConversation(workspaceId, textContent, history).catch(() => null)
+  if (!products) return false
+  console.log('[script] ship-timing question about a known product → AI answers, skip scripts:', [...products.products].join('/'), '|', textContent.slice(0, 80))
+  return true
+}
+
+/**
  * 嘗試從使用者輸入啟動腳本。
  * 回傳 true 表示已處理（已回覆使用者）；false 表示沒有任何腳本命中。
  */
@@ -2916,6 +2943,12 @@ async function runScriptStart(
     .filter(s => scriptTriggerEvent(s) === 'message')
   if (!scripts.length) return { handled: false, route: null }
   // 註：敏感情境已在編排最上層（呼叫此函式之前）攔截，這裡不需再檢查。
+
+  // 這一步只是「要不要讓 AI 先答」的判斷，壞了就當沒判斷（照舊走流程），不能把整則訊息弄成沒人回
+  if (await shipTimingGoesToAi(textContent, workspaceId, getHistory).catch((e) => {
+    console.error('[script] shipTimingGoesToAi error:', e)
+    return false
+  })) return { handled: false, route: null }
 
   // 1) 關鍵字快速通道：明確、零成本、確定性（不分模式；keywords 一律當明確觸發詞）
   let matched = scripts.find(s => matchesScriptKeywords(s, textContent)) ?? null
@@ -2959,7 +2992,8 @@ async function runScriptStart(
   // 腳本啟動要先寫入使用者狀態才回覆，期間先顯示「輸入中…」（fire-and-forget）
   if (keywordHit) showLoadingAnimation(lineUserId, workspaceId, 10).catch(() => {})
 
-  const result = await startScript(matched, fsUserDocId, userAttributes)
+  // 觸發那句話一起帶進去：裡面已經有的訂單編號／電話／Email 流程就不再問（`C-343`）
+  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, textContent)
   invalidateUserDocCache(fsUserDocId)
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
@@ -4101,7 +4135,14 @@ async function tryAiFallback(params: {
   // ── A. 答題：回覆文字（草稿模式只進收件匣，不發給客人）──────
   if (result.decision === 'answered' && result.answer.trim()) {
     if (replyToken && !draftMode) {
-      const msg: messagingApi.TextMessage = { type: 'text', text: result.answer.slice(0, 5000) }
+      const msg: messagingApi.TextMessage = {
+        type: 'text',
+        text: result.answer.slice(0, 5000),
+        // 出貨時程題答完附「找真人」（`C-343`）：送「找真人」三個字，跟傳照片那顆同一條轉接路
+        ...(result.offerFindHuman
+          ? { quickReply: { items: [{ type: 'action', action: { type: 'message', label: '🙋 找真人', text: '找真人' } }] } }
+          : {}),
+      }
       await replyMessage(replyToken, [msg], workspaceId)
       saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
         sender: 'ai',

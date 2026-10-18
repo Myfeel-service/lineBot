@@ -420,3 +420,92 @@ describe('腳本引擎：機器人模組步驟（＝自動回覆的「觸發機�
     expect(r.collected).toEqual({ order_id: 'A123' })
   })
 })
+
+/**
+ * 先撿（`C-343`）：2026-10-09 正式站兩位客人觸發「查詢訂單」那句就寫了訂單編號，
+ * 流程照樣問「請問您的訂單編號是？」，客人只好再貼一次。這組驗「講過的就不再問」。
+ */
+describe('腳本引擎：客人前面講過的資料不再問', () => {
+  // 跟正式站「查詢訂單」同形：問編號（可跳過）→ 寫名單 → 回覆＋轉真人
+  const orderLookup = script([
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['訂單'], examples: [], priority: 50, next: 'c1' },
+    { id: 'c1', type: 'collect', question: '您好,請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', skipLabel: '我沒有訂單編號', skipNext: 'c4', next: 's1' },
+    { id: 'c4', type: 'collect', question: '再麻煩您提供方便聯絡的電話號碼 📞', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 's1' },
+    { id: 's1', type: 'saveLead', fieldMap: [{ fromField: 'order_id', attrKey: '訂單編號' }, { fromField: 'phone', attrKey: '電話' }], next: 'r1' },
+    { id: 'r1', type: 'reply', text: '已收到您的資訊（{{order_id}}），我們將盡快為您查詢並處理', thenHandoff: true },
+  ])
+  // 跟正式站「更改地址」同形：編號 → 姓名 → 電話 → 地址
+  const changeAddress = script([
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['改地址'], examples: [], priority: 60, next: 'c_order' },
+    { id: 'c_order', type: 'collect', question: '請先提供您的訂單編號', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'c_name' },
+    { id: 'c_name', type: 'collect', question: '請問訂購人的大名？', fieldName: 'name', expireMs: 600000, format: 'any', next: 'c_phone' },
+    { id: 'c_phone', type: 'collect', question: '再麻煩您提供方便聯絡的電話號碼 📞', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'c_addr' },
+    { id: 'c_addr', type: 'collect', question: '最後，請提供完整的新地址', fieldName: 'address', expireMs: 600000, format: 'any', next: 'r1' },
+    { id: 'r1', type: 'reply', text: '已收到', thenHandoff: true },
+  ])
+
+  it('觸發那句就有訂單編號 → 不問編號，直接寫名單、回覆、轉真人（10-09 釋戒乘那一場）', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', orderLookup)
+    const r = await startScript(orderLookup, UID, {}, db, '訂單編號：M20261006142003LDEW，奇美電淨艙雙入組，請問何時才能出貨？')
+    expect(r.replyText).toBe('已收到您的資訊（M20261006142003LDEW），我們將盡快為您查詢並處理')
+    expect(r.finished).toBe(true)
+    expect(r.thenHandoff).toBe(true)
+    expect(attrsOf(store)['訂單編號']).toBe('M20261006142003LDEW')
+    expect(activeScriptOf(store)).toBeUndefined()
+  })
+
+  it('沒帶觸發句（舊呼叫端／加好友）→ 照舊從第一題問起，狀態裡也不留空的 prefilled', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', orderLookup)
+    const r = await startScript(orderLookup, UID, {}, db)
+    expect(r.replyText).toBe('您好,請問您的訂單編號是？')
+    expect('prefilled' in activeScriptOf(store)!).toBe(false)
+  })
+
+  it('觸發句只有沒問到的東西（型號）→ 照常問編號，型號不會被當成編號', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', orderLookup)
+    const r = await startScript(orderLookup, UID, {}, db, '我訂的 AP-08SPFG 想查訂單')
+    expect(r.replyText).toBe('您好,請問您的訂單編號是？')
+  })
+
+  it('撿到的跳過、中間沒講的照問：編號＋電話都先給了 → 只問姓名和地址', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', changeAddress)
+    const r1 = await startScript(changeAddress, UID, {}, db, '我要改地址，訂單 M20261007002452KOYK，電話0982085948')
+    expect(r1.replyText).toBe('請問訂購人的大名？')
+    expect(activeScriptOf(store)?.prefilled).toEqual(['phone'])
+
+    const r2 = await advanceScript(activeScriptOf(store)!, '白坤永', {}, UID, db)
+    expect(r2.replyText).toBe('最後，請提供完整的新地址')
+    expect(activeScriptOf(store)?.collected).toMatchObject({ order_id: 'M20261007002452KOYK', name: '白坤永', phone: '0982085948' })
+    expect('prefilled' in activeScriptOf(store)!).toBe(false)
+  })
+
+  it('回答這一題時順便帶了後面的資料 → 後面那題也不問（10-09 白坤永那一則的貼法）', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', changeAddress)
+    await startScript(changeAddress, UID, {}, db, '我要改地址')
+    const r1 = await advanceScript(activeScriptOf(store)!, 'M20261007002452KOYK訂單編號\n名字白坤永\n電話0982085948', {}, UID, db)
+    // 姓名是「不限格式」，從一整段裡撿不準 → 照問；電話撿到了 → 之後不問
+    expect(r1.replyText).toBe('請問訂購人的大名？')
+    const r2 = await advanceScript(activeScriptOf(store)!, '白坤永', {}, UID, db)
+    expect(r2.replyText).toBe('最後，請提供完整的新地址')
+  })
+
+  it('流程刻意繞回同一題（電話對嗎？不對 → 重填）→ 第二次照問，不會永遠跳過', async () => {
+    const confirmLoop = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['預約'], examples: [], priority: 50, next: 'c_phone' },
+      { id: 'c_phone', type: 'collect', question: '請留電話', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'q' },
+      { id: 'q', type: 'quickReply', question: '電話是 {{phone}} 對嗎？', expireMs: 600000, options: [{ label: '對', next: 'r' }, { label: '不對', next: 'c_phone' }] },
+      { id: 'r', type: 'reply', text: '好的', thenHandoff: false },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', confirmLoop)
+    const r1 = await startScript(confirmLoop, UID, {}, db, '我要預約，電話0912345678')
+    expect(r1.replyText).toBe('電話是 0912345678 對嗎？')
+    const r2 = await advanceScript(activeScriptOf(store)!, '不對', {}, UID, db)
+    expect(r2.replyText).toBe('請留電話')
+  })
+})

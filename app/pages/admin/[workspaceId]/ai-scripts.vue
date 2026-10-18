@@ -839,7 +839,7 @@ import type {
   TriggerKeywordMatch,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, renderScriptTemplate, resolveBranchNext, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, consumePrefilledCollect, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, prefillCollectFields, renderScriptTemplate, resolveBranchNext, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptForReachability } from '~~/shared/types/ai-script-reachability'
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
@@ -1436,6 +1436,8 @@ const simInput = ref('')
 const simWaiting = ref<'collect' | 'quickReply' | null>(null)
 const simNodeId = ref<string | null>(null)
 const simCollected = ref<Record<string, string>>({})
+/** 客人前面已經講過、走到那一題要跳過的欄位（與引擎同一套 prefillCollectFields，`C-343`） */
+const simPrefilled = ref<string[]>([])
 const simDone = ref(false)
 
 // 觸發測試框：打一句話，即時判斷會不會命中這條腳本
@@ -1462,10 +1464,20 @@ function simReset() {
   simWaiting.value = null
   simNodeId.value = null
   simCollected.value = {}
+  simPrefilled.value = []
   simDone.value = false
   triggerTest.value = ''
 }
 function simPush(m: SimMsg) { simLog.value.push(m) }
+
+/** 與引擎一致：客人這句話裡已經有的訂單編號／電話／Email 先撿起來，走到那一題就不問（`C-343`） */
+function simPrefill(text: string) {
+  const found = prefillCollectFields(form.value.nodes, text, simCollected.value)
+  const fields = Object.keys(found)
+  if (!fields.length) return
+  simCollected.value = { ...simCollected.value, ...found }
+  simPrefilled.value = [...new Set([...simPrefilled.value, ...fields])]
+}
 
 /** 從某節點往前推非互動步驟：遇到 collect/quickReply 停下等輸入、遇到 reply 結束 */
 function simRun(startId: string) {
@@ -1479,6 +1491,14 @@ function simRun(startId: string) {
     if (node.type === 'tag') { simPush({ who: 'sys', text: `（貼標：${node.addTagIds.length} 個標籤）` }); cursor = node.next; continue }
     if (node.type === 'saveLead') { simPush({ who: 'sys', text: '（已把答案存進客人資料）' }); cursor = node.next; continue }
     if (node.type === 'collect') {
+      // 與引擎一致:客人前面已經講過這一項 → 不問、往下走（試跑要講出來，不然店家會以為那一題壞了）
+      const remaining = consumePrefilledCollect(node.fieldName, { collected: simCollected.value, prefilled: simPrefilled.value })
+      if (remaining) {
+        simPrefilled.value = remaining
+        simPush({ who: 'sys', text: `（客人前面已經給過：${simCollected.value[node.fieldName]}，這一題不再問）` })
+        cursor = node.next
+        continue
+      }
       // 與引擎一致:有跳過出口 → 問句附跳過按鈕
       const skip = collectSkipLabel(node)
       simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), ...(skip ? { buttons: [skip] } : {}) })
@@ -1571,6 +1591,7 @@ function simSend(text?: string) {
   if (!simWaiting.value) {
     const trig = form.value.nodes.find(n => n.type === 'trigger')
     if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條流程沒有觸發步驟）' }); return }
+    simPrefill(msg)
     simRun(trig.next)
     return
   }
@@ -1589,6 +1610,7 @@ function simSend(text?: string) {
       return
     }
     simCollected.value[node.fieldName] = res.value
+    simPrefill(msg)
     simRun(node.next)
   }
   else if (node?.type === 'quickReply') {

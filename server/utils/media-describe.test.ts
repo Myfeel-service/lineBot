@@ -126,7 +126,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
 
     const { description: desc } = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
 
-    expect(desc.length).toBeLessThanOrEqual(61) // 60 字 + 省略號
+    expect(desc.length).toBeLessThanOrEqual(81) // 80 字 + 省略號（`C-343` 從 60 放寬：要容得下照抄的商品名）
     expect(desc.endsWith('…')).toBe(true)
   })
 
@@ -139,7 +139,7 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
     expect(desc).toBe('第一行 第二行')
   })
 
-  it('圖片是以 inlineData 送出、且用便宜的 flash-lite（描述不需要旗艦模型）', async () => {
+  it('圖片是以 inlineData 送出、用 flash（flash-lite 會把截圖上的商品名讀錯字，`C-343`）', async () => {
     mockStorage()
     mockGemini('收據照片')
 
@@ -148,7 +148,17 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
     const [parts, opts] = vi.mocked(generateParts).mock.calls[0]!
     expect(parts[0]).toHaveProperty('inlineData')
     expect((parts[0] as any).inlineData.mimeType).toBe('image/jpeg')
-    expect(opts?.model).toBe('gemini-2.5-flash-lite')
+    expect(opts?.model).toBe('gemini-2.5-flash')
+  })
+
+  it('描述規則要求照抄截圖上的商品名（AI 要靠它知道客人問哪一台，`C-343`）', async () => {
+    mockStorage()
+    mockGemini('收據照片')
+
+    await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+
+    const opts = vi.mocked(generateParts).mock.calls[0]![1]
+    expect(String(opts?.systemInstruction)).toContain('照抄商品名稱')
   })
 
   it('沒開「客人傳的照片」時不要問句：那個欄位一產出就會出現在客人畫面上', async () => {

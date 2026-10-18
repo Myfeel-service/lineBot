@@ -41,6 +41,7 @@ import type {
   DisambiguationPayload,
   HandoffReason,
 } from '~~/shared/types/ai-knowledge'
+import { isShipTimingQuestion } from '~~/shared/ship-timing-question'
 
 export interface AiChatTurn {
   role: 'user' | 'bot'
@@ -726,6 +727,11 @@ export interface AnswerOutput extends AiAnswerResult {
    * 超管的「顯示技術細節」看得到——沒有它，事後只查得到「失敗」兩個字。
    */
   errorDetail?: string
+  /**
+   * 答完附一顆「🙋 找真人」按鈕（`C-343`）。目前只有出貨時程題：客人問的是他那一筆，
+   * AI 給的是這個商品的一般時程——多半就夠了，不夠的話一按就轉人，不用自己想要打什麼。
+   */
+  offerFindHuman?: boolean
 }
 
 function handoff(reason: HandoffReason, sources: SimilarChunk[] = [], errorDetail?: string): AnswerOutput {
@@ -1295,6 +1301,24 @@ export function activeProductsInContext(
     if (hits.size) return { products: hits, from: 'history' }
   }
   return null
+}
+
+/**
+ * 答題之前就要知道「這段對話在談哪個商品」時用（`C-343`：出貨時程題要不要繞過流程直接給 AI）。
+ * 跟 answerWithAi 的產品鎖**同一份字典、同一種比對**——兩邊認得的商品不一樣，就會出現
+ * 「繞過了流程、AI 卻說不知道是哪一台」這種兩頭落空。商品名與別名都有 60 秒快取。
+ */
+export async function productsInConversation(
+  workspaceId: string,
+  text: string,
+  history: AiChatTurn[] | undefined,
+): Promise<ActiveProductContext | null> {
+  const db = getDb()
+  const [{ aliases, aliasLabels }, names] = await Promise.all([
+    getProductAliases(db, workspaceId),
+    getWorkspaceProductNames(db, workspaceId).catch(() => [] as string[]),
+  ])
+  return activeProductsInContext(text, history, productVocabulary(names, { aliases, aliasLabels }), aliases)
 }
 
 /**
@@ -1996,10 +2020,13 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   //      被改寫成 W1 REGEN 的查詢 → 分數高的**錯**產品必勝。
   // 所以改用確定性規則：脈絡鎖定產品時，別台的卡一律不得進 context。
   // 沒有產品名的通用卡（運費 / 退貨政策）與總覽卡不受影響；比較 / 列舉意圖本來就要跨產品，跳過。
+  /** 這段對話在談哪個商品（產品鎖算出來的；出貨時程題要靠它才敢自己答，見 shipTimingAnswer） */
+  let contextProducts: ActiveProductContext | null = null
   if (!isCompare && !isList && !comparedRetrieval) {
     // 在用的商品名＋指向它們的別名（`C-325`）：舊全名、型號收成別名之後，客人打那些字照樣鎖得到那一台
     const catalogNames = productVocabulary(activeProductNames, { aliases: productAliases, aliasLabels: productAliasLabels })
     const active = activeProductsInContext(text, input.history, catalogNames, productAliases)
+    contextProducts = active
     if (active) {
       const offContextIds = new Set(
         chunks
@@ -2045,6 +2072,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       }
     }
   }
+  /**
+   * 「他那一筆什麼時候出貨」＋看得出是哪個商品＝這個商品的出貨時程就是答案（`C-343`，2026-10-18 老闆：
+   * 「有辨識到產品名的話，也可以直接回覆出貨日，就不用再等上班回覆了」）。
+   * 這種題不走 order_status 的「規則答完一定轉真人」：卡片答得出就照一般答題收尾、附「找真人」按鈕；
+   * 答不出照舊轉真人。抱怨延遲、同句要改單的不算（見 isShipTimingQuestion）——那些照舊轉人查。
+   * 一定要認得出商品：沒點名時卡片可能分屬好幾個商品，挑一個商品的出貨日答他，比轉真人更糟。
+   */
+  const shipTimingAnswer = orderStatusMode && !!contextProducts && isShipTimingQuestion(text)
   const productGroups = groups.map(g => g[0]!) // 每組代表卡（最高分）
   // isList（列舉意圖「X 有哪些」）也跳過反問——直接列出，不要問「你要哪一個」。
   // 一句多問也跳過反問：客人明明兩件事都問了，卻回他「你要問哪一個？」是反意圖的。
@@ -2219,9 +2254,12 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       : [text]),
     // 個案訂單狀態：客人問的是「他那一筆」，我們沒有任何人的訂單資料（系統之後會轉真人查）。
     // 這裡只准講一般規則，並且不能講得像已經查過他的訂單——那是最容易被投訴的一種錯。
-    ...(orderStatusMode
-      ? ['（重要：客人問的是**他自己那一筆訂單／退款的進度**。你查不到任何人的訂單資料，系統稍後會把他轉給真人專員查詢。所以：只回答**一般規則與時程**（例如幾個工作日出貨、退款排程怎麼算），能講多少講多少；**絕對不要**臆測或宣稱他這一筆的狀態（不要說「您的訂單已出貨」「已為您查詢」之類的話），也不要說你會幫他查。卡片裡連一般規則都沒有時，hasInfo=false、answer 留空。）']
-      : []),
+    // 出貨時程題（shipTimingAnswer）**不會**轉真人：那段話不能提「稍後由專員為您查詢」，否則是空頭支票。
+    ...(shipTimingAnswer
+      ? ['（重要：客人問的是**他訂的商品什麼時候出貨／到貨**。你查不到任何人的訂單資料，但同一個商品的出貨時程對所有訂單都一樣：請依卡片直接告訴他**這個商品**的出貨時程（例如「依原廠公告，○○將於 10 月底依訂單順序陸續出貨」），他有提到下單日期、批次時一併對照卡片說明。**絕對不要**宣稱查過他這一筆（不要說「您的訂單已出貨」「已為您查詢」），也**不要**說會有專人跟進、幫他查或稍後回覆。卡片裡沒有這個商品的出貨時程時，hasInfo=false、answer 留空。）']
+      : orderStatusMode
+        ? ['（重要：客人問的是**他自己那一筆訂單／退款的進度**。你查不到任何人的訂單資料，系統稍後會把他轉給真人專員查詢。所以：只回答**一般規則與時程**（例如幾個工作日出貨、退款排程怎麼算），能講多少講多少；**絕對不要**臆測或宣稱他這一筆的狀態（不要說「您的訂單已出貨」「已為您查詢」之類的話），也不要說你會幫他查。卡片裡連一般規則都沒有時，hasInfo=false、answer 留空。）']
+        : []),
     // 一句多問：把子問題逐條點名。只靠下方通用規則時模型常只答第一問（7/31 稽核 P1-10）。
     ...(subQuestions.length >= 2
       ? [`（提醒：客人這句話一共問了 ${subQuestions.length} 件事——${subQuestions.map((s, i) => `${i + 1}. ${s}`).join('；')}。請依「一句多問」規則**逐一**回應，能答的都要答到，不要只答第一件。）`]
@@ -2455,7 +2493,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 個案訂單狀態：規則答得出來也**不算答完**——客人要的「他那一筆」還沒被回答。
   // answer 帶著規則一起回去（handler 先送規則、再送轉接訊息），記帳記 handoff 不記 answered：
   // 這一則的結局是交給真人，記成 answered 會讓「AI 自己答完」的比率虛胖。
-  if (orderStatusMode) {
+  // 出貨時程題例外（shipTimingAnswer）：這個商品的出貨時程就是他要的答案，往下照一般答題收尾。
+  if (orderStatusMode && !shipTimingAnswer) {
     await record({
       invocations: 1,
       handoffs: 1,
@@ -2482,12 +2521,17 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     outputTokens,
   })
 
+  if (shipTimingAnswer) {
+    // 看得見：這是「以前會轉真人、現在 AI 自己答完」的那一類，上線後要能從日誌對回來
+    console.log('[ai-answer] ship-timing question answered without handoff:', [...contextProducts!.products].join('/'), '|', text.slice(0, 80))
+  }
   return {
     decision: 'answered',
     answer: truncateAtSentence(answerText, settings.replyMaxLen),
     confidence,
     sources: sourcesPayload,
     handoffReason: null,
+    ...(shipTimingAnswer ? { offerFindHuman: true } : {}),
     ...(input.debug ? { debugPrompt: userPrompt } : {}),
   }
 }

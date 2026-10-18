@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { SCRIPT_TEMPLATES } from './ai-script-templates'
 import {
   collectSkipLabel,
+  consumePrefilledCollect,
   cosineSimilarity,
   extractCollectValue,
+  prefillCollectFields,
   findPlaceholderTexts,
   addSkipExitsToCollects,
   DEFAULT_SKIP_EXIT_LABEL,
@@ -15,6 +17,7 @@ import {
   scriptCooldownMs,
   scriptTriggerEvent,
   validateScriptDoc,
+  type ScriptCollectNode,
   type ScriptDoc,
   type ScriptNode,
 } from './ai-script'
@@ -569,5 +572,66 @@ describe('加好友觸發（triggerEvent=follow）', () => {
     const s = buildScript({ id: 't1', type: 'trigger', triggerEvent: 'follow', keywordMatch: 'anyText', keywords: ['退貨'] })
     expect(matchesScriptKeywords(s, '退貨')).toBe(false)
     expect(matchesScriptKeywords(s, '隨便打一句')).toBe(false)
+  })
+})
+
+/**
+ * 先撿（`C-343`）：MYFEEL「查詢訂單」流程 154 次問編號裡，約 56 次客人觸發那句話就已經寫了編號。
+ * 句子取自正式站原文。
+ */
+describe('prefillCollectFields：客人前面講過的資料，流程就不再問', () => {
+  const collect = (id: string, fieldName: string, format: ScriptCollectNode['format']): ScriptNode =>
+    ({ id, type: 'collect', question: '?', fieldName, expireMs: 600000, format, next: 'r' })
+  // 跟正式站「更改地址」流程同一組欄位：編號（英數符號）、姓名（不限）、電話、地址（不限）、Email
+  const nodes: ScriptNode[] = [
+    collect('c_order', 'order_id', 'alphanumericSymbol'),
+    collect('c_name', 'name', 'any'),
+    collect('c_phone', 'phone', 'phone'),
+    collect('c_email', 'email', 'email'),
+    collect('c_addr', 'address', 'any'),
+  ]
+
+  it('觸發那句就有編號 → 撿起來；不限格式的姓名、地址一律不撿', () => {
+    expect(prefillCollectFields(nodes, '訂單編號：M20261006142003LDEW，奇美電淨艙雙入組，請問何時才能出貨？'))
+      .toEqual({ order_id: 'M20261006142003LDEW' })
+  })
+
+  it('編號、姓名、電話一起貼 → 編號和電話都撿到，電話不會被當成編號', () => {
+    expect(prefillCollectFields(nodes, 'M20261007002452KOYK訂單編號\n名字白坤永\n電話0982085948'))
+      .toEqual({ order_id: 'M20261007002452KOYK', phone: '0982085948' })
+  })
+
+  it('型號、品牌、金額、日期都不是編號（數字太少或其實是日期）', () => {
+    expect(prefillCollectFields(nodes, '我買的 AP-08SPFG 跟 LG 那台，NT$17,380，訂單什麼時候出貨')).toEqual({})
+    expect(prefillCollectFields(nodes, '我 2026-10-07 下的訂單')).toEqual({})
+    expect(prefillCollectFields(nodes, '20261007 那天下的單')).toEqual({})
+  })
+
+  it('一句裡有好幾段英數時取數字最多的那段（訂單編號比型號長）', () => {
+    expect(prefillCollectFields(nodes, '超早鳥《乾淨方MAX》 (DW-UX22FT-W/H) 訂單編號 M20260906081120HBNA 有沒有確定出貨的時間點'))
+      .toEqual({ order_id: 'M20260906081120HBNA' })
+  })
+
+  it('Email 抓到信箱為止，不把後面的中文吃進去', () => {
+    expect(prefillCollectFields(nodes, '我的信箱 my794332@gmail.com，訂單幫我查一下')).toEqual({ email: 'my794332@gmail.com' })
+  })
+
+  it('已經有值的欄位不覆蓋，用掉的值也不會給第二個欄位', () => {
+    expect(prefillCollectFields(nodes, '電話0982085948', { phone: '0911111111' })).toEqual({})
+    const twoCodes: ScriptNode[] = [collect('a', 'order_id', 'alphanumericSymbol'), collect('b', 'tracking', 'alphanumeric')]
+    expect(prefillCollectFields(twoCodes, '單號 M20261007002452KOYK')).toEqual({ order_id: 'M20261007002452KOYK' })
+  })
+
+  it('純數字、自訂格式不從整句裡猜（規則可能寬到任何數字都算）', () => {
+    const loose: ScriptNode[] = [collect('n', 'qty', 'number'), { ...collect('c', 'code', 'custom'), pattern: '\\d+' } as ScriptNode]
+    expect(prefillCollectFields(loose, '訂單 M20261007002452KOYK 買了 2 台')).toEqual({})
+  })
+
+  it('consumePrefilledCollect：只跳先撿到的那一題、跳過一次就從名單拿掉', () => {
+    const state = { collected: { order_id: 'M1', phone: '0912345678' }, prefilled: ['order_id'] }
+    expect(consumePrefilledCollect('order_id', state)).toEqual([])
+    // 電話是客人當面答的（不在 prefilled）→ 流程繞回這題要照問
+    expect(consumePrefilledCollect('phone', state)).toBeNull()
+    expect(consumePrefilledCollect('order_id', { collected: {}, prefilled: ['order_id'] })).toBeNull()
   })
 })

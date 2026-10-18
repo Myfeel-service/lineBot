@@ -269,6 +269,13 @@ export interface ActiveScriptState {
   startedAt: number
   /** epoch ms；超過此時間下一則訊息進來會直接重置（避免使用者放著不回，下次入店被中斷流程攔截） */
   expiresAt: number
+  /**
+   * 客人前面那幾句話裡**已經講過**、還沒輪到的欄位（fieldName）——走到那一題就跳過不問（`C-343`）。
+   * 值本身放在 collected；這裡只記「哪幾題是先撿到的」。跳過一次就從名單拿掉，
+   * 流程若刻意繞回同一題（「電話對嗎？不對 → 重填」）照樣會問。見 {@link prefillCollectFields}。
+   * 沒有先撿到任何東西時不寫這一格（firebase-admin 沒開 ignoreUndefinedProperties）。
+   */
+  prefilled?: string[]
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -727,6 +734,113 @@ export function extractCollectValue(node: Pick<ScriptCollectNode, 'format' | 'pa
     if (!PHONE_DIGIT_LENGTHS.has(value.length)) return { ok: false, value: '' }
   }
   return { ok: true, value }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  先撿：客人前面講過的資料，流程就不再問（`C-343`）
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 從一整句話裡猜「哪一段是編號」時，至少要有幾個數字。
+ *
+ * 客人當面回答「請問訂單編號？」時怎麼打都收（他知道自己在答什麼，見 extractCollectValue）；
+ * 先撿卻是從一句**不是在答這題**的話裡猜，照「2 碼以上英數」去抓，型號（AP-08SPFG）、
+ * 品牌（LG）都會被當成訂單編號。正式站的訂單編號長這樣：M20261006142003LDEW（14 個數字），
+ * 型號多半只有 2～4 個數字。
+ */
+const PREFILL_CODE_MIN_DIGITS = 6
+
+/** 先撿用的代碼掃描（全域版，跟 COLLECT_FORMAT_PATTERNS 同一種字元集） */
+const PREFILL_CODE_SCAN: Partial<Record<CollectFormat, RegExp>> = {
+  alphanumeric: /[A-Za-z0-9]{2,}/g,
+  alphanumericSymbol: /[A-Za-z0-9][A-Za-z0-9#/._-]*[A-Za-z0-9]/g,
+}
+
+/** 數字夠多、但其實是電話（0 開頭 9～10 碼、886 開頭）或日期（2026-10-07、20261007、10/7）的，不當編號 */
+const PREFILL_NOT_CODE_RES = [
+  /^0\d{8,9}$/,
+  /^886\d{8,9}$/,
+  /^(19|20)\d{2}[-/.]?(0?[1-9]|1[0-2])[-/.]?(0?[1-9]|[12]\d|3[01])$/,
+  /^\d{1,2}[-/.]\d{1,2}([-/.]\d{2,4})?$/,
+]
+
+/**
+ * 先撿 Email 用嚴格版：COLLECT_FORMAT_PATTERNS.email 的網域段是「非空白都收」，
+ * 客人只回一個信箱時沒差，但一整句話「abc@gmail.com，訂單…」會把逗號後面整段吃進去。
+ */
+const PREFILL_EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/
+/** 找編號前先挖掉信箱與網址：「my794332@gmail.com」的帳號、商品頁網址裡的一串數字都不是訂單編號 */
+const PREFILL_NOT_CODE_SPANS = [new RegExp(PREFILL_EMAIL_RE.source, 'g'), /https?:\/\/\S+/g]
+
+function prefillValueFor(format: CollectFormat, text: string): string {
+  if (format === 'phone') {
+    const r = extractCollectValue({ format: 'phone' }, text)
+    return r.ok ? r.value : ''
+  }
+  if (format === 'email') return text.match(PREFILL_EMAIL_RE)?.[0] ?? ''
+  const scan = PREFILL_CODE_SCAN[format]
+  if (!scan) return '' // any / number / custom：不從整句裡猜
+  const codeText = PREFILL_NOT_CODE_SPANS.reduce((t, re) => t.replace(re, ' '), text)
+  let best = ''
+  let bestDigits = 0
+  for (const m of codeText.matchAll(scan)) {
+    const token = m[0]
+    const digits = token.replace(/\D/g, '').length
+    if (digits < PREFILL_CODE_MIN_DIGITS) continue
+    const bare = token.replace(/[-/.]/g, '')
+    if (PREFILL_NOT_CODE_RES.some(re => re.test(token) || re.test(bare))) continue
+    // 一句裡有好幾段時取數字最多的：訂單編號通常比任何型號、金額都長
+    if (digits > bestDigits) { best = token; bestDigits = digits }
+  }
+  return best
+}
+
+/**
+ * 從客人這句話裡，先撿出流程**等一下要問**、還沒有值的資料（`C-343`）。
+ * 引擎（ai-scripts.ts）與後台「試跑這條流程」共用，兩邊才不會一個跳過、一個照問。
+ *
+ * 為什麼要做：MYFEEL「查詢訂單」流程（關鍵字「訂單」）2026-08-07～10-18 問了 154 次訂單編號，
+ * 其中約 56 次客人觸發流程的那句話裡**已經寫了編號**，被問完只好再貼一次（有人回「上面我有打啊」）。
+ *
+ * 只撿「格式本身就認得出來」的三種：電話、Email、代碼（訂單編號這類，門檻見 PREFILL_CODE_MIN_DIGITS）。
+ * ⛔「不限格式」（姓名、地址、備註內容）不撿：整句話都符合「不限格式」，撿了就是把整句當成姓名。
+ * ⛔ 自訂格式、純數字也不撿：規則可能寬到 `\d+`，從一整句裡猜一定猜錯。
+ *
+ * @param known 已經有值的欄位不再撿（不覆蓋客人當面回答的值），已用掉的值也不會再給第二個欄位
+ * @returns 新撿到的欄位（fieldName → 值）；一個都沒有＝空物件
+ */
+export function prefillCollectFields(
+  nodes: readonly ScriptNode[],
+  text: string,
+  known: Record<string, string> = {},
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  const raw = String(text || '')
+  if (!raw.trim()) return out
+  const used = new Set(Object.values(known).filter(Boolean))
+  for (const n of nodes) {
+    if (n.type !== 'collect' || !n.fieldName) continue
+    if (known[n.fieldName] || out[n.fieldName]) continue
+    const v = prefillValueFor(n.format ?? 'any', raw)
+    if (!v || used.has(v)) continue
+    out[n.fieldName] = v
+    used.add(v)
+  }
+  return out
+}
+
+/**
+ * 走到某個收集步驟時，要不要因為「客人前面已經講過」而跳過（`C-343`）。
+ * 回傳跳過之後剩下的 prefilled 名單；null＝不跳過、照常問。
+ * 跳過一次就從名單拿掉——流程刻意繞回同一題（「電話對嗎？不對 → 重填」）時要照問，不能永遠跳。
+ */
+export function consumePrefilledCollect(
+  fieldName: string,
+  state: Pick<ActiveScriptState, 'collected' | 'prefilled'>,
+): string[] | null {
+  const list = state.prefilled ?? []
+  if (!fieldName || !list.includes(fieldName) || !state.collected[fieldName]) return null
+  return list.filter(f => f !== fieldName)
 }
 
 // ═══════════════════════════════════════════════════════════════════
