@@ -1154,6 +1154,12 @@ export async function runAdminAgentChat(params: {
 
   const toolCalls: AdminAgentToolCall[] = []
   const toolResults: string[] = []
+  /**
+   * 回答裡的數字可以拿來當出處的那幾行：真的查到的資料、以及提議被擋時後端講的事實（「有 3 條同名」「只能設 1 到 1440 分鐘」）。
+   * ⛔ 跟 toolResults 分開（`E-40`）：toolResults 也裝我們自己寫給模型的糾正話（「上一次的回答被擋下…」「輸出不是 JSON」），
+   *    那些是指示不是資料——混在一起時，糾正話裡出現的數字就變成它下一句的「出處」。
+   */
+  const groundingSources: string[] = []
   /** 工具順手給的卡片(找到某位客人 →「打開他的對話」),跟著回答一起送出 */
   const toolCards: AgentMsg[] = []
   /** 這一輪的異常總覽只查一次(見 ToolCtx.alertsMemo) */
@@ -1231,7 +1237,8 @@ export async function runAdminAgentChat(params: {
       if (!regrounded && step < MAX_TOOL_STEPS) {
         const issue = answerGroundingIssue({
           text,
-          sources: [...toolResults, ...userSaidTexts, ...dateTexts],
+          sources: [...groundingSources, ...userSaidTexts],
+          dateSources: dateTexts,
           calledTools: toolCalls.map(t => t.tool),
         })
         if (issue) {
@@ -1277,7 +1284,8 @@ export async function runAdminAgentChat(params: {
       if (!regrounded && step < MAX_TOOL_STEPS) {
         const issue = answerGroundingIssue({
           text: String(data?.answer ?? ''),
-          sources: [...toolResults, ...userSaidTexts, ...dateTexts],
+          sources: [...groundingSources, ...userSaidTexts],
+          dateSources: dateTexts,
           calledTools: toolCalls.map(t => t.tool),
         })
         if (issue) {
@@ -1324,7 +1332,8 @@ export async function runAdminAgentChat(params: {
         // `numberOptional`（`D-109`）：「不要自動交還了」這種關掉的要求本來就沒有數字，⛔ 不可以因此擋成「關不掉」
         if (op.needsUserNumber && !op.numberOptional?.(rawArgs) && !hasNumberSignal(numberScope)) {
           throw new AdminOpUserError(
-            '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見值(例如 22:00–08:00)。'
+            // ⛔ 這句不寫示範的時間（以前寫「例如 22:00–08:00」）：糾正話裡的數字會被當成模型下一句的出處（`E-40`）
+            '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見的時段。'
             + '請先告訴他現在設定的是什麼,再問他要改成幾點(或幾分鐘)。',
           )
         }
@@ -1453,6 +1462,7 @@ export async function runAdminAgentChat(params: {
         // ⛔ 這是「寫之前」的來回,不是「寫失敗後重試」——後者是明文禁止的。
         if (e instanceof AdminOpUserError) {
           toolResults.push(`提議失敗 → ${e.message}`)
+          groundingSources.push(e.message)
           continue
         }
         console.error('[admin-agent] propose failed:', e)
@@ -1503,7 +1513,9 @@ export async function runAdminAgentChat(params: {
     try {
       const result = await tool.run(db, workspaceId, args, { authHeader, role, cards: toolCards, alertsMemo })
       // ⛔ 太長時要切在整筆的邊界上、而且要講出少了幾筆（見 summarizeToolResult）
-      toolResults.push(`${toolName}(${JSON.stringify(args)}) → ${summarizeToolResult(result)}`)
+      const line = `${toolName}(${JSON.stringify(args)}) → ${summarizeToolResult(result)}`
+      toolResults.push(line)
+      groundingSources.push(line)
     }
     catch (e: any) {
       toolResults.push(`${toolName} → 查詢失敗:${String(e?.message ?? e).slice(0, 200)}`)

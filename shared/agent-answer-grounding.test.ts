@@ -38,6 +38,29 @@ describe('answerGroundingIssue（沒查就講的回答要退回去）', () => {
     })).toBe(true)
   })
 
+  /**
+   * `E-40`（2026-10-18）：日期原本跟其他出處混在一起。10/18 那天模型沒查就講「現在是 09:00–18:00」，
+   * 18 撞到今天、09 撞到上個月 → 整句被當成有出處放行，單元測試就在那天紅了。
+   */
+  describe('提示裡的日期只能證明「寫成日期的數字」', () => {
+    const dateSources = ['2026-10-18', '2026-10-17', '2026-10-10', '2026-10-11', '2026-10', '2026-09']
+
+    it('🔴 10/18 憑空講「現在是 09:00–18:00」→ 擋（18、09 撞到日期不算出處）', () => {
+      const issue = answerGroundingIssue({ text: '現在是 09:00–18:00，你要改成幾點？', sources: ['晚上太晚有人敲我 幫我設一下'], dateSources, calledTools: [] })
+      expect(issue).toContain('18')
+    })
+
+    it('寫成日期的照樣放行：2026-10-18、10/11–10/17、9 月、18 號', () => {
+      for (const text of ['今天是 2026-10-18。', '上週是 10/11–10/17。', '上個月（9 月）的數字我去查。', '今天 18 號。']) {
+        expect(ok({ text, sources: [], dateSources, calledTools: [] }), text).toBe(true)
+      }
+    })
+
+    it('同一個數字有真的出處就放行（工具查到 18 則）', () => {
+      expect(ok({ text: '今天有 18 則。', sources: ['get_ai_usage({}) → {"answered":18}'], dateSources, calledTools: ['get_ai_usage'] })).toBe(true)
+    })
+  })
+
   /** ⛔ 這句誤擋的代價最大：它是**每一次拒絕批次**都會講的話 */
   it('⛔ 不可以誤擋「我一次只能處理一個」這種話', () => {
     expect(ok({

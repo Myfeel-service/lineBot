@@ -346,6 +346,29 @@ describe('當使用者的話不足以決定要動什麼', () => {
     expect(generateJson.mock.calls[2]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
   })
 
+  /**
+   * `E-40`：上面那條在 2026-10-18 當天紅了——18 撞到「今天」、09 撞到「上個月」、00 撞到糾正話裡示範的
+   * 「22:00–08:00」，憑空講的「09:00–18:00」被當成有出處放行。把那一天釘住，之後不管哪天跑都要擋得下。
+   */
+  it('同一條釘在 10/18（日期撞到 18、09 的那天）也要退回去查', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-18T04:00:00Z'))
+    try {
+      generateJson
+        .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
+        .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
+        .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
+
+      await ask('晚上太晚有人敲我 受不了 幫我設一下')
+
+      expect(generateJson).toHaveBeenCalledTimes(3)
+      expect(generateJson.mock.calls[2]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('🔴 前面隨口打過的數字不算數：那道閘門只看這一句', async () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))

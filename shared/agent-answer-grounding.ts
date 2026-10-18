@@ -47,21 +47,40 @@ const AI_SERVICE_HOURS = /AI[^。，,\n]{0,6}的(服務時間|上班時間)|(服
 export interface GroundingParams {
   /** 模型這一輪寫的回答 */
   text: string
-  /** 數字可以有的出處：這一輪的工具結果 ＋ 使用者自己講過的話 ＋ 提示裡給過的日期 */
+  /**
+   * 數字可以有的出處：這一輪的工具結果 ＋ 使用者自己講過的話。
+   * ⛔ 不要放「我們自己寫給模型的糾正話」：那是指示不是資料，裡面的數字會變成它下一句的「出處」（`E-40`）。
+   */
   sources: readonly string[]
+  /**
+   * 提示裡給過的日期（今天、昨天、這個月…）。**只能證明寫成日期的數字**（見 DATE_SPAN）。
+   * `E-40`（2026-10-18）：原本跟 sources 混在一起，10/18 那天模型憑空講「現在是 09:00–18:00」，
+   * 18 撞到今天、09 撞到上個月，整句被當成有出處放行。
+   */
+  dateSources?: readonly string[]
   /** 這一輪實際呼叫過的工具名 */
   calledTools: readonly string[]
 }
 
 /**
+ * 回答裡「寫成日期」的那幾段：2026-10-18、2026-09、10/18、10 月 18 日、9 月、18 號。
+ * 只有這些數字可以拿提示給的日期當出處；「18:00」「18 則」不行。
+ */
+const DATE_SPAN = /\d{4}\s*[-/.年]\s*\d{1,2}(?:\s*[-/.月]\s*\d{1,2}\s*[日號]?)?|\d{1,2}\s*[/月]\s*\d{1,2}\s*[日號]?|\d{1,2}\s*月份?|\d{1,2}\s*[日號]/g
+
+/**
  * 回答站不住腳的地方（沒問題回 null）。
  * 回傳的字串會原樣回饋給模型，所以要寫成「該怎麼補」而不是罵它。
  */
-export function answerGroundingIssue({ text, sources, calledTools }: GroundingParams): string | null {
+export function answerGroundingIssue({ text, sources, dateSources = [], calledTools }: GroundingParams): string | null {
   const answer = String(text ?? '').trim()
   if (!answer) return null
 
-  const stray = numbersWithoutSource(answer, sources)
+  const dateSpans = answer.match(DATE_SPAN) ?? []
+  const stray = [
+    ...numbersWithoutSource(answer.replace(DATE_SPAN, ' '), sources),
+    ...numbersWithoutSource(dateSpans.join(' '), [...sources, ...dateSources]),
+  ]
   if (stray.length) {
     return `你的回答裡有「${stray.slice(0, 3).join('、')}」這幾個數字，但這一輪查到的資料裡沒有它們，使用者也沒講過。`
       + '⛔ 數字不可以憑印象寫——請先用對應的工具查一次再回答；'
