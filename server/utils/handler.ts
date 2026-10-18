@@ -49,7 +49,7 @@ import {
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
 import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
-import { isShipTimingQuestion } from '~~/shared/ship-timing-question'
+import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
@@ -2914,7 +2914,8 @@ async function shipTimingGoesToAi(
   if (!settings?.enabled || settings.replyMode === 'draft') return false
   const history = await getHistory().catch(() => [] as AiChatTurn[])
   const products = await productsInConversation(workspaceId, textContent, history).catch(() => null)
-  if (!products) return false
+  // 只認得出一台才繞（跟 answerWithAi 的 shipTimingAnswer 同一把尺）：對到好幾台時 AI 也不會自己答，繞過去只是少收編號
+  if (!products || !isSingleProductContext(products)) return false
   console.log('[script] ship-timing question about a known product → AI answers, skip scripts:', [...products.products].join('/'), '|', textContent.slice(0, 80))
   return true
 }

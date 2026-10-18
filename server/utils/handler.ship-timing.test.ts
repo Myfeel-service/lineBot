@@ -171,6 +171,15 @@ describe('出貨時程題：認得出商品就不進「查詢訂單」流程', (
     expect(vi.mocked(startScript).mock.calls[0]?.[4]).toBe(SHIP_QUESTION)
   })
 
+  it('一個詞對到好幾台（「咖啡機」）→ 照舊進流程，AI 也不會挑一台答', async () => {
+    vi.mocked(productsInConversation).mockResolvedValue({ products: new Set(['小滑手', 'ibarista']), from: 'query' })
+
+    await handleMessageEvent(textEvent('咖啡機訂單編號M20261011191817ADNO 請問什麼時候會出貨，謝謝'), { workspaceId: WS })
+
+    expect(vi.mocked(answerWithAi)).not.toHaveBeenCalled()
+    expect(vi.mocked(startScript)).toHaveBeenCalledTimes(1)
+  })
+
   it('草稿模式（AI 不對客人講話）→ 照舊進流程，不能繞過去變成沒人回', async () => {
     setSettings('draft')
 

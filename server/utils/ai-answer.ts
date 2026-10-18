@@ -41,7 +41,7 @@ import type {
   DisambiguationPayload,
   HandoffReason,
 } from '~~/shared/types/ai-knowledge'
-import { isShipTimingQuestion } from '~~/shared/ship-timing-question'
+import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
 
 export interface AiChatTurn {
   role: 'user' | 'bot'
@@ -2077,9 +2077,10 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
    * 「有辨識到產品名的話，也可以直接回覆出貨日，就不用再等上班回覆了」）。
    * 這種題不走 order_status 的「規則答完一定轉真人」：卡片答得出就照一般答題收尾、附「找真人」按鈕；
    * 答不出照舊轉真人。抱怨延遲、同句要改單的不算（見 isShipTimingQuestion）——那些照舊轉人查。
-   * 一定要認得出商品：沒點名時卡片可能分屬好幾個商品，挑一個商品的出貨日答他，比轉真人更糟。
+   * 一定要認得出**一個**商品：沒點名、或一個詞對到好幾台（「咖啡機」＝小滑手和 iBarista，出貨日不同）時，
+   * 挑一台的出貨日答他比轉真人更糟（見 isSingleProductContext）。
    */
-  const shipTimingAnswer = orderStatusMode && !!contextProducts && isShipTimingQuestion(text)
+  const shipTimingAnswer = orderStatusMode && isSingleProductContext(contextProducts) && isShipTimingQuestion(text)
   const productGroups = groups.map(g => g[0]!) // 每組代表卡（最高分）
   // isList（列舉意圖「X 有哪些」）也跳過反問——直接列出，不要問「你要哪一個」。
   // 一句多問也跳過反問：客人明明兩件事都問了，卻回他「你要問哪一個？」是反意圖的。

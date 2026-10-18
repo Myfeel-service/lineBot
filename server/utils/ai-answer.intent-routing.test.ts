@@ -504,6 +504,21 @@ describe('出貨時程題：認得出商品就直接答，不強制轉真人', (
     expect(res.offerFindHuman).toBeUndefined()
   })
 
+  it('一個詞對到好幾台（「咖啡機」＝小滑手和 iBarista，出貨日不同）→ 照舊轉真人，不挑一台答', async () => {
+    vi.mocked(getWorkspaceProductNames).mockResolvedValue([
+      'GIARETTI 珈樂堤小滑手全自動義式咖啡機 GL5680',
+      'SHARP iBarista 智慧咖啡機',
+    ])
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'ship_gl', title: '小滑手', productName: 'GIARETTI 珈樂堤小滑手全自動義式咖啡機 GL5680', content: '第一批 10 月底依訂單順序陸續出貨。', similarity: 0.82 }),
+    ])
+    const res = await ask('咖啡機訂單編號M20261011191817ADNO 請問什麼時候會出貨，謝謝', 'order_status')
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
+    expect(res.offerFindHuman).toBeUndefined()
+  })
+
   it('抱怨延遲（過了日子還沒出貨）→ 照舊轉真人，這一筆可能出狀況', async () => {
     const res = await ask('電淨艙都10月了還沒出貨，請問要等到什麼時候？', 'order_status')
 
