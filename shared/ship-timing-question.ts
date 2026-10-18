@@ -28,6 +28,16 @@ const SHIP_DELAY_RE = /還沒|還未|尚未|仍未|至今|迄今|怎麼還|為�
 /** 同一句還要改單／取消／退貨：那件事要走它自己的流程（收編號給真人處理） */
 const ORDER_CHANGE_RE = /取消|退貨|退款|退費|退刷|換貨|地址|備註|發票|修改|更改|合併|拆單/
 
+/**
+ * 有在問出貨／到貨的時間（不管是單純問、還是在抱怨「怎麼還沒出貨」）——`C-344`。
+ * 用來判斷「答案一定跟是哪個商品有關」：認不出商品時不可以挑一台的出貨時程答。
+ * 比 isShipTimingQuestion 寬：那支是「可以放心自己答完」，這支只是「在問時間」。
+ */
+export function asksShipTiming(text: string): boolean {
+  const t = String(text || '')
+  return SHIP_VERB_RE.test(t) && SHIP_WHEN_RE.test(t)
+}
+
 export function isShipTimingQuestion(text: string): boolean {
   const t = String(text || '')
   return SHIP_VERB_RE.test(t) && SHIP_WHEN_RE.test(t) && !SHIP_DELAY_RE.test(t) && !ORDER_CHANGE_RE.test(t)

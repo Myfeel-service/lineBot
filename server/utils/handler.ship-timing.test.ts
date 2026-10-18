@@ -65,6 +65,9 @@ const WS = 'ws-ship'
 let LINE_UID = ''
 let uidSeq = 0
 
+/** 對話裡已經有的訊息（新的在前，跟 orderBy('timestamp','desc') 讀回來的順序一樣） */
+let seededMessages: Array<Record<string, unknown>> = []
+
 function makeDb() {
   const subCollection = () => ({
     doc: (docId?: string) => ({
@@ -72,7 +75,9 @@ function makeDb() {
       get: vi.fn(async () => ({ exists: false, data: () => undefined })),
       set: vi.fn(async () => {}),
     }),
-    orderBy: () => ({ limit: () => ({ get: vi.fn(async () => ({ docs: [] })) }) }),
+    orderBy: () => ({
+      limit: (n: number) => ({ get: vi.fn(async () => ({ docs: seededMessages.slice(0, n).map(m => ({ data: () => m })) })) }),
+    }),
   })
   return {
     collection: (col: string) => ({
@@ -131,6 +136,7 @@ function sentMessages(): any[] {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  seededMessages = []
   LINE_UID = `U${String(++uidSeq).padStart(32, '0')}`
   vi.mocked(getDb).mockReturnValue(makeDb() as any)
   setSettings()
@@ -216,5 +222,62 @@ describe('出貨時程題：認得出商品就不進「查詢訂單」流程', (
     const answer = sentMessages().find(m => m.text === '保固是一年。')
     expect(answer).toBeTruthy()
     expect(answer.quickReply).toBeUndefined()
+  })
+})
+
+/**
+ * `C-344`：客人點過的按鈕要交給「認商品」那份、⛔ 不能進給 AI 讀的那份。
+ * 2026-10-12 那場：按鈕在 10/9，到 10/12 的提問中間隔了 7 則——原本只讀 8 則、又把按鈕濾掉，AI 看不到。
+ */
+describe('對話脈絡：按鈕紀錄只拿來認商品', () => {
+  /** 10/12 23:22 那一刻往回的訊息（新的在前），照正式站那場排 */
+  function seed10_12() {
+    seededMessages = [
+      { direction: 'incoming', messageType: 'text', text: '我的會什麼時候出貨' },
+      { direction: 'outgoing', messageType: 'text', sender: 'human', text: '您好，廠商公告是於 10 月底 依照訂單順序陸續出貨喔' },
+      { direction: 'outgoing', messageType: 'text', sender: 'system', text: '您好,目前為雙十節連休,非客服服務時間' },
+      { direction: 'incoming', messageType: 'text', text: 'M20261007002452KOYK' },
+      { direction: 'outgoing', messageType: 'text', sender: 'bot', text: '您好,請問您的訂單編號是？' },
+      { direction: 'incoming', messageType: 'text', text: 'M20261007002452KOYK訂單編號' },
+      { direction: 'outgoing', messageType: 'text', sender: 'bot', text: '白您好， 依原廠公告： 商品將於 10 月底 依照訂單順序陸續出貨' },
+      { direction: 'outgoing', messageType: 'image', sender: 'bot', text: '[圖片]' },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人點了「客服 - 出貨進度查詢 - 電淨艙 奇美 靜電集塵空氣清淨機 AP-08SPFG」' },
+    ]
+  }
+
+  it('按鈕在第 9 則以前也讀得到，交給認商品那份；給 AI 讀的那份沒有它', async () => {
+    seed10_12()
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+
+    await handleMessageEvent(textEvent('我的會什麼時候出貨'), { workspaceId: WS })
+
+    const input = vi.mocked(answerWithAi).mock.calls[0]![0]
+    expect(input.productHistory?.map(t => t.text).join('\n')).toContain('客人點了「客服 - 出貨進度查詢 - 電淨艙')
+    expect(input.history?.map(t => t.text).join('\n')).not.toContain('客人點了')
+    // 兩份都不含這一句（它是 query 本身）
+    expect(input.history?.at(-1)?.text).not.toBe('我的會什麼時候出貨')
+    expect(input.productHistory?.at(-1)?.text).not.toBe('我的會什麼時候出貨')
+  })
+
+  it('誰講的跟著帶（轉真人摘要要分得出 AI 說過、真人告知過）', async () => {
+    seed10_12()
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+
+    await handleMessageEvent(textEvent('我的會什麼時候出貨'), { workspaceId: WS })
+
+    const input = vi.mocked(answerWithAi).mock.calls[0]![0]
+    expect(input.history?.find(t => t.text.startsWith('您好，廠商公告'))?.speaker).toBe('human')
+    expect(input.history?.find(t => t.text === 'M20261007002452KOYK')?.speaker).toBeUndefined()
+  })
+
+  it('跳過「查詢訂單」流程的判斷也看得到按鈕：句子沒寫商品、但點過電淨艙 → 交給 AI', async () => {
+    seed10_12()
+    vi.mocked(productsInConversation).mockImplementation(async (_w, _t, h) =>
+      (h ?? []).some(t => t.text.includes('電淨艙')) ? { products: new Set(['chimei 電淨艙']), from: 'history' } : null)
+
+    await handleMessageEvent(textEvent('請問我的訂單什麼時候出貨'), { workspaceId: WS })
+
+    expect(vi.mocked(startScript)).not.toHaveBeenCalled()
+    expect(vi.mocked(answerWithAi)).toHaveBeenCalledTimes(1)
   })
 })

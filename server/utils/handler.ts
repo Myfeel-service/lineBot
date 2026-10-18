@@ -50,6 +50,7 @@ import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
 import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
 import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
+import { chatSpeakerOf } from '~~/shared/chat-speaker'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
@@ -2865,6 +2866,7 @@ async function handleIncomingText(
         options.requestOrigin || '',
         channelSecret,
         () => getConvoCtx().then(c => c.history),
+        () => getConvoCtx().then(c => c.productHistory),
       )
       if (scriptRes.handled) return
 
@@ -2907,12 +2909,13 @@ function triggerHints(script: ScriptDoc & { id: string }): string[] {
 async function shipTimingGoesToAi(
   textContent: string,
   workspaceId: string,
-  getHistory?: () => Promise<AiChatTurn[]>,
+  /** 認商品用的對話（含客人點過的按鈕，`C-344`；跟 AI 答題認商品同一份） */
+  getProductHistory?: () => Promise<AiChatTurn[]>,
 ): Promise<boolean> {
-  if (!getHistory || !isShipTimingQuestion(textContent)) return false
+  if (!getProductHistory || !isShipTimingQuestion(textContent)) return false
   const settings = await getAiSettings(workspaceId).catch(() => null)
   if (!settings?.enabled || settings.replyMode === 'draft') return false
-  const history = await getHistory().catch(() => [] as AiChatTurn[])
+  const history = await getProductHistory().catch(() => [] as AiChatTurn[])
   const products = await productsInConversation(workspaceId, textContent, history).catch(() => null)
   // 只認得出一台才繞（跟 answerWithAi 的 shipTimingAnswer 同一把尺）：對到好幾台時 AI 也不會自己答，繞過去只是少收編號
   if (!products || !isSingleProductContext(products)) return false
@@ -2936,6 +2939,8 @@ async function runScriptStart(
   channelSecret: string,
   /** 對話脈絡 lazy loader：只有走到意圖路由才會真的讀 Firestore（與 tryAiFallback 共用同一次讀取） */
   getHistory?: () => Promise<AiChatTurn[]>,
+  /** 認商品用的對話（同一次讀取；含客人點過的按鈕，`C-344`） */
+  getProductHistory?: () => Promise<AiChatTurn[]>,
 ): Promise<{ handled: boolean; route: RouteResult | null }> {
   // 加好友觸發的腳本不參與文字比對，也不能進意圖路由的候選名單——
   // matchesScriptKeywords 對它一律 false，但路由是把「腳本名稱＋提示」丟給 LLM 選，
@@ -2946,7 +2951,7 @@ async function runScriptStart(
   // 註：敏感情境已在編排最上層（呼叫此函式之前）攔截，這裡不需再檢查。
 
   // 這一步只是「要不要讓 AI 先答」的判斷，壞了就當沒判斷（照舊走流程），不能把整則訊息弄成沒人回
-  if (await shipTimingGoesToAi(textContent, workspaceId, getHistory).catch((e) => {
+  if (await shipTimingGoesToAi(textContent, workspaceId, getProductHistory).catch((e) => {
     console.error('[script] shipTimingGoesToAi error:', e)
     return false
   })) return { handled: false, route: null }
@@ -3780,6 +3785,24 @@ interface AiConvoContext {
   prevAiMeta: AiConversationMeta | undefined
   /** 最近對話（最舊在前、已排除本次剛存進去的訊息、最多 6 則） */
   history: AiChatTurn[]
+  /**
+   * 只拿來認「在談哪個商品」的對話（`C-344`）：往前多看幾則，**含客人點過的按鈕**。
+   * ⛔ 不給 AI 讀（見 AnswerInput.productHistory）。
+   */
+  productHistory: AiChatTurn[]
+}
+
+/**
+ * 認商品要往回看幾則訊息（`C-344`）。2026-10-12 那場：客人 10/9 點了「出貨進度查詢－電淨艙」，
+ * 到 10/12 再問「我的會什麼時候出貨」中間隔了 7 則（機器人回覆、問編號、勿擾、真人回覆…），
+ * 給 AI 讀的那 8 則剛好看不到那顆按鈕。多讀的幾則只有走到 AI 時才讀。
+ */
+const PRODUCT_CONTEXT_MESSAGES = 16
+/** 給 AI 讀的對話從最近幾則訊息裡挑（沿用原本的 8 則，不因為上面多讀而變長） */
+const AI_HISTORY_MESSAGES = 8
+
+type ConvoMessageData = {
+  direction?: string; text?: string; messageType?: string; mediaDescription?: string; mediaReadState?: string; sender?: string
 }
 
 async function loadAiConvoContext(fsUserDocId: string, textContent: string, workspaceId: string): Promise<AiConvoContext> {
@@ -3787,44 +3810,51 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string, work
   const [convoSnap, historySnap, imageAware] = await Promise.all([
     getDb().collection('conversations').doc(fsUserDocId).get().catch(() => null),
     getDb().collection('conversations').doc(fsUserDocId)
-      .collection('messages').orderBy('timestamp', 'desc').limit(8).get().catch(() => null),
+      .collection('messages').orderBy('timestamp', 'desc').limit(PRODUCT_CONTEXT_MESSAGES).get().catch(() => null),
     // 「客人傳的照片」開著才把圖片說明交給 AI：關著時客人收到的是「我目前只能閱讀文字」，
     // AI 卻引用圖上的內容，前後矛盾
     getAiSettings(workspaceId).then(s => s?.imageAnswer?.enabled === true).catch(() => false),
   ])
   const prevAiMeta = (convoSnap?.data() as any)?.aiMeta as AiConversationMeta | undefined
+  const newestFirst = (historySnap?.docs ?? []).map(d => d.data() as ConvoMessageData)
+
+  /** 一則訊息變成一句對話；圖片換成讀圖說明（見下面 history 的註解） */
+  const toTurn = (m: ConvoMessageData): AiChatTurn => {
+    const description = imageAware && m.messageType === 'image' && m.mediaReadState !== 'malformed'
+      ? String(m.mediaDescription || '').trim()
+      : ''
+    const speaker = m.direction === 'incoming' ? undefined : chatSpeakerOf(m.sender)
+    return {
+      role: m.direction === 'incoming' ? 'user' as const : 'bot' as const,
+      text: description ? `[客人傳了一張圖片，AI 讀到：${description}]` : String(m.text || '').trim(),
+      // 誰講的（`C-344`）：轉真人摘要要分得出「AI 說過」和「真人告知過」
+      ...(speaker ? { speaker } : {}),
+    }
+  }
+  /** 拿掉剛存進去的本次訊息（它是 query，不是脈絡） */
+  const withoutCurrent = (turns: AiChatTurn[]) => {
+    const last = turns[turns.length - 1]
+    return last && last.role === 'user' && last.text === textContent.trim() ? turns.slice(0, -1) : turns
+  }
+  // 客人點過的按鈕（「客人點了『客服 - 出貨進度查詢 - 電淨艙…』」）也算——只拿來認商品
+  const productHistory = withoutCurrent([...newestFirst].reverse().map(toTurn).filter(t => t.text))
 
   // 組裝最近對話（最舊在前）；排除剛存進去的本次訊息，最多帶 6 則
-  let history: AiChatTurn[] = (historySnap?.docs ?? [])
-    .map(d => d.data() as {
-      direction?: string; text?: string; messageType?: string; mediaDescription?: string; mediaReadState?: string
-    })
+  let history: AiChatTurn[] = newestFirst.slice(0, AI_HISTORY_MESSAGES)
     // 客人動作紀錄（「客人點了…」）不是客人說的話：塞進 history 會被 LLM 當成客人的原句
-    // 引用、也會影響產品鎖的判斷（見 shared/customer-action.ts）
+    // 引用（見 shared/customer-action.ts）。要拿它認商品走上面的 productHistory。
     .filter(m => !isCustomerActionMessage(m.messageType))
     .reverse()
-    .map((m) => {
-      // 圖片在訊息上只存「[圖片]」三個字。客人先傳訂單截圖再問「出貨時間？」，AI 只看到這三個字
-      // 就不知道是哪個商品，只能反問或猜（`C-207`）。讀圖寫的那句說明補進來，字面上標明是 AI 讀的、
-      // 不是客人講的。截圖上的商品名會被產品鎖用上——這正是要的（知道他在問哪一台）。
-      // 不補的兩種：讀圖還沒寫完（客人圖跟字幾乎同時送出）→ 維持「[圖片]」；
-      // 讀圖格式壞掉（malformed）→ 那句「說明」其實是模型吐的原文殘段，不能當成對話內容給 AI。
-      const description = imageAware && m.messageType === 'image' && m.mediaReadState !== 'malformed'
-        ? String(m.mediaDescription || '').trim()
-        : ''
-      return {
-        role: m.direction === 'incoming' ? 'user' as const : 'bot' as const,
-        text: description ? `[客人傳了一張圖片，AI 讀到：${description}]` : String(m.text || '').trim(),
-      }
-    })
+    // 圖片在訊息上只存「[圖片]」三個字。客人先傳訂單截圖再問「出貨時間？」，AI 只看到這三個字
+    // 就不知道是哪個商品，只能反問或猜（`C-207`）。讀圖寫的那句說明補進來，字面上標明是 AI 讀的、
+    // 不是客人講的。截圖上的商品名會被產品鎖用上——這正是要的（知道他在問哪一台）。
+    // 不補的兩種：讀圖還沒寫完（客人圖跟字幾乎同時送出）→ 維持「[圖片]」；
+    // 讀圖格式壞掉（malformed）→ 那句「說明」其實是模型吐的原文殘段，不能當成對話內容給 AI。
+    .map(toTurn)
     .filter(t => t.text)
-  const lastTurn = history[history.length - 1]
-  if (lastTurn && lastTurn.role === 'user' && lastTurn.text === textContent.trim()) {
-    history = history.slice(0, -1)
-  }
-  history = history.slice(-6)
+  history = withoutCurrent(history).slice(-6)
 
-  return { prevAiMeta, history }
+  return { prevAiMeta, history, productHistory }
 }
 
 /**
@@ -3972,7 +4002,7 @@ async function tryAiFallback(params: {
   }
 
   // 對話脈絡：runScriptStart 的意圖路由已載入過就重用（同一次 Firestore 讀取），否則自行載入
-  const { prevAiMeta, history } = await (params.getConvoCtx?.() ?? loadAiConvoContext(fsUserDocId, textContent, workspaceId))
+  const { prevAiMeta, history, productHistory } = await (params.getConvoCtx?.() ?? loadAiConvoContext(fsUserDocId, textContent, workspaceId))
 
   // ── 客人對「需要幫您轉接專員嗎?」的回應 ───────────────────────────
   // 上一輪是二次確認；這輪若是肯定 → 執行真正轉接（handoffs 已在 ask 時計過，不重複計）；
@@ -4108,6 +4138,8 @@ async function tryAiFallback(params: {
       followupOf,
       skipDisambiguation,
       history,
+      // 認商品另外看含按鈕紀錄的那一份（`C-344`）：客人點過「出貨進度查詢－電淨艙」，AI 才知道在談哪台
+      productHistory,
       // 意圖路由已分類過就重用（省一次 flash-lite）;routeMessage 失敗回 null 時仍由內部 classifyIntent 補
       precomputedIntent: params.precomputedIntent ?? undefined,
     })

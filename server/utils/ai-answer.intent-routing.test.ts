@@ -60,9 +60,9 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
   getProductAliases: vi.fn(async () => ({ aliases: {}, displays: {} })),
 }))
 
-const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder, socialCannedReply } = await import('./ai-answer')
+const { answerWithAi, routeMessage, classifyIntent, mentionsOwnOrder, socialCannedReply, summarizeHandoffContext, SHIP_WHICH_PRODUCT_TEXT } = await import('./ai-answer')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
-const { generateJson } = await import('./gemini')
+const { generateJson, generateText, embedQuery } = await import('./gemini')
 const { searchSimilarChunks, getWorkspaceProductNames } = await import('./ai-knowledge-chunks')
 const { recordAiUsage } = await import('./ai-usage')
 const { logHandoffEvent } = await import('./ai-handoff-events')
@@ -540,5 +540,145 @@ describe('出貨時程題：認得出商品就直接答，不強制轉真人', (
 
     expect(res.decision).toBe('handoff')
     expect(res.handoffReason).toBe('order_status')
+  })
+})
+
+/**
+ * `C-344`（2026-10-12 正式站、老闆 10-13 螢幕錄影）：客人「白」10/9 點過「出貨進度查詢－電淨艙」按鈕，
+ * 10/12 問「我的會什麼時候出貨」——這句和前面的訊息都沒寫商品名，AI 從好幾台的出貨卡裡挑了最像的
+ * 「小滑手」（10/7 起第二批 11 月底）答給他。卡片原樣照抄正式庫那兩張：都沒標 productName、標題就是商品名。
+ */
+describe('沒講商品的出貨題：看按鈕認商品、認不出就先問，⛔不挑一台答', () => {
+  const AP08 = 'CHIMEI 靜電集塵空氣清淨機 AP-08SPFG (電淨艙)'
+  const GL = 'GIARETTI 珈樂堤小滑手全自動義式咖啡機 GL5680'
+  const glCard = card({
+    id: 'ship_gl', title: '小滑手', similarity: 0.78,
+    content: '依原廠公告： 第一批商品將於 10 月底 依照訂單順序陸續出貨， 10/7號開始的訂單為第二批出貨，將於 11 月底 依照訂單順序陸續出貨。',
+  })
+  const apCard = card({
+    id: 'ship_ap08', title: '電淨艙', similarity: 0.74,
+    content: '依原廠公告： 商品將於 10 月底 依照訂單順序陸續出貨，實際到貨時間仍需以廠商實際出貨日為準。',
+  })
+  const genericCard = card({ id: 'ship_generic', title: '出貨時程是否能提前', content: '商品的出貨時間會依照商品頁面公告的資訊為主。', similarity: 0.76 })
+  /** 10/12 23:22 前面那幾則（給 AI 讀的那份）：都沒寫商品名 */
+  const history: AiChatTurn[] = [
+    { role: 'user', text: 'M20261007002452KOYK' },
+    { role: 'bot', text: '您好，廠商公告是於 10 月底 依照訂單順序陸續出貨喔', speaker: 'human' },
+  ]
+  /** 認商品用的那份：多了客人點過的按鈕 */
+  const productHistory: AiChatTurn[] = [
+    { role: 'user', text: '客人點了「客服 - 出貨進度查詢 - 電淨艙 奇美 靜電集塵空氣清淨機 AP-08SPFG」' },
+    { role: 'bot', text: '白您好， 依原廠公告： 商品將於 10 月底 依照訂單順序陸續出貨。' },
+    ...history,
+  ]
+  const Q = '我的會什麼時候出貨'
+
+  beforeEach(() => {
+    vi.mocked(getWorkspaceProductNames).mockResolvedValue([AP08, GL])
+    vi.mocked(searchSimilarChunks).mockResolvedValue([glCard, genericCard, apCard])
+    vi.mocked(generateJson).mockResolvedValue({
+      data: { answer: '依原廠公告，電淨艙將於 10 月底依訂單順序陸續出貨喔！', hasInfo: true },
+      inputTokens: 20, outputTokens: 30,
+    } as any)
+  })
+  const lastPrompt = () => String(vi.mocked(generateJson).mock.calls.at(-1)?.[0] ?? '')
+
+  it('客人點過電淨艙的按鈕 → 認得出是電淨艙：小滑手那張被擋掉、提示講明在談哪台、補一次帶商品名的檢索', async () => {
+    const res = await answerWithAi({ workspaceId: 'ws1', query: Q, history, productHistory, precomputedIntent: intent('question', Q) })
+
+    expect(res.decision).toBe('answered')
+    expect(lastPrompt()).toContain('10 月底 依照訂單順序陸續出貨，實際到貨時間')
+    expect(lastPrompt()).not.toContain('第二批')
+    expect(lastPrompt()).toContain(`這段對話在談的商品是「${AP08}」`)
+    expect(vi.mocked(embedQuery).mock.calls.map(c => String(c[0]))).toContain(`${Q}（${AP08}）`)
+  })
+
+  it('按鈕紀錄只拿來認商品，⛔ 不會出現在給 AI 讀的對話裡（會被當成客人的原句）', async () => {
+    await answerWithAi({ workspaceId: 'ws1', query: Q, history, productHistory, precomputedIntent: intent('question', Q) })
+    expect(lastPrompt()).not.toContain('客人點了')
+  })
+
+  it('「他那一筆」問時程＋看按鈕認得出商品 → 照 C-343 直接答、附找真人，不轉真人', async () => {
+    const q = '我的訂單什麼時候出貨'
+    const res = await answerWithAi({ workspaceId: 'ws1', query: q, history, productHistory, precomputedIntent: intent('order_status', q) })
+    expect(res.decision).toBe('answered')
+    expect(res.offerFindHuman).toBe(true)
+  })
+
+  it('🔴 完全認不出商品、撈到的卡分屬好幾台 → 先問是哪個商品（不給選項按鈕），⛔ 不挑一台答', async () => {
+    const res = await answerWithAi({ workspaceId: 'ws1', query: Q, history, precomputedIntent: intent('question', Q) })
+
+    expect(res.decision).toBe('disambiguate')
+    expect(res.disambiguation?.clarification).toBe(SHIP_WHICH_PRODUCT_TEXT)
+    expect(res.disambiguation?.options).toEqual([])
+    // 沒有去生成答案（不然就是在猜）
+    expect(vi.mocked(generateJson)).not.toHaveBeenCalled()
+    // 反問也算一則（D-69）
+    expect(deltas().some(d => d.disambiguations === 1 && d.billable === 1)).toBe(true)
+  })
+
+  it('🔴 好幾台的出貨卡來自同一份表（同一份來源只留一條）也要算成好幾台 → 先問（考卷 Q30）', async () => {
+    const SAME = 'p_ship_table'
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'ship_ear', title: 'KIESLECT 小耳記 AI NotePods 10S', sourceId: SAME, content: '預計於 10 月下旬依照訂單順序陸續出貨。', similarity: 0.74 }),
+      { ...glCard, sourceId: SAME, similarity: 0.73 },
+      { ...apCard, sourceId: SAME, similarity: 0.73 },
+      { ...genericCard, similarity: 0.72 },
+    ])
+    vi.mocked(getWorkspaceProductNames).mockResolvedValue([AP08, GL, 'KIESLECT 小耳記 AI NotePods 10S'])
+    const q = '請問出貨時間是十月底？可有門市可提貨？'
+    const res = await answerWithAi({ workspaceId: 'ws1', query: q, precomputedIntent: intent('question', q) })
+
+    expect(res.decision).toBe('disambiguate')
+    expect(res.disambiguation?.clarification).toBe(SHIP_WHICH_PRODUCT_TEXT)
+  })
+
+  it('認不出商品又在抱怨延遲（他那一筆）→ 轉真人，⛔ 不先送猜的那台的「一般規則」', async () => {
+    const q = '都10月了還沒出貨，我的到底什麼時候'
+    const res = await answerWithAi({ workspaceId: 'ws1', query: q, history, precomputedIntent: intent('order_status', q) })
+
+    expect(res.decision).toBe('handoff')
+    expect(res.handoffReason).toBe('order_status')
+    expect(res.answer).toBe('')
+  })
+
+  it('剛問過還是沒講商品（反問冷卻中）→ 轉真人，不再問第二次', async () => {
+    const res = await answerWithAi({ workspaceId: 'ws1', query: Q, history, skipDisambiguation: true, precomputedIntent: intent('question', Q) })
+    expect(res.decision).toBe('handoff')
+    expect(res.answer).toBe('')
+  })
+
+  it('撈到的全是不分商品的出貨說明 → 照常答（例：下單後 3～5 個工作天出貨）', async () => {
+    vi.mocked(searchSimilarChunks).mockResolvedValue([
+      card({ id: 'ship_all', title: '出貨時間說明', content: '現貨商品於下單後 3～5 個工作天出貨。', similarity: 0.82 }),
+    ])
+    const res = await answerWithAi({ workspaceId: 'ws1', query: Q, history, precomputedIntent: intent('question', Q) })
+    expect(res.decision).toBe('answered')
+  })
+
+  it('句子自己點名商品時，沒標商品但標題是別台的卡也會被擋（從標題認商品）', async () => {
+    const q = '電淨艙什麼時候出貨'
+    const res = await answerWithAi({ workspaceId: 'ws1', query: q, precomputedIntent: intent('question', q) })
+    expect(res.decision).toBe('answered')
+    expect(lastPrompt()).not.toContain('第二批')
+    expect(lastPrompt()).toContain('實際到貨時間')
+  })
+})
+
+describe('轉真人摘要分得出「AI 說過」和「真人告知過」（C-344）', () => {
+  it('逐字稿標出誰講的、規則要它把 AI 講的寫成未查證', async () => {
+    vi.mocked(generateText).mockResolvedValue({ text: '摘要', inputTokens: 1, outputTokens: 1 } as any)
+    await summarizeHandoffContext([
+      { role: 'user', text: '我的會什麼時候出貨' },
+      { role: 'bot', text: '10/7號開始的訂單為第二批出貨，將於 11 月底', speaker: 'ai' },
+      { role: 'bot', text: '您好，廠商公告是於 10 月底', speaker: 'human' },
+      { role: 'bot', text: '舊資料沒有 sender' },
+    ], '所以我的是第二批嗎', 'order_status')
+
+    const [transcript, opts] = vi.mocked(generateText).mock.calls[0]!
+    expect(transcript).toContain('AI（自動回覆）：10/7號開始的訂單為第二批出貨')
+    expect(transcript).toContain('真人客服：您好，廠商公告是於 10 月底')
+    expect(transcript).toContain('客服：舊資料沒有 sender')
+    expect(String((opts as any).systemInstruction)).toContain('未查證')
   })
 })

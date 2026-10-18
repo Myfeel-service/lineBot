@@ -41,11 +41,17 @@ import type {
   DisambiguationPayload,
   HandoffReason,
 } from '~~/shared/types/ai-knowledge'
-import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
+import { asksShipTiming, isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
+import type { ChatSpeaker } from '~~/shared/chat-speaker'
 
 export interface AiChatTurn {
   role: 'user' | 'bot'
   text: string
+  /**
+   * bot 那一側是誰講的（訊息上的 sender）。目前只有轉真人摘要用（`C-344`）：AI 自動回覆講的出貨日
+   * 沒查過訂單、也可能講錯，摘要要分得出「AI 說過」和「真人告知過」。沒有＝舊資料，當成「客服」。
+   */
+  speaker?: ChatSpeaker
 }
 
 /**
@@ -109,6 +115,14 @@ export interface AnswerInput {
    *   2. 生成回答時帶入對話脈絡，避免答非所問
    */
   history?: AiChatTurn[]
+  /**
+   * 只拿來認「這段對話在談哪個商品」的對話（`C-344`）：history ＋ 客人點過的按鈕
+   * （「客人點了『客服 - 出貨進度查詢 - 電淨艙…』」）。沒帶就用 history。
+   * ⛔ 不放進給 AI 讀的對話：那一行不是客人說的話，放進去會被當成客人的原句引用。
+   * 2026-10-12 正式站：客人點過電淨艙的出貨按鈕，之後的訊息都沒寫商品名，AI 不知道在談哪台，
+   * 就把小滑手的「10/7 起第二批 11 月底」答給他。
+   */
+  productHistory?: AiChatTurn[]
   /** Playground 用：回傳更多 debug 資訊 */
   debug?: boolean
   /** Caller 指示跳過 disambiguation（例：同對話 cooldown 期間） */
@@ -391,6 +405,12 @@ function applyOrderStatusGuard(
   return { intent: 'question', orderStatusDemoted: true }
 }
 
+/**
+ * 問出貨時間、卻認不出是哪個商品時，先問的那一句（`C-344`；老闆拍板 `D-134`）。
+ * 寫「想問的」不寫「訂購的」：還沒下單、問一般出貨時程的人也會走到這裡。
+ */
+export const SHIP_WHICH_PRODUCT_TEXT = '請問您想問的是哪一個商品的出貨時間呢？告訴我商品名稱，我馬上幫您查 🙂'
+
 const INTENT_SYSTEM_INSTRUCTION = `你是客服訊息分類器。讀客人這句話，判斷「意圖」與「是否依賴上一輪」。
 
 intent 擇一：
@@ -599,7 +619,19 @@ const HANDOFF_SUMMARY_SYSTEM_INSTRUCTION = `你是客服交接助理。讀客人
 要求：
 - 點出客人想解決什麼 / 在問什麼、目前卡在哪，以及對話中已提供的關鍵資訊（訂單編號、商品名、聯絡方式等）。
 - 只根據對話內容，不要臆測或編造沒提到的事。
+- 標「AI（自動回覆）」的是 AI 照資料自動講的，**沒有查過這位客人的訂單，也可能講錯**：摘要提到 AI 講過的出貨日、批次、訂單狀態時，寫成「AI 回覆過…（未查證）」，⛔ 不可以寫成「目前得知」「訂單為…」「已確認」這種像查證過的說法。標「真人客服」的才是已告知客人的。
 - 直接寫摘要本身，不要加「摘要：」前綴、不要客套話。`
+
+/**
+ * 摘要逐字稿裡每一句是誰講的（`C-344`）。2026-10-12 的摘要把 AI 講錯的「第二批 11 月底」寫成
+ * 「目前得知訂單為第二批」——逐字稿裡全部標「客服」，摘要分不出那是 AI 猜的，隔天真人照著回客人。
+ */
+const SUMMARY_SPEAKER_LABELS: Record<ChatSpeaker, string> = {
+  ai: 'AI（自動回覆）',
+  human: '真人客服',
+  bot: '機器人（固定流程）',
+  system: '系統',
+}
 
 /** 摘要逾時：handoff 已是終局，超過此時間就放棄摘要、不拖累通知與後台寫入 */
 const HANDOFF_SUMMARY_TIMEOUT_MS = 4000
@@ -626,7 +658,7 @@ export async function summarizeHandoffContext(
   const transcript = turns
     .filter(t => t.text.trim())
     .slice(-10)
-    .map(t => `${t.role === 'user' ? '客人' : '客服'}：${t.text.trim().slice(0, 200)}`)
+    .map(t => `${t.role === 'user' ? '客人' : (t.speaker ? SUMMARY_SPEAKER_LABELS[t.speaker] : '客服')}：${t.text.trim().slice(0, 200)}`)
     .join('\n')
   if (!transcript) return ''
 
@@ -1266,12 +1298,15 @@ export interface ActiveProductContext {
  * 取最近一則的副作用是「AI 上一則答錯的產品會變成脈絡」——但只要每一輪都過這道鎖，
  * 錯誤答案根本發不出去，也就不會污染下一輪（不是靠事後修，是靠不讓它發生）。
  */
-export function activeProductsInContext(
-  currentText: string,
-  history: AiChatTurn[] | undefined,
+/**
+ * 「一段文字提到了哪些商品」的比對器（回正式名、已正規化）。對話脈絡與卡片標題（`C-344`）共用同一份，
+ * 兩邊認商品的尺不一樣，就會出現「對話鎖在 A、卻擋不掉標題寫著 B 的卡」。
+ * 商品名與別名都沒有時回 null（＝什麼都認不出來，呼叫端照「沒有商品脈絡」處理）。
+ */
+export function makeProductMatcher(
   productNames: string[],
   aliases?: Record<string, string>,
-): ActiveProductContext | null {
+): ((text: string) => Set<string>) | null {
   const hasAliases = !!aliases && Object.keys(aliases).length > 0
   if (!productNames.length && !hasAliases) return null
   const index = buildProductIdentifierIndex(productNames, aliases)
@@ -1282,7 +1317,7 @@ export function activeProductsInContext(
   // 別名只認指向清單裡那幾台的（`C-325`）：指向已經沒有資料的名字，鎖上去就是一台什麼資料都沒有的商品
   const known = new Set<string>()
   for (const products of index.values()) for (const p of products) known.add(p)
-  const mentioned = (t: string) => {
+  return (t: string) => {
     const hits = productsMentionedIn(t, index)
     if (hasAliases) {
       for (const p of productsByAliasIn(t, aliases!)) {
@@ -1292,6 +1327,16 @@ export function activeProductsInContext(
     }
     return hits
   }
+}
+
+export function activeProductsInContext(
+  currentText: string,
+  history: AiChatTurn[] | undefined,
+  productNames: string[],
+  aliases?: Record<string, string>,
+): ActiveProductContext | null {
+  const mentioned = makeProductMatcher(productNames, aliases)
+  if (!mentioned) return null
 
   const inQuery = mentioned(currentText)
   if (inQuery.size) return { products: inQuery, from: 'query' }
@@ -1834,6 +1879,52 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     }
   }
 
+  /**
+   * 這段對話在談哪個商品——`C-344` 起提早算，檢索、產品鎖、出貨題、提示都用這一份。
+   * 看的是 productHistory（含客人點過的按鈕），沒帶才看 history。比較／列舉本來就要跨商品，不算。
+   */
+  const catalogNames = productVocabulary(activeProductNames, { aliases: productAliases, aliasLabels: productAliasLabels })
+  const productMatcher = makeProductMatcher(catalogNames, productAliases)
+  const contextProducts: ActiveProductContext | null = !isCompare && !isList
+    ? activeProductsInContext(text, input.productHistory ?? input.history, catalogNames, productAliases)
+    : null
+  const productKeyOf = (name: string) => normalizeProductName(canonicalProductName(name, productAliases))
+  /** 認得出一台時那一台的名字（正式名優先，給補檢索與提示用）；認不出一台＝空字串 */
+  const contextProductLabel = contextProducts && isSingleProductContext(contextProducts)
+    ? ([...activeProductNames, ...catalogNames].find(n => productKeyOf(n) === [...contextProducts.products][0]) ?? '')
+    : ''
+  // 商品是前面講過／點過的、這句沒再講：補一次「原句＋商品名」檢索併進來（同上面叫法那一段的做法）。
+  // 2026-10-12「我的會什麼時候出貨」單句撈回的前 5 張出貨卡裡根本沒有電淨艙——鎖住商品也沒卡可答。
+  if (contextProductLabel && contextProducts?.from === 'history') {
+    try {
+      const productQuery = `${text}（${contextProductLabel}）`
+      const v = await embedQuery(productQuery)
+      embedTokenEstimate += estimateTokens(productQuery)
+      const byId = new Map(chunks.map(c => [c.id, c] as const))
+      for (const c of await searchChunks(v, DEFAULT_TOP_K_CHUNKS)) {
+        const cur = byId.get(c.id)
+        if (!cur || c.similarity > cur.similarity) byId.set(c.id, cur ? { ...cur, similarity: c.similarity } : c)
+      }
+      chunks = [...byId.values()].sort((a, b) => b.similarity - a.similarity).slice(0, DEFAULT_TOP_K_CHUNKS + 2)
+      topSimilarity = chunks[0]?.similarity ?? 0
+    }
+    catch (err) {
+      console.warn('[ai-answer] context-product retrieval failed, keep single-query result:', err)
+    }
+  }
+  /**
+   * 一張卡是哪個（些）商品的：有 productName 就用它；沒有就從標題認（`C-344`）。
+   * MYFEEL 的出貨時程表一列一個商品，切出來的卡（標題就叫「小滑手」「電淨艙」）都沒標 productName——
+   * 只看 productName 的話，產品鎖擋不掉別台的出貨卡。
+   */
+  const productsOfCard = (c: Pick<SimilarChunk, 'productName' | 'title'>): Set<string> => {
+    if (c.productName?.trim()) {
+      const k = productKeyOf(c.productName)
+      return k ? new Set([k]) : new Set()
+    }
+    return productMatcher ? productMatcher(c.title) : new Set()
+  }
+
   // 反問 followup：query 是客人點的「選項卡片標題」，原始問題在 followupOf。
   // 只拿標題檢索會撈回該卡本身 → 答非所問（問水箱多大 → 回操作面板）。
   // 改用「標題＋原始問題」合成再檢索一次，與標題檢索結果聯集（保留客人明確選到的卡當錨點），
@@ -2020,20 +2111,17 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   //      被改寫成 W1 REGEN 的查詢 → 分數高的**錯**產品必勝。
   // 所以改用確定性規則：脈絡鎖定產品時，別台的卡一律不得進 context。
   // 沒有產品名的通用卡（運費 / 退貨政策）與總覽卡不受影響；比較 / 列舉意圖本來就要跨產品，跳過。
-  /** 這段對話在談哪個商品（產品鎖算出來的；出貨時程題要靠它才敢自己答，見 shipTimingAnswer） */
-  let contextProducts: ActiveProductContext | null = null
+  // 脈絡（contextProducts）在檢索前就算好了：在用的商品名＋指向它們的別名（`C-325`），看客人點過的按鈕（`C-344`）。
   if (!isCompare && !isList && !comparedRetrieval) {
-    // 在用的商品名＋指向它們的別名（`C-325`）：舊全名、型號收成別名之後，客人打那些字照樣鎖得到那一台
-    const catalogNames = productVocabulary(activeProductNames, { aliases: productAliases, aliasLabels: productAliasLabels })
-    const active = activeProductsInContext(text, input.history, catalogNames, productAliases)
-    contextProducts = active
+    const active = contextProducts
     if (active) {
       const offContextIds = new Set(
         chunks
           .filter((c) => {
             if (c.isOverview) return false // 總覽卡橫跨產品，不算「別台」
-            const p = normalizeProductName(canonicalProductName(c.productName, productAliases))
-            return !!p && !active.products.has(p)
+            // 沒標商品的卡從標題認（`C-344`）：標題叫「小滑手」的出貨卡就是小滑手的，談電淨艙時要擋掉
+            const ps = productsOfCard(c)
+            return ps.size > 0 && ![...ps].some(p => active.products.has(p))
           })
           .map(c => c.id),
       )
@@ -2081,6 +2169,59 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
    * 挑一台的出貨日答他比轉真人更糟（見 isSingleProductContext）。
    */
   const shipTimingAnswer = orderStatusMode && isSingleProductContext(contextProducts) && isShipTimingQuestion(text)
+
+  /**
+   * 問出貨時間、卻認不出是哪一台，撈到的卡又分屬好幾台（`C-344`；2026-10-18 老闆拍板 `D-134`：先問）。
+   * 不能照一般規則「挑最相關的那一台答」：每台的出貨時程都不一樣，挑錯就是把別台的日期講給客人——
+   * 10/12 把小滑手的「10/7 起第二批 11 月底」答給電淨艙的客人，轉真人摘要寫成「目前得知第二批」，隔天真人照著回。
+   *   - 純粹問時程 → 先問是哪個商品。⛔ 不給選項按鈕：那次撈到的前 5 張根本沒有電淨艙，列出來全錯。
+   *   - 抱怨延遲、同句要改單、或剛問過還是講不出來（反問冷卻中）→ 轉真人，⛔ 不先送「一般規則」（那是猜的那台的）。
+   * 全是不分商品的卡（「下單後 3～5 個工作天出貨」）不受影響，照常答。
+   */
+  const shipCardProducts = new Set<string>()
+  if (!isCompare && !isList && !followupOf && asksShipTiming(text) && !isSingleProductContext(contextProducts)) {
+    const floor = Math.max(0, getGroundingThreshold(settings) - 0.05)
+    // ⛔ 數「同一份來源只留一條」之前的卡：MYFEEL 的出貨時程表一列一個商品、全是同一份來源，
+    //    去重之後只剩分數最高的那一列（考卷 Q30 就剩小耳記）——數去重後的會以為只有一台，放它去猜
+    for (const c of chunks) {
+      if (c.isOverview || c.similarity < floor) continue
+      for (const p of productsOfCard(c)) shipCardProducts.add(p)
+    }
+  }
+  if (shipCardProducts.size >= 2) {
+    const sources = chunks.map(c => ({ chunkId: c.id, title: c.title, similarity: c.similarity }))
+    if (!input.skipDisambiguation && isShipTimingQuestion(text)) {
+      console.log(`[ai-answer] ship-timing without a known product (cards span ${shipCardProducts.size} products) → ask which one:`, text.slice(0, 80))
+      await record({
+        invocations: 1,
+        disambiguations: 1,
+        billable: 1, // 反問也算一則（`D-69`），同上
+        embeddingTokens: embedTokenEstimate,
+        inputTokens: routerIn,
+        outputTokens: routerOut,
+      })
+      return {
+        decision: 'disambiguate',
+        answer: '',
+        confidence: topSimilarity,
+        sources,
+        handoffReason: null,
+        disambiguation: { clarification: SHIP_WHICH_PRODUCT_TEXT, options: [] },
+        ...(input.debug ? { debugPrompt: '(ship-timing: ask which product)' } : {}),
+      }
+    }
+    console.log(`[ai-answer] ship-timing without a known product (cards span ${shipCardProducts.size} products) → handoff without a guessed rule:`, text.slice(0, 80))
+    await record({
+      invocations: 1,
+      handoffs: 1,
+      embeddingTokens: embedTokenEstimate,
+      inputTokens: routerIn,
+      outputTokens: routerOut,
+    })
+    logHandoff(reasonFor('no_grounding'), chunks)
+    return handoff(reasonFor('no_grounding'), chunks)
+  }
+
   const productGroups = groups.map(g => g[0]!) // 每組代表卡（最高分）
   // isList（列舉意圖「X 有哪些」）也跳過反問——直接列出，不要問「你要哪一個」。
   // 一句多問也跳過反問：客人明明兩件事都問了，卻回他「你要問哪一個？」是反意圖的。
@@ -2253,6 +2394,11 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           `（補充：客服反問「您指的是哪一個？」後，客人選了「${text}」——請針對他選的這個主題，回答上面的**原始問題**；不要只複述選項卡片的內容。若卡片裡真的沒有原始問題的答案，hasInfo 設為 false。）`,
         ]
       : [text]),
+    // 商品是前面講過／點過的、這句沒再講（`C-344`）：講明在談哪一台。只靠產品鎖不夠——
+    // 沒標商品、標題也看不出商品的卡還是會進來，AI 不知道客人在問哪台時就會挑一張最像的答。
+    ...(contextProductLabel && contextProducts?.from === 'history'
+      ? [`（這段對話在談的商品是「${contextProductLabel}」：客人這句沒再講商品名，是前面講過或點過的。只用這個商品的資料回答；卡片裡沒有這個商品的答案時，hasInfo=false、answer 留空，⛔ 不要拿別的商品的資料答。）`]
+      : []),
     // 個案訂單狀態：客人問的是「他那一筆」，我們沒有任何人的訂單資料（系統之後會轉真人查）。
     // 這裡只准講一般規則，並且不能講得像已經查過他的訂單——那是最容易被投訴的一種錯。
     // 出貨時程題（shipTimingAnswer）**不會**轉真人：那段話不能提「稍後由專員為您查詢」，否則是空頭支票。

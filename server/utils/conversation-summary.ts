@@ -14,6 +14,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { summarizeHandoffContext, type AiChatTurn } from './ai-answer'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
+import { chatSpeakerOf } from '~~/shared/chat-speaker'
 
 /** 進摘要的訊息則數：與 summarizeHandoffContext 內部的 slice(-10) 對齊，多撈也是白撈 */
 const HISTORY_LIMIT = 12
@@ -74,13 +75,18 @@ export async function ensureTakeoverSummary(
   }
 
   const history: AiChatTurn[] = docs
-    .map(d => d.data() as { direction?: string; text?: string; messageType?: string })
+    .map(d => d.data() as { direction?: string; text?: string; messageType?: string; sender?: string })
     // 客人動作紀錄（「客人點了…」）不是客人說的話，摘要引用它會變成客人的原句（見 shared/customer-action.ts）
     .filter(m => !isCustomerActionMessage(m.messageType))
-    .map(m => ({
-      role: m.direction === 'outgoing' ? 'bot' as const : 'user' as const,
-      text: String(m.text ?? ''),
-    }))
+    .map((m) => {
+      // 誰講的（`C-344`）：摘要要分得出 AI 自動回覆講過的（沒查過訂單）跟真人告知過的
+      const speaker = m.direction === 'outgoing' ? chatSpeakerOf(m.sender) : undefined
+      return {
+        role: m.direction === 'outgoing' ? 'bot' as const : 'user' as const,
+        text: String(m.text ?? ''),
+        ...(speaker ? { speaker } : {}),
+      }
+    })
     .filter(t => t.text.trim())
   if (!history.length) return { text: '', generatedAtMs: 0, cached: true }
 
