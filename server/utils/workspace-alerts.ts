@@ -498,9 +498,9 @@ export async function collectWorkspaceAlerts(
         }),
         probe('knowledgeWrongAnswers', async () => {
           /**
-           * 客服按過「AI 答錯了」、而那張卡至今沒被改過。
+           * 客服標「AI 答錯了」、選「資料寫錯或過期了」並指出是哪一條（`D-135`），而那一條的內容至今沒改。
            *
-           * 判定與知識庫工作台的 wrongAnswerChunks 同一套（標記時間 vs 卡片 updatedAt），
+           * 判定與知識庫工作台的 wrongAnswerChunks 同一套（aggregateWrongAnswerMarks＋內容指紋），
            * 兩邊講的必須是同一件事——小幫手說沒事、工作台卻紅著，正是最傷信任的那種矛盾。
            *
            * 查詢形狀沿用既有的 workspaceId+createdAt 索引（type 在程式裡濾），不必開新索引。
@@ -513,8 +513,8 @@ export async function collectWorkspaceAlerts(
 
           const marksByChunk = aggregateWrongAnswerMarks(
             snap.docs.map((d) => {
-              const e = d.data() as { type?: string; chunkIds?: string[]; createdAt?: unknown }
-              return { type: e.type, chunkIds: e.chunkIds, createdAtMs: tsToMs(e.createdAt) }
+              const e = d.data() as { type?: string; reason?: string; pickedChunks?: Array<{ chunkId?: string; contentHash?: string }>; createdAt?: unknown }
+              return { type: e.type, reason: e.reason, pickedChunks: e.pickedChunks, createdAtMs: tsToMs(e.createdAt) }
             }),
             Date.now() - WRONG_ANSWER_WINDOW_DAYS * 86_400_000,
           )
@@ -529,10 +529,10 @@ export async function collectWorkspaceAlerts(
           let firstTitle = ''
           docs.forEach((d, i) => {
             if (!d?.exists) return // 卡被刪掉了＝沒有東西可修
-            const c = d.data() as { workspaceId?: string; title?: string; updatedAt?: unknown }
+            const c = d.data() as { workspaceId?: string; title?: string; content?: string }
             if (c?.workspaceId !== wid) return
             const mark = marksByChunk.get(ids[i]!)
-            if (!mark || !isChunkUnfixedSinceMark(tsToMs(c.updatedAt), mark)) return
+            if (!mark || !isChunkUnfixedSinceMark(c.content, mark)) return
             unfixed++
             if (!firstTitle) firstTitle = String(c?.title ?? '')
           })

@@ -498,8 +498,11 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     addItem(e.query, e.createdAt, (e.sources ?? []).map(s => String(s?.chunkId ?? '')).filter(Boolean))
   }
   for (const d of feedbackSnap?.docs ?? []) {
-    const e = d.data() as { type?: string; query?: string; createdAt?: unknown; chunkIds?: string[] }
+    const e = d.data() as { type?: string; reason?: string; query?: string; createdAt?: unknown; chunkIds?: string[] }
     if (e.type !== 'wrong_answer') continue // draft_applied 是採用訊號，不是缺口
+    // `D-135`：只有「知識庫沒寫，AI 自己編的」才是缺口。認錯商品、資料寫錯、該交給真人都不是補一條新知識救得了的，
+    // 擬成草稿只會叫人補一條重複的；舊標記（沒有 reason）那時候不問，分不出是哪一種，也不算
+    if (e.reason !== 'missing') continue
     addItem(e.query, e.createdAt, (e.chunkIds ?? []).map(String))
   }
 

@@ -174,7 +174,8 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   tagSuggestionsPending: '有客人的標籤建議等你決定',
   followWelcomeMissing: '新加好友的人不會收到任何訊息',
   aiDraftsWaiting: 'AI 擬好的回覆還沒送出',
-  knowledgeWrongAnswers: '有內容被同事標記「AI 答錯了」',
+  // `D-135`：只有同事選「資料寫錯」並指出是哪一條的才會到這裡（以前一按就把撈到的每一條都算進來）
+  knowledgeWrongAnswers: '有內容被同事標記寫錯了',
   // `D-116`（2026-10-08）：跟側欄同名「自動回應」——以前這兩句叫「客服流程」，側欄改名後兩邊又分開了
   scriptUnreachable: '有自動回應永遠不會被啟動',
   scriptDeadEnd: '有自動回應客人走不完',

@@ -841,6 +841,7 @@
   <KnowledgeAddOneDialog
     v-model:open="addOneOpen"
     :initial-question="addOneQuestion"
+    :initial-answer="addOneAnswer"
     @created="onAddOneCreated"
   />
   <!-- ⛔ 不帶 product-name：以前的五格框預設沿用「正開著的那一份」的產品名、而且看得到改得掉；
@@ -2687,13 +2688,16 @@ const pendingResolveQuery = ref('')
 // 同一件事兩種結果。
 const addOneOpen = ref(false)
 const addOneQuestion = ref('')
+/** 答案草稿（`D-135`：對話頁帶 ?a=，客服已經回給客人的那一句）；其他入口都是空的 */
+const addOneAnswer = ref('')
 /**
  * 打開補一條。q＝客人原話（預填「客人問」那一格）；resolveHandoffs＝補好之後順手銷掉同問題的轉真人案例（?q= 那條路）。
  * ⛔ 每次打開都重設「待銷案的問句」：從 ?q= 進來卻放棄、之後自己補另一條時，殘留的舊問句會讓不相干的那一條把監控頁案例誤標成已處理
  */
-function openAddOne(q = '', opts: { resolveHandoffs?: boolean } = {}) {
+function openAddOne(q = '', opts: { resolveHandoffs?: boolean; answer?: string } = {}) {
   if (!canEditKb.value) return
   addOneQuestion.value = q.slice(0, 200)
+  addOneAnswer.value = String(opts.answer ?? '').slice(0, 500)
   pendingResolveQuery.value = opts.resolveHandoffs && q ? q : ''
   addOneOpen.value = true
 }
@@ -2739,12 +2743,15 @@ function onAskAddOne(evt: { question?: string }) {
 // 而內容相近正是會引發反問與答錯的老問題（全庫搜尋 API 就在同一頁，只是沒被用）。
 const dupOpen = ref(false)
 const dupQuery = ref('')
+/** 跟著 dupQuery 一起帶的答案草稿（`D-135`）：先跳「有沒有現成的」，他選「還是新增」時要接得回來 */
+const dupAnswer = ref('')
 const dupHits = ref<SearchRow[]>([])
 const dupChecking = ref(false)
 
 /** 有現成的就先問要不要改那一條；沒有就直接開新增視窗（不多擋一步） */
-async function startAddKnowledge(q: string) {
+async function startAddKnowledge(q: string, answer = '') {
   dupQuery.value = q
+  dupAnswer.value = answer
   dupChecking.value = true
   try {
     const res = await apiFetch<{ items: SearchRow[] }>(
@@ -2760,7 +2767,7 @@ async function startAddKnowledge(q: string) {
     dupChecking.value = false
   }
   if (dupHits.value.length) dupOpen.value = true
-  else openAddOne(q, { resolveHandoffs: true })
+  else openAddOne(q, { resolveHandoffs: true, answer })
 }
 
 async function dupEdit(row: SearchRow) {
@@ -2772,7 +2779,7 @@ async function dupEdit(row: SearchRow) {
 
 function dupCreateAnyway() {
   dupOpen.value = false
-  openAddOne(dupQuery.value, { resolveHandoffs: true })
+  openAddOne(dupQuery.value, { resolveHandoffs: true, answer: dupAnswer.value })
 }
 const chunkSaving = ref(false)
 const chunkDeleting = ref(false)
@@ -3034,10 +3041,9 @@ const todoItems = computed<TodoItem[]>(() => {
     })
   }
   /**
-   * 客服在對話上按過「AI 答錯了」的卡。排在同事回報的訊號裡最前面（僅次於整批壞掉的資料）：
-   * 這是唯一「有人親眼看到 AI 答錯客人」的訊號，比任何自動偵測都確定。
-   *
-   * 不必等建議收件匣——那條路要同主題累積、還要等排程（最長 7 天）。這裡是不用等的那條。
+   * 同事在對話上按「這題 AI 答錯了」→ 選「資料寫錯或過期了」→ 指出是哪一條（`D-135`），而那一條的內容還沒改。
+   * 排在同事回報的訊號裡最前面（僅次於整批壞掉的資料）：這是唯一「有人親眼看到、而且指出是哪一條」的訊號。
+   * ⛔ 以前一按就把當時撈到的每一條都列在這裡，正式站標過的 3 次卻都不是哪一條寫錯。
    */
   if (h.wrongAnswerChunks.count) {
     const first = h.wrongAnswerChunks.items[0]
@@ -3045,12 +3051,12 @@ const todoItems = computed<TodoItem[]>(() => {
     items.push({
       id: 'wrongAnswerChunks',
       tone: 'danger',
-      title: h.wrongAnswerChunks.count === 1
-        ? `有 1 條內容被同事標記「AI 答錯了」`
-        : `有 ${h.wrongAnswerChunks.count} 條內容被同事標記「AI 答錯了」`,
+      title: h.wrongAnswerChunks.count === 1 && first
+        ? `「${first.title}」被同事標記寫錯了`
+        : `有 ${h.wrongAnswerChunks.count} 條內容被同事標記寫錯了`,
       why: repeated
-        ? `其中 ${repeated} 條被標記不只一次，代表它正在持續答錯客人。改好那幾條就會從這裡消失。`
-        : '同事在對話上看到 AI 用這些內容答錯了，而它們到現在都還沒被修改過。',
+        ? `其中 ${repeated} 條被標記不只一次。改好內容就會從這裡消失。`
+        : '標記之後還沒改，AI 現在還會照這些內容回答客人。改好內容就會從這裡消失。',
       cta: '前往修正',
       action: h.wrongAnswerChunks.count === 1 && first
         ? () => { void gotoHealthItem({ id: first.id, kind: 'chunk' }) }
@@ -3246,7 +3252,7 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   //    而這裡正是解釋門檻的地方，兩邊講不一樣最糟。
   shortChunks: { title: '知識內容較短', hint: `這幾條不到 ${SHORT_CHUNK_CONTENT_CHARS} 字(空白不算)。⚠️ 它們沒有壞掉——AI 一樣找得到、也照樣拿去回答,「客服電話」「免運門檻」這種本來就這麼短。列出來只是因為切壞或抓壞的殘片多半也很短:看一眼,是殘片就刪掉,是正常知識就放著不用管。` },
   expiredChunks: { title: '知識已過期停用', hint: '這幾條因有效期限到期被自動停用。活動若延長,把期限改到未來就會自動重新上架;確定結束可放著或刪除。' },
-  wrongAnswerChunks: { title: '被標記「AI 答錯了」', hint: '同事在對話上看到 AI 用這幾條答錯客人。點開改掉內容就會從這裡消失——系統看的是「標記之後這條有沒有被改過」,不需要另外按已處理。次數是近 30 天內被標記的次數。' },
+  wrongAnswerChunks: { title: '被同事標記寫錯了', hint: '同事在對話上按「這題 AI 答錯了」、指出是這幾條寫錯或過期。改好內容就會從這裡消失——系統看的是「內容有沒有改」，只改標題不算，也不需要另外按已處理。次數是近 30 天內被標記的次數。' },
 }
 const healthListOpen = ref(false)
 const healthListCategory = ref<HealthCategory>('failedSources')
@@ -5088,13 +5094,15 @@ onMounted(async () => {
   await loadSources()
 
   // 監控頁「補知識」帶 ?q=(客人沒被答到的問題):直接開新增手寫視窗、預填標題
+  // 對話頁「這題 AI 答錯了 → 知識庫沒寫」另帶 ?a=（客服已經回給客人的那一句，當答案草稿，`D-135`）
   const q = String(route.query.q ?? '').trim()
   if (q) {
+    const a = String(route.query.a ?? '').trim()
     clearQuery()
     // `G-102`：這條路的終點是建卡視窗（`knowledge/create` 客服級）；沒有 knowledge.write 的人不開
     if (!canEditKb.value) return
     // 先查有沒有現成的（避免同一題從三個入口進來各建一條）；沒有才直接開新增視窗
-    await startAddKnowledge(q)
+    await startAddKnowledge(q, a)
     return
   }
 

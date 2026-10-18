@@ -263,11 +263,11 @@ const ALERTS: AlertDefinition[] = [
     fixOpId: 'knowledge-retry-index',
   },
   {
-    // critical 不是「有人回報」而已：同事看到 AI 用這條答錯客人、而它還沒被改過，
-    // 代表它現在仍然在用同樣的內容回答下一位客人（紅＝正在影響客人）。
+    // critical 不是「有人回報」而已：同事指出 AI 照這一條答錯了客人（`D-135`：選了「資料寫錯」、指出是哪一條），
+    // 而它的內容還沒改，代表它現在仍然在用同樣的內容回答下一位客人（紅＝正在影響客人）。
     id: 'knowledgeWrongAnswers',
     icon: Reading,
-    impact: '同事在對話上看到 AI 用這些內容答錯客人，而它們到現在都還沒被修改過——同樣的問題會繼續答錯。',
+    impact: '同事指出 AI 照這些內容答錯了客人，而內容到現在都還沒改——同樣的問題會繼續答錯。',
     cta: '去修這些知識',
     // 改知識卡內容＝`knowledge.write`
     requires: 'knowledge.write',

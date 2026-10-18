@@ -59,9 +59,9 @@ export default defineEventHandler(async (event) => {
       .get(),
     db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
-      // updatedAt 是「標記之後有沒有人動過這張卡」的依據（見 wrongAnswerChunks）
+      // content 也是「被標寫錯之後改了沒」的依據（`D-135` 看內容指紋，見 wrongAnswerChunks）
       // deletedAt：回收桶的卡要排除——⛔select 沒帶欄位的話讀出來恆 undefined，過濾等於沒過濾
-      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'updatedAt', 'deletedAt')
+      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'deletedAt')
       .limit(CHUNK_SCAN_LIMIT)
       .get(),
     getWorkspaceProductNames(db, workspaceId),
@@ -151,20 +151,19 @@ export default defineEventHandler(async (event) => {
   }
 
   /**
-   * 客服標「AI 答錯了」的訊號，**按卡聚合**（不是按事件列）。
+   * 客服標「AI 答錯了」、選「資料寫錯或過期了」、而且指出是哪一條的（`D-135`），**按條聚合**。
    *
-   * 為什麼按卡：能動手修的單位是那張卡，而「同一張卡被標 3 次」比三筆各自的事件
-   * 強得多。聚類成建議要同主題累積、還要等排程（最長 7 天），這裡是不必等的那條路。
-   *
-   * 沒有 chunkIds 的事件（AI 沒引用到任何卡就答錯）不列：那是知識缺口、沒有卡可修，
-   * 已經由建議收件匣涵蓋，列在這裡只會給一條沒有動作可做的死路。
+   * 為什麼按條：能動手修的單位是那一條，而「同一條被標 3 次」比三筆各自的事件強得多。
+   * ⛔ 其他三種錯（別的商品／知識庫沒寫／該交給真人）不列：那不是哪一條寫錯，列出來只會叫人去改沒錯的內容
+   *    （以前就是這樣：一按就把撈到的 5 條全列成「正在答錯客人」）。
    */
   const markCountByChunk = aggregateWrongAnswerMarks(
     (feedbackSnap?.docs ?? []).map((d) => {
-      const e = d.data() as { type?: string; chunkIds?: string[]; createdAt?: any }
+      const e = d.data() as { type?: string; reason?: string; pickedChunks?: Array<{ chunkId?: string; contentHash?: string }>; createdAt?: any }
       return {
         type: e.type,
-        chunkIds: e.chunkIds,
+        reason: e.reason,
+        pickedChunks: e.pickedChunks,
         createdAtMs: typeof e.createdAt?.toMillis === 'function' ? e.createdAt.toMillis() : 0,
       }
     }),
@@ -191,18 +190,15 @@ export default defineEventHandler(async (event) => {
     }
 
     /**
-     * 被標過答錯、而且**標記之後沒有人動過**這張卡。
+     * 被標「寫錯了」、而且**內容到現在都沒改**（`D-135`：看內容指紋，改標題、重新學習都不算）。
      *
-     * 「有人改過就自動離開清單」是刻意的：不另外存一份「已處理」狀態，就不會有
-     * 「修好了但清單還掛著」的第二種真相。代價是改了卡卻沒真的改對時它會消失——
+     * 「改了就自動離開清單」是刻意的：不另外存一份「已處理」狀態，就不會有
+     * 「修好了但清單還掛著」的第二種真相。代價是改了卻沒真的改對時它會消失——
      * 但那種情況客人會再問、客服會再標一次，訊號自己會回來。
      */
     const marked = markCountByChunk.get(d.id)
-    if (marked) {
-      const chunkUpdatedMs = typeof c?.updatedAt?.toMillis === 'function' ? c.updatedAt.toMillis() : 0
-      if (isChunkUnfixedSinceMark(chunkUpdatedMs, marked)) {
-        wrongAnswerItems.push({ ...item, markCount: marked.count, lastMarkedAtMs: marked.lastMarkedAtMs })
-      }
+    if (marked && isChunkUnfixedSinceMark(c?.content, marked)) {
+      wrongAnswerItems.push({ ...item, markCount: marked.count, lastMarkedAtMs: marked.lastMarkedAtMs })
     }
     const status = String(c?.status ?? '')
     if (status === 'failed') {

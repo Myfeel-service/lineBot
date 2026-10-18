@@ -903,6 +903,33 @@ export function isKnowledgeGapContext(c: AiContextGapInput): boolean {
 }
 
 /**
+ * 「這題 AI 答錯了」錯在哪（`D-135`，2026-10-18 老闆「按照你建議的改」）。
+ *
+ * 為什麼要問：以前一按就當成「卡寫錯了」，把當時撈到的每一條（最多 5 條）都標紅、叫人去改；
+ * 正式站 8/4～10/18 標過的 3 次**都不是卡寫錯**（道謝被當問題、日期讀錯、認錯商品），
+ * 10/13 同事照著把 5 條都改了一遍，改不到原因，紅色卻全消失。四種錯，該去的地方不一樣：
+ *   - wrong_product：講成別的商品了 → 系統要修，資料不用改（不列進知識庫待辦）
+ *   - wrong_data：資料寫錯或過期了 → 選出寫錯的那**一條**，只列那一條，內容改了才消失
+ *   - missing：知識庫沒寫、AI 自己編的 → 補一條；也只有這一種進「AI 建議補的知識」的累積
+ *   - should_handoff：這題應該交給真人 → 去 AI 設定加敏感詞
+ */
+export type WrongAnswerReason = 'wrong_product' | 'wrong_data' | 'missing' | 'should_handoff'
+
+/** 畫面上的順序就是這個順序 */
+export const WRONG_ANSWER_REASONS: readonly WrongAnswerReason[] = ['wrong_product', 'wrong_data', 'missing', 'should_handoff']
+
+export const WRONG_ANSWER_REASON_LABELS: Record<WrongAnswerReason, string> = {
+  wrong_product: '講成別的商品了',
+  wrong_data: '資料寫錯或過期了',
+  missing: '知識庫沒寫，AI 自己編的',
+  should_handoff: '這題應該交給真人',
+}
+
+export function isWrongAnswerReason(v: unknown): v is WrongAnswerReason {
+  return typeof v === 'string' && (WRONG_ANSWER_REASONS as readonly string[]).includes(v)
+}
+
+/**
  * 後台脈絡卡的回應形狀。**兩支端點共用**：
  *   - `ai-context`（這位客人最近一次，讀 aiMeta）
  *   - `ai-turn/:turnId`（某一則 AI 回覆當時，讀 aiTurns）
@@ -931,9 +958,16 @@ export interface AiContextPayload {
    * 要把完整脈絡留在上面（見 AiContextBanner）。
    */
   draftMode: boolean
-  /** exists=false＝卡已被刪：不給「去修這張卡」的連結（點下去只會說找不到） */
-  sources: Array<{ chunkId: string; title: string; exists: boolean }>
+  /**
+   * exists=false＝卡已被刪：不給「去修這張卡」的連結（點下去只會說找不到）。
+   * snippet＝內容第一行（`D-135`：「是哪一條寫錯了？」要看得到每一條在講什麼才選得出來；舊端點沒給＝空字串）
+   */
+  sources: Array<{ chunkId: string; title: string; exists: boolean; snippet?: string }>
   wrongMarked: boolean
+  /**
+   * 標記時選的「錯在哪」（`D-135`）。null＝沒標記、或 2026-10-18 以前的舊標記（那時候不問）。
+   */
+  wrongMarkedReason?: WrongAnswerReason | null
   /**
    * 這一次 AI 回合的識別。有值＝脈絡來自 aiTurns，回饋直接綁這一回合（舊回合也標得到、取消得掉）；
    * 空字串＝來自 aiMeta 的「最近一次」，只能用 updatedAtMs 指認（見 ai-feedback.post.ts 的樂觀鎖）。

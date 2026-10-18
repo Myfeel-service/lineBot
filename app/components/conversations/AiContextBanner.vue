@@ -64,7 +64,7 @@
       :user-id="userId"
       :api-fetch="apiFetch"
       @apply-draft="$emit('apply-draft', $event)"
-      @add-knowledge="$emit('add-knowledge', $event)"
+      @add-knowledge="forwardAddKnowledge"
       @edit-chunk="$emit('edit-chunk', $event)"
       @reload="load"
     />
@@ -104,11 +104,17 @@ const props = defineProps<{
   apiFetch: <T = unknown>(url: string, opts?: Record<string, unknown>) => Promise<T>
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'apply-draft', text: string): void
-  (e: 'add-knowledge', query: string): void
+  /** context：「這題 AI 答錯了 → 知識庫沒寫」帶上是哪一回合，父層找客服回給客人的那句當答案（`D-135`） */
+  (e: 'add-knowledge', query: string, context?: { turnId: string }): void
   (e: 'edit-chunk', chunkId: string): void
 }>()
+
+/** 兩個參數都要往上送（`$event` 只帶得到第一個，context 會掉） */
+function forwardAddKnowledge(query: string, context?: { turnId: string }) {
+  emit('add-knowledge', query, context)
+}
 
 const { showToast } = useAdminToast()
 

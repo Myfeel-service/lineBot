@@ -544,7 +544,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '要你處理的事會列在這裡',
         // `C-314`：工作台拿掉了「內容較短」「到期停用」那幾行灰字（不用做事的不擺），這一步也不再提
         description:
-          '資料內容變了、同步失敗、被標「AI 答錯了」這類<strong>要你動手的</strong>，都會列在這裡，點進去照著做就好。',
+          '資料內容變了、同步失敗、被同事標記寫錯了這類<strong>要你動手的</strong>，都會列在這裡，點進去照著做就好。',
         placement: 'left',
       },
       {
@@ -939,8 +939,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         description:
           'AI 回覆的泡泡下面有「<strong>為什麼這樣答</strong>」，點開看得到它根據哪幾則資料回的；'
           // ⛔ 2026-09-29（`D-109`）：原本寫「標了會收進小幫手的待辦清單」——畫面上講的是知識庫的「建議收件匣」
-          // `C-309`：那一區叫「AI 建議補的知識」（不叫「建議收件匣」），量詞講「條」
-          + '答得不對就在那裡標「這題 AI 答錯了」——同一類被標到兩次，<strong>知識庫的「AI 建議補的知識」就會擬好一條</strong>讓你審，補資料時就知道要補什麼。',
+          // `D-135`（2026-10-18）：按下去改成先問錯在哪、再帶到該改的地方，不再講「同一類被標兩次會擬一條」
+          + '答得不對就在那裡按「<strong>這題 AI 答錯了</strong>」——它會先問你錯在哪，再帶你到該改的地方。',
         placement: 'left',
         // `G-107`：那顆「為什麼這樣答」是 `canReply && msg.aiTurnId` 才渲染（AdminPanel.vue，
         // `canReply`＝`can('conversations.reply')`），觀察者畫面上沒有，這一步不標的話等於跟他介紹一顆他沒有的按鈕

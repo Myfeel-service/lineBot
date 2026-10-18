@@ -6,6 +6,7 @@
  *  ② 忽略過的那筆，「次數翻倍才重新出現」也只看剩下的題目（回答過的題目再被問不算惡化）
  *  ③ 新主題開始存每題各被問幾次（部分採用靠它扣出真話）
  *  ④ 掃描讀既有建議時 select 有列到要讀的欄位（漏列＝讀回 undefined、不報錯，以前改名那段就是這樣從沒跑到過）
+ *  ⑤ 客服標「答錯」只有選「知識庫沒寫」的才進建議（`D-135`）
  * 跑在記憶體裡的假 Firestore 上（select 照實只回列出的欄位），embedding／LLM 都是假的，正式庫零讀零寫、不連網。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -238,6 +239,28 @@ describe('部分採用之後的下一輪掃描（C-311）', () => {
 
     expect(STORE.knowledgeSuggestions!.old).toMatchObject({ topic: '小滑手咖啡機的產地', topicIsRaw: false })
     expect(generateJson).not.toHaveBeenCalled()
+  })
+})
+
+describe('客服標「答錯」：只有「知識庫沒寫」進建議（`D-135`）', () => {
+  it('⑤ 講成別的商品／資料寫錯／該交給真人、舊標記（沒問錯在哪）都不擬成「補一條」', async () => {
+    STORE.aiFeedbackEvents = {}
+    const reasons = ['missing', 'wrong_product', 'wrong_data', 'should_handoff', undefined]
+    reasons.forEach((reason, i) => {
+      STORE.aiFeedbackEvents![`f${i}`] = {
+        workspaceId: WS,
+        type: 'wrong_answer',
+        query: [ORIGIN, ESPRESSO, FROTH, SIZE, '電淨艙什麼時候出貨'][i],
+        ...(reason ? { reason } : {}),
+        chunkIds: [],
+        createdAt: { toMillis: () => Date.now() - 3600_000 },
+      }
+    })
+
+    const tally = await scanWorkspaceKnowledgeGaps(db, WS)
+
+    expect(tally.events).toBe(1)
+    expect(vi.mocked(embedQuery).mock.calls.map(c => c[0])).toEqual([ORIGIN])
   })
 })
 

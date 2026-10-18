@@ -391,7 +391,8 @@
         </div>
 
         <!-- ── 敏感詞 ─────────────────────────── -->
-        <div class="message-card ai-section-card" data-agent-target="sensitive-topics">
+        <!-- id：對話頁「這題 AI 答錯了 → 這題應該交給真人」的「前往 AI 設定」連到 #sensitive-topics（`D-135`） -->
+        <div id="sensitive-topics" class="message-card ai-section-card" data-agent-target="sensitive-topics">
           <div class="message-card-header">
             <div class="card-header-main">
               <span class="section-title">敏感詞</span>
@@ -1047,8 +1048,18 @@ onMounted(() => {
     void navigateTo(`/admin/${workspaceId.value}/settings/line-notify?add=me`, { replace: true })
     return
   }
-  loadSettings()
+  const settingsLoaded = loadSettings()
   loadStatus()
   checkIsSuperAdmin().catch(() => {})
+  // 對話頁「這題 AI 答錯了 → 這題應該交給真人 → 前往 AI 設定」帶 #sensitive-topics 進來（`D-135`）：
+  // 卡片在設定載回來之後才排好位置，瀏覽器自己的錨點跳轉那時早就跑完了（實測停在頁面頂端）——載完再捲過去、亮一下。
+  // 先自己捲到正中間：flashAgentTarget 只捲到「剛好看得到」，卡片會貼在畫面最下緣
+  if (route.hash === '#sensitive-topics') {
+    void settingsLoaded.then(async () => {
+      await nextTick()
+      document.getElementById('sensitive-topics')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      await flashAgentTarget('sensitive-topics', 8000)
+    })
+  }
 })
 </script>

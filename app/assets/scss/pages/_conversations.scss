@@ -2520,12 +2520,6 @@
     gap: 8px;
   }
 
-  /* 原始信心分數:白話等級為主,分數留給平台端排查用 */
-  .conv-ai-confidence-raw {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-  }
-
   .conv-ai-source-list {
     margin: 4px 0 0;
     padding-left: 18px;
@@ -2604,32 +2598,120 @@
     }
   }
 
-  // 標記答錯之後的「接下來可以做什麼」。獨立成一塊(不是接在按鈕後面的一行小字):
-  // 這是按下去唯一看得到的回饋,擠成 11px 灰字等於沒講。
-  .conv-ai-followup {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px 10px;
-    border-radius: 6px;
-    background: var(--el-fill-color-blank);
-    border: 1px solid var(--el-border-color-lighter);
+  // 「這題 AI 答錯了」（`D-135`）：按下去先問錯在哪，選了之後一句話＋一個按鈕。
+  // 獨立成一塊白底框（不是接在按鈕後面的小字）：這是按下去唯一看得到的回饋。
+  .conv-ai-mark {
+    padding-top: 6px;
+    border-top: 1px solid var(--el-border-color-extra-light);
 
-    &__line {
+    &__box {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 6px;
+      background: var(--el-fill-color-blank);
+      border: 1px solid var(--el-border-color-lighter);
+    }
+
+    &__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    &__title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--el-text-color-primary);
+    }
+
+    &__text {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--el-text-color-primary);
+    }
+
+    &__muted {
       margin: 0;
       font-size: 12px;
       line-height: 1.6;
-      color: var(--el-text-color-regular);
+      color: var(--el-text-color-secondary);
+    }
 
-      &--muted {
-        color: var(--el-text-color-secondary);
+    &__strong {
+      color: var(--el-text-color-primary);
+    }
+
+    // 四個選項一個一列、整列可點、字靠左：一眼看完四種，不用比按鈕寬度
+    &__options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+
+      .el-button + .el-button {
+        margin-left: 0;
       }
     }
 
-    &__cards {
+    &__option.el-button {
+      justify-content: flex-start;
+      height: 36px;
+      padding: 0 12px;
+      font-size: 13px;
+    }
+
+    // 「是哪一條寫錯了？」：每一條附第一行內容才選得出來 → 標題＋一行灰字，兩行高的框
+    &__cards.el-radio-group {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
+      align-items: stretch;
       gap: 6px;
+    }
+
+    &__card.el-radio.is-bordered {
+      height: auto;
+      margin-right: 0;
+      padding: 8px 12px;
+      align-items: flex-start;
+      white-space: normal;
+
+      .el-radio__input {
+        margin-top: 3px;
+      }
+
+      .el-radio__label {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+    }
+
+    &__card-title {
+      font-size: 13px;
+      color: var(--el-text-color-primary);
+    }
+
+    &__card-snippet {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
+
+    &__foot {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    // 標完之後只剩一行：錯在哪＋取消標記
+    &__done {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
     }
   }
 }

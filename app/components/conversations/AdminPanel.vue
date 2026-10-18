@@ -2389,9 +2389,40 @@ function applyAiDraft(text: string) {
 }
 
 /** 開新分頁去補知識（帶客人原句預填），不離開現場對話——和 playground 同一做法 */
-function goAddKnowledge(query: string) {
+/** 往後找客服回覆最多看幾則：太遠的多半已經在講別的事 */
+const HUMAN_REPLY_LOOKAHEAD = 10
+
+/**
+ * 「這題 AI 答錯了 → 知識庫沒寫，補一條正確的」（`D-135`）：客服多半已經在對話裡把正確答案回給客人了，
+ * 那句就是最好的答案草稿——找那一次 AI 回覆之後、真人送出的第一則文字。找不到就不帶（他自己寫）。
+ * turnId 空＝頂部卡片（最近一次，沒有回合身分）→ 從最後一則 AI 回覆往後找。
+ */
+function humanReplyAfterTurn(turnId: string): string {
+  const items = timelineItems.value
+  let from = -1
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!
+    if (turnId ? it.aiTurnId === turnId : (it.type === 'message' && it.sender === 'ai')) { from = i; break }
+  }
+  if (from < 0) return ''
+  for (let i = from + 1; i < Math.min(items.length, from + 1 + HUMAN_REPLY_LOOKAHEAD); i++) {
+    const it = items[i]!
+    if (it.type !== 'message' || it.direction !== 'outgoing' || it.sender !== 'human') continue
+    if ((it.messageType ?? 'text') !== 'text') continue
+    const text = String(it.text ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function goAddKnowledge(query: string, context?: { turnId: string }) {
+  const params = new URLSearchParams()
   const q = String(query || '').trim()
-  const suffix = q ? `?q=${encodeURIComponent(q)}` : ''
+  if (q) params.set('q', q)
+  // 網址有長度上限；答案草稿 500 字很夠了，他在視窗裡還能改
+  const answer = context ? humanReplyAfterTurn(context.turnId).slice(0, 500) : ''
+  if (answer) params.set('a', answer)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
   window.open(`/admin/${workspaceId.value}/knowledge/sources${suffix}`, '_blank')
 }
 

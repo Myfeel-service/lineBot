@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
-import { AI_FEEDBACK_EVENTS_COLLECTION, aiFeedbackDocId } from '~~/server/utils/ai-feedback-events'
+import { AI_FEEDBACK_EVENTS_COLLECTION, NOT_MARKED, aiFeedbackDocId, chunkSnippet, wrongMarkOf } from '~~/server/utils/ai-feedback-events'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import type { TakeoverSummaryDoc } from '~~/server/utils/conversation-summary'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
@@ -81,29 +81,32 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
   const updatedAtMs = tsToMs(meta.updatedAt)
 
   const titleByChunkId: Record<string, string> = {}
+  /** 每一條的第一行（`D-135`：選「是哪一條寫錯了」時要看得出每條在講什麼） */
+  const snippetByChunkId: Record<string, string> = {}
   /** 在回收桶的（換新版換掉的、刪掉的）：標題照給、但不給「去修」（`D-125`，點下去找不到那一條） */
   const recycled = new Set<string>()
-  const [, wrongMarked] = await Promise.all([
+  const [, mark] = await Promise.all([
     ids.length
       ? Promise.all(ids.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id).get().catch(() => null)))
         .then((docs) => {
           docs.forEach((d, i) => {
             if (!d?.exists) return
-            const cd = d.data() as { workspaceId?: string; title?: string; isDeleted?: boolean; deletedAt?: unknown }
+            const cd = d.data() as { workspaceId?: string; title?: string; content?: string; isDeleted?: boolean; deletedAt?: unknown }
             if (cd?.workspaceId !== workspaceId) return
             titleByChunkId[ids[i]!] = String(cd.title ?? '')
+            snippetByChunkId[ids[i]!] = chunkSnippet(cd.content)
             if (cd.isDeleted === true || cd.deletedAt != null) recycled.add(ids[i]!)
           })
         })
       : Promise.resolve(),
-    // 「這一次互動標過答錯了嗎」：doc id 算得出來，一次點讀即可（讀失敗當成沒標記，不讓整張卡掛掉）
+    // 「這一次互動標過答錯了嗎、錯在哪」：doc id 算得出來，一次點讀即可（讀失敗當成沒標記，不讓整張卡掛掉）
     updatedAtMs
       ? db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
         .doc(aiFeedbackDocId({ workspaceId, userId: convDocId, type: 'wrong_answer', interactionAtMs: updatedAtMs }))
         .get()
-        .then(s => s.exists)
-        .catch(() => false)
-      : Promise.resolve(false),
+        .then(s => wrongMarkOf(s))
+        .catch(() => NOT_MARKED)
+      : Promise.resolve(NOT_MARKED),
   ])
 
   return {
@@ -125,8 +128,10 @@ export default defineEventHandler(async (event): Promise<AiContextResponse> => {
       chunkId: id,
       title: titleByChunkId[id] ?? '',
       exists: id in titleByChunkId && !recycled.has(id),
+      snippet: snippetByChunkId[id] ?? '',
     })),
-    wrongMarked,
+    wrongMarked: mark.marked,
+    wrongMarkedReason: mark.reason,
     // aiMeta 沒有回合身分：這支只能靠時間戳指認是哪一次（見 ai-feedback.post.ts 的舊路徑）
     turnId: '',
     updatedAtMs,

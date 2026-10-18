@@ -97,11 +97,17 @@ const props = withDefaults(defineProps<{
   open: boolean
   /** 「客人問」預填（問 AI 一題答錯的那句、對話頁帶過來的那句） */
   initialQuestion?: string
+  /**
+   * 「正確答案」預填（`D-135`）：對話頁「這題 AI 答錯了 → 知識庫沒寫」帶過來的、客服已經回給客人的那一句。
+   * 只是草稿——照樣要他看過、可以改，存之前一樣走整理。
+   */
+  initialAnswer?: string
   suggestion?: AddOneSuggestion | null
   /** 手動那條路：這一條在講哪個商品（只有呼叫端確定時才帶；沒帶＝不是講單一商品） */
   productName?: string
 }>(), {
   initialQuestion: '',
+  initialAnswer: '',
   suggestion: null,
   productName: '',
 })
@@ -158,7 +164,7 @@ function reset() {
   const defaults = (s?.answeredDefault ?? []).filter(q => qs.includes(q))
   ticked.value = qs.length > 1 ? (defaults.length ? defaults : [qs[0]!]) : []
   question.value = (props.initialQuestion || defaults[0] || qs[0] || '').trim()
-  answer.value = ''
+  answer.value = (props.initialAnswer || '').trim()
   preview.value = previewFromDraft(s?.draft, qs.length > 1 ? (defaults[0] ?? qs[0] ?? '') : question.value)
   errorText.value = ''
   tidying.value = false
