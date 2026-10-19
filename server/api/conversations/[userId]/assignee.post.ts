@@ -3,6 +3,7 @@ import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
+import { notifyAssignee } from '~~/server/utils/assign-notify'
 
 /**
  * POST /api/conversations/:userId/assignee — 指派／取消「負責人員」（G-27 功能缺口②）
@@ -13,15 +14,17 @@ import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-a
  * ⛔ 只准指派給**這個工作區、而且回得了訊息**的成員（同 assignees.get.ts 的名單）：
  *    不驗的話任何一組 uid 都寫得進去，清單上就會出現查無此人的名字。
  * ⛔ 不動會話狀態：負責人員與「機器人有沒有閉嘴」是兩件事（見 shared/conversation-assignee.ts）。
+ * 指派給**別人**時用 LINE 告訴他（`H-16`，見 server/utils/assign-notify.ts）；指給自己、沒換人都不傳。
  */
 const ASSIGNABLE_ROLES = new Set(['owner', 'admin', 'agent'])
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'conversations.reply')
+  const { workspaceId, uid: callerUid, token } = await requireCapability(event, 'conversations.reply')
 
   const userIdParam = getRouterParam(event, 'userId')
   if (!userIdParam) throw createError({ statusCode: 400, statusMessage: 'userId is required' })
-  const docId = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userIdParam, workspaceId), workspaceId)
+  const customerLineUserId = lineUserIdFromFirestoreDocId(userIdParam, workspaceId)
+  const docId = lineUserFirestoreDocId(customerLineUserId, workspaceId)
 
   const body = await readBody(event)
   const uid = String(body?.uid ?? '').trim()
@@ -53,8 +56,26 @@ export default defineEventHandler(async (event) => {
   }
 
   const name = await resolveMemberName(uid, String(member.invitedEmail ?? '').trim())
+  const previousUid = String(convSnap.data()?.assigneeUid ?? '').trim()
   const now = new Date()
   await convRef.update({ assigneeUid: uid, assigneeName: name, assignedAt: now })
+
+  /**
+   * 交給別人了 → LINE 告訴他（`H-16`）。沒換人（又選了同一位）不傳；指給自己由 notifyAssignee 擋。
+   * ⚠️ 要 await（Lambda 回應後容器凍結，沒 await 的推播會被砍掉）；它自己吞錯，⛔ 不會讓指派失敗。
+   */
+  if (uid !== previousUid) {
+    const result = await notifyAssignee({
+      workspaceId,
+      assigneeUid: uid,
+      assigneeLineUserId: String(member.lineUserId ?? ''),
+      assignerUid: callerUid,
+      assignerName: String(token?.name || token?.email || ''),
+      customerLineUserId,
+      db,
+    })
+    if (result === 'failed') console.warn('[assignee] 指派通知沒送出去（指派本身已完成）:', workspaceId, uid)
+  }
 
   return { uid, name, assignedAtMs: now.getTime() } satisfies ConversationAssignee
 })

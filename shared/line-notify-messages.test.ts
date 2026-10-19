@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  buildAssignNotifyText,
   buildCriticalAlertText,
   buildHandoffNotifyText,
   buildNotifyConfirmText,
@@ -53,6 +54,20 @@ describe('notifyWhatYouGetLines：這支手機之後會收到什麼', () => {
     expect(notifyWhatYouGetLines(cfg(), WEEKEND_OFF)).toContain('・每天早上 10:00 的摘要（週末不傳）')
     expect(notifyWhatYouGetLines(cfg(), OFF)).toContain('・每天早上 10:00 的摘要')
     expect(notifyWhatYouGetLines(cfg({ criticalAlertPush: false }), OFF)).not.toContain('・出大事的時候')
+  })
+  it('同事把客人指派給你也會收到（`H-16`）——綁好時的確認與「LINE 通知」頁都講得到', () => {
+    expect(notifyWhatYouGetLines(cfg(), OFF)).toContain('・同事把客人交給你的時候')
+  })
+})
+
+describe('buildAssignNotifyText：同事把客人交給你（`H-16`）', () => {
+  it('誰交的、哪位客人，有連結就放連結', () => {
+    expect(buildAssignNotifyText({ assignerName: '小美', customerName: '王小明', link: 'https://x.test/c/Ab3dE7x' }))
+      .toBe('📌 小美 把客人「王小明」交給你\n👉 打開這段對話\nhttps://x.test/c/Ab3dE7x')
+  })
+  it('沒有連結 → 退回「請至後台…」（⛔ 不放相對路徑，LINE 裡點不開）', () => {
+    expect(buildAssignNotifyText({ assignerName: '小美', customerName: '王小明' }))
+      .toBe('📌 小美 把客人「王小明」交給你\n請至後台「對話」頁回覆。')
   })
 })
 

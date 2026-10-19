@@ -68,6 +68,8 @@ export function notifyWhatYouGetLines(cfg: NotifyTimingLike, serviceHours: Notif
   const weekend = serviceHours?.enabled && serviceHours.weekendOff ? '（週末不傳）' : ''
   lines.push(`・每天${digestTimeLabel(cfg.digestHour)} 的摘要${weekend}`)
   if (cfg.criticalAlertPush) lines.push('・出大事的時候')
+  // `H-16`：同事在對話頁把客人指派給你（你自己按「我接手」的不傳）
+  lines.push('・同事把客人交給你的時候')
   return lines
 }
 
@@ -150,6 +152,17 @@ export function buildHandoffNotifyText(p: HandoffNotifyTextInput): string {
     ...(summary ? [`📋 摘要：${summary}`] : []),
     ...(message ? [`訊息：${message}`] : []),
     `原因：${p.reasonLabel}`,
+    ...tail(p.link, '打開這段對話', REPLY_FALLBACK),
+  ].join('\n')
+}
+
+/**
+ * 同事把客人指派給你的那一則（`H-16`，老闆 2026-10-20「照建議」；見 `server/utils/assign-notify.ts`）。
+ * 只講誰交給你、哪位客人、去哪看——客人說了什麼點進去就看得到，⛔ 不在這裡重抄一遍。
+ */
+export function buildAssignNotifyText(p: { assignerName: string, customerName: string, link?: string }): string {
+  return [
+    `📌 ${p.assignerName} 把客人「${p.customerName}」交給你`,
     ...tail(p.link, '打開這段對話', REPLY_FALLBACK),
   ].join('\n')
 }
