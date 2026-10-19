@@ -12,7 +12,7 @@ const VALID_TYPES = new Set<AiFeedbackType>(['wrong_answer', 'draft_applied'])
 /**
  * 「資料寫錯」選的那一條（`D-135`）：⛔ 只收當時撈到的那幾條裡的（不能借這支把任意一條標成寫錯），
  * 而且要同一個工作區；順便記下標記當下的內容指紋，之後看內容有沒有變來判斷改好了沒。
- * 讀不到卡＝回 null（不擋標記本身，只是不列進待辦）。
+ * 卡不在了、或不是這個工作區的＝回 null（不擋標記本身，只是不列進待辦）；讀卡暫時失敗＝照記、指紋留空。
  */
 async function pickChunk(
   db: Firestore,
@@ -25,8 +25,11 @@ async function pickChunk(
     throw createError({ statusCode: 400, statusMessage: '選的那一條不是 AI 這次參考的知識' })
   }
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId).get().catch(() => null)
-  const data = snap?.data() as { workspaceId?: string; content?: string } | undefined
-  if (!snap?.exists || data?.workspaceId !== workspaceId) return null
+  // 讀卡暫時失敗：照樣記下是哪一條、指紋留空＝「當成還沒改」（寧可多掛著，也不要整筆不見，`/code-review` 10-19）。
+  // ⚠️ chunkId 已經確認是這次撈到的那幾條之一（上面那關），不會借這裡把別家的掛上去
+  if (!snap) return { chunkId, contentHash: '' }
+  const data = snap.data() as { workspaceId?: string; content?: string } | undefined
+  if (!snap.exists || data?.workspaceId !== workspaceId) return null
   return { chunkId, contentHash: chunkContentFingerprint(data?.content) }
 }
 

@@ -1,11 +1,10 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability, requireSuperAdmin } from '~~/server/utils/workspace-auth'
-import { AI_FEEDBACK_EVENTS_COLLECTION, markFeedbackHandled, pendingMarks, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
+import { markFeedbackHandled, pendingMarks, readMarkDocsByReason, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
+import { clearSuperAlertsCache } from '~~/server/utils/super-alerts-cache'
 
 /** 看近 30 天（跟知識庫「被同事標記寫錯了」同一個窗口） */
 const WINDOW_DAYS = 30
-/** 讀最近幾筆回饋：吃既有的 (workspaceId, createdAt) 索引，跟小幫手那顆同一個查法 */
-const SCAN_LIMIT = 100
 const MAX_ITEMS = 20
 
 /**
@@ -26,15 +25,12 @@ export default defineEventHandler(async (event) => {
 
   if (method === 'GET') {
     const { workspaceId } = await requireCapability(event, 'ai.settings.write')
-    const snap = await getDb().collection(AI_FEEDBACK_EVENTS_COLLECTION)
-      .where('workspaceId', '==', workspaceId)
-      .orderBy('createdAt', 'desc')
-      .limit(SCAN_LIMIT)
-      .get()
-    const items = pendingMarks(snap.docs.map(toPendingMarkEvent), 'should_handoff', Date.now() - WINDOW_DAYS * 86_400_000)
-      .slice(0, MAX_ITEMS)
-      .map(m => ({ id: m.id, query: m.query, createdAtMs: m.createdAtMs }))
-    return { items }
+    // 直接按原因查（跟小幫手那顆同一支）：以前讀「最近 100 筆回饋」再挑，「採用草稿」一多就把這些擠出去
+    const { docs, truncated } = await readMarkDocsByReason(getDb(), 'should_handoff', workspaceId)
+    const pending = pendingMarks(docs.map(toPendingMarkEvent), 'should_handoff', Date.now() - WINDOW_DAYS * 86_400_000)
+    const items = pending.slice(0, MAX_ITEMS).map(m => ({ id: m.id, query: m.query, createdAtMs: m.createdAtMs }))
+    // 列不完要講（畫面會說「還有 N 題沒列出來」），⛔不悄悄少列
+    return { items, more: pending.length - items.length, truncated }
   }
 
   if (method !== 'POST') throw createError({ statusCode: 405, statusMessage: 'Method not allowed' })
@@ -63,5 +59,7 @@ export default defineEventHandler(async (event) => {
   for (const id of ids) {
     if (await markFeedbackHandled(db, id, { reason, ...ctx })) handled++
   }
+  // 超管總覽整包有 5 分鐘快取：不清的話，下一次重新整理那一筆又會長回來（`/code-review` 10-19）
+  if (reason === 'ai_mistake' && handled) clearSuperAlertsCache()
   return { ok: true, handled }
 })

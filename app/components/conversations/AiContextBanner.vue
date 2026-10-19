@@ -107,17 +107,20 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'apply-draft', text: string): void
   /** context：「這題 AI 答錯了 → 知識庫沒寫」帶上是哪一回合，父層找客服回給客人的那句當答案（`D-135`） */
-  (e: 'add-knowledge', query: string, context?: { turnId: string }): void
+  (e: 'add-knowledge', query: string, context?: ReplyContext): void
   /** context 同上：「資料寫錯 → 打開來改」帶上是哪一回合，父層把同事回給客人的那句附在編輯視窗上（`D-136`） */
-  (e: 'edit-chunk', chunkId: string, context?: { turnId: string }): void
+  (e: 'edit-chunk', chunkId: string, context?: ReplyContext): void
 }>()
 
+/** 去對話裡找「同事回給客人的那句」用：頂部卡片沒有回合身分，靠 atMs（那次 AI 判斷的時間） */
+interface ReplyContext { turnId: string; atMs?: number }
+
 /** 兩個參數都要往上送（`$event` 只帶得到第一個，context 會掉） */
-function forwardAddKnowledge(query: string, context?: { turnId: string }) {
+function forwardAddKnowledge(query: string, context?: ReplyContext) {
   emit('add-knowledge', query, context)
 }
 
-function forwardEditChunk(chunkId: string, context?: { turnId: string }) {
+function forwardEditChunk(chunkId: string, context?: ReplyContext) {
   emit('edit-chunk', chunkId, context)
 }
 

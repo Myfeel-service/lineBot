@@ -176,18 +176,29 @@ export function aggregateWrongAnswerMarks(
   return byChunk
 }
 
+/** 判斷「改好了沒」要讀的那一條的欄位 */
+export interface MarkedChunkState {
+  content?: unknown
+  isDeleted?: unknown
+  deletedAt?: unknown
+}
+
 /**
  * 這條被標「寫錯了」之後，內容還沒改嗎？（`D-135`：看內容指紋，不看 updatedAt）
  *
  * 「改了就自動離開清單」是刻意的：不另外存一份「已處理」狀態，就不會有「修好了但清單還掛著」的第二種真相。
  * 以前看 updatedAt，改標題、重新學習、試算表同步都算「改過」——10/13 只改了標題，紅色就全消失了。
  * 標記時沒拿到指紋（讀卡失敗）→ 當成還沒改，寧可多掛著也不要假裝修好。
+ * 進了回收桶（刪掉、換新版換掉）→ 不算還沒改：AI 已經不用它了，而且工作台也不列回收桶裡的（`/code-review` 10-19：
+ * 以前看 updatedAt 時刪除會順手更新它所以自己會消失；改看指紋後刪除不改內容，小幫手就一直紅、工作台卻是空的）。
+ * ⚠️ 兩個欄位都要判：舊資料只有 deletedAt（同 isChunkRecycled 的判法）。
  *
  * 知識庫工作台與右下角小幫手**共用這一支**：兩邊講的必須是同一件事。
  */
-export function isChunkUnfixedSinceMark(currentContent: unknown, mark: WrongAnswerMark): boolean {
+export function isChunkUnfixedSinceMark(chunk: MarkedChunkState | undefined, mark: WrongAnswerMark): boolean {
+  if (chunk && (chunk.isDeleted === true || chunk.deletedAt != null)) return false
   if (!mark.contentHash) return true
-  return chunkContentFingerprint(currentContent) === mark.contentHash
+  return chunkContentFingerprint(chunk?.content) === mark.contentHash
 }
 
 // ── 兩種「記下來了」的標記要有人看（`D-136`，2026-10-19）──────────────────────────────
@@ -237,6 +248,34 @@ export function toPendingMarkEvent(doc: { id: string; data(): unknown }): Pendin
     createdAtMs: createdAtMsOf(d.createdAt),
     handled: Boolean(d.handledAt),
   }
+}
+
+/**
+ * 按原因讀標記最多讀幾筆。`/code-review` 10-19：以前讀「這個工作區最近 100 筆回饋」再挑原因，
+ * 草稿模式一天就有幾十筆「採用草稿」，三四天前的標記就被擠出去、清單與小幫手都悄悄看不到。
+ * 改成直接按原因查（原因＋工作區兩個等值條件，走自動的單欄位索引，不用開複合索引）。
+ */
+export const MARK_SCAN_LIMIT = 300
+
+/** 某一種原因的標記文件（不分新舊、不分處理了沒，呼叫端自己濾）；給 workspaceId 就只讀那個工作區的 */
+export async function readMarkDocsByReason(
+  db: Firestore,
+  reason: WrongAnswerReason,
+  workspaceId?: string,
+): Promise<{ docs: Array<{ id: string; data(): unknown }>; truncated: boolean }> {
+  let q = db.collection(AI_FEEDBACK_EVENTS_COLLECTION).where('reason', '==', reason)
+  if (workspaceId) q = q.where('workspaceId', '==', workspaceId)
+  const snap = await q.limit(MARK_SCAN_LIMIT).get()
+  const truncated = snap.size >= MARK_SCAN_LIMIT
+  // ⛔ 撞到上限要講：多出來的那些不會出現在任何清單上
+  if (truncated) console.warn(`[ai-feedback] ${reason} 標記超過 ${MARK_SCAN_LIMIT} 筆，只讀了前 ${MARK_SCAN_LIMIT} 筆`, workspaceId ?? '(全站)')
+  return { docs: snap.docs, truncated }
+}
+
+/** 給 aggregateWrongAnswerMarks 用的欄位（Firestore 讀回來的樣子） */
+export function toWrongAnswerMarkEvent(doc: { data(): unknown }): WrongAnswerMarkEvent {
+  const d = (doc.data() ?? {}) as { type?: string; reason?: string; pickedChunks?: WrongAnswerMarkEvent['pickedChunks']; createdAt?: unknown }
+  return { type: d.type, reason: d.reason, pickedChunks: d.pickedChunks, createdAtMs: createdAtMsOf(d.createdAt) }
 }
 
 /** 某一種原因、還沒處理的標記，新的在前 */

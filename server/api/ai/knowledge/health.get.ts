@@ -2,9 +2,10 @@ import { Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import {
-  AI_FEEDBACK_EVENTS_COLLECTION,
   aggregateWrongAnswerMarks,
   isChunkUnfixedSinceMark,
+  readMarkDocsByReason,
+  toWrongAnswerMarkEvent,
 } from '~~/server/utils/ai-feedback-events'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from '~~/server/utils/ai-knowledge-chunks'
@@ -35,8 +36,6 @@ interface WrongAnswerItem extends HealthItem {
 
 /** 「答錯」訊號的回看窗口：與建議收件匣的聚類窗口同一把尺（30 天） */
 const FEEDBACK_WINDOW_DAYS = 30
-/** 單輪最多撈幾筆回饋事件（同 kb-suggest，共用既有的 workspaceId+createdAt 索引） */
-const FEEDBACK_SCAN_LIMIT = 100
 
 /**
  * GET /api/ai/knowledge/health
@@ -66,17 +65,13 @@ export default defineEventHandler(async (event) => {
       .get(),
     getWorkspaceProductNames(db, workspaceId),
     getProductAliases(db, workspaceId),
-    // 查詢形狀刻意與 kb-suggest 相同（type 在程式裡濾），共用既有的 workspaceId+createdAt 索引，不必再開新的。
-    // 缺索引時降級成「少一類體檢」而不是整頁掛掉，但一定要 log——靜默吞掉的話，
+    // 只讀「資料寫錯」那一種標記（`/code-review` 10-19：以前讀最近 100 筆回饋再挑，草稿模式一天幾十筆「採用草稿」
+    // 就把標記擠出去）。跟小幫手那顆同一支（readMarkDocsByReason），兩邊講的必須是同一件事。
+    // 查失敗降級成「少一類體檢」而不是整頁掛掉，但一定要 log——靜默吞掉的話，
     // 客服按的每個「AI 答錯了」都不會出現在工作台，而沒有人會知道。
-    db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
-      .where('workspaceId', '==', workspaceId)
-      .where('createdAt', '>=', feedbackCutoff)
-      .orderBy('createdAt', 'desc')
-      .limit(FEEDBACK_SCAN_LIMIT)
-      .get()
+    readMarkDocsByReason(db, 'wrong_data', workspaceId)
       .catch((e) => {
-        console.warn('[kb-health] feedback query failed (缺 aiFeedbackEvents 複合索引?):', (e as Error)?.message)
+        console.warn('[kb-health] wrong_data marks query failed:', (e as Error)?.message)
         return null
       }),
     // 疑似重複（C-40(c)）：讀排程掃好的結果（單筆文件），這裡零 LLM 費
@@ -158,15 +153,7 @@ export default defineEventHandler(async (event) => {
    *    （以前就是這樣：一按就把撈到的 5 條全列成「正在答錯客人」）。
    */
   const markCountByChunk = aggregateWrongAnswerMarks(
-    (feedbackSnap?.docs ?? []).map((d) => {
-      const e = d.data() as { type?: string; reason?: string; pickedChunks?: Array<{ chunkId?: string; contentHash?: string }>; createdAt?: any }
-      return {
-        type: e.type,
-        reason: e.reason,
-        pickedChunks: e.pickedChunks,
-        createdAtMs: typeof e.createdAt?.toMillis === 'function' ? e.createdAt.toMillis() : 0,
-      }
-    }),
+    (feedbackSnap?.docs ?? []).map(toWrongAnswerMarkEvent),
     feedbackCutoff.toMillis(),
   )
 
@@ -197,7 +184,7 @@ export default defineEventHandler(async (event) => {
      * 但那種情況客人會再問、客服會再標一次，訊號自己會回來。
      */
     const marked = markCountByChunk.get(d.id)
-    if (marked && isChunkUnfixedSinceMark(c?.content, marked)) {
+    if (marked && isChunkUnfixedSinceMark(c, marked)) {
       wrongAnswerItems.push({ ...item, markCount: marked.count, lastMarkedAtMs: marked.lastMarkedAtMs })
     }
     const status = String(c?.status ?? '')
@@ -252,7 +239,7 @@ export default defineEventHandler(async (event) => {
        * 回饋事件撈到上限了＝標記數是低估值。要講出來：不講的話畫面會讀成
        * 「就這幾條」，而實際上可能還有更多被標記過的卡沒被算進來。
        */
-      scanTruncated: (feedbackSnap?.size ?? 0) >= FEEDBACK_SCAN_LIMIT,
+      scanTruncated: feedbackSnap?.truncated ?? false,
     },
     /** 卡片掃描是否達到上限(超大知識庫時計數可能低估) */
     chunkScanTruncated: chunksSnap.size >= CHUNK_SCAN_LIMIT,

@@ -46,14 +46,17 @@ beforeEach(() => {
       doc: (id: string) => ({
         get: async () => {
           if (col === 'conversations') return { exists: id === CONV, data: () => ({ workspaceId: WS }) }
-          if (col === 'knowledgeChunks') return { exists: id in CHUNKS, data: () => CHUNKS[id] }
+          if (col === 'knowledgeChunks') {
+            if (id === 'flaky') throw new Error('DEADLINE_EXCEEDED')
+            return { exists: id in CHUNKS, data: () => CHUNKS[id] }
+          }
           return { exists: false, data: () => undefined }
         },
         collection: () => ({
           doc: () => ({
             get: async () => ({
               exists: true,
-              data: () => ({ workspaceId: WS, query: '何時出貨', sourceChunkIds: ['shipA', 'shipB', 'theirs'] }),
+              data: () => ({ workspaceId: WS, query: '何時出貨', sourceChunkIds: ['shipA', 'shipB', 'theirs', 'flaky'] }),
             }),
           }),
         }),
@@ -106,6 +109,12 @@ describe('POST /api/conversations/:userId/ai-feedback：答錯先問錯在哪', 
     await expect(call()).resolves.toEqual({ ok: true })
     expect(logged()).toMatchObject({ reason: 'wrong_data' })
     expect(logged()).not.toHaveProperty('pickedChunks')
+  })
+
+  it('🔴 讀那一條暫時失敗 → 照樣記下是哪一條、指紋留空（＝當成還沒改，寧可多掛著也不要整筆不見）', async () => {
+    body = { type: 'wrong_answer', turnId: 't1', reason: 'wrong_data', chunkId: 'flaky' }
+    await expect(call()).resolves.toEqual({ ok: true })
+    expect(logged()?.pickedChunks).toEqual([{ chunkId: 'flaky', contentHash: '' }])
   })
 
   it('採用草稿不用帶原因', async () => {

@@ -48,6 +48,8 @@
           maxlength="5000"
           placeholder="例：滿 1000 元免運，未滿收 80 元。"
         />
+        <!-- 從對話頁帶過來的是回給某一位客人的原話（`/code-review` 10-19）：沒刪就加進去，那位客人的資料就成了大家的知識 -->
+        <p v-if="answerFromReply" class="kb-addone__warn">這是你回給客人的原話：客人的名字、訂單編號、電話記得拿掉，AI 會拿這一條回答別的客人。</p>
         <div class="kb-addone__tidy">
           <el-button size="small" plain :loading="tidying" :disabled="!normalizeInput" @click="tidy">
             AI 幫我整理
@@ -127,6 +129,8 @@ const visible = computed({
 
 const question = ref('')
 const answer = ref('')
+/** 這次打開時答案是不是從對話頁帶過來的原話（要提醒拿掉客人的個資） */
+const answerFromReply = ref(false)
 const preview = ref<AddOnePreview | null>(null)
 const queries = ref<string[]>([])
 const ticked = ref<string[]>([])
@@ -165,6 +169,7 @@ function reset() {
   ticked.value = qs.length > 1 ? (defaults.length ? defaults : [qs[0]!]) : []
   question.value = (props.initialQuestion || defaults[0] || qs[0] || '').trim()
   answer.value = (props.initialAnswer || '').trim()
+  answerFromReply.value = Boolean(answer.value)
   preview.value = previewFromDraft(s?.draft, qs.length > 1 ? (defaults[0] ?? qs[0] ?? '') : question.value)
   errorText.value = ''
   tidying.value = false

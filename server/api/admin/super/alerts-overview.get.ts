@@ -4,7 +4,8 @@ import { getDb } from '~~/server/utils/firebase'
 import { collectWorkspaceAlerts, MAINTENANCE_STALE_MS } from '~~/server/utils/workspace-alerts'
 import { getCurrentMonthUsageCounts } from '~~/server/utils/ai-usage'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
-import { AI_FEEDBACK_EVENTS_COLLECTION, pendingMarks, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
+import { pendingMarks, readMarkDocsByReason, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
+import { readSuperAlertsCache, writeSuperAlertsCache } from '~~/server/utils/super-alerts-cache'
 
 /**
  * GET /api/admin/super/alerts-overview — 全站異常總覽（C-91，2026-08-27 拍板執行）。
@@ -24,17 +25,15 @@ import { AI_FEEDBACK_EVENTS_COLLECTION, pendingMarks, toPendingMarkEvent } from 
 
 /** 全租戶掃描上限：遠高於現有租戶數的保險絲，撞到會在 payload 標 truncated */
 const WORKSPACE_SCAN_CAP = 300
-const PAYLOAD_CACHE_TTL_MS = 5 * 60_000
-/** 「AI 弄錯了」標記：最多讀幾筆、列幾筆（一週一兩筆的量，這是保險絲不是分頁） */
-const AI_MISTAKE_SCAN_LIMIT = 300
+/** 「AI 弄錯了」標記最多列幾筆（一週一兩筆的量，這是保險絲不是分頁；讀幾筆見 MARK_SCAN_LIMIT） */
 const AI_MISTAKE_MAX_ROWS = 50
-
-let cache: { at: number, payload: SuperAlertsOverviewPayload } | null = null
 
 export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayload> => {
   await requireSuperAdmin(event)
   const force = getQuery(event).force === '1'
-  if (!force && cache && Date.now() - cache.at < PAYLOAD_CACHE_TTL_MS) return cache.payload
+  // 整包快取在 super-alerts-cache.ts：按「處理好了」那支要清得掉它
+  const cached = force ? null : readSuperAlertsCache()
+  if (cached) return cached
 
   const db = getDb()
 
@@ -94,11 +93,8 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
   // 同事標「資料沒錯，是 AI 弄錯了」還沒處理的（`D-136`）：知識庫改不了、要我們修系統，所以列在這裡。
   // reason 單欄位等值走自動索引；排序在記憶體做（不為這幾筆開複合索引）。查失敗回 null，⛔不當成「沒有」
   const wsNames = new Map(wsSnap.docs.map(d => [d.id, String((d.data() as { name?: string }).name ?? d.id)]))
-  const aiMistakes = await db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
-    .where('reason', '==', 'ai_mistake')
-    .limit(AI_MISTAKE_SCAN_LIMIT)
-    .get()
-    .then(snap => pendingMarks(snap.docs.map(toPendingMarkEvent), 'ai_mistake')
+  const aiMistakes = await readMarkDocsByReason(db, 'ai_mistake')
+    .then(({ docs }) => pendingMarks(docs.map(toPendingMarkEvent), 'ai_mistake')
       .slice(0, AI_MISTAKE_MAX_ROWS)
       .map(m => ({ ...m, workspaceName: wsNames.get(m.workspaceId) ?? m.workspaceId })))
     .catch((e) => {
@@ -107,6 +103,6 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
     })
 
   const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads, aiMistakes }
-  cache = { at: Date.now(), payload }
+  writeSuperAlertsCache(payload)
   return payload
 })

@@ -907,9 +907,17 @@ function mdText(ms: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
-function adoptHandoffSuggestion(s: HandoffSuggestion) {
+async function adoptHandoffSuggestion(s: HandoffSuggestion) {
   const word = String(handoffWords.value[s.id] ?? '').trim()
   if (!word) return
+  // 這個詞本來就在敏感詞裡（而且已經存了）：表單沒變、「儲存設定」是灰的，等存檔就永遠等不到
+  // （`/code-review` 10-19）→ 當場標成處理好了
+  const saved = lastLoadedDoc?.sensitiveTopics ?? []
+  if (saved.includes(word)) {
+    await dismissHandoffSuggestion(s)
+    showToast(`「${word}」本來就在敏感詞裡了`, 'success')
+    return
+  }
   if (!form.value.sensitiveTopics.includes(word)) form.value.sensitiveTopics = [...form.value.sensitiveTopics, word]
   adoptedHandoffIds.value = [...adoptedHandoffIds.value, s.id]
   handoffSuggestions.value = handoffSuggestions.value.filter(x => x.id !== s.id)

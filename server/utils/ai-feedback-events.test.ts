@@ -128,19 +128,27 @@ describe('isChunkUnfixedSinceMark（看內容指紋，不看更新時間）', ()
 
   it('🔴 內容沒變 → 還要處理，就算只改了標題、重新學習過（10/13 改了標題紅色就全消失）', () => {
     // 那幾種只會動 updatedAt；這支根本不看時間，內容一字未改就不算修好
-    expect(isChunkUnfixedSinceMark(content, mark)).toBe(true)
+    expect(isChunkUnfixedSinceMark({ content, updatedAt: 99_999 } as never, mark)).toBe(true)
   })
 
   it('只多了空白、換行 → 不算改（多按一次 Enter 不等於修好）', () => {
-    expect(isChunkUnfixedSinceMark(`  ${content.replace('第二批', '第二批\n\n')}  `, mark)).toBe(true)
+    expect(isChunkUnfixedSinceMark({ content: `  ${content.replace('第二批', '第二批\n\n')}  ` }, mark)).toBe(true)
   })
 
   it('內容真的改了 → 自動離開清單（不必另外按「已處理」）', () => {
-    expect(isChunkUnfixedSinceMark('小滑手咖啡機第二批 12/05 出貨。', mark)).toBe(false)
+    expect(isChunkUnfixedSinceMark({ content: '小滑手咖啡機第二批 12/05 出貨。' }, mark)).toBe(false)
   })
 
   it('標記時沒拿到指紋（讀不到那條）→ 當成還沒改，寧可多掛著也不要假裝修好', () => {
-    expect(isChunkUnfixedSinceMark('任何內容', { ...mark, contentHash: '' })).toBe(true)
+    expect(isChunkUnfixedSinceMark({ content: '任何內容' }, { ...mark, contentHash: '' })).toBe(true)
+  })
+
+  it('🔴 進了回收桶（刪掉、換新版換掉）→ 不算還沒改，就算內容一字未動（/code-review：以前小幫手一直紅、工作台卻是空的）', () => {
+    expect(isChunkUnfixedSinceMark({ content, isDeleted: true, deletedAt: { seconds: 1 } }, mark)).toBe(false)
+    // 舊資料只有 deletedAt
+    expect(isChunkUnfixedSinceMark({ content, deletedAt: { seconds: 1 } }, mark)).toBe(false)
+    // 沒拿到指紋的也一樣：AI 已經不用它了
+    expect(isChunkUnfixedSinceMark({ content, deletedAt: { seconds: 1 } }, { ...mark, contentHash: '' })).toBe(false)
   })
 })
 

@@ -2782,7 +2782,8 @@ async function dupEdit(row: SearchRow) {
   dupOpen.value = false
   pendingResolveQuery.value = ''
   // 改既有那一條也算把這題處理掉了 → 沿用同一套自動銷案（存了、真的有改才銷，見 saveChunk）
-  await openChunkById(row.id, { resolveQuery: dupQuery.value })
+  // 從對話頁「知識庫沒寫」帶來的那句（同事回給客人的話）也跟著帶過去，附在編輯視窗最上面（`/code-review` 10-19）
+  await openChunkById(row.id, { resolveQuery: dupQuery.value, reference: dupAnswer.value })
 }
 
 function dupCreateAnyway() {

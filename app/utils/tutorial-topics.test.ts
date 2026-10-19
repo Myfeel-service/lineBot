@@ -128,7 +128,8 @@ describe('客服對話導覽擴到右半邊（2026-08-28）', () => {
     // 那顆按鈕是 `canReply && msg.aiTurnId` 才渲染（AdminPanel.vue）——觀察者畫面上沒有。
     // 兩邊一起驗：頁面那一側換了條件，這裡也要跟著回來重看
     const panel = readFileSync(join(APP_DIR, 'components/conversations/AdminPanel.vue'), 'utf8')
-    expect(panel).toContain('v-if="canReply && msg.aiTurnId"')
+    // 後面可以再加條件（10-19 起只掛在一回合的最後一則），但一定要先過 canReply
+    expect(panel).toMatch(/v-if="canReply && msg\.aiTurnId[ "]/)
     expect(panel).toMatch(/const canReply = computed\(\(\) => can\('conversations\.reply'\)\)/)
     const at = convBlock.indexOf('為什麼這樣答')
     expect(at, '找不到介紹「為什麼這樣答」的那一步').toBeGreaterThan(-1)

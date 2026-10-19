@@ -172,7 +172,10 @@ const { apiFetch } = useSuperAdmin()
 const { showToast } = useAdminToast()
 
 // ── 同事標「資料沒錯，是 AI 弄錯了」（`D-136`）──
-const aiMistakes = computed<SuperAiMistake[]>(() => data.value?.aiMistakes ?? [])
+/** 這次按過「處理好了」的：還在跑的那次重新整理晚回來、帶著舊快取，也不讓它長回來 */
+const handledMistakeIds = ref<string[]>([])
+const aiMistakes = computed<SuperAiMistake[]>(() =>
+  (data.value?.aiMistakes ?? []).filter(m => !handledMistakeIds.value.includes(m.id)))
 const handlingMistakeId = ref('')
 
 function mdText(ms: number): string {
@@ -185,11 +188,16 @@ function openMistakeConversation(row: SuperAiMistake) {
   navigateTo(`/admin/${row.workspaceId}/conversations?userId=${encodeURIComponent(row.userId)}`)
 }
 
+/**
+ * ⛔ 不呼叫 refresh({ force: true })：那會把全部帳號的異常重新探測一輪（含 LINE API），只為了拿掉一列；
+ * 而且碰上還在跑的一般重新整理會拿到 5 分鐘前的快取、那一列又出現（`/code-review` 10-19）。
+ * 本地拿掉那一列就好；伺服器那份快取由 POST 那支清掉。
+ */
 async function markMistakeHandled(row: SuperAiMistake) {
   handlingMistakeId.value = row.id
   try {
     await apiFetch('/api/ai/feedback-marks', { method: 'POST', body: { reason: 'ai_mistake', ids: [row.id] } })
-    await refresh({ force: true })
+    handledMistakeIds.value = [...handledMistakeIds.value, row.id]
   }
   catch {
     showToast('沒有標成功，請再試一次', 'error')

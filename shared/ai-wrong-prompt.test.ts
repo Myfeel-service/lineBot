@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { HUMAN_FOLLOW_WINDOW_MS, humanFollowedAiTurns, type WrongPromptItem } from './ai-wrong-prompt'
+import { HUMAN_FOLLOW_WINDOW_MS, humanFollowedAiTurns, humanReplyAfter, type ReplyLookupItem, type WrongPromptItem } from './ai-wrong-prompt'
 
 const MIN = 60_000
 /** 2026-09-29 09:12（台北）——時間是 0 會被當成「讀不到」，測試一律從真的時間點起算 */
@@ -50,5 +50,37 @@ describe('humanFollowedAiTurns：「你接著回了客人——AI 這題答錯�
   it('沒有 aiTurnId 的舊 AI 訊息、時間讀不到的 → 不掛（不猜）', () => {
     expect(humanFollowedAiTurns([msg({ sender: 'ai', at: 0 }), human(MIN)]).size).toBe(0)
     expect(humanFollowedAiTurns([{ ...ai('t1', 0), atMs: 0 }, human(MIN)]).size).toBe(0)
+  })
+})
+
+describe('humanReplyAfter：帶進「補一條」／編輯視窗的那句（跟掛提示同一套規則）', () => {
+  const said = (text: string, at: number, over: Partial<ReplyLookupItem> = {}): ReplyLookupItem =>
+    ({ ...human(at), text, messageType: 'text', ...over })
+
+  it('那一回合之後真人回的第一句', () => {
+    const items = [ai('t1', 0), customer(MIN), said('廠商說 10 月中下旬出貨', 3 * MIN)]
+    expect(humanReplyAfter(items, { turnId: 't1' })).toBe('廠商說 10 月中下旬出貨')
+  })
+
+  it('🔴 中間 AI 又答了下一題 → 不拿真人回下一題的話（/code-review：以前往後看 10 列不停，答案會張冠李戴）', () => {
+    const items = [ai('t1', 0), customer(MIN), ai('t2', 2 * MIN), said('這是回 t2 那題的', 3 * MIN)]
+    expect(humanReplyAfter(items, { turnId: 't1' })).toBe('')
+    expect(humanReplyAfter(items, { turnId: 't2' })).toBe('這是回 t2 那題的')
+  })
+
+  it('真人先傳貼圖再打字 → 取那句字；超過 6 小時 → 不拿', () => {
+    expect(humanReplyAfter([ai('t1', 0), said('', MIN, { messageType: 'sticker' }), said('好的我查一下', 2 * MIN)], { turnId: 't1' }))
+      .toBe('好的我查一下')
+    expect(humanReplyAfter([ai('t1', 0), said('隔天才回', HUMAN_FOLLOW_WINDOW_MS + 1)], { turnId: 't1' })).toBe('')
+  })
+
+  it('🔴 頂部卡片沒有回合（草稿模式 AI 沒送訊息）→ 從那次 AI 判斷的時間起算，⛔不退回好幾天前的 AI 訊息', () => {
+    const oldAuto = ai('old', -3 * 86400_000)
+    const items = [oldAuto, said('三天前回別的事', -3 * 86400_000 + MIN), customer(-MIN), said('這題的正確答案', 2 * MIN)]
+    expect(humanReplyAfter(items, { turnId: '', sinceMs: T })).toBe('這題的正確答案')
+    // 那個時間點之後真人還沒回 → 空的，不撿三天前那句
+    expect(humanReplyAfter(items.slice(0, 3), { turnId: '', sinceMs: T })).toBe('')
+    // 沒有時間也沒有回合 → 不猜
+    expect(humanReplyAfter(items, { turnId: '' })).toBe('')
   })
 })

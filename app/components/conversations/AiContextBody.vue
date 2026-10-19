@@ -92,20 +92,21 @@
         </div>
       </div>
 
-      <div v-else-if="step === 'reason' && savedReason" class="conv-ai-mark__box">
+      <!-- chosenReason＝這次選的（「資料寫錯」要等選了是哪一條才送出，見 choose）；savedReason＝已經記下來的 -->
+      <div v-else-if="step === 'reason' && chosenReason" class="conv-ai-mark__box">
         <div class="conv-ai-mark__head">
-          <span class="conv-ai-mark__muted">錯在：<strong class="conv-ai-mark__strong">{{ WRONG_ANSWER_REASON_LABELS[savedReason] }}</strong></span>
+          <span class="conv-ai-mark__muted">錯在：<strong class="conv-ai-mark__strong">{{ WRONG_ANSWER_REASON_LABELS[chosenReason] }}</strong></span>
           <el-button link type="primary" size="small" :disabled="marking" @click="step = 'ask'">改選</el-button>
         </div>
 
-        <template v-if="savedReason === 'ai_mistake'">
+        <template v-if="chosenReason === 'ai_mistake'">
           <p class="conv-ai-mark__text">記下來了。資料沒錯、是 AI 自己弄錯的——這要系統這邊修，知識庫的資料不用改。</p>
           <div class="conv-ai-mark__foot">
             <el-button size="small" type="primary" @click="step = 'done'">完成</el-button>
           </div>
         </template>
 
-        <template v-else-if="savedReason === 'wrong_data'">
+        <template v-else-if="chosenReason === 'wrong_data'">
           <template v-if="editableSources.length">
             <p class="conv-ai-mark__title">是哪一條寫錯了？</p>
             <el-radio-group v-model="pickedChunkId" class="conv-ai-mark__cards">
@@ -141,7 +142,7 @@
           </template>
         </template>
 
-        <template v-else-if="savedReason === 'missing'">
+        <template v-else-if="chosenReason === 'missing'">
           <p class="conv-ai-mark__text">把正確的答案補進知識庫，下次 AI 就會照著答。</p>
           <p class="conv-ai-mark__muted">會先帶入客人的問題；你已經回覆客人的話，那句也會帶進去當答案。</p>
           <div class="conv-ai-mark__foot">
@@ -211,6 +212,8 @@ const props = defineProps<{
  */
 interface ReplyContext {
   turnId: string
+  /** 頂部卡片（沒有回合身分）用：從這個時間點之後找（aiMeta 的時間） */
+  atMs?: number
 }
 
 const emit = defineEmits<{
@@ -285,6 +288,11 @@ type MarkStep = 'idle' | 'ask' | 'reason' | 'done'
 const step = ref<MarkStep>('idle')
 const savedMarked = ref(false)
 const savedReason = ref<WrongAnswerReason | null>(null)
+/**
+ * 這次在「哪裡錯了？」選的那一個（畫面照它走）。跟 savedReason 分開是因為「資料寫錯」要等選了是哪一條才送出——
+ * 以前選了就先記，中途離開就留下一筆「資料寫錯、沒說哪一條」：哪裡都不會出現，同事卻看到「已標記」以為處理好了（`/code-review` 10-19）
+ */
+const chosenReason = ref<WrongAnswerReason | null>(null)
 const pickedChunkId = ref('')
 const marking = ref(false)
 /** 正在送的是哪一個選項（只讓那一顆轉圈） */
@@ -294,6 +302,7 @@ function syncFromCtx() {
   savedMarked.value = props.ctx.wrongMarked
   savedReason.value = props.ctx.wrongMarkedReason ?? null
   step.value = props.ctx.wrongMarked ? 'done' : props.askFirst ? 'ask' : 'idle'
+  chosenReason.value = null
   pickedChunkId.value = ''
 }
 syncFromCtx()
@@ -370,9 +379,14 @@ async function sendMark(reason: WrongAnswerReason, chunkId?: string): Promise<bo
   }
 }
 
-/** 選了錯在哪：先記下來（之後只是換一條路走），再給這一種的下一步 */
+/**
+ * 選了錯在哪，給這一種的下一步。先記下來再走——除了「資料寫錯」而且有東西可選：
+ * 那一種要等他選了是哪一條（openPicked）才送，中途離開就什麼都沒記（不留一筆說不出是哪一條的標記）
+ */
 async function choose(reason: WrongAnswerReason) {
-  if (!(await sendMark(reason))) return
+  const waitForPick = reason === 'wrong_data' && editableSources.value.length > 0
+  if (!waitForPick && !(await sendMark(reason))) return
+  chosenReason.value = reason
   pickedChunkId.value = ''
   step.value = 'reason'
 }
@@ -382,18 +396,27 @@ function cancelAsk() {
   step.value = savedMarked.value ? 'done' : 'idle'
 }
 
-/** 「資料寫錯」選了是哪一條：補記那一條（只有它會列進知識庫待辦），再打開來改 */
+/** 父層去對話裡找「同事回給客人的那句」用的：哪一回合，或（頂部卡片沒有回合）哪個時間點之後 */
+function replyContext(): ReplyContext {
+  return { turnId: props.ctx.turnId, atMs: props.ctx.updatedAtMs }
+}
+
+/**
+ * 「資料寫錯」選了是哪一條：記下那一條（只有它會列進知識庫待辦），打開來改。
+ * ⛔ 先開分頁再送：等 POST 回來才 window.open 已經離開「使用者點擊的當下」，Safari 會擋掉新分頁、
+ *    而且不出聲（`/code-review` 10-19）。送失敗分頁照樣開著，畫面留在這一步、讓他再按一次記錄。
+ */
 async function openPicked() {
   const id = pickedChunkId.value
-  if (!id) return
-  if (!(await sendMark('wrong_data', id))) return
+  if (!id || marking.value) return
   // 帶上這一回合：父層把同事回給客人的那句附在編輯視窗最上面（`D-136`，最常見的是出貨日過期、新日期就在那句裡）
-  emit('edit-chunk', id, { turnId: props.ctx.turnId })
+  emit('edit-chunk', id, replyContext())
+  if (!(await sendMark('wrong_data', id))) return
   step.value = 'done'
 }
 
 function addCorrect() {
-  emit('add-knowledge', props.ctx.lastQuery, { turnId: props.ctx.turnId })
+  emit('add-knowledge', props.ctx.lastQuery, replyContext())
   step.value = 'done'
 }
 
