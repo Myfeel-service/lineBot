@@ -98,10 +98,9 @@ function clampOneLine(raw: unknown, max: number): string {
  *   - `questionsDropped`：AI 有給問句，但全被我們濾掉（超過按鈕字數、不是文字、格式不對）
  *     → 客人少了猜的按鈕，跟 `noQuestion` 看起來一樣、原因卻在我們這邊，要分開記才查得到。
  *   - `unavailable`：根本沒讀（AI 沒開／圖太小／下載失敗／逾時）。
- *   - `quotaExhausted`：開了「客人傳的照片」，但 AI 回覆額度用完了——只寫給客服看的描述、不猜問句
- *     （`D-132`③：猜的按鈕要算一則，額度用完就不叫 AI 猜）。
+ * （開了「客人傳的照片」但 AI 回覆額度用完時，handler 根本不叫這支——直接轉真人，`D-132`③）
  */
-export type InboundImageReadState = 'ok' | 'noQuestion' | 'questionsDropped' | 'malformed' | 'answerOff' | 'quotaExhausted' | 'unavailable'
+export type InboundImageReadState = 'ok' | 'noQuestion' | 'questionsDropped' | 'malformed' | 'answerOff' | 'unavailable'
 
 /** 讀圖的產物。`questions` 只有工作區開了「客人傳的照片」、而且 AI 判斷得出來時才有值 */
 export interface InboundImageReading {
@@ -149,11 +148,6 @@ export async function readInboundImage(opts: {
   workspaceId: string
   storagePath: string
   contentType: string
-  /**
-   * false＝就算開了「客人傳的照片」也不猜問句、只寫描述（`D-132`③：AI 回覆額度用完時）。
-   * 猜的按鈕會放到客人畫面上、要算一則；描述只給客服看、不算則。沒帶＝照開關。
-   */
-  allowQuestions?: boolean
 }): Promise<InboundImageReading> {
   const { workspaceId, storagePath, contentType } = opts
   if (!workspaceId || !storagePath) return EMPTY_READING
@@ -168,10 +162,7 @@ export async function readInboundImage(opts: {
   if (!settings?.enabled) return EMPTY_READING
 
   // 開關關著時只要描述，省一半輸出、也不會產生「客人想問什麼」這種會被誤用的欄位
-  const switchOn = settings.imageAnswer?.enabled === true
-  // 額度用完（allowQuestions=false）：照「開關關著」那樣只寫描述，客人那邊只會收到一句問句、沒有猜的按鈕
-  const quotaExhausted = switchOn && opts.allowQuestions === false
-  const wantQuestion = switchOn && !quotaExhausted
+  const wantQuestion = settings.imageAnswer?.enabled === true
 
   const buffer = await getStorage().bucket().file(storagePath).download()
     .then(([buf]) => buf)
@@ -221,7 +212,7 @@ export async function readInboundImage(opts: {
       return EMPTY_READING
     }
 
-    if (!wantQuestion) return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), questions: [], state: quotaExhausted ? 'quotaExhausted' : 'answerOff' }
+    if (!wantQuestion) return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), questions: [], state: 'answerOff' }
 
     // 模型偶爾會在合法 JSON 後面多吐一截殘句（見 parseFirstJsonValue 的實測紀錄）——
     // 取第一份完整的就好，不能因為後面有雜訊就把填對的兩格一起丟掉。

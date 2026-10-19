@@ -209,17 +209,6 @@ describe('客人傳的照片（工作區開了 imageAnswer 才會走）', () => 
     } as any)
   })
 
-  it('AI 回覆額度用完（allowQuestions=false）→ 只寫給客服看的描述、不猜問句（`D-132`③：猜的按鈕要算一則）', async () => {
-    mockStorage()
-    mockGemini('鍋子底部白色掉漆')
-
-    const r = await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg', allowQuestions: false })
-
-    expect(r).toEqual({ description: '鍋子底部白色掉漆', questions: [], state: 'quotaExhausted' })
-    const opts = vi.mocked(generateParts).mock.calls[0]![1]
-    expect(opts?.responseMimeType).toBeUndefined()
-    expect(String(opts?.systemInstruction)).not.toContain('questions')
-  })
 
   it('讀得出客人可能想問什麼 → 描述給客服、最多兩句問句給客人當按鈕', async () => {
     mockStorage()

@@ -2100,8 +2100,10 @@ export async function handleMessageEvent(
         : null
       // 接下來會沉默十幾秒（讀圖＋等客人打字），先讓客人看到「輸入中…」才不像已讀不回
       if (role === 'leader') showLoadingAnimation(userId, workspaceId, 20).catch(() => {})
-      // AI 猜的按鈕要算一則（`D-132`③），所以先看額度：用完了就不叫 AI 猜，只問一句、不扣。
-      // 同一批的每一張都要看（負責問的那張會拿其他張猜的選項來用）。只有開了「客人傳的照片」才查。
+      // AI 猜的按鈕要算一則（`D-132`③），所以先看額度。只有開了「客人傳的照片」才查。
+      // 用完了（老闆 10-19：「直接轉真人」）：不叫 AI 讀圖、也不問——客人沒自己打字的話直接轉真人，
+      // 跟文字訊息額度用完同一條路（answerWithAi 的 quota_exceeded → 真人客服那句＋通知值班）。
+      // 存檔照做（客服要看得到那張圖）。
       const quotaExhausted = willReplyImage ? await isReplyQuotaExhausted(workspaceId) : false
 
       const lineMessageId = String((event.message as { id?: string }).id || '')
@@ -2117,14 +2119,13 @@ export async function handleMessageEvent(
       // 存檔完就讓 AI 看一眼：描述一律寫給客服看；猜的問句只有開了「客人傳的照片」才會有。
       // 同樣 await：Lambda 回應後容器會凍結，沒 await 的後續工作會被砍掉。
       let questions: string[] = []
-      if (archived?.ok) {
+      if (archived?.ok && !quotaExhausted) {
         questions = await describeAndAttachImage({
           workspaceId,
           userIdOrDocId: userId,
           messageIdPromise: savedMessageId,
           storagePath: archived.path,
           contentType: archived.contentType,
-          allowQuestions: !quotaExhausted,
         }).catch((e) => {
           console.error('[media-describe] attach error:', e)
           return []
@@ -2141,7 +2142,15 @@ export async function handleMessageEvent(
             replyToken: event.replyToken!,
             imageAtMs,
             questions,
-            allowGuesses: !quotaExhausted,
+            handoffInstead: quotaExhausted
+              ? replyToken => handoffImageOnQuotaExhausted({
+                  workspaceId,
+                  userIdOrDocId: userId,
+                  sessionId,
+                  replyToken,
+                  requestOrigin: options.requestOrigin || '',
+                })
+              : undefined,
           })
           : role
         await recordImageReplyOutcome(convDocId, savedMessageId, outcome)
@@ -2184,7 +2193,8 @@ const IMAGE_ASK_TEXT = '收到您的照片了 📷 請問想了解什麼呢？'
 
 /** 不負責問的三種情況（直接當成這張圖的處理結果記下來） */
 type ImageRole = 'leader' | 'typedBefore' | 'alreadyAsked' | 'batchFollower'
-type ImageReplyOutcome = Exclude<ImageRole, 'leader'> | 'asked' | 'customerActed' | 'suppressed' | 'replyFailed'
+/** `quotaHandoff`＝AI 回覆額度用完、客人沒自己打字 → 直接轉真人（`D-132`③，老闆 10-19） */
+type ImageReplyOutcome = Exclude<ImageRole, 'leader'> | 'asked' | 'customerActed' | 'suppressed' | 'replyFailed' | 'quotaHandoff'
 
 type ConversationMessageLite = {
   direction?: string
@@ -2325,11 +2335,14 @@ async function askAboutImageUnlessCustomerActs(params: {
   replyToken: string
   imageAtMs: number
   questions: string[]
-  /** false＝AI 回覆額度用完：不附任何猜的按鈕（同一批其他張猜的也不用），只問一句、不扣則（`D-132`③） */
-  allowGuesses?: boolean
+  /**
+   * 有帶＝AI 回覆額度用完：等完客人還是沒動作，就不問了、改呼叫這支直接轉真人（`D-132`③，老闆 10-19
+   * 「直接轉真人」）。等的那段照舊——客人自己打了字，那句會照文字訊息的規則處理（額度用完一樣轉真人），
+   * 這裡再轉一次就是兩則「已為您安排專員」。
+   */
+  handoffInstead?: (replyToken: string) => Promise<void>
 }): Promise<ImageReplyOutcome> {
   const { workspaceId, lineUserId, convDocId, sessionId, replyToken, imageAtMs, questions } = params
-  const allowGuesses = params.allowGuesses !== false
   const ref = getDb().collection('conversations').doc(convDocId)
   try {
     let batchQuestions: string[] = []
@@ -2351,7 +2364,12 @@ async function askAboutImageUnlessCustomerActs(params: {
     // 等的這十幾秒內真人可能已經接手
     if (await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false)) return 'suppressed'
 
-    const guesses = allowGuesses ? pickImageGuesses(questions, batchQuestions) : []
+    if (params.handoffInstead) {
+      await params.handoffInstead(replyToken)
+      return 'quotaHandoff'
+    }
+
+    const guesses = pickImageGuesses(questions, batchQuestions)
     const msg = buildImageAskMessage(guesses)
     try {
       await replyMessage(replyToken, [msg], workspaceId)
@@ -2368,7 +2386,7 @@ async function askAboutImageUnlessCustomerActs(params: {
        * 附了 AI 猜的按鈕＝AI 讀圖替客人想了要問什麼：照「反問」算一則（`D-132`③，老闆 10-19：
        * 「應該要吧而且消耗的 token 更多」）。invocations＋disambiguations 一起記，
        * AI 表現頁「答出＋轉真人＋反問＝AI 出手次數」才湊得滿。
-       * 沒有猜的按鈕（AI 看不出來、或額度用完）＝客人只收到一句固定的問句，不扣。
+       * 沒有猜的按鈕（AI 看不出來）＝客人只收到一句固定的問句，不扣。額度用完的不會走到這裡（見 handoffInstead）。
        */
       ...(guesses.length
         ? [recordAiUsage(workspaceId, { invocations: 1, disambiguations: 1, billable: 1 })
@@ -2392,6 +2410,39 @@ async function askAboutImageUnlessCustomerActs(params: {
     await ref.set({ imageAskWaitingAt: null }, { merge: true })
       .catch(e => console.error('[image-ask] release waiting error:', e))
   }
+}
+
+/**
+ * AI 回覆額度用完、客人只傳照片沒說話 → 直接轉真人（`D-132`③，老闆 10-19「直接轉真人」）。
+ *
+ * 走跟文字訊息額度用完一樣的那條（`deliverHandoffReply` 的 `quota_exceeded`）：客人收到「真人客服」
+ * 系統模組的文案（勿擾時段換成勿擾訊息），對話進待真人、通知值班。AI 一次都沒叫（沒讀圖、沒猜），
+ * 所以不記任何 AI 用量、不扣則。
+ */
+async function handoffImageOnQuotaExhausted(params: {
+  workspaceId: string
+  userIdOrDocId: string
+  sessionId: string | null
+  replyToken: string
+  requestOrigin: string
+}): Promise<void> {
+  const { workspaceId, sessionId, replyToken, requestOrigin } = params
+  const lineUserId = lineUserIdFromFirestoreDocId(params.userIdOrDocId, workspaceId)
+  const [userData, { channelSecret }] = await Promise.all([
+    ensureUser(lineUserId, undefined, workspaceId).catch(() => null),
+    getLineWorkspaceCredentials(workspaceId),
+  ])
+  await deliverHandoffReply({
+    workspaceId,
+    lineUserId,
+    replyToken,
+    userAttributes: buildAttributeContext(userData),
+    channelSecret,
+    sessionId,
+    requestOrigin,
+    customerMessage: '[圖片]',
+    reason: 'quota_exceeded',
+  })
 }
 
 /** 把這張圖最後怎麼處理的記在那則訊息上（客服看不到，給事後查「這張圖為什麼沒人理」用） */
@@ -2426,11 +2477,9 @@ async function describeAndAttachImage(params: {
   messageIdPromise: Promise<string>
   storagePath: string
   contentType: string
-  /** false＝AI 回覆額度用完，只寫描述、不猜問句（見 readInboundImage） */
-  allowQuestions?: boolean
 }): Promise<string[]> {
-  const { workspaceId, userIdOrDocId, storagePath, contentType, allowQuestions } = params
-  const { description, questions, state } = await readInboundImage({ workspaceId, storagePath, contentType, allowQuestions })
+  const { workspaceId, userIdOrDocId, storagePath, contentType } = params
+  const { description, questions, state } = await readInboundImage({ workspaceId, storagePath, contentType })
   // AI 交回空白也歸「格式壞掉」：沒有說明可寫，但壞掉這件事照樣要記在訊息上（超管總覽靠它，`C-164`）
   if (!description && state !== 'malformed') return questions
 
@@ -2446,8 +2495,7 @@ async function describeAndAttachImage(params: {
   // 客人的問句會少了猜的按鈕。這種失敗在 2026-09-10 之前只進主機日誌（我們沒在看），
   // 正式站上連壞三週沒人知道，最後是靠對話裡漏出來的原文才被發現。
   const messagePatch: Record<string, unknown> = description ? { mediaDescription: description } : {}
-  // quotaExhausted 也記：客人那句問句沒附猜的按鈕，是因為額度用完（`D-132`③），不是 AI 看不出來
-  if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed' || state === 'quotaExhausted') {
+  if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed') {
     messagePatch.mediaReadState = state
   }
   // 猜的選項也存在這一則上：一次傳好幾張時只有一張負責問，它要拿得到其他張讀出來的選項
