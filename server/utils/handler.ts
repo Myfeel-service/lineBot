@@ -53,6 +53,17 @@ import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffCon
 import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
 import { chatSpeakerOf } from '~~/shared/chat-speaker'
 import { contextWindowFlags, type ContextWindowMessage } from '~~/shared/ai-context-window'
+import {
+  ORDER_INFO_ASK_TEXT,
+  ORDER_INFO_ASK_TTL_MS,
+  ORDER_INFO_SHIP_OPTION,
+  isOrderInfoOnly,
+  orderInfoAskOptions,
+  shouldAskOrderIntent,
+  type OrderInfoRecentMessage,
+} from '~~/shared/order-info-only'
+import { storeBizTypeOf } from '~~/shared/store-profile-biz'
+import { getStoreProfile } from './store-profile'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
@@ -2885,20 +2896,46 @@ async function handleIncomingText(
       let convoCtxPromise: Promise<AiConvoContext> | null = null
       const getConvoCtx = () => (convoCtxPromise ??= loadAiConvoContext(fsUserDocId, textContent, wid))
 
+      // 0.5 客人只丟訂單資料、沒說要做什麼 → 先問他想詢問什麼（`D-133`），附按鈕
+      const lastOrderInfoAsk = userData?.orderInfoAsk
+      if (await askWhatForOrderInfo({
+        textContent, replyToken, lineUserId, fsUserDocId, workspaceId: wid,
+        sessionId: sessionId ?? null, getConvoCtx, lastAskAtMs: lastOrderInfoAsk?.askedAt ?? null,
+      }).catch((e) => {
+        // 壞了就當沒問，照舊往下走（流程或 AI），不能讓這則訊息沒人回
+        console.error('[order-info] ask error:', e)
+        return false
+      })) return
+
+      // 剛問過「想詢問什麼」（2 小時內）：他前面丟的那筆資料，流程要撿得到；點「什麼時候出貨」直接交給 AI
+      const pendingOrderInfo = lastOrderInfoAsk && Date.now() - Number(lastOrderInfoAsk.askedAt || 0) < ORDER_INFO_ASK_TTL_MS
+        ? String(lastOrderInfoAsk.text || '')
+        : ''
+      /**
+       * 「請問什麼時候出貨？」是那顆按鈕代他送出的：不進任何流程，直接交給 AI（`C-343`／`C-344` 那一套）。
+       * 認得出商品（例如他剛點過「出貨進度查詢－電淨艙」）→ AI 答那一台的出貨時程；認不出 → AI 先問是哪一個。
+       * 不繞的話，認不出商品時會被意圖路由送進「查詢訂單」流程，收完一樣轉真人——那就白問了。
+       */
+      const shipFromOrderAsk = Boolean(pendingOrderInfo) && textContent.trim() === ORDER_INFO_SHIP_OPTION.text
+        && await getAiSettings(wid).then(s => s?.enabled === true && s.replyMode === 'auto').catch(() => false)
+
       // 1. 嘗試啟動腳本（關鍵字快速通道 + 統一意圖路由）
-      const scriptRes = await runScriptStart(
-        textContent,
-        userAttributes,
-        fsUserDocId,
-        lineUserId,
-        replyToken,
-        wid,
-        sessionId ?? null,
-        options.requestOrigin || '',
-        channelSecret,
-        () => getConvoCtx().then(c => c.history),
-        () => getConvoCtx().then(c => c.productHistory),
-      )
+      const scriptRes = shipFromOrderAsk
+        ? { handled: false, route: null }
+        : await runScriptStart(
+            textContent,
+            userAttributes,
+            fsUserDocId,
+            lineUserId,
+            replyToken,
+            wid,
+            sessionId ?? null,
+            options.requestOrigin || '',
+            channelSecret,
+            () => getConvoCtx().then(c => c.history),
+            () => getConvoCtx().then(c => c.productHistory),
+            pendingOrderInfo,
+          )
       if (scriptRes.handled) return
 
       // 2. 沒命中 → AI 保底（重用路由的意圖分類與已載入的對話脈絡）
@@ -2955,6 +2992,65 @@ async function shipTimingGoesToAi(
 }
 
 /**
+ * 客人只丟訂單資料、沒說要做什麼 → 機器人先問一句「想詢問什麼」，附按鈕（`D-133`，2026-10-19 老闆拍板）。
+ * 判斷與按鈕見 shared/order-info-only.ts；回傳 true＝問了（這則訊息處理完）。
+ *
+ * 只在 AI 會真的回客人時問（AI 開著、不是草稿模式）：按「什麼時候出貨」之後靠 AI 答，
+ * AI 不出聲的帳號問了也接不下去——那種照舊交給店家的流程。
+ * 這一句是機器人問的（固定文字、不是 AI 寫的）→ 不扣則；標「系統」：後台沒有模組可以改這句。
+ */
+async function askWhatForOrderInfo(params: {
+  textContent: string
+  replyToken: string | undefined
+  lineUserId: string
+  fsUserDocId: string
+  workspaceId: string
+  sessionId: string | null
+  getConvoCtx: () => Promise<AiConvoContext>
+  lastAskAtMs: number | null
+}): Promise<boolean> {
+  const { textContent, replyToken, lineUserId, fsUserDocId, workspaceId, sessionId } = params
+  // 先用純文字判斷擋掉幾乎所有訊息：後面要讀設定與對話，只有真的像「只丟資料」的才讀
+  if (!replyToken || !isOrderInfoOnly(textContent)) return false
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  if (!settings?.enabled || settings.replyMode !== 'auto') return false
+  const { recent } = await params.getConvoCtx()
+  if (!shouldAskOrderIntent({ text: textContent, recent, nowMs: Date.now(), lastAskAtMs: params.lastAskAtMs })) return false
+
+  // 店家型別是「做服務」「教課」的不放「什麼時候出貨」；沒填輪廓的照放（訂單編號本身就是有出貨的訊號）
+  const bizType = await getStoreProfile(workspaceId)
+    .then(p => storeBizTypeOf(p.fields.industry?.value))
+    .catch(() => 'neutral' as const)
+  const options = orderInfoAskOptions(bizType !== 'service' && bizType !== 'class')
+  const msg: messagingApi.TextMessage = {
+    type: 'text',
+    text: ORDER_INFO_ASK_TEXT,
+    quickReply: {
+      items: options.map(o => ({ type: 'action', action: { type: 'message', label: o.label, text: o.text } })),
+    },
+  }
+  await replyMessage(replyToken, [msg], workspaceId)
+  console.log('[order-info] only order info, no question → asked what for:', textContent.slice(0, 40).replace(/\d{4,}/g, '…'))
+
+  // 都要等完：回覆後 webhook 就回應 LINE、主機隨即凍結。記號沒寫進去的話，他點「什麼時候出貨」不會直接交給 AI、
+  // 流程也撿不到剛剛那筆資料（又要再問一次編號）
+  await Promise.all([
+    getDb().collection('users').doc(fsUserDocId)
+      .set({ orderInfoAsk: { text: textContent.slice(0, 1000), askedAt: Date.now() } }, { merge: true })
+      .then(() => invalidateUserDocCache(fsUserDocId))
+      .catch(e => console.error('[order-info] mark asked error:', e)),
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
+      sender: 'system',
+      senderName: '客人只傳訂單資料時的提問',
+    }).catch(e => console.error('[order-info] save outgoing error:', e)),
+    // 機器人真的回了一句 → 記機器人首接（不是 AI 作答，同客人傳照片時的提問）
+    enterModule(sessionId, lineUserId, 'bot_flow', undefined, workspaceId)
+      .catch(e => console.error('[order-info] enterModule error:', e)),
+  ])
+  return true
+}
+
+/**
  * 嘗試從使用者輸入啟動腳本。
  * 回傳 true 表示已處理（已回覆使用者）；false 表示沒有任何腳本命中。
  */
@@ -2972,6 +3068,11 @@ async function runScriptStart(
   getHistory?: () => Promise<AiChatTurn[]>,
   /** 認商品用的對話（同一次讀取；含客人點過的按鈕，`C-344`） */
   getProductHistory?: () => Promise<AiChatTurn[]>,
+  /**
+   * 客人前面只丟的那筆訂單資料（`D-133`：機器人剛問過他想詢問什麼）。跟觸發那句一起交給流程先撿，
+   * 他點「我想修改訂單資料」啟動的流程就不會再問一次編號。只拿來撿資料，⛔ 不拿來比對關鍵字。
+   */
+  pendingOrderInfo = '',
 ): Promise<{ handled: boolean; route: RouteResult | null }> {
   // 加好友觸發的腳本不參與文字比對，也不能進意圖路由的候選名單——
   // matchesScriptKeywords 對它一律 false，但路由是把「腳本名稱＋提示」丟給 LLM 選，
@@ -3029,8 +3130,10 @@ async function runScriptStart(
   // 腳本啟動要先寫入使用者狀態才回覆，期間先顯示「輸入中…」（fire-and-forget）
   if (keywordHit) showLoadingAnimation(lineUserId, workspaceId, 10).catch(() => {})
 
-  // 觸發那句話一起帶進去：裡面已經有的訂單編號／電話／Email 流程就不再問（`C-343`）
-  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, textContent)
+  // 觸發那句話一起帶進去：裡面已經有的訂單編號／電話／Email 流程就不再問（`C-343`）；
+  // 機器人剛問過「想詢問什麼」的話，他前面丟的那筆資料也一起（`D-133`）
+  const prefillText = pendingOrderInfo ? `${textContent}\n${pendingOrderInfo}` : textContent
+  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, prefillText)
   invalidateUserDocCache(fsUserDocId)
   const dndReply = await dndScriptHandoffReply(result, workspaceId)
   if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
@@ -3821,6 +3924,8 @@ interface AiConvoContext {
    * ⛔ 不給 AI 讀（見 AnswerInput.productHistory）。
    */
   productHistory: AiChatTurn[]
+  /** 讀回來的那幾則原樣（新的在前、帶時間）：「客人只丟訂單資料要不要先問」用（`D-133`），不給 AI */
+  recent: OrderInfoRecentMessage[]
 }
 
 /**
@@ -3907,7 +4012,11 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string, work
     .filter(t => t.text)
   history = withoutCurrent(history).slice(-6)
 
-  return { prevAiMeta, history, productHistory }
+  const recent = newestFirst.map((m): OrderInfoRecentMessage => {
+    const { direction, messageType, text, timestampMs } = toContextWindowMessage(m)
+    return { direction, messageType, text, timestampMs }
+  })
+  return { prevAiMeta, history, productHistory, recent }
 }
 
 /**

@@ -31,6 +31,12 @@ export interface UserDoc {
   } | null
   /** 正在進行中的腳本狀態（見 shared/types/ai-script） */
   activeScript?: ActiveScriptState | null
+  /**
+   * 客人只丟訂單資料、機器人問了「想詢問什麼」（`D-133`，見 shared/order-info-only.ts）：
+   * 他那句原文＋問的時間（epoch ms）。之後 2 小時內點「什麼時候出貨」直接交給 AI、
+   * 啟動的流程撿得到這筆資料（不再問編號）、再丟一次資料不重問。不清除，靠時間過期；下次再問時覆寫。
+   */
+  orderInfoAsk?: { text: string; askedAt: number }
   /** 客人身上的自訂屬性（貼標／模組收集到的欄位） */
   attributes?: Record<string, string>
   /** 自動回覆規則 ID → 上次觸發時間（epoch ms） */
