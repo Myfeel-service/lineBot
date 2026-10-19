@@ -1,7 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getSource } from '~~/server/utils/ai-knowledge-sources'
-import { alignSourceProductWithGroup, relearnSourceChunks } from '~~/server/utils/ai-knowledge-product-group'
+import { alignSourceProductWithGroup, relearnSourceChunks, relearnTailNote } from '~~/server/utils/ai-knowledge-product-group'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -39,9 +39,9 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'source.reindex',
     targetId: sourceId,
-    after: { name: String(source.data.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed },
-    // `D-129`：店家看得到的字不講「重新學習」
-    note: `${String(source.data.name ?? '')}：再學一次，學會 ${r.indexed} 條${r.failed ? `、${r.failed} 條還沒學會（會自己再試）` : ''}`,
+    after: { name: String(source.data.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed, ...(r.kept ? { keptPreviousCount: r.kept } : {}) },
+    // `D-129`：店家看得到的字不講「重新學習」；`C-351` 先用原本學好的那幾條另外講
+    note: `${String(source.data.name ?? '')}：再學一次，學會 ${r.indexed} 條${relearnTailNote(r)}`,
   }, db)
 
   return r

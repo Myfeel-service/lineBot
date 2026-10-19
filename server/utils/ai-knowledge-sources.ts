@@ -20,6 +20,7 @@ import type {
   KnowledgeSourceType,
 } from '~~/shared/types/ai-knowledge'
 import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
+import type { KnowledgeRelearnState } from '~~/shared/knowledge-relearn'
 // ⚠️ 這支會繞一圈 import 回本檔（folder-guard → ai-knowledge-folders → 本檔）。安全的前提是
 //    兩邊都只在函式裡用對方的東西、頂層不讀——動這三支檔案的頂層時要記得這個圈。
 import { resolveKnowledgeFolderId } from './ai-knowledge-folder-guard'
@@ -436,7 +437,7 @@ export async function listChunksBySource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; retryCount: number; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
+): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; retryCount: number; relearnState?: KnowledgeRelearnState; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
@@ -457,6 +458,8 @@ export async function listChunksBySource(
       ...(data?.failureReason ? { failureReason: String(data.failureReason) } : {}),
       // 學失敗了幾次（`D-129`）：畫面照這個分「系統還會自己再試」跟「試完了，這時才給『再試一次』」
       retryCount: Number(data?.retryCount ?? 0) || 0,
+      // 重學沒成、AI 先用原本學好的（`C-351`）：還會自己再學的畫面不講；試完 5 次的灰字一行＋「再試一次」
+      ...(data?.relearnState === 'retrying' || data?.relearnState === 'exhausted' ? { relearnState: data.relearnState as KnowledgeRelearnState } : {}),
       isOverview: data?.isOverview === true,
       manuallyEditedAtMs: tsToMs(data?.manuallyEditedAt),
       updatedAtMs: tsToMs(data?.updatedAt),

@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
   // 停用的卡跳過:runIndexOnChunk 會把 status 設回 'indexed',全量重建不該偷偷重新啟用
   const docs = snap.docs.filter(d => String(d.data()?.content ?? '').trim() && d.data()?.status !== 'disabled')
 
-  type ResultRow = { id: string; status: string; failureReason?: string }
+  type ResultRow = { id: string; status: string; failureReason?: string; keptPrevious?: true }
   const results: ResultRow[] = new Array(docs.length)
   let batchEmbeddingTokens = 0
 
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
         ),
       )
       if (r.status === 'indexed') batchEmbeddingTokens += r.embeddingTokens
-      results[idx] = { id: r.id, status: r.status, failureReason: r.failureReason }
+      results[idx] = { id: r.id, status: r.status, failureReason: r.failureReason, ...(r.keptPrevious ? { keptPrevious: true as const } : {}) }
     }
   }
   await Promise.all(Array.from({ length: Math.min(EMBED_CONCURRENCY, docs.length) }, worker))
@@ -79,7 +79,13 @@ export default defineEventHandler(async (event) => {
     await recordAiUsage(workspaceId, { buildEmbeddingTokens: batchEmbeddingTokens }, db)
   }
 
-  const indexed = results.filter(r => r.status === 'indexed').length
+  /**
+   * `C-351`：本來學好的那幾條這次沒學成＝回 status 'indexed'＋keptPrevious——AI 照樣用原本的、排程會自己再學。
+   * ⛔ 不算進「成功」（沒學成）也不算進「失敗」（客人問到照樣答得出來），另外一格 kept。
+   * 以前這種直接變 failed：超管按一次「全部重新學習」碰上 AI 忙，一整批知識就下架到排程補好。
+   */
+  const kept = results.filter(r => r.keptPrevious).length
+  const indexed = results.filter(r => r.status === 'indexed' && !r.keptPrevious).length
   const failed = results.filter(r => r.status === 'failed').length
   const lastDoc = snap.docs[snap.docs.length - 1]
 
@@ -95,7 +101,7 @@ export default defineEventHandler(async (event) => {
       uid,
       actor: 'human',
       action: 'knowledge.reindexAll',
-      after: { itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed },
+      after: { itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed, ...(kept ? { keptPreviousCount: kept } : {}) },
       note: '讓 AI 把整個知識庫再學一次（會分批跑完，這裡記的是第一批的數字）',
     }, db)
   }
@@ -105,6 +111,7 @@ export default defineEventHandler(async (event) => {
     skippedEmpty: snap.size - docs.length,
     indexed,
     failed,
+    kept,
     failures: results.filter(r => r.status === 'failed'),
     // 滿頁代表可能還有下一批；呼叫端帶 nextCursor 重複呼叫直到 null
     nextCursor: snap.size === BATCH_LIMIT && lastDoc ? lastDoc.id : null,

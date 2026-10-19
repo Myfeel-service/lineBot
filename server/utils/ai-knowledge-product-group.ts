@@ -38,9 +38,22 @@ export interface SourceRelearnResult {
   total: number
   /** 停用的、沒內容的跳過（重新學習不偷偷把停用的打開） */
   skipped: number
+  /** 照新的學好了（⛔ 不含 kept） */
   indexed: number
+  /** 沒學成、AI 找不到（從來沒學好過的那種） */
   failed: number
+  /**
+   * 重學沒成、AI 先用原本學好的（`C-351`）：客人問到照樣答得出來，排程會自己再學。
+   * ⛔ 不算在 failed（畫面不講「還沒學會」）、也不算在 indexed（操作紀錄不講成學會了）。
+   */
+  kept: number
   failures: Array<{ id: string; status: string; failureReason?: string }>
+}
+
+/** 操作紀錄備註接在「學會 N 條」後面那一段（`D-129` 不講「重新學習」；`C-351` 先用原本的那幾條另外講） */
+export function relearnTailNote(r: Pick<SourceRelearnResult, 'failed' | 'kept'>): string {
+  return (r.failed ? `、${r.failed} 條還沒學會（會自己再試）` : '')
+    + (r.kept ? `、${r.kept} 條先用原本學好的（會自己再學）` : '')
 }
 
 /**
@@ -59,7 +72,7 @@ export async function relearnSourceChunks(db: Firestore, workspaceId: string, so
     .get()
   const docs = snap.docs.filter(d => String(d.data()?.content ?? '').trim() && d.data()?.status !== 'disabled')
 
-  const results: SourceRelearnResult['failures'] = new Array(docs.length)
+  const results: Array<SourceRelearnResult['failures'][number] & { keptPrevious?: true }> = new Array(docs.length)
   let embeddingTokens = 0
   let cursor = 0
   async function worker() {
@@ -77,13 +90,16 @@ export async function relearnSourceChunks(db: Firestore, workspaceId: string, so
         ),
       )
       if (r.status !== 'failed') embeddingTokens += r.embeddingTokens
-      results[idx] = { id: r.id, status: r.status, failureReason: r.failureReason }
+      results[idx] = { id: r.id, status: r.status, failureReason: r.failureReason, ...(r.keptPrevious ? { keptPrevious: true as const } : {}) }
     }
   }
   await Promise.all(Array.from({ length: Math.min(EMBED_CONCURRENCY, docs.length) }, worker))
   if (embeddingTokens > 0) await recordAiUsage(workspaceId, { buildEmbeddingTokens: embeddingTokens }, db)
 
-  const failures = results.filter(r => r.status === 'failed')
+  const failures = results.filter(r => r.status === 'failed').map(({ keptPrevious: _k, ...f }) => f)
+  // `C-351`：重學沒成、AI 先用原本學好的——每一條自己帶著「還要重學」的記號（排程 retryStuckChunks 撿），
+  // 所以下面這份資料上的記號照樣拿掉（不然 relearnPendingProductSources 會整份再學一次、學好的那幾條白花錢）
+  const kept = results.filter(r => r.keptPrevious).length
   // 學完了：「商品名換了、還沒重新學」的記號拿掉（體檢靠它找沒學完的，見 RELEARN_PENDING_FIELD）。
   // 學失敗的那幾條另外有「AI 沒學起來」那一列在管。清不掉不擋（下次學再清）
   try {
@@ -93,8 +109,9 @@ export async function relearnSourceChunks(db: Firestore, workspaceId: string, so
   return {
     total: snap.size,
     skipped: snap.size - docs.length,
-    indexed: results.length - failures.length,
+    indexed: results.length - failures.length - kept,
     failed: failures.length,
+    kept,
     failures,
   }
 }
@@ -127,9 +144,14 @@ export interface RelearnPendingResult {
   relearned: number
   indexed: number
   failed: number
+  /** 重學沒成、AI 先用原本學好的條數（`C-351`，每一條自己帶記號、retryStuckChunks 接手） */
+  kept: number
   /** 還在等畫面學（記號剛留下不到 10 分鐘）的份數 */
   waitingForPage: number
-  /** 這個帳號本月 AI 整理用量用完了，這輪先不學的份數（⛔ 學下去每一條都會變成學失敗、AI 找不到，比用舊名字更糟） */
+  /**
+   * 這個帳號本月 AI 整理用量用完了，這輪先不學的份數（學下去每一條都被額度擋下：
+   * 本來學好的那幾條 `C-351` 起會先用原本的、不會下架，但從來沒學好的那幾條會變成學失敗——打了也是白打，下月再學）
+   */
   skippedBudget: number
   /** 時間到、下一輪再接的份數 */
   deferred: number
@@ -143,7 +165,8 @@ export interface RelearnPendingResult {
  *
  * ① 分組上有 productSyncPending（改組名時底下資料的商品名寫失敗）→ 重跑一次 syncGroupSourcesProduct，底下資料改名＋留記號；
  * ② 資料上有 productRelearnPending、而且留下超過 10 分鐘 → 先對齊組名、再整份學一次（同畫面打的 reindex 端點）。
- *    學失敗的那幾條另外由 retryStuckChunks 自動再試（那幾條本身已經是 failed）。
+ *    學失敗的那幾條另外由 retryStuckChunks 自動再試（那幾條本身已經是 failed；本來學好、重學沒成的那幾條
+ *    先用原本的、帶著 relearnState='retrying'，也是 retryStuckChunks 撿，`C-351`）。
  * 稽核記成系統排程（⛔ 不掛在當初改組名的人頭上：學的那一刻他不在場）。
  */
 export async function relearnPendingProductSources(
@@ -155,7 +178,7 @@ export async function relearnPendingProductSources(
   const graceMs = opts.graceMs ?? RELEARN_PENDING_GRACE_MS
   const perRound = opts.perRound ?? RELEARN_PENDING_SOURCES_PER_ROUND
   const timeBudgetMs = opts.timeBudgetMs ?? RELEARN_PENDING_TIME_BUDGET_MS
-  const result: RelearnPendingResult = { foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 }
+  const result: RelearnPendingResult = { foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, kept: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 }
 
   // ① 分組上「沒跟上」的記號：畫面那時拿到 syncFailed、沒有一份份學——沒人在學，底下的資料不用等 10 分鐘
   const readyNow = new Set<string>()
@@ -217,15 +240,15 @@ export async function relearnPendingProductSources(
       result.relearned++
       result.indexed += r.indexed
       result.failed += r.failed
+      result.kept += r.kept
       await writeAuditLog({
         workspaceId: wid,
         uid: '',
         actor: 'system',
         action: 'source.reindex',
         targetId: d.id,
-        after: { name: String(s.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed },
-        note: `${String(s.name ?? '')}：換了商品名之後沒學完的，系統自己補學：學會 ${r.indexed} 條`
-          + (r.failed ? `、${r.failed} 條還沒學會（會自己再試）` : ''),
+        after: { name: String(s.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed, ...(r.kept ? { keptPreviousCount: r.kept } : {}) },
+        note: `${String(s.name ?? '')}：換了商品名之後沒學完的，系統自己補學：學會 ${r.indexed} 條${relearnTailNote(r)}`,
       }, db)
     }
     catch (e) {
@@ -305,11 +328,11 @@ export async function syncSourceProductWithGroup(
     action: 'source.put',
     targetId: sourceId,
     before: { productName: previous },
-    after: { productName: target, chunkIdsCount: relearned.indexed, failedItemsCount: relearned.failed },
+    after: { productName: target, chunkIdsCount: relearned.indexed, failedItemsCount: relearned.failed, ...(relearned.kept ? { keptPreviousCount: relearned.kept } : {}) },
     note: `${String(source.data.name ?? '')}：`
       + (target ? `放進「${group?.name ?? ''}」，AI 把它當成「${target}」的資料` : `不在商品分組裡，AI 不再把它當成「${previous}」的資料`)
-      // `D-129`：店家看得到的字不講「重新學習」；沒學會的那幾條排程會自己再試
-      + `，照新的商品名學會 ${relearned.indexed} 條${relearned.failed ? `、${relearned.failed} 條還沒學會（會自己再試）` : ''}`,
+      // `D-129`：店家看得到的字不講「重新學習」；沒學會的那幾條排程會自己再試（`C-351` 先用原本的那幾條另外講）
+      + `，照新的商品名學會 ${relearned.indexed} 條${relearnTailNote(relearned)}`,
   }, db)
 
   return { changed: true, productName: target, previous, source: updated, relearned }

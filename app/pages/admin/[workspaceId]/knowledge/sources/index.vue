@@ -795,7 +795,8 @@
                       `C-314`：只講例外（停用、處理中、沒學起來、等你看過、有效至…）。
                       以前每一條都寫「62 字 · 可用 · 10/1」——字數不用管、「可用」是正常、日期沒人要用，三樣都不擺
                     -->
-                    <!-- `D-129`：只有試完 5 次還是沒學會的上紅字；還在自動再試的是灰字（不用他管） -->
+                    <!-- `D-129`：只有試完 5 次還是沒學會的上紅字；還在自動再試的是灰字（不用他管）。
+                         `C-351` 重學沒成、AI 先用原本的：還會自己再學的不講，試完 5 次的灰字（客人問到照樣答得出來） -->
                     <span v-if="chunkMeta(c)" class="src-chunk-meta" :class="{ 'is-failed': isAutoRetryExhausted(c) }">{{ chunkMeta(c) }}</span>
                   </div>
                   <el-button v-if="canEditKb" :icon="EditPen" size="small" plain @click="openEditChunk(c)">編輯</el-button>
@@ -1155,9 +1156,11 @@
     <div v-if="chunkReadonly" class="chunk-form">
       <!-- 狀態章只在不正常時出現（`C-314`，理由見編輯版那一段） -->
       <div v-if="chunkStatusWorthShowing" class="chunk-status-row">
-        <span :class="['badge', chunkEditBadge.cls]">{{ chunkEditBadge.text }}</span>
+        <span v-if="chunkEditLearnState !== 'keptExhausted'" :class="['badge', chunkEditBadge.cls]">{{ chunkEditBadge.text }}</span>
         <!-- `D-129`：還在自動再試的只講「系統會自己再試」；原因原文（多半是英文）不給看，試完的才翻成白話講 -->
         <span v-if="chunkEditLearnState === 'retrying'" class="text-xs text-muted">系統會自己再試，不用另外處理</span>
+        <!-- `C-351`：重學試完 5 次、AI 先用原本的——灰字（客人問到照樣答得出來，不上紅、不掛「沒學起來」章） -->
+        <span v-else-if="chunkEditLearnState === 'keptExhausted'" class="text-xs text-muted">{{ chunkEditFailureLine }}</span>
         <span v-else-if="chunkEditLearnState !== 'none'" class="chunk-status-failure">{{ chunkEditFailureLine }}</span>
         <span v-else-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
       </div>
@@ -1205,10 +1208,15 @@
         全平台店家按過 0 次——按鈕只讓人以為要自己處理。現在還在再試的只講一句；試完 5 次還是沒學會的，才講原因、給「再試一次」、
         講還不行怎麼辦（停用中又沒學成的那種一開始就給：排程不碰停用的）
       -->
+      <!--
+        `C-351`：本來學好、重學沒成的那一條 AI 照樣用原本的——還會自己再學的什麼都不掛（chunkStatusWorthShowing 擋掉，原因原文也不給看）；
+        試完 5 次的灰字一句＋「再試一次」，⛔ 不掛「沒學起來」紅章、不給「改一下內容」那句（一改內容，原本那份就對不上了）
+      -->
       <div v-if="chunkStatusWorthShowing" class="chunk-status-row">
-        <span :class="['badge', chunkEditBadge.cls]">{{ chunkEditBadge.text }}</span>
+        <span v-if="chunkEditLearnState !== 'keptExhausted'" :class="['badge', chunkEditBadge.cls]">{{ chunkEditBadge.text }}</span>
         <span v-if="chunkEditStatus === 'pending'" class="text-xs text-muted">處理中，約 5–30 秒後 AI 就能用這條回答</span>
         <span v-else-if="chunkEditLearnState === 'retrying'" class="text-xs text-muted">系統會自己再試，不用另外處理</span>
+        <span v-else-if="chunkEditLearnState === 'keptExhausted'" class="text-xs text-muted">{{ chunkEditFailureLine }}</span>
         <span v-else-if="chunkEditLearnState !== 'none'" class="chunk-status-failure">{{ chunkEditFailureLine }}</span>
         <span v-else-if="chunkEditFailureReason" class="chunk-status-failure">{{ chunkEditFailureReason }}</span>
         <el-button
@@ -1648,10 +1656,14 @@ import {
   chunkLearnState,
   chunkRetryButtonShown,
   isAutoRetryExhausted,
+  isKeptPreviousExhausted,
   KB_AUTO_RETRY_TEXT,
+  KB_KEPT_EXHAUSTED_LINE,
+  KB_KEPT_PREVIOUS_TEXT,
   KB_RETRY_BUTTON,
   KB_RETRY_EXHAUSTED_ADVICE,
   KB_RETRY_EXHAUSTED_TEXT,
+  needsManualRetry,
   plainIndexFailure,
 } from '~~/shared/knowledge-relearn'
 
@@ -1714,6 +1726,8 @@ interface ChunkRow {
    * ⚠️ 舊伺服器沒這一格：讀的時候一律 `?? 0`（＝當成還在自動再試，不給按鈕——寧可少一顆也不要叫他按系統會自己做的事）
    */
   retryCount?: number
+  /** 重學沒成、AI 先用原本學好的（`C-351`）：retrying＝系統會自己再學（畫面不講）、exhausted＝試完 5 次（灰字＋「再試一次」）。舊伺服器沒這一格 */
+  relearnState?: string
   manuallyEditedAtMs: number
   updatedAtMs: number
   /** 有效期限（0 = 永久）；到期會被排程自動停用 */
@@ -2108,8 +2122,13 @@ function chunkPreview(c: Pick<ChunkRow, 'content'>): string {
  * 每一條底下那一行（`C-314`）：只講例外，正常的一條什麼都不寫（回空字串＝那一行不畫）。
  * 以前每一條都是「62 字 · 可用 · 10/1」——字數不用管、「可用」是正常狀態、日期沒有人要拿來做什麼。
  */
-function chunkMeta(c: Pick<ChunkRow, 'status' | 'activeUntilMs' | 'expiredAtMs' | 'retryCount'>): string {
-  if (c.status === 'indexed') return c.activeUntilMs ? `有效至 ${ymdLabel(c.activeUntilMs)}` : ''
+function chunkMeta(c: Pick<ChunkRow, 'status' | 'activeUntilMs' | 'expiredAtMs' | 'retryCount' | 'relearnState'>): string {
+  if (c.status === 'indexed') {
+    const until = c.activeUntilMs ? `有效至 ${ymdLabel(c.activeUntilMs)}` : ''
+    // `C-351`：重學試完 5 次、AI 先用原本的才講一句（還會自己再學的不講：店家不用做事）
+    if (isKeptPreviousExhausted(c)) return until ? `${KB_KEPT_EXHAUSTED_LINE}；${until}` : KB_KEPT_EXHAUSTED_LINE
+    return until
+  }
   if (c.status === 'disabled') return c.expiredAtMs ? `已停用（${ymdLabel(c.expiredAtMs)} 到期）` : '已停用'
   // `D-129`：學失敗的分兩種——還在自動再試的灰字一句（不用他管）、試完 5 次的才上紅字
   if (c.status === 'failed') return isAutoRetryExhausted(c) ? `${KB_RETRY_EXHAUSTED_TEXT}，點開看怎麼處理` : KB_AUTO_RETRY_TEXT
@@ -2825,17 +2844,21 @@ const chunkEditStatus = ref('')
 const chunkEditFailureReason = ref('')
 /** 打開的這一條學失敗了幾次（`D-129`：5 次以內系統會自己再試，試完才給「再試一次」） */
 const chunkEditRetryCount = ref(0)
+/** 打開的這一條是不是「重學沒成、AI 先用原本學好的」（`C-351`：retrying／exhausted，空＝不是） */
+const chunkEditRelearnState = ref('')
 /**
  * 這一條「沒學會」是哪一種（`D-129`）：
  *  · retrying：學失敗、系統還會自己再試——只講「系統會自己再試」，⛔ 不給按鈕、不上紅色；
  *  · exhausted：自動重試用完還是沒學會——這時才講原因、給「再試一次」、講還不行怎麼辦；
  *  · disabledNoVector：停用中、上一次學沒成（沒向量，打不開）——排程不碰停用的，所以一開始就給「再試一次」
  *    （伺服器擋「打開」時那句叫他按的就是這一顆）
+ *  · keptRetrying／keptExhausted：本來學好、重學沒成，AI 先用原本的（`C-351`）——前者什麼都不講，後者灰字＋「再試一次」
  */
 const chunkEditLearnState = computed(() => chunkLearnState({
   status: chunkEditStatus.value,
   retryCount: chunkEditRetryCount.value,
   failureReason: chunkEditFailureReason.value,
+  relearnState: chunkEditRelearnState.value,
 }))
 /** 狀態章：學失敗分兩種顏色（還在再試＝琥珀「還沒學會」、試完＝紅「沒學起來」），其他照舊 */
 const chunkEditBadge = computed(() => {
@@ -2846,6 +2869,7 @@ const chunkEditBadge = computed(() => {
 /** 試完了／停用中沒學成：原因翻成白話（原文多半是英文，⛔ 不直接給他看） */
 const chunkEditFailureLine = computed(() => {
   const why = plainIndexFailure(chunkEditFailureReason.value).text
+  if (chunkEditLearnState.value === 'keptExhausted') return `${KB_RETRY_EXHAUSTED_TEXT}：${why}；${KB_KEPT_PREVIOUS_TEXT}`
   return chunkEditLearnState.value === 'exhausted' ? `${KB_RETRY_EXHAUSTED_TEXT}：${why}` : `AI 還沒學會這一條：${why}`
 })
 const chunkNormalizing = ref(false)
@@ -2858,10 +2882,12 @@ const chunkExpiredAtMs = ref(0)
 const chunkShowUsage = computed(() => chunkEditStatus.value === 'indexed' || chunkEditStatus.value === 'disabled')
 /**
  * 編輯框最上面那個狀態章要不要掛（`C-314`）：只有不正常時（處理中、沒學起來、等你看過，或有失敗原因）。
- * 「可用」是正常不講；「已停用」不講——下面「AI 可以用這一條」那顆開關關著就是在講這件事
+ * 「可用」是正常不講；「已停用」不講——下面「AI 可以用這一條」那顆開關關著就是在講這件事。
+ * `C-351`：重學沒成、AI 先用原本的、系統還會自己再學（keptRetrying）身上有失敗原因，但⛔ 不掛：店家什麼都不用做，
+ * 掛了只會冒出一行英文原文。試完 5 次的（keptExhausted）才掛（灰字＋「再試一次」）
  */
-const chunkStatusWorthShowing = computed(() =>
-  (chunkEditStatus.value !== 'indexed' && chunkEditStatus.value !== 'disabled') || !!chunkEditFailureReason.value)
+const chunkStatusWorthShowing = computed(() => chunkEditLearnState.value !== 'keptRetrying'
+  && ((chunkEditStatus.value !== 'indexed' && chunkEditStatus.value !== 'disabled') || !!chunkEditFailureReason.value))
 /** 有效期限收進「進階」摺疊;開窗時依「有沒有值」決定預設開合 */
 const chunkAdvancedOpen = ref(false)
 /**
@@ -3920,6 +3946,7 @@ async function loadSourceDetail(sourceId: string) {
         chunkEditStatus.value = row.status
         chunkEditFailureReason.value = row.failureReason ?? ''
         chunkEditRetryCount.value = row.retryCount ?? 0
+        chunkEditRelearnState.value = row.relearnState ?? ''
         chunkEditLockedAtMs.value = row.manuallyEditedAtMs || 0
       }
     }
@@ -3953,8 +3980,8 @@ const moveHint = computed(() => {
   return `AI 會把這份當成「${f.name}」的資料。`
 })
 
-/** 這一份裡「試了 5 次都沒學會」的那幾條（`D-129`：只有它們才給按鈕） */
-const exhaustedChunks = computed(() => chunks.value.filter(c => isAutoRetryExhausted(c)))
+/** 這一份裡「試了 5 次都沒學會」的那幾條（`D-129`：只有它們才給按鈕；`C-351` 重學試完 5 次、先用原本的也算） */
+const exhaustedChunks = computed(() => chunks.value.filter(c => needsManualRetry(c)))
 /** 「⋯ → 沒學會的 N 條再試一次」正在打（見 retryExhaustedInSource） */
 const retryingExhausted = ref(false)
 /**
@@ -4010,17 +4037,23 @@ async function retryExhaustedInSource() {
   if (!id || !targets.length || retryingExhausted.value) return
   retryingExhausted.value = true
   let ok = 0
+  /** 本來學好、這次又沒學成的（`C-351`）：AI 照樣用原本的——⛔ 不叫他「改一下內容」（一改，原本那份就對不上了） */
+  let keptStill = 0
   try {
     for (const chunkId of targets) {
       try {
-        const res = await apiFetch<{ status?: string }>(`/api/ai/knowledge/${chunkId}/reindex`, { method: 'POST' })
-        if (res?.status !== 'failed') ok++
+        const res = await apiFetch<{ status?: string; keptPrevious?: boolean }>(`/api/ai/knowledge/${chunkId}/reindex`, { method: 'POST' })
+        if (res?.keptPrevious === true) keptStill++
+        else if (res?.status !== 'failed') ok++
       }
       catch { /* 這一條沒打成：算還是沒學會，接著打下一條 */ }
     }
+    const failedStill = targets.length - ok - keptStill
     showToast(ok === targets.length
       ? `${ok} 條都學會了`
-      : `學會 ${ok} 條；${targets.length - ok} 條還是沒學會——改一下內容再存，或聯絡我們`, ok === targets.length ? 'success' : 'warning')
+      : `學會 ${ok} 條`
+        + (failedStill ? `；${failedStill} 條還是沒學會——改一下內容再存，或聯絡我們` : '')
+        + (keptStill ? `；${keptStill} 條還是沒學會，${KB_KEPT_PREVIOUS_TEXT}` : ''), ok === targets.length ? 'success' : 'warning')
     if (selectedId.value === id) await loadSourceDetail(id)
     void loadHealth(true)
   }
@@ -4685,17 +4718,20 @@ async function reindexAll() {
     let cursor: string | null = null
     let indexed = 0
     let failed = 0
+    let kept = 0
     do {
       // res 顯式標型:cursor ↔ res.nextCursor 互相參照會讓 TS 推導成循環(TS7022)
-      const res: { batch: number; indexed: number; failed: number; nextCursor: string | null } = await apiFetch(
+      const res: { batch: number; indexed: number; failed: number; kept?: number; nextCursor: string | null } = await apiFetch(
         '/api/ai/knowledge/reindex-all',
         { method: 'POST', body: cursor ? { cursor } : {} },
       )
       indexed += res.indexed
       failed += res.failed
+      kept += res.kept ?? 0
       cursor = res.nextCursor
     } while (cursor)
-    showToast(`重新學習完成:${indexed} 條成功${failed ? `、${failed} 條失敗(可在知識上個別重試)` : ''}`, failed ? 'warning' : 'success')
+    // `C-351`：本來學好、這次沒學成的 AI 照樣用原本的，系統會自己再學（超管看得到的數字照實分開講）
+    showToast(`重新學習完成:${indexed} 條成功${kept ? `、${kept} 條沒學成先用原本的(系統會自己再學)` : ''}${failed ? `、${failed} 條失敗(可在知識上個別重試)` : ''}`, failed ? 'warning' : 'success')
     if (selectedId.value) await loadSourceDetail(selectedId.value)
   }
   catch (err: any) {
@@ -4836,6 +4872,7 @@ function openEditChunk(chunk: ChunkRow, resolveQuery = '', reference = '') {
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
   chunkEditRetryCount.value = chunk.retryCount ?? 0
+  chunkEditRelearnState.value = chunk.relearnState ?? ''
   chunkEditLockedAtMs.value = chunk.manuallyEditedAtMs || 0
   chunkEnabled.value = chunk.status !== 'disabled'
   chunkActiveUntil.value = chunk.activeUntilMs ? ymdLabel(chunk.activeUntilMs) : ''
@@ -4895,18 +4932,21 @@ async function reindexChunkFromModal() {
      *    return 不是 throw）。原本一律跳「已重新學習」，於是 AI 服務忙碌時按下去，
      *    畫面說學會了、卡其實還是失敗——客人問到照樣答不出來。
      */
-    const res = await apiFetch<{ status?: string; failureReason?: string }>(
+    const res = await apiFetch<{ status?: string; failureReason?: string; keptPrevious?: boolean }>(
       `/api/ai/knowledge/${chunkEditingId.value}/reindex`,
       { method: 'POST' },
     )
     // ⚠️ 判「失敗」看 status === 'failed',不是「不等於 indexed」（2026-09-03 code review 抓到）:
     //    停用中的卡重算成功時回的是 'disabled'（刻意的,停用卡不落 failed 才不會被重試佇列復活）,
     //    用不等式判會把那種成功報成「還是沒學起來」。
-    const learned = res?.status !== 'failed'
+    // ⛔ 也要看 keptPrevious（`C-351`）：本來學好、這次又沒學成的回的是 'indexed'（AI 照樣用原本的）——只看 status 會報成「學會了」
+    const kept = res?.keptPrevious === true
+    const learned = res?.status !== 'failed' && !kept
+    const why = plainIndexFailure(res?.failureReason).text
     // `D-129`：不講「重新學習」；原因翻成白話（原文多半是英文）
     showToast(
-      learned ? 'AI 學會這一條了' : `還是沒學會：${plainIndexFailure(res?.failureReason).text}`,
-      learned ? 'success' : 'error',
+      learned ? 'AI 學會這一條了' : kept ? `還是沒學會：${why}；${KB_KEPT_PREVIOUS_TEXT}` : `還是沒學會：${why}`,
+      learned ? 'success' : kept ? 'warning' : 'error',
     )
     if (selectedId.value) await loadSourceDetail(selectedId.value)
     const updated = chunks.value.find(c => c.id === chunkEditingId.value)
@@ -4914,6 +4954,7 @@ async function reindexChunkFromModal() {
       chunkEditStatus.value = updated.status
       chunkEditFailureReason.value = updated.failureReason ?? ''
       chunkEditRetryCount.value = updated.retryCount ?? 0
+      chunkEditRelearnState.value = updated.relearnState ?? ''
     }
     /**
      * 修好一條就把體檢一起刷新（`D-41` P1⑦，2026-09-03 修）。

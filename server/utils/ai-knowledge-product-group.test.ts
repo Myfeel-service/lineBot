@@ -482,7 +482,7 @@ describe('relearnPendingProductSources（改組名中途關頁、沒學完的，
   it('沒有記號＝什麼都不做（平常每 10 分鐘就是兩個空查詢）', async () => {
     seed()
     const r = await run()
-    expect(r).toEqual({ foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 })
+    expect(r).toEqual({ foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, kept: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 })
     expect(runIndexOnChunk).not.toHaveBeenCalled()
     expect(writeAuditLog).not.toHaveBeenCalled()
   })

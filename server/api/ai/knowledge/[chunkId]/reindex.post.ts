@@ -38,8 +38,11 @@ export default defineEventHandler(async (event) => {
     actor: 'human',
     action: 'knowledge.reindex',
     targetId: chunkId,
-    after: { title: String(data.title ?? ''), cardStatus: result.status },
-    ...(result.failureReason ? { note: `還是沒學成功：${result.failureReason}` } : {}),
+    after: { title: String(data.title ?? ''), cardStatus: result.status, ...(result.keptPrevious ? { keptPrevious: true } : {}) },
+    // `C-351`：本來學好、這次又沒學成的，AI 照樣用原本的（status 仍是 indexed）——紀錄上講清楚，不然看起來像「可用」又「沒學成」
+    ...(result.failureReason
+      ? { note: `還是沒學成功：${result.failureReason}${result.keptPrevious ? '（AI 先用原本學好的）' : ''}` }
+      : {}),
   }, db)
 
   return result

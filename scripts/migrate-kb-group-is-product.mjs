@@ -352,15 +352,19 @@ async function applyPlan(plan) {
   // 5. 每一份照它現在所在那一組換商品名、重新學習（同伺服器搬組那一支，稽核記成系統）
   let indexed = 0
   let failed = 0
+  // `C-351`：本來學好、這次沒學成的 AI 照樣用原本的（不下架），排程會自己再學——跟「失敗」分開數
+  let kept = 0
   for (const c of plan.changes) {
     if (c.to === c.from) continue
     const r = await syncSourceProductWithGroup(db, workspaceId, c.source.id, { uid: '', actor: 'system' })
     if (r.changed) {
       indexed += r.relearned.indexed
       failed += r.relearned.failed
-      console.log(`  ${q(c.source.name)}：${q(r.previous)} → ${q(r.productName)}，學 ${r.relearned.indexed} 條${r.relearned.failed ? `、失敗 ${r.relearned.failed}` : ''}`)
+      kept += r.relearned.kept ?? 0
+      console.log(`  ${q(c.source.name)}：${q(r.previous)} → ${q(r.productName)}，學 ${r.relearned.indexed} 條${r.relearned.failed ? `、失敗 ${r.relearned.failed}` : ''}${r.relearned.kept ? `、沒學成先用原本的 ${r.relearned.kept}` : ''}`)
     }
   }
+  if (kept) console.log(`  （${kept} 條沒學成、AI 先用原本學好的，排程每 10 分鐘自己再學）`)
   // 6. 商品名清單重建成現在的商品分組名
   await db.collection('knowledgeProductIndex').doc(workspaceId).set({ names: plan.productGroupNames }, { merge: true })
   await audit(`搬家（D-127 分組就是商品）做完：商品名改成組名 ${plan.changes.filter(c => c.to !== c.from).length} 份、重新學習 ${indexed} 條${failed ? `（失敗 ${failed} 條）` : ''}`)

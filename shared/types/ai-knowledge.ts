@@ -1,4 +1,5 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
+import type { KnowledgeRelearnState } from '../knowledge-relearn'
 
 /** Firestore Vector Search 的向量欄位型別（768 dim） */
 export type EmbeddingVector = FirebaseFirestore.VectorValue
@@ -46,6 +47,12 @@ export interface KnowledgeChunkDoc {
   failureReason?: string
   /** 連續索引失敗次數；超過上限後排程不再自動重試（手動 reindex 不受限，成功即歸零） */
   retryCount?: number
+  /**
+   * 重學沒成、AI 先用原本學好的那份（`C-351`）：status 仍是 indexed、向量是上一次的。
+   * 'retrying'＝排程會自己再學；'exhausted'＝試完 5 次（畫面給「再試一次」）。學好了／內容改了就拿掉。
+   * 規則與講法在 shared/knowledge-relearn。
+   */
+  relearnState?: KnowledgeRelearnState
   /** 來源 doc ID；手打輸入則為 null */
   sourceId: string | null
   /**

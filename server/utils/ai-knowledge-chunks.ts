@@ -4,6 +4,7 @@
  * 設計重點：
  * - Collection 走「top-level + workspaceId 欄位」與既有 autoReplies/conversations 一致
  * - 寫入流程：先寫 pending → 同步呼叫 embed → 成功 indexed / 失敗 failed
+ *   （本來就學好、AI 正在用的那一條**重學**沒成：維持 indexed＋原本的向量、記 relearnState，見 runIndexOnChunk，`C-351`）
  * - 同步寫入時間預期 ~300-500ms（Gemini embed ~200ms + Firestore 2 次寫入）
  * - 排程任務會掃 pending 太久或 failed 的卡重新嘗試
  */
@@ -13,7 +14,7 @@ import { getMaintenanceBudgetStatus, recordAiUsage } from './ai-usage'
 import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
 import { writeAuditLog } from './audit-log'
 import type { KnowledgeChunkDoc, KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
-import { KNOWLEDGE_MAX_AUTO_RETRIES } from '~~/shared/knowledge-relearn'
+import { KNOWLEDGE_MAX_AUTO_RETRIES, relearnStateAfterFailure, type KnowledgeRelearnState } from '~~/shared/knowledge-relearn'
 
 export const KNOWLEDGE_CHUNKS_COLLECTION = 'knowledgeChunks'
 
@@ -237,7 +238,7 @@ interface UpdateChunkParams extends Omit<ChunkInput, 'tags'> {
 export async function updateKnowledgeChunk(
   db: Firestore,
   params: UpdateChunkParams,
-): Promise<{ status: KnowledgeChunkStatus; failureReason?: string }> {
+): Promise<{ status: KnowledgeChunkStatus; failureReason?: string; keptPrevious?: true }> {
   const ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(params.chunkId)
   const now = FieldValue.serverTimestamp()
 
@@ -282,7 +283,34 @@ export async function updateKnowledgeChunk(
     return { status: (existing.status as KnowledgeChunkStatus) ?? 'pending' }
   }
 
+  /**
+   * `C-351`：標題、內容都沒變、只是**系統**補了客人問法（補問法、重新同步時沒變的那幾條回填問法；manualEdit=false）——
+   * 原本學好的那份照樣對得上這一條，⛔ 不清向量、不落 pending：重學這一下照樣讓 AI 用原本的，
+   * 學成了才換新的；沒成就留「還要重學」給排程（runIndexOnChunk 的 hadUsable 那條路）。
+   * 「還要重學」先寫上去再學：學到一半程式被停掉，排程也找得到它（以前那種落 pending 的，排程靠「pending 太久」撿）。
+   * ⛔ 店家自己手改問法（manualEdit=true）不算：他改問法就是要換掉「哪些問題會撈到這一條」，留著舊的＝他刪掉的那句照樣撈得到。
+   */
+  const keepPreviousWhileRelearning = !params.contentChanged && !params.manualEdit
+    && existing.status === 'indexed' && existing.embedding != null
+  if (keepPreviousWhileRelearning) {
+    await ref.update({
+      ...baseUpdate,
+      relearnState: 'retrying' satisfies KnowledgeRelearnState,
+      failureReason: FieldValue.delete(),
+      // 要學的東西換了（新問法）＝自動重試的 5 次從頭算（同下面內容改了那一段）
+      retryCount: FieldValue.delete(),
+    })
+    return runIndexOnChunk(
+      db,
+      params.chunkId,
+      buildEmbeddingText(params.title, params.content, questions),
+      typeof existing.workspaceId === 'string' ? existing.workspaceId : undefined,
+    )
+  }
+
   // 內容（或 questions）變動：先標 pending、清掉舊向量，再跑 embed。
+  // `C-351`：內容改過的⛔ 不保留舊向量（舊的是照舊內容算的：配上新內容，會被拿去答舊內容的問題、新內容的問題又撈不到）——
+  // 學失敗照舊標 failed、系統會自己再試（`D-129`）；「還要重學」的記號也一起拿掉（要學的已經是新的一條）。
   // ⛔停用卡例外：status 保持 'disabled' 不落 pending——「停用」是店家的意圖、
   // 內容更新不是重新啟用。這裡若寫 pending，下游 runIndexOnChunk 讀到的就不是
   // disabled，守門（停用卡不復活）會失效；被 retry 排程撿走也會直接復活。
@@ -299,6 +327,7 @@ export async function updateKnowledgeChunk(
     // 內容換了＝新的一條，自動重試的 5 次從頭算（`D-129`）：試完 5 次沒學會的，畫面建議他「改一下內容再存」——
     // 不歸零的話，改完剛好碰到 AI 服務忙、失敗一次就又直接變成「要人按」，排程也不會再撿它
     retryCount: FieldValue.delete(),
+    relearnState: FieldValue.delete(),
   })
 
   return runIndexOnChunk(
@@ -475,12 +504,26 @@ export function pickCardProduct(title: string, productNames: string[], fallback:
   return best || fallback
 }
 
+/**
+ * runIndexOnChunk 的結果。
+ * keptPrevious＝重學沒成、保留原本學好的那份讓 AI 照樣用（`C-351`）：status 是 'indexed'（卡片真的狀態），
+ * ⛔ 但這一次**沒有學成**——呼叫端算「學會幾條」、跳「學會了」之前一定要先看這一格。
+ */
+export interface ChunkIndexResult {
+  id: string
+  status: KnowledgeChunkStatus
+  failureReason?: string
+  embeddingTokens: number
+  keptPrevious?: true
+  relearnState?: KnowledgeRelearnState
+}
+
 export async function runIndexOnChunk(
   db: Firestore,
   chunkId: string,
   embeddingText: string,
   workspaceId?: string,
-): Promise<{ id: string; status: KnowledgeChunkStatus; failureReason?: string; embeddingTokens: number }> {
+): Promise<ChunkIndexResult> {
   const ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId)
   // 讀一次現況：守門（停用卡不復活）與產品名解析共用這次讀取。
   // 讀失敗時 cd=null → 不守門照原文走（跟舊行為一致；讀都讀不到，embed 多半也會失敗）。
@@ -504,8 +547,18 @@ export async function runIndexOnChunk(
    */
   const wasDraft = cd?.status === 'draft'
   const keptStatus: KnowledgeChunkStatus | null = wasDisabled ? 'disabled' : wasDraft ? 'draft' : null
+  /**
+   * `C-351`：這一條**本來就學好、AI 正在用**（indexed＋有向量）＝這一次是**重學**（改組名、換分組、搬家、超管全部重學、
+   * 排程補學、系統補問法）。重學碰上 AI 忙，以前直接寫成 failed＝回客人的檢索（只撈 indexed）找不到它，
+   * 要等排程補好（10-16 搬家 261 條下架約 7 分鐘）。現在失敗時保留原本那份照樣讓 AI 用、記一格「還要重學」，見 catch 那段。
+   * ⚠️ 「內容改過」不會走到這裡：updateKnowledgeChunk 改了標題／內容（或店家手改問法）會先清掉向量、落 pending
+   *    （舊向量是照舊內容算的，配新內容會被拿去答舊的問題、新的問題又撈不到），那種失敗照舊標 failed。
+   */
+  const hadUsable = !keptStatus && cd?.status === 'indexed' && cd?.embedding != null
   // 解析並前置產品名：卡標題自己有品名 → 逐卡認領（優先）；否則退回來源層 productName。沒有就維持原樣。
   let productName = ''
+  /** 產品名有解析完（沒在半路丟錯）——重學沒成、保留原本那份時，只有解析完才把卡上的商品名換成新的 */
+  let productResolved = false
   try {
     if (cd) {
       const sourceProduct = await resolveSourceProductName(db, cd?.sourceId ?? null, cd?.workspaceId)
@@ -517,6 +570,7 @@ export async function runIndexOnChunk(
         const { aliases } = await getProductAliases(db, cd.workspaceId)
         productName = canonicalProductName(productName, aliases)
       }
+      productResolved = true
     }
   }
   catch { /* 產品名解析失敗就照原 embeddingText 走 */ }
@@ -547,6 +601,8 @@ export async function runIndexOnChunk(
       updatedAt: FieldValue.serverTimestamp(),
       failureReason: FieldValue.delete(),
       retryCount: FieldValue.delete(),
+      // `C-351`：新的學好了，「還要重學」的記號拿掉（排程不再撿、畫面不再講）
+      relearnState: FieldValue.delete(),
     })
     if (workspaceId) {
       // fire-and-forget：記帳失敗不影響索引結果（recordAiUsage 內部已吞錯）
@@ -560,6 +616,24 @@ export async function runIndexOnChunk(
     // 429＝維運額度守門擋下（gemini.ts 出口；Gemini 自己的 429 會被包成 502），不是這張卡的錯：
     // 不耗 retryCount，下月額度恢復後自動重試得回來；耗掉的話 5 輪後永久 failed、額度回來也不自癒。
     const isBudgetBlock = Number(err?.statusCode) === 429
+    if (hadUsable) {
+      /**
+       * `C-351`：重學沒成——⛔ 不落 failed、⛔ 不清向量（status、embedding、lastIndexedAt 一格都不寫）：
+       * AI 照樣用原本學好的那份回客人。另外記「還要重學」＋次數（跟學失敗同一個 5 次上限，同樣 429 不耗次數），
+       * 排程 retryStuckChunks 撿 relearnState='retrying' 的自己再學；試完 5 次＝'exhausted'，畫面才給「再試一次」。
+       * 卡上的商品名照這一次解析的換成新的（產品鎖、回答時標「產品：」都看這一格）：商品名是店家剛剛的決定
+       * （換了分組＝這份講的是另一台），向量裡的舊商品名只影響「撈不撈得到」，等新的學好才跟上。
+       */
+      const next = relearnStateAfterFailure(cd?.retryCount, !isBudgetBlock)
+      await ref.update({
+        failureReason: reason,
+        ...(isBudgetBlock ? {} : { retryCount: next.retryCount }),
+        relearnState: next.relearnState,
+        ...(productResolved ? { productName: productName || FieldValue.delete() } : {}),
+        updatedAt: FieldValue.serverTimestamp(),
+      }).catch(() => {})
+      return { id: chunkId, status: 'indexed', keptPrevious: true, relearnState: next.relearnState, failureReason: reason, embeddingTokens: 0 }
+    }
     await ref.update({
       // 停用卡 embed 失敗也不落 failed：落了就會進 retry 佇列，重試成功又寫回 indexed＝復活。
       // 向量可能因此過舊/為空——安全網在 settings.post.ts：啟用時 embedding 為空會擋下並指去「重新索引」。
@@ -842,10 +916,15 @@ export type RetryStuckChunksResult = {
   deferred: number
   /** 開頭連續失敗、一條都沒成功 → 這輪先停（RETRY_CIRCUIT_BREAK_AFTER） */
   circuitBroken: boolean
+  /** `C-351`：重學沒成、AI 先用原本學好的那幾條，這輪學好新的幾條（也算在 indexed 裡） */
+  keptRelearned: number
+  /** `C-351`：重學這一輪剛好試完 5 次、AI 還是先用原本的（⛔ 不算在 exhausted：那一格是「客人問到找不到、要人看」） */
+  keptExhausted: number
 }
 
 /**
  * 撿出 pending 卡住或 failed 的卡片重試。供排程任務呼叫（正式站走 /api/cron/run-tasks，每 10 分鐘一輪）。
+ * 也撿「重學沒成、AI 先用原本學好的」（relearnState='retrying'，`C-351`）：學好了換新的；又沒成就照樣先用原本的、次數 +1。
  * 份量、併發、時限、熔斷的數字與理由見 RETRY_BATCH 上面那段（`D-129`）。
  * 有學會的、或這一輪剛好試完 5 次的，每個帳號記一筆操作紀錄（系統排程）——不然操作紀錄只看得到
  * 當初「失敗 N 條」那一筆，看的人以為還壞著（`C-335` 10-17 老闆就是這樣問的）。
@@ -871,7 +950,8 @@ export async function retryStuckChunks(
   const startedAt = now()
   const cutoff = new Date(startedAt - stuckMs)
   // ⛔ 不讀向量：學過又失敗的卡身上還帶著舊的 768 維向量，一輪 200 條整包拉回來是白花的流量
-  const FIELDS = ['workspaceId', 'title', 'content', 'questions', 'retryCount'] as const
+  // status：分得出是「學失敗／卡住」還是「重學沒成、先用原本的」（`C-351`）——兩種失敗了寫法不一樣
+  const FIELDS = ['workspaceId', 'title', 'content', 'questions', 'retryCount', 'status'] as const
 
   // 撿 failed。必須在查詢層就排除 retryCount 達上限的卡：只靠撈出後 skip 的話，
   // 全平台累積 ≥maxBatch 張永久失敗卡（一份爛 PDF 就夠）後，每次撈到的都是同一批
@@ -893,10 +973,24 @@ export async function retryStuckChunks(
     .limit(maxBatch)
     .get()
 
-  const scanned = failedSnap.docs.length + pendingSnap.docs.length
+  /**
+   * 撿重學沒成、AI 先用原本學好的（`C-351`）：relearnState='retrying'。
+   * 排在最後：學失敗的、卡住的客人問到是**找不到**，這種客人問到照樣答得出來——名額先給前兩種。
+   * 兩個等值條件走自動索引合併（同 relearnPendingProductSources 那一句），不用另建複合索引；
+   * 試完 5 次的值是 'exhausted'，不會被撿到（不用 retryCount 的範圍條件也不會被永久失敗的塞滿名額）。
+   * status='indexed'：重學沒成之後被停用的那一條不撿（停用是店家的意思；打開之後記號還在，那時才撿）。
+   */
+  const keptSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+    .where('relearnState', '==', 'retrying' satisfies KnowledgeRelearnState)
+    .where('status', '==', 'indexed')
+    .select(...FIELDS)
+    .limit(maxBatch)
+    .get()
+
+  const scanned = failedSnap.docs.length + pendingSnap.docs.length + keptSnap.docs.length
   const seen = new Set<string>()
   const queue: Array<{ id: string; ref: any; data: any }> = []
-  for (const doc of [...failedSnap.docs, ...pendingSnap.docs]) {
+  for (const doc of [...failedSnap.docs, ...pendingSnap.docs, ...keptSnap.docs]) {
     if (seen.has(doc.id)) continue
     seen.add(doc.id)
     queue.push({ id: doc.id, ref: doc.ref, data: doc.data() })
@@ -907,14 +1001,18 @@ export async function retryStuckChunks(
   let skippedPermanent = 0
   let skippedBudget = 0
   let exhausted = 0
+  let keptRelearned = 0
+  let keptExhausted = 0
   let attempts = 0
   let attemptFailures = 0
   let circuitBroken = false
   const tokensByWorkspace = new Map<string, number>()
-  const perWorkspace = new Map<string, { indexed: number; failed: number; exhausted: number }>()
-  const bump = (ws: string, k: 'indexed' | 'failed' | 'exhausted') => {
+  // kept*＝重學沒成、AI 先用原本的那幾條（`C-351`）：操作紀錄要分開講——它們不是「沒學會」，是「新的還沒學好」
+  type WsStats = { indexed: number; failed: number; exhausted: number; keptIndexed: number; keptFailed: number; keptExhausted: number }
+  const perWorkspace = new Map<string, WsStats>()
+  const bump = (ws: string, k: keyof WsStats) => {
     if (!ws) return
-    const s = perWorkspace.get(ws) ?? { indexed: 0, failed: 0, exhausted: 0 }
+    const s = perWorkspace.get(ws) ?? { indexed: 0, failed: 0, exhausted: 0, keptIndexed: 0, keptFailed: 0, keptExhausted: 0 }
     s[k]++
     perWorkspace.set(ws, s)
   }
@@ -939,16 +1037,26 @@ export async function retryStuckChunks(
       const item = queue[cursor++]!
       const data = item.data
       const prevCount = Number(data?.retryCount ?? 0) || 0
+      /** 重學沒成、AI 先用原本的那種（`C-351`）：⛔ 下面任何一步都不可以把它寫成 failed——AI 正在用它 */
+      const kept = data?.status === 'indexed'
 
       // 連續失敗超過上限 → 非暫時性錯誤（內容問題等），停止自動重試。
       // 卡片維持 failed 狀態，使用者手動 reindex 仍可重試（成功會歸零 retryCount）。
       if (prevCount >= MAX_AUTO_RETRIES) {
+        // 先用原本的那種，次數滿了記號卻還是 retrying（兩個請求同時寫）：改成試完了，不然每一輪都撿到它、佔名額
+        if (kept) await item.ref.update({ relearnState: 'exhausted' satisfies KnowledgeRelearnState }).catch(() => {})
         skippedPermanent++
         continue
       }
 
       const ws = typeof data?.workspaceId === 'string' ? data.workspaceId : ''
       const content = String(data?.content ?? '')
+      if (!content && kept) {
+        // 先用原本的那種沒內容（理論上不會有）：記號拿掉就好，⛔ 不標 failed（那會把 AI 正在用的那一條下架）
+        await item.ref.update({ relearnState: FieldValue.delete() }).catch(() => {})
+        skippedPermanent++
+        continue
+      }
       if (!content) {
         // 空內容推不動：當場標 failed＋滿額 retryCount 讓它離開佇列。原本只 failed++ 不動文件，
         // updatedAt 永遠不變 → 這張卡每輪都排在「最舊」最前面，把別租戶真正卡住的卡
@@ -979,10 +1087,23 @@ export async function retryStuckChunks(
         content,
         Array.isArray(data?.questions) ? data.questions.map(String) : [],
       )))
-      if (result.status === 'indexed') {
+      // ⛔ 看 keptPrevious：重學又沒成的那種回的也是 status 'indexed'（卡片真的狀態），但這一次沒學成
+      if (result.status === 'indexed' && !result.keptPrevious) {
         indexed++
-        bump(ws, 'indexed')
+        bump(ws, kept ? 'keptIndexed' : 'indexed')
+        if (kept) keptRelearned++
         if (ws) tokensByWorkspace.set(ws, (tokensByWorkspace.get(ws) ?? 0) + result.embeddingTokens)
+      }
+      else if (result.keptPrevious) {
+        failed++
+        bump(ws, 'keptFailed')
+        // 剛好用完 5 次（這一刻起那一條才給「再試一次」）；額度擋下的不耗次數、記號還是 retrying
+        if (result.relearnState === 'exhausted') {
+          keptExhausted++
+          bump(ws, 'keptExhausted')
+        }
+        attemptFailures++
+        if (indexed === 0 && attemptFailures >= breakAfter) circuitBroken = true
       }
       else {
         failed++
@@ -1010,17 +1131,32 @@ export async function retryStuckChunks(
 
   // 操作紀錄（系統排程）：有學會的、或剛好試完 5 次的才記——只是又失敗一次（還會再試）不記，不然服務出事時每 10 分鐘洗一筆
   for (const [ws, s] of perWorkspace) {
-    if (!s.indexed && !s.exhausted) continue
-    const stillRetrying = s.failed - s.exhausted
+    const notes: string[] = []
+    if (s.indexed || s.exhausted) {
+      const stillRetrying = s.failed - s.exhausted
+      notes.push(`之前沒學會的知識，系統自己再試：學會 ${s.indexed} 條`
+        + (stillRetrying > 0 ? `、${stillRetrying} 條還沒學會（會再試）` : '')
+        + (s.exhausted > 0 ? `；${s.exhausted} 條試了 ${KNOWLEDGE_MAX_AUTO_RETRIES} 次都沒學會，要人看一下（知識庫「要處理的事」）` : ''))
+    }
+    // `C-351`：重學沒成、先用原本的那幾條——客人問到一直答得出來，這裡講的是「新的學好了沒」
+    if (s.keptIndexed || s.keptExhausted) {
+      const keptStill = s.keptFailed - s.keptExhausted
+      notes.push(`重學沒成、AI 先用原本學好的知識，系統自己再學：學好新的 ${s.keptIndexed} 條`
+        + (keptStill > 0 ? `、${keptStill} 條還沒學好（會再試）` : '')
+        + (s.keptExhausted > 0 ? `；${s.keptExhausted} 條試了 ${KNOWLEDGE_MAX_AUTO_RETRIES} 次都沒學好，AI 繼續用原本學好的` : ''))
+    }
+    if (!notes.length) continue
     await writeAuditLog({
       workspaceId: ws,
       uid: '',
       actor: 'system',
       action: 'knowledge.autoRetry',
-      after: { chunkIdsCount: s.indexed, failedItemsCount: s.failed },
-      note: `之前沒學會的知識，系統自己再試：學會 ${s.indexed} 條`
-        + (stillRetrying > 0 ? `、${stillRetrying} 條還沒學會（會再試）` : '')
-        + (s.exhausted > 0 ? `；${s.exhausted} 條試了 ${KNOWLEDGE_MAX_AUTO_RETRIES} 次都沒學會，要人看一下（知識庫「要處理的事」）` : ''),
+      after: {
+        chunkIdsCount: s.indexed + s.keptIndexed,
+        failedItemsCount: s.failed,
+        ...(s.keptIndexed || s.keptFailed ? { keptPreviousCount: s.keptFailed } : {}),
+      },
+      note: notes.join('。'),
     }, db)
   }
 
@@ -1035,5 +1171,7 @@ export async function retryStuckChunks(
     exhausted,
     deferred: Math.max(0, queue.length - processed),
     circuitBroken,
+    keptRelearned,
+    keptExhausted,
   }
 }

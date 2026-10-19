@@ -7,12 +7,18 @@ import {
   chunkRetryButtonShown,
   isAutoRetryExhausted,
   isAutoRetrying,
+  isKeptPreviousExhausted,
+  isKeptPreviousRelearning,
   KB_AUTO_RETRY_TEXT,
+  KB_KEPT_EXHAUSTED_LINE,
+  KB_KEPT_PREVIOUS_TEXT,
   KB_RETRY_BUTTON,
   KB_RETRY_EXHAUSTED_ADVICE,
   KB_RETRY_EXHAUSTED_TEXT,
   KNOWLEDGE_MAX_AUTO_RETRIES,
+  needsManualRetry,
   plainIndexFailure,
+  relearnStateAfterFailure,
 } from './knowledge-relearn'
 
 describe('還在自動再試 vs 試完了（按鈕只在用完才出現）', () => {
@@ -54,6 +60,45 @@ describe('還在自動再試 vs 試完了（按鈕只在用完才出現）', () 
     expect(chunkLearnState({ status: 'disabled', failureReason: 'Gemini 502' })).toBe('disabledNoVector')
     expect(chunkRetryButtonShown('disabledNoVector')).toBe(true)
     expect(chunkRetryButtonShown('none')).toBe(false)
+  })
+})
+
+describe('重學沒成、AI 先用原本學好的（`C-351`）', () => {
+  it('還會自己再學（retrying）：什麼都不講、不給按鈕；試完（exhausted）：給「再試一次」', () => {
+    expect(chunkLearnState({ status: 'indexed', relearnState: 'retrying', retryCount: 2, failureReason: 'Gemini 503' })).toBe('keptRetrying')
+    expect(chunkRetryButtonShown('keptRetrying')).toBe(false)
+    expect(chunkLearnState({ status: 'indexed', relearnState: 'exhausted', retryCount: 5, failureReason: 'Gemini 503' })).toBe('keptExhausted')
+    expect(chunkRetryButtonShown('keptExhausted')).toBe(true)
+    expect(isKeptPreviousRelearning({ status: 'indexed', relearnState: 'retrying' })).toBe(true)
+    expect(isKeptPreviousExhausted({ status: 'indexed', relearnState: 'exhausted' })).toBe(true)
+  })
+
+  it('⛔ 不算「學失敗、客人問到找不到」：體檢、小幫手紅燈、LINE 推播（isAutoRetryExhausted）不為它亮；「再試一次」的清單（needsManualRetry）有它', () => {
+    const c = { status: 'indexed', relearnState: 'exhausted', retryCount: 5 }
+    expect(isAutoRetryExhausted(c)).toBe(false)
+    expect(isAutoRetrying(c)).toBe(false)
+    expect(needsManualRetry(c)).toBe(true)
+    expect(needsManualRetry({ status: 'failed', retryCount: 5 })).toBe(true)
+    expect(needsManualRetry({ status: 'indexed', relearnState: 'retrying', retryCount: 2 })).toBe(false)
+  })
+
+  it('記號只認 indexed 的：被改成失敗、停用的那一條照它自己的狀態講', () => {
+    expect(chunkLearnState({ status: 'failed', relearnState: 'exhausted', retryCount: 1 })).toBe('retrying')
+    expect(chunkLearnState({ status: 'disabled', relearnState: 'retrying' })).toBe('none')
+  })
+
+  it('又沒成之後：次數 +1、第 5 次起 exhausted；額度擋下（429）不耗次數', () => {
+    expect(relearnStateAfterFailure(undefined, true)).toEqual({ retryCount: 1, relearnState: 'retrying' })
+    expect(relearnStateAfterFailure(3, true)).toEqual({ retryCount: 4, relearnState: 'retrying' })
+    expect(relearnStateAfterFailure(4, true)).toEqual({ retryCount: 5, relearnState: 'exhausted' })
+    expect(relearnStateAfterFailure(7, true)).toEqual({ retryCount: 8, relearnState: 'exhausted' })
+    expect(relearnStateAfterFailure(2, false)).toEqual({ retryCount: 2, relearnState: 'retrying' })
+    expect(relearnStateAfterFailure('亂寫', true)).toEqual({ retryCount: 1, relearnState: 'retrying' })
+  })
+
+  it('那一行字：接在「系統試了 5 次都沒學會」後面（同 `D-129`），⛔ 不出現「重新學習」', () => {
+    expect(KB_KEPT_EXHAUSTED_LINE).toBe('系統試了 5 次都沒學會，AI 先用原本學好的')
+    expect(KB_KEPT_PREVIOUS_TEXT).not.toContain('重新學習')
   })
 })
 
