@@ -168,12 +168,13 @@ export default defineNuxtConfig({
     /** 對外 HTTPS 原點（金流 Notify/Return 導回用）；與 clickTrackingBaseUrl 同源 */
     appBaseUrl: appPublicBaseUrl,
     /**
-     * LINE 通知裡要不要放「打開這段對話」的短網址（`C-270`／`D-103`⑦）。**預設關**。
-     * 2026-09-27 拍板「放，前提是先驗對話頁手機上堪用」——實測後台沒有手機版（390px 寬時側欄固定 240px、
-     * 對話頁只剩 150px，回覆那半邊看不到），前提沒過，所以程式做好但先不開。後台有手機版、
-     * 或老闆決定先開（電腦版 LINE 點得開）時，設 `NOTIFY_LINKS_ENABLED=true` 即可，不用改程式。
+     * LINE 通知裡要不要放「打開這段對話」的短網址（`C-270`／`D-103`⑦）。**預設開**（`D-105`，2026-10-19）。
+     * 2026-09-27 拍板「放，前提是先驗對話頁手機上堪用」；當時後台沒有手機版所以先關著，
+     * 10-19 對話頁做好手機版（清單→對話→回覆一層一層切）之後打開。
+     * 要關：設 `NOTIFY_LINKS_ENABLED=false`（也認 0／off／no），不用改程式。判斷在 `server/utils/notify-links.ts` 的 `notifyLinksFlagOn`。
+     * ⚠️ 原字串照收、不在這裡轉成布林：轉布林的那一刀放在有測試的地方。
      */
-    notifyLinksEnabled: process.env.NOTIFY_LINKS_ENABLED === 'true',
+    notifyLinksEnabled: process.env.NOTIFY_LINKS_ENABLED ?? '',
     /**
      * 交易通知信（AWS SES）。付款收據、扣款失敗、續扣提醒、額度用完會寄到客戶的帳務信箱。
      *

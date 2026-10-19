@@ -1,5 +1,13 @@
 <template>
-  <AdminSplitLayout class="conversations-page" :is-empty="!selectedUserId">
+  <!-- 手機（≤ 720）一次只看一邊（`D-105`，跟知識庫同一套 `mobileStack`）：沒點人看清單、點了看對話＋回覆框，
+       上面一顆「← 客服對話」回清單。從通知連結帶 ?userId= 進來時，還在找那一位的這一兩秒也停在對話那一邊（見 deepLinkUserId） -->
+  <AdminSplitLayout
+    class="conversations-page"
+    :is-empty="!selectedUserId && !(isPhone && deepLinkUserId)"
+    mobile-stack
+    mobile-back-label="客服對話"
+    @mobile-back="backToList"
+  >
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <!-- 側欄選單昨天改叫「客服對話」了，這裡跟著改：同一個東西同一個名字（G-27⑤） -->
@@ -513,14 +521,15 @@
               <div class="split-editor-title">{{ selectedUser?.displayName }}</div>
             </div>
           </div>
-          <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義） -->
+          <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義）。
+               手機上右邊沒有位置放那一欄，這顆一直在、按了從旁邊滑出來（見下面的 conv-customer-drawer） -->
           <el-button
-            v-if="selectedUserId && !customerPanelOpen"
+            v-if="selectedUserId && (isPhone || !customerPanelOpen)"
             size="small"
             text
             type="primary"
             class="conv-customer-reopen"
-            @click="customerPanelOpen = true"
+            @click="openCustomerPanel"
           >客人檔案 →</el-button>
         </div>
 
@@ -707,7 +716,8 @@
         <div v-if="canReply && isDraggingImage" class="conv-drop-hint">
           放開就把圖片帶進來，送出前還可以先看一眼
         </div>
-        <div v-if="msgLoading" class="split-sidebar-loading">
+        <!-- 從通知連結進來、還在找那一位（手機上這時已經停在對話這一邊）：轉圈，⛔ 不要先講「尚無對話內容」 -->
+        <div v-if="msgLoading || (deepLinkUserId && !selectedUserId)" class="split-sidebar-loading">
           <div class="spinner" />
         </div>
         <div v-else-if="!chatRows.length" class="split-empty-state">
@@ -1366,8 +1376,8 @@
           type="textarea"
           :autosize="{ minRows: 1, maxRows: 8 }"
           resize="none"
-          placeholder="輸入訊息（可含 emoji），Enter 送出、Shift + Enter 換行…"
-          :disabled="sending"
+          :placeholder="isPhone ? '輸入訊息…' : '輸入訊息（可含 emoji），Enter 送出、Shift + Enter 換行…'"
+          :disabled="sending || !selectedUserId"
           @keydown.enter="onInputEnter"
           @paste="onInputPaste"
         />
@@ -1379,8 +1389,10 @@
 
       <!-- 右側客人卡：**與好友頁同一個元件**（改一次兩邊都變）。
            ⛔ 按需載入——它自己在 userId 變動時撈一次，**沒有掛進 30 秒清單輪詢**
-              （那是 2026-08-11 讀取費暴衝的形狀）。 -->
-      <aside v-if="selectedUserId && customerPanelOpen" class="conv-customer">
+              （那是 2026-08-11 讀取費暴衝的形狀）。
+           手機上不掛這一欄（放不下），改成按「客人檔案」才滑出來的抽屜（下面 conv-customer-drawer）——
+           ⛔ 不要用 CSS 藏起來：藏起來的那一份照樣在背景讀一次，按開抽屜又讀一次。 -->
+      <aside v-if="selectedUserId && customerPanelOpen && !isPhone" class="conv-customer">
         <div class="conv-customer__hd">
           <span class="conv-customer__title">客人檔案</span>
           <button type="button" class="conv-customer__collapse" title="收起客人檔案" @click="customerPanelOpen = false">✕</button>
@@ -1400,6 +1412,30 @@
       </div>
     </template>
   </AdminSplitLayout>
+
+  <!-- 手機上的客人檔案（`D-105`）：電腦版右邊那一欄的同一張卡，按「客人檔案」才從右邊滑出來蓋住對話，✕ 收回。
+       destroy-on-close＝收起來就卸掉：留著的話換下一位客人它會在背景再讀一次（同上面那一欄「按需載入」的理由） -->
+  <el-drawer
+    v-if="isPhone"
+    v-model="phoneCustomerOpen"
+    title="客人檔案"
+    direction="rtl"
+    size="100%"
+    append-to-body
+    destroy-on-close
+    class="conv-customer-drawer"
+  >
+    <AdminCustomerCard
+      v-if="selectedUserId"
+      :user-id="selectedUserId"
+      :api-fetch="apiFetch"
+      :fallback-name="selectedUser?.displayName"
+      :fallback-picture="selectedUser?.pictureUrl"
+      :show-last-activity="false"
+      :show-assignee="false"
+      @open-conversation="openSessionFromPhoneCustomer"
+    />
+  </el-drawer>
 
   <el-dialog
     v-model="mediaDialogVisible"
@@ -1579,6 +1615,7 @@ import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 import type { TimelineItem, TimelineResponse, TimelineSessionMeta } from '~~/shared/types/conversation-timeline'
 import { humanFollowedAiTurns, humanReplyAfter, type ReplyLookupItem } from '~~/shared/ai-wrong-prompt'
 import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
+import { deepLinkUserIdFromQuery } from '~~/shared/conversation-deep-link'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
 /** 與 `useWorkspace().apiFetch` 相同簽章，由路由頁注入（含 workspaceId）。 */
@@ -1590,7 +1627,10 @@ const { apiFetch } = props
 const { can, assertCan } = useAdminOperateGuard()
 
 const route = useRoute()
+const router = useRouter()
 const workspaceId = computed(() => String(route.params.workspaceId || ''))
+/** 手機版面（≤ 720，`D-105`）：一次只看一邊、客人檔案改抽屜。排版交給 CSS，這個只管「換哪個元件」 */
+const isPhone = usePhoneLayout()
 
 /**
  * 未讀紅點的兩個記號，都只存在這台電腦的 localStorage（每個 workspace 一份）：
@@ -2227,6 +2267,16 @@ const selectedUser = ref<ConvItem | null>(null)
  * 正是這個面板存在的理由（老闆 08-24 拍板照 LINE 的版面做）。
  */
 const customerPanelOpen = useState('conv-customer-panel-open', () => true)
+/** 手機上的客人檔案抽屜開著沒（`D-105`）。⛔ 跟上面那個分開：電腦版「預設開」，手機上一進來就蓋住對話不行 */
+const phoneCustomerOpen = ref(false)
+// 轉成橫的、跨過 720 變電腦版：抽屜不在了，開著的狀態也收掉（不然轉回來它自己又跳出來）
+watch(isPhone, (phone) => { if (!phone) phoneCustomerOpen.value = false })
+/**
+ * 從網址帶 ?userId= 進來、還在找那一位（`D-105`）。找到或找不到都會清掉（見 onMounted）。
+ * 手機上靠它在第一個畫面就停在對話那一邊——LINE 通知的「打開這段對話」點進來，不先閃一下清單。
+ * ⛔ 初值在 setup 當下就給：等 onMounted 才設，第一個畫面已經照「沒選人」畫出清單了。
+ */
+const deepLinkUserId = ref(deepLinkUserIdFromQuery(route.query))
 const activeTab = ref<TabValue>('all')
 
 /** 現在選的是不是收在下拉裡那三個（是的話下拉那顆要亮起來，並顯示它的名字） */
@@ -4432,7 +4482,8 @@ async function selectUserById(userId: string, opts?: { sessionId?: string, messa
     return
   }
   // 找不到就要說:靜默不動的話,從監控頁按「開對話」會像連結壞掉
-  showToast('找不到這位客人的對話，請用左側搜尋看看', 'warning')
+  // ⛔ 不講「左側」：手機上清單不在左邊（`D-105`），兩邊都成立的講法是「清單上方」
+  showToast('找不到這位客人的對話，請用清單上方的搜尋找找看', 'warning')
 }
 
 /**
@@ -4507,6 +4558,41 @@ async function openSessionById(sessionId: string) {
   sessionMeta.value = null
   aiContextSeenAtMs = 0
   await loadTimeline(userId, { sessionId })
+}
+
+// ── 手機：一次只看一邊（`D-105`）──────────────────────────────────────
+
+/** 「客人檔案 →」：電腦版是把右邊那一欄打開，手機上是從右邊滑出來的抽屜 */
+function openCustomerPanel() {
+  if (isPhone.value) phoneCustomerOpen.value = true
+  else customerPanelOpen.value = true
+}
+
+/** 抽屜裡「AI 建議 → 看這段對話」：先收抽屜，不然切過去的那一場被它蓋著 */
+function openSessionFromPhoneCustomer(sessionId: string) {
+  phoneCustomerOpen.value = false
+  if (sessionId) void openSessionById(sessionId)
+}
+
+/**
+ * 手機上「← 客服對話」：回清單＝放下這位客人（清單那一邊才會出來，見 AdminSplitLayout 的 mobileStack）。
+ * 打到一半的字先收進這位客人的抽屜，下次點回來還在（跟換人同一套，見 selectUser）。
+ * ⛔ 網址上的 ?userId= 一起拿掉：留著的話重新整理又被帶回這一位。
+ */
+function backToList() {
+  stashDraft()
+  inputText.value = ''
+  phoneCustomerOpen.value = false
+  // 還在找通知連結那一位就按了返回：那一位找到之後不要再把人拉回去（見 onMounted）
+  deepLinkUserId.value = ''
+  selectedUserId.value = null
+  selectedUser.value = null
+  selectedSessionId.value = null
+  sessionMeta.value = null
+  allTabActiveSession.value = null
+  highlightMessageId.value = ''
+  if (route.query.userId || route.query.sessionId)
+    void router.replace({ query: { ...route.query, userId: undefined, sessionId: undefined } })
 }
 
 // ── 對話時間軸：一段一段讀 ──────────────────────────────────────────
@@ -4765,6 +4851,8 @@ async function leaveSessionSegment(userId: string) {
  */
 function onInputEnter(evt: Event | KeyboardEvent) {
   const e = evt as KeyboardEvent
+  // 手機（`D-105`）：鍵盤上沒有 Shift，Enter 拿去送出就永遠打不出第二行——照 LINE 手機版，Enter 換行、按「送出」才送
+  if (isPhone.value) return
   if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return
   if (e.isComposing || e.keyCode === 229) return
   e.preventDefault()
@@ -6149,10 +6237,14 @@ onMounted(() => {
    * 最新那場多半不是同一場，落錯場等於看了也判斷不了。
    */
   const qSessionId = String(route.query.sessionId || '')
-  void loadList('reset').then(() => {
-    if (qUserId && activeTab.value === 'all')
-      void selectUserById(qUserId, qSessionId ? { sessionId: qSessionId } : undefined)
-  })
+  void loadList('reset')
+    .then(async () => {
+      // deepLinkUserId 被清掉＝手機上還在找的時候他按了「← 客服對話」，不要再把他拉回那一位
+      if (qUserId && activeTab.value === 'all' && (deepLinkUserId.value || !isPhone.value))
+        await selectUserById(qUserId, qSessionId ? { sessionId: qSessionId } : undefined)
+    })
+    // 找到（已經選好人）或找不到（toast 講了）都收掉：手機上找不到就退回清單，不要停在空白的對話那一邊
+    .finally(() => { deepLinkUserId.value = '' })
   loadSupportPresets()
   listPollTimer = setInterval(() => {
     // 分頁在背景（切走／視窗最小化）不刷新——回前景時 onVisibilityChange 會補刷一次。

@@ -4,11 +4,42 @@
  *    所以轉址端看到 LINE 內建瀏覽器要先轉回自己、加上 `openExternalBrowser=1`，讓 LINE 改用手機瀏覽器開。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createNotifyLink, isLineInAppBrowser, isValidNotifyLinkCode, NOTIFY_LINK_TTL_MS, notifyLinksEnabled, resolveNotifyRedirect } from './notify-links'
+import { deepLinkUserIdFromQuery } from '../../shared/conversation-deep-link'
+import { conversationPath, createNotifyLink, isLineInAppBrowser, isValidNotifyLinkCode, NOTIFY_LINK_TTL_MS, notifyLinksEnabled, notifyLinksFlagOn, resolveNotifyRedirect } from './notify-links'
 
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 
-describe('連結開關（2026-09-27 預設關：後台還沒有手機版）', () => {
+describe('連結開關預設開（`D-105`，2026-10-19 對話頁有手機版之後；09-27～10-19 是預設關）', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+  it('🔴 沒設 NOTIFY_LINKS_ENABLED（nuxt.config 傳空字串）＝開', () => {
+    expect(notifyLinksFlagOn('')).toBe(true)
+    expect(notifyLinksFlagOn(undefined)).toBe(true)
+    vi.stubGlobal('useRuntimeConfig', () => ({ appBaseUrl: 'https://x.test', notifyLinksEnabled: '' }))
+    expect(notifyLinksEnabled()).toBe(true)
+  })
+  it('明講關才關：false／0／off／no（大小寫、前後空白都認），執行期蓋成布林 false 也算', () => {
+    for (const v of ['false', 'FALSE', ' false ', '0', 'off', 'No', false]) expect(notifyLinksFlagOn(v), String(v)).toBe(false)
+    for (const v of ['true', '1', 'on', true]) expect(notifyLinksFlagOn(v), String(v)).toBe(true)
+    vi.stubGlobal('useRuntimeConfig', () => ({ appBaseUrl: 'https://x.test', notifyLinksEnabled: 'false' }))
+    expect(notifyLinksEnabled()).toBe(false)
+  })
+})
+
+describe('「打開這段對話」的連結落點跟對話頁的認法對得上（`D-105`）', () => {
+  it('🔴 通知連結轉過去的網址，對話頁一打開就認得要直接開哪一位（手機上才不會先閃清單）', () => {
+    const url = new URL(`https://x.test${conversationPath('W1', 'U123abc')}`)
+    expect(url.pathname).toBe('/admin/W1/conversations')
+    expect(deepLinkUserIdFromQuery(Object.fromEntries(url.searchParams))).toBe('U123abc')
+  })
+  it('統計頁帶會話分頁下鑽（?tab=pending_human）照舊先開清單；沒帶人就沒有', () => {
+    expect(deepLinkUserIdFromQuery({ tab: 'pending_human', userId: 'U1' })).toBe('')
+    expect(deepLinkUserIdFromQuery({ tab: 'all', userId: 'U1' })).toBe('U1')
+    expect(deepLinkUserIdFromQuery({})).toBe('')
+    expect(deepLinkUserIdFromQuery({ userId: ['U2', 'U3'] })).toBe('U2')
+  })
+})
+
+describe('連結開關', () => {
   afterEach(() => { vi.unstubAllGlobals() })
   const fakeDb = () => {
     const created: any[] = []

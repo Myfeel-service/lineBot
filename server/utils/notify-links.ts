@@ -24,13 +24,20 @@ const CODE_LENGTH = 7
 const CODE_RE = /^[A-Za-z0-9]{7}$/
 
 /**
- * 通知裡要不要放連結：開關打開（`NOTIFY_LINKS_ENABLED=true`）而且有對外網址原點才放。
- * ⚠️ 2026-09-27 預設關：後台還沒有手機版，手機上點開對話頁只剩 150px 寬（見 nuxt.config 的說明）。
+ * `NOTIFY_LINKS_ENABLED` 的值算不算「開」：**沒設就是開**（`D-105`，2026-10-19 對話頁有手機版之後），
+ * 明講 false／0／off／no 才關。也收布林：Nuxt 執行期用 `NUXT_NOTIFY_LINKS_ENABLED=false` 蓋設定時會變成 `false`。
+ * ⚠️ 2026-09-27～10-19 是預設關（後台沒有手機版，手機上點開對話頁只剩 150px 寬）。
  */
+export function notifyLinksFlagOn(raw: unknown): boolean {
+  if (raw === false) return false
+  return !/^(?:false|0|off|no)$/i.test(String(raw ?? '').trim())
+}
+
+/** 通知裡要不要放連結：開關沒關（見 `notifyLinksFlagOn`）而且有對外網址原點才放 */
 export function notifyLinksEnabled(): boolean {
   try {
     const c = useRuntimeConfig()
-    return c.notifyLinksEnabled === true && Boolean(String(c.appBaseUrl || '').trim())
+    return notifyLinksFlagOn(c.notifyLinksEnabled) && Boolean(String(c.appBaseUrl || '').trim())
   }
   catch {
     return false

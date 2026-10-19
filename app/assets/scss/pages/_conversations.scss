@@ -2760,6 +2760,61 @@
   }
 }
 
+/* ── 手機（`D-105`，≤ 720 跟外殼、`mobileStack` 同一條線）──────────────────
+   清單↔對話一次看一邊是 `_split-layout.scss` 的 `--stack` 在排，這裡只補這一頁自己的三件事。
+   ⛔ 全部包在 @media 裡：電腦版一個像素都不動（改前改後 1440／1100 量過盒子一模一樣）。 */
+@media (max-width: 720px) {
+  .conversations-page {
+    /* iPhone 點進字小於 16px 的輸入框會把整頁放大，放大之後要自己兩指縮回來 */
+    .conv-search-bar .el-input__inner,
+    .conv-input-row .el-textarea__inner {
+      font-size: 16px;
+    }
+
+    /* 右下角小幫手那顆（58px，離邊 1.5rem；≤ 600 是 1rem，見 `_tutorial-agent.scss`）會壓在「送出」上：
+       回覆列右邊讓出它的位置——跟測試對話頁 `.pg-composer` 同一個做法，⛔ 不搬那顆（它是全站的） */
+    .conv-input-row {
+      padding-right: calc(1.5rem + 58px + 10px);
+    }
+
+    /* 四顆小圓鈕縮一點，回覆區少佔一截高度（手機上對話本身最缺的就是高度） */
+    .conv-input-tools {
+      padding: 0.4rem 1rem;
+    }
+
+    .conv-picker-trigger {
+      width: 36px;
+      height: 36px;
+    }
+  }
+}
+
+@media (max-width: 600px) {
+  .conversations-page .conv-input-row {
+    padding-right: calc(1rem + 58px + 8px);
+  }
+}
+
+/* 手機上的客人檔案抽屜（掛在 body 底下，不在 .conversations-page 裡）。
+   標頭跟電腦版右邊那一欄的「客人檔案　✕」同一個樣子；底部留白讓得過小幫手那顆（同 .conv-customer__body） */
+.conv-customer-drawer {
+  .el-drawer__header {
+    margin-bottom: 0;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .el-drawer__title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+  }
+
+  .el-drawer__body {
+    padding: 0.9rem 0.85rem 6rem;
+  }
+}
+
 .conv-picker-popover {
   padding: 0.65rem;
   border-radius: var(--radius-lg);
