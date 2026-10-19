@@ -4,6 +4,7 @@ import { invalidateWorkspaceSubscriptionCache } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import type { WorkspaceSubscription } from '~~/shared/billing/plans'
 import { applySuperSubscriptionEdit, SubscriptionEditError } from '~~/shared/billing/subscription-edit'
+import { redactSubscriptionForClient } from '~~/server/utils/subscription-redact'
 
 /**
  * PATCH /api/admin/super/workspaces/:id
@@ -82,5 +83,15 @@ export default defineEventHandler(async (event) => {
     note: 'subscription' in body ? '平台調整了這個帳號的方案／額度' : '平台改了這個帳號的設定',
   }, db)
 
-  return { id, ...after.data() }
+  /*
+   * ⛔ 不回整份文件（`B-51`）：以前是 `{ id, ...after.data() }`，連 LINE 的 channelAccessToken／channelSecret、
+   * 扣款卡片代碼都一起回到瀏覽器。畫面存完會重新載入列表、用不到回傳值；只回畫面認得的幾格，訂閱照列表那樣換掉卡片代碼。
+   */
+  const data = after.data() ?? {}
+  return {
+    id,
+    name: String(data.name ?? id),
+    organizationId: data.organizationId ?? null,
+    subscription: redactSubscriptionForClient(data.subscription as WorkspaceSubscription | undefined),
+  }
 })

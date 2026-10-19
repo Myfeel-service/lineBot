@@ -2,6 +2,7 @@ import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm, monthlyBillable } from '~~/server/utils/ai-usage'
 import { bucketAiCosts } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
+import { redactSubscriptionForClient } from '~~/server/utils/subscription-redact'
 
 /**
  * GET /api/admin/super/workspaces
@@ -42,7 +43,8 @@ export default defineEventHandler(async (event) => {
       organizationId: d.data().organizationId ?? null,
       channelAccessTokenConfigured: !!d.data().channelAccessToken,
       channelSecretConfigured: !!d.data().channelSecret,
-      subscription: d.data().subscription ?? null,
+      // 扣款卡片代碼換成記號再回（`B-51`）：畫面只需要知道有沒有綁卡、末四碼
+      subscription: redactSubscriptionForClient(d.data().subscription),
       // 本月用量摘要（super admin 掌控用）
       usage: {
         period,
