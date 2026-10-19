@@ -3,6 +3,7 @@ import { warmWorkspaceAutomationCaches } from '~~/server/utils/handler'
 import { assertCronAuthorized } from '~~/server/utils/cron-auth'
 import { forwardedForHops, TRUSTED_TRAILING_HOPS } from '~~/server/utils/rate-limit'
 import { getDb } from '~~/server/utils/firebase'
+import { isWarmupOffPeak, warmChildrenAt } from '~~/server/utils/warmup-plan'
 import { LEAD_PATH } from '~~/shared/liff-lead-path'
 
 /**
@@ -22,13 +23,12 @@ import { LEAD_PATH } from '~~/shared/liff-lead-path'
  *      期間全部同時在線，強迫多台實例一起保持熱機（Lambda 一實例一請求）。
  *      這是 serverless 社群的標準 warmer 模式；子請求只做輕量保溫、
  *      絕不再往下擴散（防迴圈）。
+ *      ⚠️ 2026-10-20 起半夜（台北 01:00–07:00）不發子請求、只保母請求（`D-47`②）——
+ *         幾台、哪幾點、省多少與代價都寫在 `server/utils/warmup-plan.ts`。
  *
  * 保護機制：與 /api/broadcast/trigger-scheduled 相同——Header 需帶 X-Cron-Secret
  * 且與環境變數 CRON_SECRET 相符；未設定 CRON_SECRET 時僅允許 localhost。
  */
-
-/** 除了母請求外,額外併發保溫幾台實例(總熱機池 ≈ 此值 + 1) */
-const WARM_CHILDREN = 3
 
 /** 兩條頁面渲染路徑(SPA 殼/完整 SSR 是不同懶載入模組,各暖一次) */
 const WARM_PAGES = [LEAD_PATH, '/'] as const
@@ -67,8 +67,11 @@ export default defineEventHandler(async (event) => {
   // 子保溫必須走「公開網址」才會經過負載平衡打到別台實例(內部 $fetch 只會留在本機)。
   // 未設 PUBLIC_BASE_URL 或密鑰時略過(等同舊行為,單台保溫)。
   // 子請求回報它看到的 X-Forwarded-For 格數（null＝這台沒暖成）
+  // 半夜只保母請求（`D-47`②）：子保溫數 0，其他照舊（快取預熱、頁面渲染都還是做）
+  const now = new Date(startedAt)
+  const offPeak = isWarmupOffPeak(now)
   const childTasks: Promise<number | null>[] = publicBase && cronSecret
-    ? Array.from({ length: WARM_CHILDREN }, () =>
+    ? Array.from({ length: warmChildrenAt(now) }, () =>
         $fetch<{ xffHops?: number }>(`${publicBase}/api/warmup?depth=1`, {
           headers: { 'x-cron-secret': cronSecret },
           timeout: 15_000,
@@ -104,6 +107,7 @@ export default defineEventHandler(async (event) => {
     pagesWarmed,
     childrenWarmed: childXffHops.length,
     childrenTotal: childTasks.length,
+    offPeak,
     childXffHops,
     ms: Date.now() - startedAt,
   }

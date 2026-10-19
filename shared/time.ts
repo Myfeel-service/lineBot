@@ -31,6 +31,11 @@ export function taipeiDate(date: Date = new Date()): string {
   return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`
 }
 
+/** 台灣時區下現在幾點（0–23）。 */
+export function taipeiHour(date: Date = new Date()): number {
+  return new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCHours()
+}
+
 /**
  * 台灣時區下的「YYYY-MM-DD HH:mm」——講給人看的時間點。
  *
