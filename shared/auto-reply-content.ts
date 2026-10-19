@@ -51,3 +51,14 @@ export function autoReplyActionToLineMessages(
 
   return []
 }
+
+/**
+ * 這個動作會不會真的傳訊息給客人（`D-46`：活動綁定完成頁要不要講「活動訊息會傳到你的 LINE」）。
+ * 跟送出端（`handler.ts` 的 `handleFollowEvent`）同一條：模組型看有沒有指定模組（內容是模組自己的，見上面的 ⚠️），
+ * 其他照上面那支組不組得出訊息。
+ * ⚠️ 模組型只看「有指定」不讀模組內容：模組被刪掉或是空的時候會多講一句——寧可多講，送出端照實送。
+ */
+export function autoReplyActionSendsMessage(action: Pick<AutoReplyAction, 'type' | 'text' | 'uri' | 'moduleId'>): boolean {
+  if (action.type === 'module') return !!String(action.moduleId ?? '').trim()
+  return autoReplyActionToLineMessages(action).length > 0
+}

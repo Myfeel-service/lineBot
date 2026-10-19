@@ -8,17 +8,16 @@
     <template v-else-if="phase === 'done'">
       <p class="liff-lead-title">綁定完成</p>
       <p class="liff-lead-msg">{{ doneMessage }}</p>
-      <template v-if="needAddFriend">
-        <p class="liff-lead-hint">請加入官方帳號為好友，加好友後系統會自動完成活動貼標。</p>
-        <a
-          v-if="addFriendUrl"
-          :href="addFriendUrl"
-          class="liff-lead-btn"
-          target="_blank"
-          rel="noopener noreferrer"
-        >加入官方帳號好友</a>
-      </template>
-      <p v-else class="liff-lead-hint">貼標與活動訊息已即時套用，請至 LINE 查收。</p>
+      <!-- `D-46`：從 LINE 外面進來的客人會停在這一頁（不再自動丟回聊天室），這一句就是他知道接下來去哪看的線索。
+           字在 shared/lead-finish.ts 的 leadDoneHint（⛔ 不寫「貼標」、活動沒設訊息就不承諾訊息）。 -->
+      <p class="liff-lead-hint">{{ doneHint }}</p>
+      <a
+        v-if="needAddFriend && addFriendUrl"
+        :href="addFriendUrl"
+        class="liff-lead-btn"
+        target="_blank"
+        rel="noopener noreferrer"
+      >加入官方帳號好友</a>
     </template>
     <template v-else-if="phase === 'error'">
       <p class="liff-lead-title">{{ endedCampaign ? '活動已結束' : '無法完成綁定' }}</p>
@@ -42,6 +41,7 @@ import { ref, onMounted, computed } from 'vue'
 import { $fetch } from 'ofetch'
 import { buildLoginRedirectUri, liffChannelIdFromLiffId, parseLeadClaimFromQuery, rewriteLiffRedirectUriToOrigin } from '~~/shared/liff-lead-query'
 import { CAMPAIGN_INACTIVE_CODE, type LeadFailureReason, type LeadTimeoutStage } from '~~/shared/lead-page-failure'
+import { buildLineAppDeepLink, decideLeadFinish, leadDoneHint } from '~~/shared/lead-finish'
 
 definePageMeta({ layout: false, ssr: false })
 
@@ -73,6 +73,9 @@ function reloadPage() {
 const endedCampaign = ref(false)
 const needAddFriend = ref(false)
 const addFriendUrl = ref('')
+/** 這個活動綁定完會不會傳訊息（claim 回的；舊版後端沒回＝null，照「會傳」講） */
+const sendsMessage = ref<boolean | null>(null)
+const doneHint = computed(() => leadDoneHint({ needAddFriend: needAddFriend.value, sendsMessage: sendsMessage.value }))
 
 /**
  * 把「客人這次打不開」回報回去（`server/utils/lead-page-failures.ts`）。
@@ -273,12 +276,10 @@ function isLikelyLineClientUserAgent() {
   return /Line\//i.test(navigator.userAgent)
 }
 
+/** 外部瀏覽器跳進 LINE App 的深連結——會掛上「從外面來的」記號（`D-46`，見 shared/lead-finish.ts） */
 function buildLineAppOpenUrl(liffId: string) {
   if (!liffId || typeof window === 'undefined') return ''
-  const currentUrl = new URL(window.location.href)
-  const deepLink = new URL(`line://app/${liffId}`)
-  currentUrl.searchParams.forEach((value, key) => deepLink.searchParams.set(key, value))
-  return deepLink.toString()
+  return buildLineAppDeepLink(window.location.href, liffId)
 }
 
 async function tryOpenInLineAppBeforeInit(liffId: string) {
@@ -522,6 +523,8 @@ onMounted(async () => {
       redirectUrl?: string
       lineOaBasicId?: string
       workspaceId?: string
+      /** `D-46`：這個活動綁定完會不會傳訊息（完成頁那一句照它講） */
+      sendsMessage?: boolean
     }>(
       '/api/liff/claim',
       { method: 'POST', body: { rawToken: ct, accessToken } },
@@ -551,21 +554,39 @@ onMounted(async () => {
     phase.value = 'done'
     doneMessage.value = '已將你的 LINE 與活動綁定。'
     needAddFriend.value = !res.immediatelyApplied
+    sendsMessage.value = typeof res.sendsMessage === 'boolean' ? res.sendsMessage : null
 
-    if (res.redirectUrl) {
-      window.location.href = res.redirectUrl
+    /**
+     * 收尾怎麼走（`D-46`，規則與理由在 shared/lead-finish.ts）：
+     *   店家設了「完成後前往」→ 去那裡；從 LINE **外面**進來的 → 停在這個「綁定完成」頁、
+     *   活動訊息走推播、客人點通知回聊天室（不主動丟進聊天室——LINE 會停在上次讀到的位置）；
+     *   從 LINE **裡面**開的 → 照舊開聊天室（LIFF 裡開完再關窗；LINE 內建瀏覽器用網址跳）。
+     * ⛔ `getContext()` 在少數環境會丟錯：丟錯就當「不知道」，交給其他線索判斷。
+     */
+    let contextType: string | null = null
+    try { contextType = liff.getContext()?.type ?? null }
+    catch { /* 不知道就算了 */ }
+    const finish = decideLeadFinish({
+      redirectUrl: res.redirectUrl,
+      href: window.location.href,
+      contextType,
+      isInClient: liff.isInClient(),
+      isLineUserAgent: isLikelyLineClientUserAgent(),
+    })
+    ctx.finish = finish
+    if (finish === 'redirect') {
+      window.location.href = String(res.redirectUrl)
       return
     }
-
-    // LINE app 內但非 LIFF in-client 容器時，isInClient() 可能是 false；
-    // 這時改用 location 跳轉對話，避免使用者卡在完成頁。
-    if (liff.isInClient()) {
+    if (finish === 'open-chat-and-close') {
       finishInLineClientWithoutCampaignRedirect(liff)
       return
     }
-    if (isLikelyLineClientUserAgent())
+    // LINE app 內但非 LIFF in-client 容器時，isInClient() 可能是 false；
+    // 這時改用 location 跳轉對話，避免使用者卡在完成頁。
+    if (finish === 'go-chat-by-location')
       goToChatOrAddFriendByLocation()
-    // 沒有對話／加好友連結可跳時，就留在上面那個「綁定完成」畫面。
+    // 'stay'：就留在上面那個「綁定完成」畫面（外面進來的、或沒地方可跳）。
     // ⛔ 這裡原本是 `return` 且不跳任何地方，而畫面還停在 loading＝永遠轉圈，
     //    只能等看門狗把一次成功收成一次失敗。
   }

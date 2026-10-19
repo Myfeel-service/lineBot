@@ -8,6 +8,8 @@ import { verifyLiffAccessToken, warnOnLiffChannelMismatch } from '~~/server/util
 import { getLineWorkspaceCredentials } from '~~/server/utils/line-workspace-credentials'
 import { assertCampaignLinkActive } from '~~/server/utils/lead-campaign-active'
 import { recordLeadPageSuccess } from '~~/server/utils/lead-page-failures'
+import { normalizeAutoReplyAction } from '~~/shared/auto-reply-rule'
+import { autoReplyActionSendsMessage } from '~~/shared/auto-reply-content'
 
 function sharedUserClaimDocId(campaignId: string, lineUserId: string): string {
   return createHash('sha256').update(`lead_shared|${campaignId}|${lineUserId}`).digest('hex')
@@ -248,6 +250,12 @@ export default defineEventHandler(async (event) => {
   const immediatelyApplied = !!followProfile
 
   const redirectUrl = String(claim.redirectUrl || '').trim() || undefined
+  /**
+   * 綁定完成之後會不會傳一則活動訊息（`D-46`）：完成頁照這個決定要不要講「活動訊息會傳到你的 LINE」——
+   * 外面進來的客人不再被自動丟回聊天室，那一句就是他知道接下來去哪裡看的唯一線索，⛔ 不能承諾一則不會來的訊息。
+   * 判斷跟送出端同一條（`handleFollowEvent` 照 claim 的 action／moduleId 推）。
+   */
+  const sendsMessage = autoReplyActionSendsMessage(normalizeAutoReplyAction(claim.action, String(claim.moduleId ?? '')))
 
   // 記一次成功，給後台「幾次沒完成」當分母。
   // ⛔ 不 await、失敗吞掉：這只是統計，絕不能讓它擋下或弄壞一次已經成立的綁定。
@@ -261,6 +269,7 @@ export default defineEventHandler(async (event) => {
     campaignCode: claim.campaignCode,
     immediatelyApplied,
     redirectUrl,
+    sendsMessage,
     ...(lineOaBasicId ? { lineOaBasicId } : {}),
     // 前端用於背景呼叫 /api/liff/apply（已加好友才需要）
     ...(immediatelyApplied ? { workspaceId: claimWorkspaceId } : {}),
