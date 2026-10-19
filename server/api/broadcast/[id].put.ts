@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
+import { assertBroadcastPlanAllows } from '~~/server/utils/broadcast-plan-gate'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '~~/server/utils/audit-log'
@@ -64,6 +65,15 @@ export default defineEventHandler(async (event) => {
       updates.scheduleAt = assertFutureBroadcastScheduleAt(body.scheduleAt)
       updates.status = 'scheduled'
     }
+  }
+
+  /**
+   * 存完還是「已排程」的話，方案要發得了那份對象（`D-131`）：排程中的推播按「儲存變更」也是一條
+   * 「排好、到時間才失敗」的路（例如把對象從全部好友改成依標籤）。草稿不擋——存草稿不會送出任何東西。
+   */
+  if ((updates.status ?? current.status) === 'scheduled') {
+    const audienceSource = (updates.audienceSource ?? current.audienceSource) as { type?: string } | undefined
+    await assertBroadcastPlanAllows(workspaceId, audienceSource?.type, db)
   }
 
   await ref.update(updates)

@@ -125,7 +125,15 @@
             {{ selectedItem?.status === 'scheduled' ? '儲存變更' : '儲存草稿' }}
           </el-button>
           <!-- `G-109`：驗證本身是讀取，這顆按到底是 `send`／`schedule`，所以照 `broadcast.send` 擋 -->
-          <el-button v-if="can('broadcast.send')" type="primary" :loading="validating" data-tour="bc-send" @click="openValidateDialog">
+          <!-- `D-131`：方案不含推播時鎖住（原因寫在表單最上面那張卡）；試發、存草稿照常 -->
+          <el-button
+            v-if="can('broadcast.send')"
+            type="primary"
+            :loading="validating"
+            :disabled="planLock === 'all'"
+            data-tour="bc-send"
+            @click="openValidateDialog"
+          >
             {{ headerSubmitLabel }}
           </el-button>
         </template>
@@ -157,6 +165,19 @@
           </div>
         </div>
 
+        <!-- `D-131`：方案不含推播（免費）——整則都發不出去，所以講在最上面、「驗證並發送」鎖住。
+             ⛔ 已經發出去的不講（那時候講方案沒有用）。試發給自己看不受方案限制，照常可以按。 -->
+        <div v-if="!isReadOnly && planLock === 'all'" class="message-card bc-section-card" data-tour="bc-plan-lock">
+          <div class="card-section-stack">
+            <p class="bc-plan-lock">
+              <el-icon class="bc-plan-lock__icon"><Lock /></el-icon>
+              <span>{{ planLockText }}</span>
+              <el-button v-if="can('billing.manage')" link type="primary" @click="openPlanUpgrade">查看方案</el-button>
+              <span v-else class="bc-plan-lock__ask">升級請找管理員。</span>
+            </p>
+          </div>
+        </div>
+
         <!-- ①  受眾設定 -->
         <div class="message-card bc-section-card">
           <div class="message-card-header">
@@ -169,11 +190,20 @@
                  開著就不要再幫他按一次「新增」把手上編到一半的推播切掉 -->
             <div class="admin-field-group" data-tour="bc-audience">
               <AdminFieldLabel text="發送對象" tight />
+              <!-- `D-131`：方案選不到的對象先鎖住，就在選項正下方講要哪個方案（以前選得到、按送出才失敗）。
+                   ⛔ 已經選著的（小幫手擬的、從好友頁／好友統計／檔期帶過來的）照樣顯示選著＋鎖住，不偷偷改成全部好友——
+                      改發送對象＝改了收件人，要他自己決定。 -->
               <el-radio-group v-model="form.audienceType" :disabled="isLocked">
                 <el-radio value="all">全部好友</el-radio>
-                <el-radio value="tags">依標籤篩選</el-radio>
-                <el-radio value="import">匯入名單</el-radio>
+                <el-radio value="tags" :disabled="audienceOptionLocked('tags')">依標籤篩選</el-radio>
+                <el-radio value="import" :disabled="audienceOptionLocked('import')">匯入名單</el-radio>
               </el-radio-group>
+              <p v-if="!isReadOnly && planLock === 'segment'" class="bc-plan-lock bc-plan-lock--inline">
+                <el-icon class="bc-plan-lock__icon"><Lock /></el-icon>
+                <span>{{ planLockText }}</span>
+                <el-button v-if="can('billing.manage')" link type="primary" @click="openPlanUpgrade">查看方案</el-button>
+                <span v-else class="bc-plan-lock__ask">升級請找管理員。</span>
+              </p>
             </div>
 
             <!-- 依標籤 -->
@@ -644,6 +674,13 @@
     </template>
   </el-dialog>
 
+  <!-- `D-131`：推播頁鎖住時的「查看方案」（只有管理得了帳單的人看得到那顆鈕） -->
+  <AdminPlanUpgradeDialog
+    v-if="can('billing.manage')"
+    v-model="planUpgradeOpen"
+    :current-plan-id="planSummary?.id ?? null"
+  />
+
   <!-- 驗證 / 發送確認 Dialog -->
   <el-dialog v-model="validateDialogVisible" class="bc-dialog-validate" :title="validateDialogTitle" width="min(440px, 92vw)">
     <div v-if="validateLoading" class="bc-validate-loading">
@@ -694,7 +731,8 @@
 </template>
 
 <script setup lang="ts">
-import { CopyDocument, Plus, Promotion } from '@element-plus/icons-vue'
+import { CopyDocument, Lock, Plus, Promotion } from '@element-plus/icons-vue'
+import { broadcastLockText, broadcastPlanBlockReason, tierAllowsAudience, type BroadcastTier } from '~~/shared/billing/plans'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
@@ -839,16 +877,46 @@ const {
 // 草稿總數：null＝還沒查到或查失敗（整行不顯示，⛔不拿 0 冒充「沒有草稿」）。
 // 掛在 loading 的 true→false 邊緣刷新：清單每次重載（發送/刪除/新增後）數字跟著對。
 const draftTotal = ref<number | null>(null)
+/**
+ * `D-131`：這個帳號的推播等級（跟草稿總數同一趟問：`withPlan=1`，不多打一支）。
+ * null＝還沒問到或讀不到訂閱——**不鎖**（fail-open，同後端）；真的不該送的，驗證視窗與送出端還會擋。
+ */
+const planBroadcastTier = ref<BroadcastTier | null>(null)
 async function loadDraftTotal() {
   try {
-    const res = await apiFetch<{ total?: number }>('/api/broadcast/list', {
-      params: { status: 'draft', page: 1, limit: 1 },
+    const res = await apiFetch<{ total?: number, broadcastTier?: BroadcastTier | null }>('/api/broadcast/list', {
+      params: { status: 'draft', page: 1, limit: 1, withPlan: 1 },
     })
     draftTotal.value = typeof res?.total === 'number' ? res.total : null
+    planBroadcastTier.value = res?.broadcastTier ?? null
   }
   catch {
     draftTotal.value = null
   }
+}
+
+/**
+ * 方案把哪些鎖住了：`all`＝整個推播都發不出去（免費）、`segment`＝只能發全部好友（依標籤、匯入名單鎖住）、null＝沒鎖。
+ * 句子跟驗證視窗、送出端擋下時同一句（`broadcastLockText`）。
+ */
+const planLock = computed<'all' | 'segment' | null>(() => {
+  const tier = planBroadcastTier.value
+  if (!tier || tier === 'advanced') return null
+  return tier === 'none' ? 'all' : 'segment'
+})
+const planLockText = computed(() => (planBroadcastTier.value ? broadcastLockText(planBroadcastTier.value) ?? '' : ''))
+/** 這個發送對象選項要不要鎖（全部好友在免費方案也不鎖：整則發不出去的事講在最上面，選項本身沒有選錯） */
+function audienceOptionLocked(type: 'tags' | 'import'): boolean {
+  const tier = planBroadcastTier.value
+  return !!tier && tier !== 'none' && !tierAllowsAudience(tier, type)
+}
+
+const planUpgradeOpen = ref(false)
+const { plan: planSummary, load: loadPlanSummary } = usePlanSummary()
+function openPlanUpgrade() {
+  // 外殼的額度提醒條多半已經問過方案（同一份共享資料）；沒問過就補問一次，「目前」那一列才標得出來
+  if (!planSummary.value) void loadPlanSummary()
+  planUpgradeOpen.value = true
 }
 watch(loading, (now, was) => { if (was && !now) void loadDraftTotal() })
 function toggleDraftFilter() {
@@ -1532,6 +1600,13 @@ async function openValidateDialog() {
 
   const err = validateForm({ requireScheduleTime: capturedMode === 'schedule' })
   if (err) return showToast(err, 'error')
+
+  // `D-131`：方案發不了這個對象，就別開確認視窗、也別先建草稿——講推播頁上鎖住的那一句
+  // （⛔ 不放進 validateForm：存草稿要照常存得起來，鎖的是「送出去」）
+  const planBlock = planBroadcastTier.value
+    ? broadcastPlanBlockReason(planBroadcastTier.value, capturedAudienceSource.type)
+    : null
+  if (planBlock) return showToast(planBlock, 'error')
 
   // 若是新建中，先建立草稿取得 ID（不帶 scheduleAt，之後由確認排程統一寫入）
   if (isCreating.value) {

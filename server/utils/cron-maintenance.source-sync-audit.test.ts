@@ -93,7 +93,7 @@ describe('試算表自動同步的操作紀錄（`C-308`⑥）', () => {
     expect(a).toMatchObject({ workspaceId: 'ws1', uid: '', actor: 'system', action: 'source.gsheetSync', targetId: 'sheet1' })
     expect(a.after).toMatchObject({ added: 2, updated: 0, deleted: 1 })
     expect(a.note).toContain('新增 2')
-    expect(a.note).toContain('有 3 列因為知識空間滿了沒有新增')
+    expect(a.note).toContain('有 3 列因為 AI 知識量滿了沒有新增')
     expect(a.note).toContain('每小時自動同步')
   })
 

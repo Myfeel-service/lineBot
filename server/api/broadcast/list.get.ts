@@ -1,6 +1,7 @@
 import { listDocs } from '~~/server/utils/firebase'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
 import { requireCapability } from '~~/server/utils/workspace-auth'
+import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -37,5 +38,15 @@ export default defineEventHandler(async (event) => {
     messageCount: Array.isArray(messages) ? messages.length : 0,
   }))
 
-  return paginateInMemoryList(rows, query)
+  const result = paginateInMemoryList(rows, query)
+
+  /**
+   * `withPlan=1`（要配分頁參數）：順便回這個帳號的推播等級（`D-131`）——推播頁拿它先把選不到的發送對象鎖起來，
+   * 不要等按了送出才失敗。放在推播自己的端點而不是方案摘要：客服（agent）也會發推播、也要知道哪些選不了，
+   * 而方案摘要要管理員權限。⛔ 只回等級、不回方案名（方案名屬計費資訊，`G-103`）。null＝讀不到訂閱（畫面不鎖，送出端照擋）。
+   */
+  if (query.withPlan && !Array.isArray(result)) {
+    return { ...result, broadcastTier: await workspaceBroadcastTier(workspaceId) }
+  }
+  return result
 })

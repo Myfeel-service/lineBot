@@ -18,17 +18,17 @@
         <!-- ⛔ 會用掉空間的數字要寫在**按下去之前看得到的地方**（知識條數是計費維度）。
              放得下才在這裡講；放不下的兩種講法在下面那行（`C-308`⑨） -->
         <template v-if="roomLeft !== null && total && roomLeft >= total">
-          全收會用掉 <b>{{ total }} 條</b>知識空間（還能放 {{ roomLeft }} 條），不要的刪掉就不佔。
+          全收會用掉 <b>{{ total }} 條</b> AI 知識量（還能放 {{ roomLeft }} 條），不要的刪掉就不佔。
         </template>
       </p>
       <!-- 空間不夠（`C-308`⑨，照加入視窗的講法）：⛔ 以前寫「全收會用掉 30／50 張（現在用了 25 張）」——
            看起來放得下，按下去才說只收 25 張；收不下時叫他「刪掉用不到的卡」，但旁邊的「刪掉」刪的是這裡的，
            這裡的本來就沒佔空間，刪了也空不出位子。要刪的是知識庫裡**已經上線**、用不到的。 -->
       <p v-if="roomLeft !== null && roomLeft > 0 && total > roomLeft" class="kb-drafts__warn">
-        知識空間還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——刪掉知識庫裡用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就收得下。
+        AI 知識量還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——刪掉知識庫裡用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就收得下。
       </p>
       <p v-else-if="roomLeft === 0 && total" class="kb-drafts__warn">
-        知識空間滿了（{{ quota?.used }}／{{ quota?.limit }} 條），這裡的先採用不了：刪掉知識庫裡用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>，就能採用（這裡的還沒佔空間，刪掉它們空不出位子）。
+        AI 知識量滿了（{{ quota?.used }}／{{ quota?.limit }} 條），這裡的先採用不了：刪掉知識庫裡用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>，就能採用（這裡的還沒算進去，刪掉它們空不出位子）。
       </p>
       <p v-if="stillWorking" class="kb-drafts__working">
         <span class="kb-drafts__spin" aria-hidden="true" />
@@ -81,7 +81,7 @@
         <el-input v-else v-model="editA" type="textarea" :autosize="{ minRows: 2, maxRows: 10 }" :maxlength="4000" />
         <p v-if="decided[c.id]" class="kb-drafts__state" :class="`is-${decided[c.id]!.tone}`">{{ decided[c.id]!.text }}</p>
         <!-- 按了採用但空間滿了：講這一下的結果，⛔ 但不把按鈕收掉——空出位子（回到這頁時會重查）就能再按（`C-308`⑨） -->
-        <p v-else-if="heldForQuota[c.id] && roomLeft === 0" class="kb-drafts__state is-warn">知識空間滿了，這條先留著</p>
+        <p v-else-if="heldForQuota[c.id] && roomLeft === 0" class="kb-drafts__state is-warn">AI 知識量滿了，這條先留著</p>
         <div v-if="!decided[c.id] && canEdit" class="kb-drafts__bar">
           <template v-if="editing === c.id">
             <el-button size="small" type="primary" :loading="busyCard === c.id" @click="saveEdit(c)">存起來</el-button>
@@ -133,7 +133,7 @@ const decided = reactive<Record<string, { tone: 'ok' | 'muted' | 'warn', text: s
 const heldForQuota = reactive<Record<string, true>>({})
 
 /**
- * 知識空間還能放幾條；null＝不限條數或讀不到（照舊 fail-open：不擋、也不講）。
+ * AI 知識量還能放幾條；null＝不限條數或讀不到（照舊 fail-open：不擋、也不講）。
  * 跟加入視窗同一個算法（已用＝方案那一把尺，不含等你看過）。
  */
 const roomLeft = computed(() => {
@@ -246,7 +246,7 @@ async function adopt(ids: string[], whole = false) {
     for (const id of r.leftForQuota) heldForQuota[id] = true
     if (r.quota) quota.value = r.quota
     // 怎麼空出位子由上面那一行講（刪知識庫裡用不到的、或升級），⛔ 這裡不再叫他「刪掉用不到的卡」——旁邊的「刪掉」刪的是這裡的
-    if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 條；知識空間滿了，還有 ${r.leftForQuota.length} 條先留在這裡`, 'warning')
+    if (r.leftForQuota.length) showToast(`收了 ${r.adopted.length} 條；AI 知識量滿了，還有 ${r.leftForQuota.length} 條先留在這裡`, 'warning')
     // 開帳讀的網頁採用之後才開始每天檢查（`D-125`③）：第一次開起來的那一下講一聲，之後同一頁不再講
     else if (r.autoUpdateOn?.length) showToast(`收好了；這 ${r.autoUpdateOn.length} 個網頁之後每天自動檢查，網站有改會提醒你`, 'success')
     total.value = Math.max(0, total.value - r.adopted.length)

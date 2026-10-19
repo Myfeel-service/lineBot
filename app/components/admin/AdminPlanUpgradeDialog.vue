@@ -20,10 +20,16 @@
              而「每期」是我們的內部詞——客人比價時會先卡一下「一期是多久」，賣點多一道翻譯就弱一分。
              會混淆的只有一種人：已經是客戶、又剛好在錨定日附近看用量頁（那邊寫「本期」），
              他需要的是一句解釋，不是把整張表的字都換掉。所以定義就掛在兩個詞碰頭的這裡。 -->
+        <!-- `D-131`②：這顆 ⓘ 先講「什麼算一則」（反問也算、答不出轉真人不算、跟 LINE 的訊息則數無關），
+             再講「每月」的定義——買之前會問的就是這兩件。前一句跟官網方案卡底下、/product-info 同一句（REPLY_UNIT_SHORT）。 -->
         <el-table-column min-width="84">
           <template #header>
             每月則數
-            <el-tooltip placement="top" :content="QUOTA_PERIOD_HINT">
+            <el-tooltip placement="top" popper-class="pu-hint-popper">
+              <template #content>
+                <p>{{ REPLY_UNIT_SHORT }}</p>
+                <p>{{ QUOTA_PERIOD_HINT }}</p>
+              </template>
               <span class="pu-hint" role="img" aria-label="每月則數怎麼算">ⓘ</span>
             </el-tooltip>
           </template>
@@ -40,9 +46,22 @@
         </el-table-column>
         <!-- ⛔ 2026-09-26「流程」欄拿掉：老闆拍板**所有方案都開放腳本／流程**（plans.ts `scripting` 全為 true），
              那一欄只剩一整排 ✓＝沒有在比較任何東西；拿掉後也正好跟官網方案卡列的欄位一致。
-             ⚠️ 之後若重新分級，欄位要跟官網定價區**一起**加回來（上面「AI 知識量」那段同一條規矩）。 -->
-        <el-table-column label="API" width="52" align="center">
-          <template #default="{ row }"><span :class="row.api ? 'pu-yes' : 'pu-no'">{{ row.api ? '✓' : '—' }}</span></template>
+             ⚠️ 之後若重新分級，欄位要跟官網定價區**一起**加回來（上面「AI 知識量」那段同一條規矩）。
+             `D-59`／`D-131`（2026-10-19）：這張表只列**真的會擋**的差異，跟官網方案卡同一組——
+               · 「API」欄拿掉：沒有對外的 API、也沒有地方照 `api` 擋，檯面上四個方案整排「—」，同「流程」欄的理由。
+               · 「推播」欄加上：後端真的擋（免費不能發、輕量／入門只能發全部好友），以前哪裡都沒寫。
+             ⛔ 報表（`reports`）不擋，所以不列。 -->
+        <!-- 128：「全部好友＋分眾」7 個字＋格子內距；手機上整張表左右捲、欄寬就是這個最小值，再窄會折成兩行 -->
+        <el-table-column min-width="128">
+          <template #header>
+            推播
+            <el-tooltip placement="top" :content="BROADCAST_SEGMENT_HINT">
+              <span class="pu-hint" role="img" aria-label="分眾是什麼">ⓘ</span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <span :class="{ 'pu-no': row.broadcast === 'none' }">{{ broadcastCell(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="月費" min-width="92" align="right">
           <template #default="{ row }">{{ priceLabel(row) }}</template>
@@ -132,7 +151,16 @@
 
 <script setup lang="ts">
 import { ElLoading, ElMessageBox } from 'element-plus'
-import { BILLING_PLANS, BILLING_PLAN_ORDER, FEATURED_PLAN_IDS, type BillingPlan, type BillingPlanId } from '~~/shared/billing/plans'
+import {
+  BILLING_PLANS,
+  BILLING_PLAN_ORDER,
+  BROADCAST_SEGMENT_HINT,
+  BROADCAST_TIER_CELL,
+  FEATURED_PLAN_IDS,
+  type BillingPlan,
+  type BillingPlanId,
+} from '~~/shared/billing/plans'
+import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
@@ -440,6 +468,11 @@ async function checkout(p: BillingPlan) {
 }
 
 // submitToGateway 由 useGatewayCheckout composable 自動 import（與帳單頁共用）
+
+/** 「推播」欄那一格（字在 plans.ts，跟官網方案卡同一組） */
+function broadcastCell(p: BillingPlan): string {
+  return BROADCAST_TIER_CELL[p.broadcast]
+}
 
 function quotaLabel(p: BillingPlan): string {
   if (p.answeredQuota == null) return '客製額度'

@@ -50,6 +50,12 @@
         每個帳號都有免費額度，之後按 AI 回覆則數計價。用量在後台看得到，
         額度用完時 AI 會停止自動回覆並轉真人接手，<b>不會自動加收超量費用</b>——要加購額度或升級方案都由你決定。
       </p>
+      <!-- `D-131`②：「怎樣算一則」跟首頁方案卡底下、後台付款彈窗的 ⓘ 同一句（REPLY_UNIT_SHORT）。
+           ⛔ 刻意另起一段、不塞進上面那兩句：上面那兩句跟首頁 FAQ「會不會爆帳單」逐字相同，改了就三處要一起改。 -->
+      <p>{{ REPLY_UNIT_SHORT }}</p>
+      <!-- `D-131`①：推播各方案不同（後端真的擋），以前首頁方案卡、這一頁、付款彈窗、條款都沒寫。
+           句子照方案表導出來（broadcastTierSummary），跟條款「推播」那一條同一句。 -->
+      <p>推播：{{ broadcastSummary }}</p>
     </section>
 
     <section>
@@ -65,7 +71,10 @@
 </template>
 
 <script setup lang="ts">
-import { BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
+import { BILLING_PLANS, FEATURED_PLAN_IDS, broadcastTierSummary } from '~~/shared/billing/plans'
+import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
+
+const broadcastSummary = broadcastTierSummary()
 
 definePageMeta({ layout: false })
 

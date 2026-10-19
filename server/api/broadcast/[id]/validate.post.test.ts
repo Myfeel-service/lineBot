@@ -16,6 +16,8 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
   requireCapability: vi.fn(async () => ({ workspaceId: WS })),
 }))
 vi.mock('~~/server/utils/audience', () => ({ resolveAudienceUserIds: vi.fn(async () => []) }))
+// 方案：預設讀不到（fail-open），方案那一組才換成真的方案（走真的 broadcast-plan-gate 判斷）
+vi.mock('~~/server/utils/billing', () => ({ getWorkspacePlan: vi.fn(async () => null) }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getRouterParam', () => 'bc1')
@@ -24,6 +26,8 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 
 const { default: handler } = await import('./validate.post')
 const { getDb, getDoc } = await import('~~/server/utils/firebase')
+const { getWorkspacePlan } = await import('~~/server/utils/billing')
+const { BILLING_PLANS, broadcastLockText } = await import('~~/shared/billing/plans')
 const mockGetDb = vi.mocked(getDb)
 const mockGetDoc = vi.mocked(getDoc)
 
@@ -62,6 +66,43 @@ function broadcastDoc(messages: unknown[]) {
 beforeEach(() => {
   mockGetDb.mockReset()
   mockGetDoc.mockReset()
+  vi.mocked(getWorkspacePlan).mockReset().mockResolvedValue(null)
+})
+
+/**
+ * `D-131`：方案不含這種推播，**按確認之前**就講（以前視窗照樣寫「預估發送人數」，按下去或到了排程時間才失敗）。
+ * 立即發送與排程都先開這個視窗，所以這一關兩條路一起擋到。
+ */
+describe('發送前確認：方案不含這種推播就當場講', () => {
+  it('輕量方案發匯入名單 → 擋下來，句子跟推播頁鎖住時同一句', async () => {
+    makeDb(broadcastDoc([{ type: 'text', text: '今天公休' }]))
+    vi.mocked(getWorkspacePlan).mockResolvedValue(BILLING_PLANS.lite)
+
+    const res = await (handler as any)({})
+
+    expect(res.valid).toBe(false)
+    expect(res.errors).toEqual([broadcastLockText('basic')])
+  })
+
+  it('輕量方案發全部好友、成長方案發匯入名單 → 放行', async () => {
+    makeDb({ ...broadcastDoc([{ type: 'text', text: '今天公休' }]), audienceSource: { type: 'all' } })
+    vi.mocked(getWorkspacePlan).mockResolvedValue(BILLING_PLANS.lite)
+    // 全部好友會去數 users：這裡只要確認沒有方案那一句
+    const all = await (handler as any)({}).catch((e: Error) => ({ errors: [String(e)] }))
+    expect(all.errors.join()).not.toContain('目前的方案')
+
+    makeDb(broadcastDoc([{ type: 'text', text: '今天公休' }]))
+    vi.mocked(getWorkspacePlan).mockResolvedValue(BILLING_PLANS.growth)
+    const growth = await (handler as any)({})
+    expect(growth.valid).toBe(true)
+  })
+
+  it('免費方案連全部好友都擋', async () => {
+    makeDb({ ...broadcastDoc([{ type: 'text', text: '今天公休' }]), audienceSource: { type: 'all' } })
+    vi.mocked(getWorkspacePlan).mockResolvedValue(BILLING_PLANS.free)
+    const res = await (handler as any)({}).catch((e: Error) => ({ valid: false, errors: [String(e)] }))
+    expect(res.errors).toContain(broadcastLockText('none'))
+  })
 })
 
 describe('發送前確認：模組送不出東西就要當場講', () => {

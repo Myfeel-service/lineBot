@@ -88,7 +88,7 @@ export interface SourceSummary {
    */
   manualKeptCount: number
   /**
-   * type='gsheet'：上次同步時「表格上有、但知識空間滿了沒新增」的列數（`C-296`）。
+   * type='gsheet'：上次同步時「表格上有、但 AI 知識量滿了沒新增」的列數（`C-296`）。
    * >0 也要在來源頁常駐講：店家在表格加了一列、AI 卻答不出來，原因只在這裡。
    */
   quotaSkippedCount: number

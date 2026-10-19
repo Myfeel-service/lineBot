@@ -315,7 +315,8 @@ describe('補一張知識卡（只放進「等你看過」）', () => {
   })
 
   // `C-309`（2026-10-13）：知識庫頁、加入流程都講「條」；確認卡、回話、操作紀錄還在講「一張知識卡」「知識卡額度」
-  it('確認卡、回話、操作紀錄講「條」與「知識空間」，⛔ 不講「張／卡片／知識卡」', async () => {
+  // `D-131`④（2026-10-19）：額度的名字跟官網、條款、方案頁統一叫「AI 知識量」，⛔ 不再講「知識空間」
+  it('確認卡、回話、操作紀錄講「條」與「AI 知識量」，⛔ 不講「張／卡片／知識卡／知識空間」', async () => {
     fetchImpl = () => ({ id: 'c1', status: 'draft', failureReason: 'Gemini 429（請求太多）' })
     similarHits = [{ title: '停車資訊', similarity: 0.83 }]
     const { args, preview } = await propose(ops.knowledgeDraftCreate, { question: '有沒有停車位', answer: '門口有 3 格' })
@@ -326,8 +327,8 @@ describe('補一張知識卡（只放進「等你看過」）', () => {
       preview.summary, preview.warning, ...preview.items.map((i: any) => i.note),
       res.message, live.message, ...auditLogs.map(a => a.note),
     ].join('\n')
-    expect(said).toContain('知識空間')
-    expect(said).not.toMatch(/張|卡片|知識卡/)
+    expect(said).toContain('AI 知識量')
+    expect(said).not.toMatch(/張|卡片|知識卡|知識空間/)
   })
 })
 

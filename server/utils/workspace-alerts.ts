@@ -16,7 +16,8 @@ import { TAG_DISCOVERY_COLLECTION } from './tag-discovery'
 import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
 import { countOpenQueueSessions, isOpenQueueSession } from './conversation-queue'
-import { buildPlanView, getWorkspaceSubscription } from './billing'
+import { buildPlanView, effectivePlanOf, getWorkspaceSubscription } from './billing'
+import { countWorkspaceChunks } from './ai-knowledge-quota'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { findOtherWorkspacesOnChannel, getOrLearnChannelBotUserId } from './line-channel-binding'
@@ -24,7 +25,7 @@ import { fetchLineWebhookEndpoint, normalizeWebhookCompareUrl } from './line-web
 import { collectLiffEndpointChecks, countCampaignsWithoutUsableLiff } from './liff-endpoint-remote'
 import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
-import { derivePlanState } from '~~/shared/billing/plan-state'
+import { derivePlanState, deriveUsageState, type PlanUsageState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 import { normalizeLineUserId } from '~~/shared/line-notify-list'
@@ -315,6 +316,23 @@ async function recentLlmErrorTimes(
 type ProbeResult = { active: boolean; count?: number; detail?: string; scopes?: WorkspaceAlertScope[]
   /** 蓋掉預設嚴重度（見 shared 的 severityOf）。目前只有 llmError 用：偶發一次 vs 一直在壞是兩件事 */
   severity?: AlertSeverity }
+
+/**
+ * AI 知識量那兩顆（`D-131`⑤）：滿了（`knowledgeQuotaFull`）與快滿了（`knowledgeQuotaRunningOut`）。
+ * 門檻跟則數同一把尺（`deriveUsageState`：≥80% near、≥100% over），兩顆同一時間只會亮一顆——
+ * 同 quotaExceeded／quotaRunningOut 的分工（兩顆同時亮只會互相稀釋）。usage 為 null＝不限條數或讀不到訂閱。
+ */
+export function knowledgeQuotaProbe(kind: 'full' | 'near', usage: PlanUsageState | null): ProbeResult {
+  if (!usage || usage.limit == null) return { active: false }
+  if (kind === 'full') {
+    return usage.state === 'over'
+      ? { active: true, count: usage.used, detail: `已用 ${usage.used} / ${usage.limit} 條` }
+      : { active: false }
+  }
+  return usage.state === 'near'
+    ? { active: true, detail: `已用 ${usage.used} / ${usage.limit} 條（${usage.percentRaw}%）` }
+    : { active: false }
+}
 
 /** 把一次判定包成 active/clear；丟錯降級為 unknown（狀態未知，不等於沒問題） */
 async function probe(id: WorkspaceAlertId, fn: () => Promise<ProbeResult>): Promise<WorkspaceAlertItem> {
@@ -927,6 +945,16 @@ export async function collectWorkspaceAlerts(
   const answeredPromise = canSettings
     ? subPromise!.then(sub => (sub?.currentPeriodStart ? getQuotaAnswered(wid, sub.currentPeriodStart, db) : 0))
     : null
+  // AI 知識量（`D-131`⑤）：同一份訂閱算上限、數一次條數（跟知識庫守門同一支、同 60 秒快取），兩顆共用。
+  // 不限條數的方案（企業／內部）不數；訂閱讀不到時同則數那兩顆：不亮（不是「滿了」）
+  const knowledgeUsagePromise = canSettings
+    ? subPromise!.then(async (sub) => {
+        if (!sub) return null
+        const limit = effectivePlanOf(sub).plan.knowledgeChunks
+        if (limit == null) return null
+        return deriveUsageState(limit, await countWorkspaceChunks(wid, db))
+      })
+    : null
 
   // webhook 只問 LINE 一次，「確定收不到」與「網址不一致」兩顆 probe 共用同一個答案
   const webhookCheckPromise = canSettings ? checkLineWebhook(wid, skipCache) : null
@@ -1064,6 +1092,8 @@ export async function collectWorkspaceAlerts(
             parts.push(`照最近的速度約 ${Math.max(1, Math.round(daysToExhaust))} 天後用完，本期還有 ${Math.ceil(leftDays)} 天`)
           return { active: true, detail: parts.join('，') }
         }),
+        probe('knowledgeQuotaFull', async () => knowledgeQuotaProbe('full', await knowledgeUsagePromise!)),
+        probe('knowledgeQuotaRunningOut', async () => knowledgeQuotaProbe('near', await knowledgeUsagePromise!)),
         probe('maintenanceStalled', async () => {
           // 背景維護（轉真人提醒、過期回收、資料更新偵測）的心跳，run-tasks 每 10 分鐘寫一次
           // （cronState/maintenance-heartbeat）。同專案內所有工作區共用同一顆心跳——排程死掉

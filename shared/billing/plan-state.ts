@@ -83,8 +83,16 @@ export function derivePlanState(
   plan: Pick<PlanView, 'answeredQuota'> | null | undefined,
   answered: number,
 ): PlanUsageState {
-  const used = answered || 0
-  const limit = plan?.answeredQuota ?? null
+  return deriveUsageState(plan?.answeredQuota ?? null, answered)
+}
+
+/**
+ * 任何「用了幾個／上限幾個」都用這一把尺（`D-131`⑤：AI 知識量跟則數同一個 80% 門檻、同一組顏色）。
+ * ⛔ 別為知識量另寫一份門檻：方案頁兩條進度條變色的時機、「快滿了」提醒亮的時機要是同一件事。
+ * limit 為 null＝不限（永遠 ok）。
+ */
+export function deriveUsageState(limit: number | null, usedRaw: number): PlanUsageState {
+  const used = usedRaw || 0
   const percentRaw = limit ? Math.round((used / limit) * 100) : 0
   const percent = Math.min(100, percentRaw)
   const remaining = limit == null ? null : Math.max(0, limit - used)

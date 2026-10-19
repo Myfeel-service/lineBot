@@ -7,12 +7,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   BILLING_PLANS,
+  BROADCAST_TIER_CELL,
   FEATURED_PLAN_IDS,
   OVERAGE_PER_REPLY_TWD,
+  broadcastLockText,
+  broadcastPlanBlockReason,
+  broadcastTierSpec,
+  broadcastTierSummary,
   planAllowsBroadcast,
   planAllowsReport,
   planAllowsScripting,
   planLimitMessage,
+  tierAllowsAudience,
 } from './plans'
 
 describe('額度階梯（D-69 拍板①）', () => {
@@ -63,6 +69,20 @@ describe('功能閘門（D-69 拍板④）', () => {
     expect(planAllowsBroadcast(BILLING_PLANS.growth, 'advanced')).toBe(true)
   })
 
+  /**
+   * `D-131`：前端鎖選項、後端擋端點用的 `tierAllowsAudience` 必須跟送出端的規則（`planAllowsBroadcast`＋
+   * 「全部好友要 basic、其餘要 advanced」）逐一相同——漂開就是「畫面鎖了、送出端放行」或反過來。
+   */
+  it('推播：鎖選項的判斷跟送出端的規則逐方案、逐對象一致', () => {
+    for (const plan of Object.values(BILLING_PLANS)) {
+      for (const type of ['all', 'tags', 'audience', 'import']) {
+        const need = type === 'all' ? 'basic' : 'advanced'
+        expect(tierAllowsAudience(plan.broadcast, type), `${plan.id}/${type}`).toBe(planAllowsBroadcast(plan, need))
+        expect(broadcastPlanBlockReason(plan.broadcast, type) === null, `${plan.id}/${type}`).toBe(planAllowsBroadcast(plan, need))
+      }
+    }
+  })
+
   it('報表：等級可比較，export 是最高階', () => {
     expect(planAllowsReport(BILLING_PLANS.free, 'advanced')).toBe(false)
     expect(planAllowsReport(BILLING_PLANS.growth, 'advanced')).toBe(true)
@@ -75,6 +95,37 @@ describe('功能閘門（D-69 拍板④）', () => {
       expect(BILLING_PLANS[id].seats).toBeNull()
       expect(BILLING_PLANS[id].knowledgeChunks).toBeNull()
     }
+  })
+})
+
+/**
+ * `D-131`①：推播分級對外的說法。每個面向（官網方案卡、付款彈窗、條款、/product-info、推播頁鎖住、驗證視窗、
+ * 送出／排程被擋）都用這幾支——這裡把「講的是真的」釘住：說得出要哪個方案，而且那個方案真的發得了。
+ */
+describe('推播分級的說法（D-131）', () => {
+  it('方案卡與付款彈窗：檯面上四個方案各寫一格，同一組字', () => {
+    expect(FEATURED_PLAN_IDS.map(id => broadcastTierSpec(BILLING_PLANS[id].broadcast)))
+      .toEqual(['不含推播', '推播：全部好友', '推播：全部好友', '推播：全部好友＋分眾'])
+    expect(FEATURED_PLAN_IDS.map(id => BROADCAST_TIER_CELL[BILLING_PLANS[id].broadcast]))
+      .toEqual(['—', '全部好友', '全部好友', '全部好友＋分眾'])
+  })
+
+  it('鎖住時講得出要哪個方案以上，而且那個方案真的發得了', () => {
+    expect(broadcastLockText('basic')).toBe('目前的方案只能發給全部好友；依標籤篩選、匯入名單要成長以上的方案才能用。')
+    expect(broadcastLockText('none')).toBe('目前的方案不能發推播，要輕量以上的方案才能發。')
+    expect(broadcastLockText('advanced')).toBeNull()
+    expect(planAllowsBroadcast(BILLING_PLANS.growth, 'advanced')).toBe(true)
+    expect(planAllowsBroadcast(BILLING_PLANS.lite, 'basic')).toBe(true)
+  })
+
+  it('⛔ 鎖住那句不寫目前是哪個方案（推播頁客服也看得到，方案名屬計費資訊 G-103）', () => {
+    for (const t of ['none', 'basic'] as const) {
+      expect(broadcastLockText(t)).not.toMatch(/免費方案|輕量方案|入門方案/)
+    }
+  })
+
+  it('條款與 /product-info 那一句照方案表導出', () => {
+    expect(broadcastTierSummary()).toBe('免費方案不含推播；輕量、入門方案可推播給全部好友；成長方案另可依標籤篩選或匯入名單挑人發（分眾）。')
   })
 })
 

@@ -53,8 +53,12 @@
         <li><b>計價單位</b>：以「LINE 官方帳號」為單位各自訂閱、各自計價，額度不跨帳號共用。</li>
         <!-- 「一則」的定義要出現在條款裡：這是收錢的單位，客人最有資格知道怎麼算。
              ⛔ 與 shared/billing/usage-units.ts 的 REPLY_UNIT_TIP 必須同一套說法。 -->
-        <li><b>什麼算一則</b>：AI 每出手回答一次算一則，包含為了問清楚需求而反問的那一句；<b>AI 表示無法回答並轉由真人接手的訊息不計入額度</b>。同一次回答即使拆成多則訊息送出，仍只計一則。此處的「則」與 LINE 官方帳號本身的訊息額度無關。</li>
+        <!-- `D-131`③（2026-10-19）：補「草稿模式也算」——後台提示有寫、程式也真的扣（REPLY_UNIT_TIP），條款以前漏了這一句。 -->
+        <li><b>什麼算一則</b>：AI 每出手回答一次算一則，包含為了問清楚需求而反問的那一句；<b>草稿模式下 AI 擬好回覆給客服參考，也算一則</b>；<b>AI 表示無法回答並轉由真人接手的訊息不計入額度</b>。同一次回答即使拆成多則訊息送出，仍只計一則。此處的「則」與 LINE 官方帳號本身的訊息額度無關。</li>
         <li><b>其他用量上限</b>：各方案另有團隊成員人數與 AI 知識量（知識卡條數）上限，以本網站定價區與後台顯示為準；達到上限時可刪除既有內容或升級方案。</li>
+        <!-- `D-131`①：推播各方案不同（後端真的擋），以前條款沒寫。句子照方案表導出來（broadcastTierSummary），
+             跟 /product-info 同一句；後半句講方案中途變更時已排好的推播會怎樣（送出端到了時間照樣擋）。 -->
+        <li><b>推播</b>：{{ broadcastSummary }}方案中途變更時，新方案不含的推播（含已排好的排程推播）不會送出。</li>
         <li><b>金額</b>：本網站與後台顯示的月費均為<b>新臺幣、已含稅</b>價格。</li>
         <li><b>計費週期</b>：自你付款開通日起算一個月為一期；每期開始時，該期的 AI 回覆額度重新計算。</li>
         <li><b>額度歸零</b>：當期未使用完的額度於期末歸零，不遞延至下一期、不折現。</li>
@@ -188,7 +192,13 @@
 </template>
 
 <script setup lang="ts">
-import { OVERAGE_PER_REPLY_TWD } from '~~/shared/billing/plans'
+import { OVERAGE_PER_REPLY_TWD, broadcastTierSummary } from '~~/shared/billing/plans'
+
+/**
+ * 「推播」那一條照方案表導出來（`D-131`）。⚠️ 跟加購單價一樣是條款內容：方案的推播分級一改，
+ * 這句就跟著變，**POLICY_VERSION 要一起升**（shared/legal.ts）。
+ */
+const broadcastSummary = broadcastTierSummary()
 
 definePageMeta({ layout: false })
 

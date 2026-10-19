@@ -1281,9 +1281,11 @@
         <!-- 方案一覽（2026-09-04 老闆：這裡要呈現免費／399／799／1,499）。
              ⛔ 清單本體讀 FEATURED_PLAN_IDS，別在頁面自己列 id——2026-08-17 就是因為官網與
                 付款彈窗各維護一份，改了官網沒改彈窗被老闆抓到。
-             ⛔ 卡上刻意只列「每月則數／席次／AI 知識量（條）」而且沒有打叉的列：打叉會跟底下那行
-                圖說（AI 客服四個方案都能用）同一區自打嘴巴——同 2026-08-21「不寫 799 才有
-                完整 AI 客服」的拍板。要動這個口徑先看圖說那段的 ⛔（連著後台彈窗一起改）。
+             ⛔ 卡上只列**真的會擋**的差異：每月則數／席次／AI 知識量（條）／推播（`D-131`，2026-10-19 加：
+                後端一直在擋——免費不能發、輕量／入門只能發全部好友——卻哪裡都沒寫）。
+                ⛔ 不擋的不寫成差異（`D-59`：腳本／流程全方案開放、報表與 API 沒有地方在擋），
+                也不畫 ✓／✕——同 2026-08-21「不寫 799 才有完整 AI 客服」的拍板。卡上的字跟後台付款彈窗
+                同一組（plans.ts 的 `broadcastTierSpec`／`BROADCAST_TIER_CELL`），改一邊兩邊一起動。
              ⛔ 卡上刻意沒有各自的按鈕：官網買不到方案（要先註冊、在後台才選），四顆一模一樣
                 的按鈕只會讓人以為按下去就選定了，也違反「每一列都長一樣＝等於沒有」。
              進場動畫掛在每張卡（不是這層網格）：手機單欄時四張疊起來，掛在外層網格的話
@@ -1308,6 +1310,11 @@
             </ul>
           </div>
         </div>
+        <!-- `D-131`②（2026-10-19 拍板照建議做）：卡上賣的是「每月 AI 回覆 N 則」，買之前一定會問「怎樣算一則」——
+             反問算不算、答不出來算不算、跟 LINE 官方帳號的訊息則數有沒有關係，這一頁以前一個字都沒講。
+             ⛔ 字是 shared/billing/usage-units.ts 的 REPLY_UNIT_SHORT，/product-info 與付款彈窗的 ⓘ 同一句，別在這裡改字。
+             ⚠️ 這一行跟下面那段 09-08 移除的圖說不是同一件事：那一行三句都在別處講過才拿掉；這一句全站買之前看得到的地方只有這裡。 -->
+        <p class="lp-plans__note lp-reveal">{{ REPLY_UNIT_SHORT }}</p>
         <!-- ══ 這裡原本有一行方案卡圖說（.lp-plans__note），2026-09-08 使用者拍板**整行移除** ══
              同一天砍了四輪：103 →（砍卡上已印過的則數／席次）67 →（換算搬進 FAQ）50 → 0 字。
              最後一刀的問句是「這邊是否也可以移除」，逐句查完別處都有去處才拍板：
@@ -1321,10 +1328,9 @@
                   這件事丟回給讀者自己做；四張卡列的欄位完全相同、只有數字遞增，是唯一還在
                   暗示「差別只在規模」的東西。
              ⛔ 要復活的話這三件先讀完，別直接把句子貼回來：
-               1. 刻意**不可以寫「四個方案功能完全一樣」**——群發（broadcast）與 API 各方案仍不同
-                  （後端 broadcast-send 真的會擋）。⚠️ 2026-10-17 全站對過：後台彈窗（AdminPlanUpgradeDialog）
-                  **現在並沒有**印群發的 ✓／—，官網也沒寫——這個差別目前哪裡都沒揭露，等拍板（`D-131`）。
-                  （⚠️ 2026-09-26 起腳本／流程**所有方案都開放**，彈窗的「流程」欄已拿掉；這條仍成立。）
+               1. 刻意**不可以寫「四個方案功能完全一樣」**——推播各方案不同（後端 broadcast-send 真的會擋）。
+                  2026-10-19 `D-131` 起卡上第三列與後台付款彈窗的「推播」欄都寫出來了。
+                  （⚠️ 2026-09-26 起腳本／流程**所有方案都開放**，彈窗的「流程」欄已拿掉；API 欄 10-19 也拿掉了——沒有地方在擋。）
                   「AI 客服四個方案都能用」才是查得證的（四個方案的 answeredQuota 都 > 0）。
                2. ⛔ 別改回卡片：這個位置 2026-09-04 之前是三張特點卡，橫在方案卡與 CTA 之間
                   183px（平板 412px）——讀者正要按按鈕，中間插的卻不是「選哪個／會不會被扣款」。
@@ -1634,7 +1640,8 @@
 <script setup lang="ts">
 import type { BubbleTyping } from '~/utils/bubble-typing'
 import { prepareBubbleTyping } from '~/utils/bubble-typing'
-import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS } from '~~/shared/billing/plans'
+import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS, broadcastTierSpec } from '~~/shared/billing/plans'
+import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
 // 註冊入口（`/login?intent=start`）：五顆 CTA ＋導覽列「免費註冊」共用同一個常數。
 // ⛔ 別改回字面 `/login`——登入頁靠這個參數換成註冊口吻、零帳號的人才會被直接送進開通引導。
 import { SIGNUP_ENTRY_PATH } from '~~/shared/signup-entry'
@@ -1940,9 +1947,11 @@ const featuredPlans = computed(() =>
       price: fmt(p.priceMonthly as number),
       quota: fmt(p.answeredQuota as number),
       // 每張卡的規格列數必須一樣多，行才對得齊（房規：對齊到像素級）
+      // `D-131`①：推播那一列是**真的會擋**的差異（免費不能發、輕量／入門只能發全部好友），字跟付款彈窗的「推播」欄同一組
       specs: [
         p.seats === null ? '團隊席次不限' : `團隊 ${p.seats} 席`,
         p.knowledgeChunks === null ? 'AI 知識量不限' : `AI 知識量 ${fmt(p.knowledgeChunks)} 條`,
+        broadcastTierSpec(p.broadcast),
       ],
     })),
 )

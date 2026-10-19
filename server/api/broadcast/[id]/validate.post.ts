@@ -1,6 +1,7 @@
 import { getDb, getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { resolveAudienceUserIds } from '~~/server/utils/audience'
+import { broadcastPlanBlockFor } from '~~/server/utils/broadcast-plan-gate'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
 
@@ -66,6 +67,13 @@ export default defineEventHandler(async (event) => {
       errors.push(`機器人模組「${flowName || triggerModuleId}」裡面一則訊息都沒有，發出去客人什麼都收不到。請先把內容編好。`)
     }
   }
+
+  /**
+   * 方案不含這種推播（`D-131`）：在**按確認之前**就講，跟推播頁鎖住時同一句。
+   * 以前這個視窗照樣顯示「預估發送人數 842」，按下去才失敗；排程的話是到了時間才失敗。
+   */
+  const planBlock = await broadcastPlanBlockFor(workspaceId, data.audienceSource?.type, db)
+  if (planBlock) errors.push(planBlock)
 
   // 檢查狀態
   if (data.status === 'completed') {

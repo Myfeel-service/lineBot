@@ -66,9 +66,17 @@ export interface BillingPlan {
    * null = 不限。「幾份資料」仍在來源列表顯示，但**不再是限制**。
    */
   knowledgeChunks: number | null
-  /** 數據報表等級。 */
+  /**
+   * 數據報表等級。
+   * ⚠️ 2026-10-19 `D-59` 收斂：**全站沒有任何地方照這一欄擋**（報表每個方案都看得到），
+   *    所以官網、付款彈窗、條款都**不展示**它——不擋的東西寫成方案差異＝對客戶說了不存在的事。
+   *    哪天真的要做報表分級，先做擋、再同時加回官網方案卡與付款彈窗。
+   */
   reports: ReportTier
-  /** 群發 / 分眾行銷等級。 */
+  /**
+   * 推播（群發）等級——**真的會擋**：送出端 `broadcast-send.ts`、驗證／送出／排程端點都照它（`D-131`）。
+   * 對外說法一律走下面的 `BROADCAST_TIER_CELL`／`broadcastTierSpec`／`broadcastLockText`，⛔ 別各頁自己造句。
+   */
   broadcast: BroadcastTier
   /**
    * 腳本 / 流程自動化。
@@ -79,7 +87,11 @@ export interface BillingPlan {
    *    而不回頭看精靈：那一步會再次壞掉。
    */
   scripting: boolean
-  /** API 串接。 */
+  /**
+   * API 串接。
+   * ⚠️ 2026-10-19 `D-59` 收斂：目前**沒有對外的 API 可用、也沒有地方照這一欄擋**，
+   *    付款彈窗原本的「API」欄（檯面上四個方案整排「—」）已拿掉，理由同 `reports`。
+   */
   api: boolean
   /** 客製方案（需業務報價 + 手動開通）；前端顯示「聯繫我們」而非「立即訂閱」。 */
   custom: boolean
@@ -418,7 +430,7 @@ const BROADCAST_TIER_LEVEL: Record<BroadcastTier, number> = { none: 0, basic: 1,
 /** 報表等級高低（basic < advanced < export），供 `planAllowsReport` 比較。 */
 const REPORT_TIER_LEVEL: Record<ReportTier, number> = { basic: 0, advanced: 1, export: 2 }
 
-/** 這個方案的群發權限是否達到 `min` 等級。`advanced` = 分眾（標籤／受眾／匯入名單）。 */
+/** 這個方案的推播權限是否達到 `min` 等級。`advanced` = 分眾（標籤／受眾／匯入名單）。 */
 export function planAllowsBroadcast(plan: BillingPlan, min: BroadcastTier): boolean {
   return BROADCAST_TIER_LEVEL[plan.broadcast] >= BROADCAST_TIER_LEVEL[min]
 }
@@ -426,6 +438,102 @@ export function planAllowsBroadcast(plan: BillingPlan, min: BroadcastTier): bool
 /** 這個方案的報表權限是否達到 `min` 等級。 */
 export function planAllowsReport(plan: BillingPlan, min: ReportTier): boolean {
   return REPORT_TIER_LEVEL[plan.reports] >= REPORT_TIER_LEVEL[min]
+}
+
+// ── 推播分級的對外說法（`D-131`，2026-10-19 拍板照建議做）─────────────────────────
+//
+// 以前後端真的擋（免費不能發、輕量／入門不能分眾），但官網方案卡、付款彈窗、條款都沒寫，推播頁也沒鎖——
+// 輕量方案的人排好一則依標籤的推播，按送出（或到了排程時間）才失敗。
+// ⛔ 下面幾句是**唯一的說法**：官網方案卡、付款彈窗、條款、推播頁鎖住時的說明、驗證視窗、
+//    送出／排程被擋、排程到時間才被擋（方案中途降級），全部用這幾支，別各處自己造句。
+
+/**
+ * 這種發送對象要哪一級。全部好友＝`basic`；依標籤、匯入名單、受眾＝`advanced`（分眾）。
+ * ⛔ 跟送出端同一條規則（`broadcast-send.ts` 照 `audienceSource.type !== 'all'` 判），別另寫一份。
+ */
+export function broadcastTierNeededFor(audienceType: string | null | undefined): BroadcastTier {
+  return audienceType === 'all' ? 'basic' : 'advanced'
+}
+
+/** 方案能不能發這種發送對象（前端鎖選項、後端擋端點都用這一支）。 */
+export function tierAllowsAudience(tier: BroadcastTier, audienceType: string | null | undefined): boolean {
+  return BROADCAST_TIER_LEVEL[tier] >= BROADCAST_TIER_LEVEL[broadcastTierNeededFor(audienceType)]
+}
+
+/** 付款彈窗方案表的「推播」欄（欄名已經是「推播」，格子裡只寫發得到誰）。 */
+export const BROADCAST_TIER_CELL: Record<BroadcastTier, string> = {
+  none: '—',
+  basic: '全部好友',
+  advanced: '全部好友＋分眾',
+}
+
+/** 「分眾」是什麼：付款彈窗「推播」欄名旁的 ⓘ。字跟推播頁的兩個選項同名，客人在那一頁找得到。 */
+export const BROADCAST_SEGMENT_HINT = '分眾＝在推播頁用「依標籤篩選」或「匯入名單」挑人發，只發給挑出來的人。'
+
+/** 官網方案卡的那一列（跟付款彈窗那一格同一組字，只是卡片上沒有欄名，要自己帶「推播：」）。 */
+export function broadcastTierSpec(tier: BroadcastTier): string {
+  return tier === 'none' ? '不含推播' : `推播：${BROADCAST_TIER_CELL[tier]}`
+}
+
+/**
+ * 檯面上（`FEATURED_PLAN_IDS`）最便宜、而且推播達到這一級的方案名。
+ * 讀方案表導出來，不寫死「成長」：哪天改了分級，鎖住時講的方案名跟著對。
+ */
+export function lowestFeaturedPlanNameForBroadcast(tier: BroadcastTier): string | null {
+  const hit = BILLING_PLAN_ORDER
+    .filter(id => FEATURED_PLAN_IDS.includes(id))
+    .map(id => BILLING_PLANS[id])
+    .find(p => BROADCAST_TIER_LEVEL[p.broadcast] >= BROADCAST_TIER_LEVEL[tier])
+  return hit?.name ?? null
+}
+
+/**
+ * 推播頁鎖住時的那一句，也是驗證視窗、送出／排程被擋、排程到時間被擋時的原因。null＝這一級沒有被鎖的東西。
+ *
+ * ⛔ **不寫目前是哪個方案**：推播頁客服（agent）也進得去，而方案名屬於計費資訊（`G-103`）——
+ *    只講「目前的方案」＋「要哪個方案以上」，兩件事就夠他決定改對象或找管理員升級。
+ */
+export function broadcastLockText(tier: BroadcastTier): string | null {
+  if (tier === 'none') {
+    const need = lowestFeaturedPlanNameForBroadcast('basic')
+    return `目前的方案不能發推播${need ? `，要${need}以上的方案才能發` : ''}。`
+  }
+  if (tier === 'basic') {
+    const need = lowestFeaturedPlanNameForBroadcast('advanced')
+    return `目前的方案只能發給全部好友；依標籤篩選、匯入名單${need ? `要${need}以上的方案才能用` : '暫不開放'}。`
+  }
+  return null
+}
+
+/** 這個方案發這種對象會被擋的話回那一句（同 `broadcastLockText`），發得了回 null。 */
+export function broadcastPlanBlockReason(tier: BroadcastTier, audienceType: string | null | undefined): string | null {
+  return tierAllowsAudience(tier, audienceType) ? null : broadcastLockText(tier)
+}
+
+/** 檯面上的方案照推播等級分組（下面那句照它寫，跟方案卡同一份來源）。 */
+export function featuredPlanNamesByBroadcastTier(): Record<BroadcastTier, string[]> {
+  const out: Record<BroadcastTier, string[]> = { none: [], basic: [], advanced: [] }
+  for (const id of BILLING_PLAN_ORDER) {
+    if (!FEATURED_PLAN_IDS.includes(id)) continue
+    const p = BILLING_PLANS[id]
+    out[p.broadcast].push(p.name)
+  }
+  return out
+}
+
+/**
+ * 各方案的推播一句話講完（條款「推播」那一條、`/product-info`）：
+ * 「免費方案不含推播；輕量、入門方案可推播給全部好友；成長方案另可依標籤篩選或匯入名單挑人發（分眾）。」
+ * 照方案表導出來，跟方案卡同一組詞（不含推播／全部好友／分眾）。⛔ 別在頁面上寫死方案名。
+ */
+export function broadcastTierSummary(): string {
+  const g = featuredPlanNamesByBroadcastTier()
+  const names = (list: string[]) => list.join('、')
+  const parts: string[] = []
+  if (g.none.length) parts.push(`${names(g.none)}方案不含推播`)
+  if (g.basic.length) parts.push(`${names(g.basic)}方案可推播給全部好友`)
+  if (g.advanced.length) parts.push(`${names(g.advanced)}方案另可依標籤篩選或匯入名單挑人發（分眾）`)
+  return parts.length ? `${parts.join('；')}。` : ''
 }
 
 /**

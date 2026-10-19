@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
       ...(r.leftForQuota.length || r.autoUpdateOn.length
         ? {
             note: [
-              r.leftForQuota.length ? `知識空間滿了，還有 ${r.leftForQuota.length} 條沒收` : '',
+              r.leftForQuota.length ? `AI 知識量滿了，還有 ${r.leftForQuota.length} 條沒收` : '',
               // `D-125`③：開帳讀的網站頁採用了就開始每天檢查，紀錄要講得出「從什麼時候起會自動更新」
               r.autoUpdateOn.length ? `開帳讀的 ${r.autoUpdateOn.length} 個網頁從現在起每天自動檢查更新` : '',
             ].filter(Boolean).join('；'),

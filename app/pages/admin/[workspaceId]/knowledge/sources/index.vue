@@ -554,7 +554,7 @@
             表格上有 {{ selectedSource.quotaSkippedCount }} 列還沒收進知識庫
           </template>
           <div>
-            知識空間已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，{{ gsheetRefillWhen }}，不用重新匯入。
+            AI 知識量已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，{{ gsheetRefillWhen }}，不用重新匯入。
           </div>
         </el-alert>
 
@@ -1016,14 +1016,14 @@
       </div>
 
       <!--
-        知識空間（`C-308`⑪）：勾了新增才講——跟加入視窗同一把尺，放不下的先不加、套用完講是幾條。
+        AI 知識量（`C-308`⑪；`D-131`④ 前叫「知識空間」）：勾了新增才講——跟加入視窗同一把尺，放不下的先不加、套用完講是幾條。
         以前空間不夠是整批套用失敗，差異畫面上也看不到還剩多少。
       -->
       <p v-if="diffRoom" class="kb-quota-line" :class="{ 'is-full': diffRoom.over > 0 }">
         <template v-if="diffRoom.over > 0">
-          知識空間只剩 {{ diffRoom.room }} 條：勾了新增的 {{ diffRoom.adds }} 條裡，{{ diffRoom.over }} 條這次放不下、先不加。刪掉用不到的知識或升級方案就放得下。
+          AI 知識量只剩 {{ diffRoom.room }} 條：勾了新增的 {{ diffRoom.adds }} 條裡，{{ diffRoom.over }} 條這次放不下、先不加。刪掉用不到的知識或升級方案就放得下。
         </template>
-        <template v-else>知識空間還能放 {{ diffRoom.room }} 條。</template>
+        <template v-else>AI 知識量還能放 {{ diffRoom.room }} 條。</template>
       </p>
 
       <!-- 把「該看哪幾條」講出來:修改裡只有數字變掉的那些會影響客人拿到的答案 -->
@@ -1686,7 +1686,7 @@ interface SourceSummary {
   detectStalledAtMs: number
   /** type='gsheet'：手動編輯鎖住、與表格內容分歧的張數（>0 要常駐提示） */
   manualKeptCount: number
-  /** type='gsheet'：知識空間滿了、同步時沒新增的列數（>0 要常駐提示，`C-296`） */
+  /** type='gsheet'：AI 知識量滿了、同步時沒新增的列數（>0 要常駐提示，`C-296`） */
   quotaSkippedCount?: number
   /** type='gsheet'：在後台刪掉、之後同步不再收的那幾列的標題（`D-125`②）；舊伺服器沒有這一格 */
   gsheetExcludedTitles?: string[]
@@ -3135,7 +3135,7 @@ const todoItems = computed<TodoItem[]>(() => {
     items.push({
       id: 'quotaSkippedSheets',
       tone: 'warning',
-      title: `${quotaSkippedSheets.value.length} 份試算表有 ${rows} 列因為空間滿了還沒收`,
+      title: `${quotaSkippedSheets.value.length} 份試算表有 ${rows} 列因為 AI 知識量滿了還沒收`,
       why: '表格上新加的那幾列 AI 還答不出來。刪掉用不到的知識或升級方案之後，同步時就會補上。',
       cta: '查看',
       action: singleOrList(quotaSkippedSheets.value, 'source', 'quotaSkippedSheets'),
@@ -3289,7 +3289,7 @@ const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「立即更新」,或改用內容固定的頁面當資料來源。' },
   // `D-127`：點一份直接打開「移到哪一組」那個小視窗（gotoHealthItem），所以只講「點一份放進去」
   noProductSources: { title: '檔案還沒放進商品分組', hint: '單一商品的說明書要放進那一台的分組，AI 才知道在講哪一台。點一份放進去。' },
-  quotaSkippedSheets: { title: '試算表還有列沒收', hint: '知識空間滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
+  quotaSkippedSheets: { title: '試算表還有列沒收', hint: 'AI 知識量滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
   // `D-129`：這一類只有「系統自己試了 5 次還是沒學會」的（還在自動再試的不列）
   failedChunks: { title: 'AI 試了 5 次都沒學會', hint: `這幾條系統自己試了 5 次，AI 還是沒學會，客人問到相關問題時找不到它們。點開那一條按「${KB_RETRY_BUTTON}」；還是不行的話，改一下內容再存，或聯絡我們。` },
   // ⛔ 字數不要寫死：門檻是 SHORT_CHUNK_CONTENT_CHARS，前後端共用同一把尺。
@@ -4367,7 +4367,7 @@ const foldedNoteParts = computed(() => {
 })
 
 /**
- * 套用前的知識空間（`C-308`⑪）：差異打開時讀一次；null＝不限或讀不到——那就不講（不猜）。
+ * 套用前的 AI 知識量（`C-308`⑪）：差異打開時讀一次；null＝不限或讀不到——那就不講（不猜）。
  * 伺服器套用時放不下的新增會先不加、回 quotaSkipped（跟加入視窗「先收前 N 條」同一把尺），這裡讓他按之前就知道。
  */
 const diffQuota = ref<{ used: number, limit: number | null } | null>(null)
@@ -4493,7 +4493,7 @@ interface GsheetSyncRes {
   kept: number
   pendingDeletes?: number
   manualKept?: number
-  /** 知識空間滿了沒新增的列數（`C-296`） */
+  /** AI 知識量滿了沒新增的列數（`C-296`） */
   quotaSkipped?: number
 }
 
@@ -4540,7 +4540,7 @@ async function syncGsheetNow() {
     // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了更新卻什麼都沒發生。
     // 什麼時候補照自動更新的頻率講（`C-308`④）：設成不自動更新的不會「自動」補
     const quotaTail = res.quotaSkipped
-      ? `；還有 ${res.quotaSkipped} 列因為知識空間用滿了沒收進來（空出空間後${gsheetAutoSync.value ? '，下一次自動更新會補上' : '再按一次「立即更新」就會補上'}）`
+      ? `；還有 ${res.quotaSkipped} 列因為 AI 知識量用滿了沒收進來（刪掉用不到的或升級方案後${gsheetAutoSync.value ? '，下一次自動更新會補上' : '再按一次「立即更新」就會補上'}）`
       : ''
     if (res.outcome === 'unchanged') {
       showToast(quotaTail ? `表格沒有變動${quotaTail}` : '已是最新，無變動', quotaTail ? 'warning' : 'success')
@@ -4643,7 +4643,7 @@ async function applyDiff() {
     // 空間不夠、先沒加的新增（`C-308`⑪）：伺服器收到滿為止，沒收的那幾條一定要講——不講就是「沉默地少收」
     const skipped = Number(res.quotaSkipped ?? 0)
     if (skipped > 0) {
-      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；還有 ${skipped} 條新增因為知識空間滿了沒加（空出空間後再按一次「立即更新」就會補上）`, 'warning')
+      showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}；還有 ${skipped} 條新增因為 AI 知識量滿了沒加（刪掉用不到的或升級方案後再按一次「立即更新」就會補上）`, 'warning')
     }
     else {
       showToast(`已套用：新增 ${res.added}、更新 ${res.updated}、刪除 ${res.deleted}、保留 ${res.kept}`, 'success')

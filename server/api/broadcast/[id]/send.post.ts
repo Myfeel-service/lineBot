@@ -1,9 +1,11 @@
 import { executeBroadcastSend } from '~~/server/utils/broadcast-send'
+import { assertBroadcastPlanAllows } from '~~/server/utils/broadcast-plan-gate'
 import { broadcastScheduleAtToDate } from '~~/server/utils/broadcast-schedule'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDoc } from '~~/server/utils/firebase'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { BROADCAST_ALL_RECIPIENTS_FAILED } from '~~/shared/broadcast-failure'
+import { broadcastLockText } from '~~/shared/billing/plans'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -35,6 +37,12 @@ export default defineEventHandler(async (event) => {
       statusMessage: '此推播已設定未來排程時間，請使用「驗證並排程」或先取消排程',
     })
   }
+
+  /**
+   * 方案不含這種推播（`D-131`）：**認領之前**就擋。送出端也會擋，但那時推播已經被標成發送中、
+   * 擋下來就變成「失敗」，草稿得重設才能改——在這裡擋，草稿原封不動，改個對象就能再按。
+   */
+  await assertBroadcastPlanAllows(workspaceId, doc.audienceSource?.type)
 
   try {
     const result = await executeBroadcastSend(id, { source: 'manual' })
@@ -71,6 +79,10 @@ export default defineEventHandler(async (event) => {
     if (msg.includes('not found')) throw createError({ statusCode: 404, statusMessage: msg })
     if (msg.includes('已排程')) {
       throw createError({ statusCode: 409, statusMessage: msg })
+    }
+    // 認領之後方案才變（極少見）：送出端已經把推播標成失敗，原因照推播頁那一句講
+    if (msg === broadcastLockText('none') || msg === broadcastLockText('basic')) {
+      throw createError({ statusCode: 403, statusMessage: msg })
     }
     if (msg.includes('Cannot send') || msg.includes('No messages') || msg.includes('audience')) {
       throw createError({ statusCode: 400, statusMessage: msg })

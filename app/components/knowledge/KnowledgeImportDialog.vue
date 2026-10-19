@@ -102,13 +102,14 @@
         </template>
       </div>
 
-      <!-- 知識空間（`C-296`）：放之前就看得到剩幾條；滿了要在這裡就講，不是等整理完、按匯入才擋 -->
+      <!-- AI 知識量（`C-296`）：放之前就看得到剩幾條；滿了要在這裡就講，不是等整理完、按匯入才擋。
+           `D-131`④（2026-10-19）：名稱從「知識空間」改成跟官網、條款、方案頁同一個——「AI 知識量」，單位「條」 -->
       <p v-if="quota && quota.limit != null" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
         <template v-if="roomLeft === 0">
-          知識空間滿了（{{ quota.used }}／{{ quota.limit }} 條）：新的資料整理完會放不進去，先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+          AI 知識量滿了（{{ quota.used }}／{{ quota.limit }} 條）：新的資料整理完會放不進去，先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
         </template>
         <template v-else>
-          知識空間：已用 {{ quota.used }}／{{ quota.limit }} 條，還能放 {{ roomLeft }} 條
+          AI 知識量：已用 {{ quota.used }}／{{ quota.limit }} 條，還能放 {{ roomLeft }} 條
           <!--
             「條」是什麼、一份會用掉幾條（`D-124` 新手走查：後台沒講，只有官網常見問題寫過）。
             數字是正式庫 2026-10-12 唯讀量的中位數附近：PDF 說明書 21 份中位數 35（25%～75%＝15～53）、
@@ -709,10 +710,10 @@
         <!-- 放不下時收到滿為止（`C-296`）：按之前就講會收幾條、幾條不收，按鈕跟著改口 -->
         <p v-if="overQuotaBy > 0" class="kb-preview-summary__warn">
           <template v-if="fitChunkCount > 0">
-            知識空間只剩 {{ roomLeft }} 條：這次會先收前 {{ fitChunkCount }} 條，其餘 {{ overQuotaBy }} 條先不收——刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就放得下。
+            AI 知識量只剩 {{ roomLeft }} 條：這次會先收前 {{ fitChunkCount }} 條，其餘 {{ overQuotaBy }} 條先不收——刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就放得下。
           </template>
           <template v-else>
-            知識空間滿了，這 {{ overQuotaBy }} 條放不進去——先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+            AI 知識量滿了，這 {{ overQuotaBy }} 條放不進去——先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
           </template>
         </p>
         <div class="kb-preview-summary__actions">
@@ -1126,7 +1127,7 @@
       <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
       <!-- 補齊的路照來源講：試算表每小時自己同步，空間一空出來就會補上，不用他動手（叫他「再傳一次」是錯的） -->
       <p v-if="quotaSkipped > 0" class="kb-quota-line is-full">
-        還有 <strong>{{ quotaSkipped }}</strong> 條因為知識空間不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，{{ quotaRefillHint }}
+        還有 <strong>{{ quotaSkipped }}</strong> 條因為 AI 知識量不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，{{ quotaRefillHint }}
       </p>
 
       <!--
@@ -1203,7 +1204,7 @@
           <div class="kb-overview-suggest__actions">
             <el-button size="small" type="primary" plain :loading="overviewState === 'busy'" @click="makeOverview">做一張</el-button>
             <el-button size="small" text :disabled="overviewState === 'busy'" @click="overviewState = 'dismissed'">不用</el-button>
-            <span class="text-xs text-muted">AI 會照這份整理一次（算一次用量、佔 1 條空間）</span>
+            <span class="text-xs text-muted">AI 會照這份整理一次（算一次用量、佔 1 條 AI 知識量）</span>
           </div>
         </template>
         <p v-else-if="overviewState === 'made'" class="kb-overview-suggest__text">做好了：客人問「你們有賣哪些」時，會先用這張清單回答。</p>
@@ -1599,7 +1600,7 @@ function onFileBatchFinished(summary: FileBatchSummary) {
   // （還沒開始就停下的也要講：以前只說「已匯入 2 份」，另外 8 份去哪了沒人知道）
   if (!dialogShown.value) {
     const notDone = [
-      summary.quotaShort ? `${summary.quotaShort} 條因為空間不夠沒收` : '',
+      summary.quotaShort ? `${summary.quotaShort} 條因為 AI 知識量不夠沒收` : '',
       summary.failed ? `${summary.failed} 份沒有匯入` : '',
       summary.conflicts ? `${summary.conflicts} 份跟現有資料同名、沒有匯入` : '',
       summary.notStarted ? `${summary.notStarted} 份還沒開始就停下了` : '',
@@ -2696,7 +2697,7 @@ const importTotalLabel = computed(() =>
 )
 
 /**
- * 知識空間（`C-296`）：放之前就看得到剩幾條；放不下時**先收前 N 條**、講清楚其餘幾條沒收。
+ * AI 知識量（`C-296`）：放之前就看得到剩幾條；放不下時**先收前 N 條**、講清楚其餘幾條沒收。
  * 以前是等完、看完、按下匯入才整批 403——42 條一條都拿不到，訊息還叫新帳號「刪掉不需要的」。
  * ⚠️ 伺服器照樣把關（assertKnowledgeChunkQuota），這裡只是讓人在按之前就知道；
  *    讀不到用量（訂閱讀取失敗）就整行不顯示，不猜。
@@ -2730,9 +2731,9 @@ const siteRoomHint = computed(() => {
   if (room == null || siteImporting.value || siteFinished.value) return null
   const need = checkedSiteCount.value * CARDS_PER_PAGE_ESTIMATE
   if (checkedSiteCount.value && need > room) {
-    return { tight: true, text: `空間還能放 ${room} 條，一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條——勾這麼多，後面幾頁可能放不進去` }
+    return { tight: true, text: `AI 知識量還能放 ${room} 條，一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條——勾這麼多，後面幾頁可能放不進去` }
   }
-  return { tight: false, text: `空間還能放 ${room} 條（一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條）` }
+  return { tight: false, text: `AI 知識量還能放 ${room} 條（一頁大約 ${CARDS_PER_PAGE_ESTIMATE} 條）` }
 })
 /** 放得下幾條一般知識（總表排最後：先保住內容，空間還有剩才收總表）。跟帶過去那幾條同名的不用位置（sendCount 已扣） */
 const fitChunkCount = computed(() =>
@@ -2766,7 +2767,7 @@ const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceI
  */
 const importButtonLabel = computed(() => {
   if (overQuotaBy.value > 0) {
-    if (fitChunkCount.value === 0) return '空間已經滿了'
+    if (fitChunkCount.value === 0) return 'AI 知識量已經滿了'
     // `C-319`：跟同名提醒那顆、一次好幾份那一列同一句「更新原本那一份」（以前叫「更新既有資料」）
     return replaceTarget.value ? `更新原本那一份（先收前 ${fitChunkCount.value} 條）` : `先收前 ${fitChunkCount.value} 條`
   }
@@ -3731,7 +3732,7 @@ async function runImport() {
   if (!selected.length) {
     return showToast(
       overQuotaBy.value > 0
-        ? '知識空間已經滿了：先刪掉用不到的知識，或升級方案'
+        ? 'AI 知識量已經滿了：先刪掉用不到的知識，或升級方案'
         : includedCount.value > 0 ? '新版的每一條都跟你改過、要帶過去的同名——原本那一份不用更新' : '請至少選一條',
       'error',
     )

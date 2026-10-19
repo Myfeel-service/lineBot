@@ -1535,6 +1535,18 @@
     border-top: 1px solid var(--hair); display: flex; flex-direction: column; gap: 9px;
   }
   .lp-plan__spec li { font-size: 0.88rem; color: var(--ink-soft); }
+  /* `D-131`②（2026-10-19）：卡片底下一行「怎樣算一則」。跟卡上規格列同字級（0.88＝這一區「方案卡圖說」那一級）、
+     同色（ink-soft＝跟卡片內容是一組的註腳，不搶 CTA 底下那行風險答案的戲）。
+     ⚠️ 不是 09-08 拿掉的那一行（那行三句別處都有）；這一句全站買之前看得到的地方只有這裡。
+     寬度上限 46em：桌機一行讀完（約 50 字），手機自然折兩三行；text-wrap: balance 是**這一段量過**的，
+     別當通則（見下面那段的 ⛔）。 */
+  .lp-plans__note {
+    max-width: 46em; margin: 18px auto 0; text-align: center;
+    font-size: 0.88rem; line-height: 1.7; color: var(--ink-soft); text-wrap: balance;
+    /* 390 實測：不加會折成「…答不出來、轉」／「真人的不算…」——「轉真人」被拆開。
+       keep-all＝只在標點與空白後換行（這句每一段都短，最長那段 17 字，手機一行放得下） */
+    word-break: keep-all;
+  }
   /* （方案卡底下原本有一行圖說＝.lp-plans__note，2026-09-08 使用者拍板整行移除，
      為什麼寫在 index.vue 那段 ══ 註解裡。這裡留下量過的版面知識，復活時不用重量一次：
        · 寬度必須收（原本 max-width: 60ch）：滿版 1112px 時兩句會拉成一行 80 幾個字，

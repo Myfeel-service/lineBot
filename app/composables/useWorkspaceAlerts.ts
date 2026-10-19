@@ -301,6 +301,25 @@ const ALERTS: AlertDefinition[] = [
     anchor: { selector: '[data-tour="bill-quota"]', note: '這一區是本期用量；趁還沒停，按這張卡右上角的「升級 / 續訂」換更大的方案。' },
   },
   {
+    // `D-131`⑤：照抄上面兩顆則數的機制（同一頁、同一個圈法、同一把 80% 尺），只是後果比較輕——AI 照常回答
+    id: 'knowledgeQuotaFull',
+    icon: Reading,
+    impact: '新的知識加不進去（匯入、手寫、採用建議、試算表新加的列都會被擋），AI 照常用已有的回答。',
+    cta: '去看用量與方案',
+    requires: 'billing.manage',
+    route: wid => `/admin/${wid}/settings/billing`,
+    anchor: { selector: '[data-tour="bill-knowledge"]', note: '這一區是 AI 知識量；到知識庫刪掉不需要的，或按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+  },
+  {
+    id: 'knowledgeQuotaRunningOut',
+    icon: Reading,
+    impact: '滿了之後新的知識就加不進去。趁還沒滿，刪掉不需要的或升級方案。',
+    cta: '去看用量與方案',
+    requires: 'billing.manage',
+    route: wid => `/admin/${wid}/settings/billing`,
+    anchor: { selector: '[data-tour="bill-knowledge"]', note: '這一區是 AI 知識量；到知識庫刪掉不需要的，或按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+  },
+  {
     id: 'paymentPastDue',
     icon: CreditCard,
     impact: '服務目前照常，但一直扣不到款會被降回免費方案、AI 停止回覆。請更新付款方式，或改用手動付款。',

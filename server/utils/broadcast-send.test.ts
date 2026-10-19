@@ -15,8 +15,12 @@ vi.mock('./handler', () => ({ renderModuleToLineMessages: vi.fn() }))
 vi.mock('./broadcast-click-track', () => ({
   wrapBroadcastMessagesForClickTracking: vi.fn((m: unknown) => m),
 }))
+// 方案推播等級：預設 null＝讀不到訂閱（fail-open），其他測試照舊不受方案影響
+vi.mock('./broadcast-plan-gate', () => ({ workspaceBroadcastTier: vi.fn(async () => null) }))
 
 import { broadcastRetryKey, executeBroadcastSend } from './broadcast-send'
+import { workspaceBroadcastTier } from './broadcast-plan-gate'
+import { broadcastLockText } from '~~/shared/billing/plans'
 import { renderModuleToLineMessages } from './handler'
 import { getDb } from './firebase'
 import { multicastMessage, pushMessagesPerRecipient } from './line'
@@ -99,6 +103,45 @@ beforeEach(() => {
   mockClaim.mockReset()
   // ⛔ 模組渲染也要重設：上一條的回傳值留著的話，下一條會在「沒選模組」的情境下拿到內容
   vi.mocked(renderModuleToLineMessages).mockReset()
+  vi.mocked(workspaceBroadcastTier).mockReset().mockResolvedValue(null)
+})
+
+describe('executeBroadcastSend — 方案不含這種推播（`D-131`）', () => {
+  /**
+   * 會走到這裡的多半是「排好之後方案才變」（期末降級、扣款失敗降回免費）——前面的入口都先擋了。
+   * 以前擋在 try 外面：推播已被認領成「發送中」，丟錯後沒人改狀態，要等看門狗十分鐘收殮、原因還寫成「發送中斷」。
+   */
+  it('輕量方案到了時間送依名單的推播：當場標失敗、原因就是推播頁那一句，LINE 一則都沒送', async () => {
+    claimReturns(['w1_U1', 'w1_U2'])
+    vi.mocked(workspaceBroadcastTier).mockResolvedValue('basic')
+    const { updates } = makeDb()
+
+    await expect(executeBroadcastSend('bc1', { source: 'scheduler' })).rejects.toThrow(broadcastLockText('basic')!)
+    expect(mockMulticast).not.toHaveBeenCalled()
+    expect(mockPush).not.toHaveBeenCalled()
+    const failed = lastStatusPatch(updates)
+    expect(failed).toMatchObject({ status: 'failed' })
+    expect(failed!.failureReason).toBe(`${broadcastLockText('basic')}這則沒有送出任何訊息。`)
+  })
+
+  it('免費方案連全部好友都不能發；成長方案發依名單的照常送', async () => {
+    mockClaim.mockResolvedValue({
+      workspaceId: 'w1',
+      status: 'processing',
+      messages: [{ type: 'text', text: 'hi' }],
+      audienceSource: { type: 'all' },
+    } as any)
+    vi.mocked(workspaceBroadcastTier).mockResolvedValue('none')
+    makeDb()
+    await expect(executeBroadcastSend('bc1')).rejects.toThrow(broadcastLockText('none')!)
+    expect(mockMulticast).not.toHaveBeenCalled()
+
+    claimReturns(['w1_U1'])
+    vi.mocked(workspaceBroadcastTier).mockResolvedValue('advanced')
+    mockMulticast.mockResolvedValue({ successCount: 1, failedIds: [], lineAggregationApplied: true })
+    makeDb()
+    await expect(executeBroadcastSend('bc1')).resolves.toMatchObject({ success: true, sentCount: 1 })
+  })
 })
 
 describe('executeBroadcastSend — 送出後記帳失敗不可謊報失敗', () => {

@@ -351,7 +351,7 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   memberBound: '綁到成員身上',
   notify: '通知名單',
   adoptedCount: '採用的條數',
-  leftForQuotaCount: '知識空間滿了沒收的條數',
+  leftForQuotaCount: 'AI 知識量滿了沒收的條數',
   dismissedCount: '刪掉的條數',
   // 批次貼標／拆標的摘要（`G-107`）
   tagIdsCount: '標籤數',
@@ -372,7 +372,7 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   failedCount: '沒送成功的人數',
   // 知識那邊「沒成功」數的是條數不是人數（`C-309`）：以前跟推播共用 failedCount，操作紀錄寫成「沒送成功的人數」
   failedItemsCount: '沒成功的條數',
-  quotaSkipped: '知識空間滿了沒收的條數',
+  quotaSkipped: 'AI 知識量滿了沒收的條數',
   isDefault: '預設選單',
   chatBarText: '選單列文字',
   imageUrl: '圖片',

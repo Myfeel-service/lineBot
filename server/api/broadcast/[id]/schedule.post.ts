@@ -1,5 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
+import { assertBroadcastPlanAllows } from '~~/server/utils/broadcast-plan-gate'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditTimeText } from '~~/server/utils/audit-log'
@@ -36,6 +37,14 @@ export default defineEventHandler(async (event) => {
   }
 
   const scheduleAt = assertFutureBroadcastScheduleAt(body.scheduleAt)
+
+  /**
+   * 方案不含這種推播就不讓排（`D-131`）：以前排得進去，**到了排定時間**才在送出端失敗——
+   * 那時人多半不在電腦前，隔天只看得到「失敗」。看的是排好之後真的會送的那一份對象（這次帶來的優先）。
+   */
+  const audienceSource = (body.audienceSource ?? current.audienceSource) as { type?: string } | undefined
+  await assertBroadcastPlanAllows(workspaceId, audienceSource?.type, db)
+
   const updates: Record<string, unknown> = {
     status: 'scheduled',
     scheduleAt,

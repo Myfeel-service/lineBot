@@ -197,7 +197,7 @@ export const KB_IMPORT_DIALOG_STEPS: TutorialStep[] = [
         // `C-314`：停下來的理由現在有五種（又多了「你改過的要不要帶到新版」），一條條列只會越寫越長；
         // 講原則＋兩個最常見的例子，停下來那一頁自己會講是哪一種
         description:
-          'AI 整理好就<strong>直接加進知識庫</strong>；需要你確認的（例如照片上的字、空間不夠）'
+          'AI 整理好就<strong>直接加進知識庫</strong>；需要你確認的（例如照片上的字、AI 知識量不夠）'
           + '會<strong>先停下來給你看</strong>。加好之後每一條都能再改。',
         placement: 'top',
       },
@@ -531,11 +531,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       {
         target: '[data-tour="kb-drafts"]',
         requiresPresent: '[data-tour="kb-drafts"]',
-        // `C-309`：量詞統一講「條」、額度講「知識空間」（跟加入視窗同一套說法）
+        // `C-309`：量詞統一講「條」；`D-131`④（2026-10-19）額度改叫「AI 知識量」（跟官網、條款、方案頁、加入視窗同一個名字）
         title: '等你看過的知識',
         description:
           '替你整理好、還沒上線的知識<strong>先放在這裡</strong>，客人還收不到。'
-          + '看過按「<strong>採用</strong>」才會拿來回答（採用了才佔知識空間）。',
+          + '看過按「<strong>採用</strong>」才會拿來回答（採用了才算進 AI 知識量）。',
         placement: 'left',
       },
       {

@@ -6,6 +6,7 @@
  * 所以每一條把 status 寫成 failed 的路徑都必須留下一句人看得懂的原因，
  * 不能只有看門狗那條有寫（2026-08-13 code review 抓到）。
  */
+import { broadcastLockText } from './billing/plans'
 
 /** 看門狗：卡死在發送中，且確定還沒呼叫 LINE（認領後沒有第二筆寫入） */
 export const BROADCAST_STUCK_SAFE_TO_RESEND
@@ -37,6 +38,11 @@ export const BROADCAST_ALL_RECIPIENTS_FAILED
  */
 export function humanizeBroadcastSendFailure(rawReason: string): string {
   const reason = String(rawReason || '').trim()
+
+  // 方案不含這種推播（`D-131`）：原因本身就是推播頁鎖住時那一句，照原句講、補上「沒送出」
+  if (reason === broadcastLockText('none') || reason === broadcastLockText('basic')) {
+    return `${reason}這則沒有送出任何訊息。`
+  }
 
   if (/Resolved audience is empty/i.test(reason)) {
     return '發送對象算出來是 0 人（標籤沒有人、或名單上的人都已封鎖官方帳號），沒有送出任何訊息。改好發送對象後可以重發。'

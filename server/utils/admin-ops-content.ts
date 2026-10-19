@@ -608,7 +608,7 @@ export const knowledgeDraftCreate: AdminOpDef = {
     const base = { opId: 'knowledge-draft-create' as const }
     // ⚠️ 這個 noop 也是確認端點判斷「這張剛剛已經執行過了」的依據——一定要跟指紋講同一件事
     if (await identicalCardExists(ctx, args))
-      // `C-309`：確認卡是店家看的字，量詞跟知識庫頁一樣講「條」、額度講「知識空間」
+      // `C-309`：確認卡是店家看的字，量詞跟知識庫頁一樣講「條」；額度講「AI 知識量」（`D-131`④，跟官網、條款、方案頁同一個名字）
       return { ...base, summary: '知識庫裡已經有一條一模一樣的了（同一句問法、同樣的回答），不用再放一次。', items: [], confirmLabel: '知道了', noop: true }
 
     const similarItem = args.similar?.length
@@ -624,7 +624,7 @@ export const knowledgeDraftCreate: AdminOpDef = {
         { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容', verbatim: true },
         ...similarItem,
       ],
-      warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用了才佔知識空間）。測試對話裡可以先試問看看。',
+      warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用了才算進 AI 知識量）。測試對話裡可以先試問看看。',
       confirmLabel: '確定放進「等你看過」',
     }
   },

@@ -15,8 +15,8 @@ function fetchError(status: number, data: unknown, statusMessage = '') {
 
 describe('apiErrorText', () => {
   it('伺服器的中文原因在 data.statusMessage：講它', () => {
-    const err = fetchError(403, { statusCode: 403, statusMessage: '知識空間滿了，先刪掉用不到的知識或升級方案' }, 'Forbidden')
-    expect(apiErrorText(err, '還原失敗')).toBe('知識空間滿了，先刪掉用不到的知識或升級方案')
+    const err = fetchError(403, { statusCode: 403, statusMessage: 'AI 知識量滿了，先刪掉用不到的知識或升級方案' }, 'Forbidden')
+    expect(apiErrorText(err, '還原失敗')).toBe('AI 知識量滿了，先刪掉用不到的知識或升級方案')
   })
 
   it('⛔ 不講 HTTP 狀態那一行（正式站只拿得到英文 Not Found）', () => {

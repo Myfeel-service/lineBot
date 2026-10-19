@@ -18,8 +18,8 @@ import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveAudienceUserIds } from './audience'
 import { addTagsToUser } from './tagging'
-import { getWorkspacePlan } from './billing'
-import { planAllowsBroadcast, type BroadcastTier } from '~~/shared/billing/plans'
+import { workspaceBroadcastTier } from './broadcast-plan-gate'
+import { broadcastPlanBlockReason } from '~~/shared/billing/plans'
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
 import { BROADCAST_ALL_RECIPIENTS_FAILED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
 import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
@@ -95,24 +95,6 @@ export async function executeBroadcastSend(
     throw new Error('No messages to send')
   }
 
-  /**
-   * 方案群發權限（`D-69` 拍板④）。**擋在這裡而不是只擋建立端點**，因為這是唯一的收斂點：
-   * 手動送出、排程 cron（trigger-scheduled 沒有 workspace context）、重試，全都經過這裡。
-   * 只擋 create 的話，「先建好再等排程送出」就整條繞過去了。
-   *
-   * 分眾（tags / audience / import）要 advanced；全體推播要 basic。
-   */
-  const plan = await getWorkspacePlan(workspaceId, db)
-  if (plan) {
-    const needsAdvanced = data.audienceSource.type !== 'all'
-    const need: BroadcastTier = needsAdvanced ? 'advanced' : 'basic'
-    if (!planAllowsBroadcast(plan, need)) {
-      throw new Error(needsAdvanced
-        ? `${plan.name}方案不含分眾推播，請改用全體推播或升級方案`
-        : `${plan.name}方案不含群發推播，請升級方案`)
-    }
-  }
-
   // ── 解析受眾 ──────────────────────────────────────────────────────
   let resolvedUserIds: string[] = []
 
@@ -153,6 +135,21 @@ export async function executeBroadcastSend(
   })
 
   try {
+    /**
+     * 方案推播權限（`D-69` 拍板④）。**送出端一定要再擋一次**，因為這是唯一的收斂點：
+     * 手動送出、排程 cron（trigger-scheduled 沒有 workspace context）、重試，全都經過這裡。
+     * 分眾（tags / audience / import）要 advanced；全部好友要 basic（規則在 `broadcastTierNeededFor`）。
+     *
+     * `D-131`（2026-10-19）兩處改動：
+     * ① 前面的入口（驗證視窗、立即送出、確認排程、儲存排程中的推播）都先擋了，走到這裡的多半是
+     *    **排好之後方案才變**（期末降級、扣款失敗降回免費）。
+     * ② 擋在 `try` 裡面：以前擋在外面，推播已經被認領成「發送中」、丟錯之後沒人改狀態，
+     *    要等看門狗十分鐘後收殮，原因還寫成「發送中斷」。現在走下面的 catch 當場標失敗，原因就是推播頁鎖住時那一句。
+     */
+    const tier = await workspaceBroadcastTier(workspaceId, db)
+    const planBlock = tier ? broadcastPlanBlockReason(tier, data.audienceSource.type) : null
+    if (planBlock) throw new Error(planBlock)
+
     if (data.audienceSource.type === 'all') {
       let query = db.collection('users').select('isBlocked') as FirebaseFirestore.Query
       if (workspaceId) query = query.where('workspaceId', '==', workspaceId)

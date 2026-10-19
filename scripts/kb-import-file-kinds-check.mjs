@@ -318,7 +318,7 @@ try {
   })
   const firstLine = await quotaPage.$eval('.kb-quota-line', el => el.innerText).catch(() => '')
   if (firstLine.includes('已用 38／50 條，還能放 12 條')) pass(`第一步就看得到空間：「${firstLine.trim()}」`)
-  else fail('第一步沒講知識空間', firstLine)
+  else fail('第一步沒講 AI 知識量', firstLine)
 
   await (await quotaPage.$('.kb-file-input')).uploadFile(pathOf.docx)
   await sleep(500)
@@ -346,7 +346,7 @@ try {
   else fail('送出的條數不對', `送了 ${sent}`)
   if (process.env.SHOT_DIR) await (await quotaPage.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-quota-result.png') })
   const resultLine = await quotaPage.$$eval('.kb-quota-line', els => els.map(e => e.innerText).join(' ／ '))
-  if (resultLine.includes('還有 2 條因為知識空間不夠沒收進去')) pass('結果頁講出還有 2 條沒收、怎麼補')
+  if (resultLine.includes('還有 2 條因為 AI 知識量不夠沒收進去')) pass('結果頁講出還有 2 條沒收、怎麼補')
   else fail('結果頁沒講沒收進去的條數', resultLine)
   await quotaPage.close()
 
@@ -453,7 +453,7 @@ try {
   else fail('一次好幾份送出的條數不對', JSON.stringify(bulkCalls))
   if (bulkCalls.every(c => c.fileName === c.name && c.importId?.startsWith('job-batch-'))) pass('每一份都帶原檔名與自己的整理工作（原檔留存、逾時重按不重複建）')
   else fail('一次好幾份的匯入參數不對', JSON.stringify(bulkCalls))
-  if (summaryText.includes('已建立 3 份資料、共 12 條知識') && summaryText.includes('另有 3 條因為知識空間不夠沒收進去')) pass(`結論列講清楚收了多少、幾條沒收：「${summaryText.trim().slice(0, 80)}…」`)
+  if (summaryText.includes('已建立 3 份資料、共 12 條知識') && summaryText.includes('另有 3 條因為 AI 知識量不夠沒收進去')) pass(`結論列講清楚收了多少、幾條沒收：「${summaryText.trim().slice(0, 80)}…」`)
   else fail('一次好幾份的結論列不對', summaryText)
   const actionLabels = await batchPage.$$eval('.kb-import-actions .el-button', els => els.map(e => e.innerText.trim()))
   if (!actionLabels.some(t => t.includes('重試'))) pass(`跑完沒東西可重試 → 不留「重試 0 份」的灰按鈕（剩：${actionLabels.join('／')}）`)
@@ -552,7 +552,7 @@ try {
     const disabled = await pg.$eval('.kb-import-actions .el-button--primary', el => el.disabled || el.classList.contains('is-disabled')).catch(() => null)
     await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
     await sleep(800)
-    if (line.includes('知識空間滿了') && disabled === true && !uploads.length) pass(`空間滿了 → 清單上方先講（「${line.trim().slice(0, 40)}…」）、按鈕按不下去、一份都沒上傳`)
+    if (line.includes('AI 知識量滿了') && disabled === true && !uploads.length) pass(`空間滿了 → 清單上方先講（「${line.trim().slice(0, 40)}…」）、按鈕按不下去、一份都沒上傳`)
     else fail('空間滿了沒有先講／還能按／還在上傳', `line=${line} disabled=${disabled} uploads=${uploads.length}`)
     await pg.close()
   }
@@ -791,7 +791,7 @@ try {
     await sleep(500)
     const picked = await pg.$$eval('.kb-dedup-row .el-button', els => els.some(e => e.innerText.includes('已選這一份')))
     const btn = await pg.$eval('.kb-preview-summary__actions .el-button--primary', el => ({ text: el.innerText.trim(), disabled: el.disabled || el.classList.contains('is-disabled') })).catch(() => null)
-    if (clicked && picked && btn?.text === '空間已經滿了' && btn.disabled && !bulkCalled) pass('選了「更新原本那一份」（變成「已選這一份」）、舊的那份全是草稿 → 換掉也空不出位置，按鈕講「空間已經滿了」、按不下去')
+    if (clicked && picked && btn?.text === 'AI 知識量已經滿了' && btn.disabled && !bulkCalled) pass('選了「更新原本那一份」（變成「已選這一份」）、舊的那份全是草稿 → 換掉也空不出位置，按鈕講「AI 知識量已經滿了」、按不下去')
     else fail('「更新原本那一份」沒按到、或把草稿算成空出來的空間', JSON.stringify({ clicked, picked, btn }))
     await pg.close()
   }
@@ -944,7 +944,7 @@ try {
     else fail('加好了那頁沒列出整理成哪幾條', JSON.stringify(extra))
     if (extra.verify.includes('問 AI 一題試試') && extra.verify.includes('不算額度') && extra.verify.includes('到測試對話') && extra.labels === '整理出／AI 學會了／還沒學起來') pass(`問一題講清楚不算額度、給去測試對話的路；數字格改白話（${extra.labels}）`)
     else fail('問一題或數字格的說法不對', JSON.stringify(extra))
-    if (r.offer.includes('要不要再做一張') && r.offer.includes('佔 1 條空間')) {
+    if (r.offer.includes('要不要再做一張') && r.offer.includes('佔 1 條 AI 知識量')) {
       await pg.evaluate(() => [...document.querySelectorAll('.kb-overview-suggest .el-button')].find(b => b.innerText.includes('做一張'))?.click())
       const made = await waitFor(pg, () => document.querySelector('.kb-overview-suggest')?.innerText.includes('做好了'), null, 10_000)
       if (made && overviewCalls.length === 1) pass('9 條的檔案 → 結果頁問要不要做「我們有賣什麼」，按「做一張」打對的那一份、講做好了')
@@ -1208,7 +1208,7 @@ try {
     const okPick = r.checked.length === 8 && r.checked[0].includes('/pages/shipping') && r.checked[1].includes('/pages/faq') && !r.checked.some(u => u.includes('privacy') || u.includes('/blogs/'))
       && r.firstRows.slice(0, 8).every(Boolean)
     const okChips = r.chips.some(c => c.startsWith('商品')) && r.chips.some(c => c.startsWith('文章')) && !r.chips.some(c => c.includes('/'))
-    if (okPick && okChips && r.toolbar.includes('空間還能放 40 條')) pass(`整個網站 → 先勾好 8 頁（說明頁在前、補商品頁，剩 40 條÷每頁約 5 條），分組用白話（${r.chips.join('｜')}），講空間`)
+    if (okPick && okChips && r.toolbar.includes('AI 知識量還能放 40 條')) pass(`整個網站 → 先勾好 8 頁（說明頁在前、補商品頁，剩 40 條÷每頁約 5 條），分組用白話（${r.chips.join('｜')}），講空間`)
     else fail('整個網站的預先勾選／分組／空間不對', JSON.stringify(r))
     await pg.close()
   }
@@ -1818,9 +1818,9 @@ try {
       if (req.url().includes('/api/ai/knowledge/gone-1?') && req.method() === 'GET') return json({ id: 'gone-1', sourceId: 'fake-other', deleted: true })
       return pageFake(req)
     }, SOURCES_PAGE)
-    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('列因為空間滿了還沒收')), null, 30_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('列因為 AI 知識量滿了還沒收')), null, 30_000)
     const item = await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.replace(/\s+/g, ' ')).find(t => t.includes('還沒收')) ?? '')
-    if (item.includes('1 份試算表有 4 列因為空間滿了還沒收')) pass(`「要處理的事」講試算表還有幾列沒收：「${item.slice(0, 40)}…」`)
+    if (item.includes('1 份試算表有 4 列因為 AI 知識量滿了還沒收')) pass(`「要處理的事」講試算表還有幾列沒收：「${item.slice(0, 40)}…」`)
     else fail('「要處理的事」沒講試算表沒收的列', item)
     await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('還沒收'))?.querySelector('.el-button')?.click())
     // 明細故意晚 3 秒回來：這段時間看到的同步頻率要已經是對的
@@ -1885,15 +1885,15 @@ try {
     await pickSource(pg, urlSrc.name)
     await waitFor(pg, () => !!document.querySelector('[data-tour="kb-resync"]'), null, 15_000)
     await pg.evaluate(() => document.querySelector('[data-tour="kb-resync"]')?.click())
-    await waitFor(pg, () => document.querySelector('.diff-body .kb-quota-line')?.innerText.includes('知識空間'), null, 30_000)
+    await waitFor(pg, () => document.querySelector('.diff-body .kb-quota-line')?.innerText.includes('AI 知識量'), null, 30_000)
     if (process.env.SHOT_DIR) await (await pg.$('.el-dialog:not([style*="display: none"]) .diff-body'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-resync-quota.png') }).catch(() => {})
     const line = await pg.$eval('.diff-body .kb-quota-line', el => el.innerText).catch(() => '')
-    if (line.includes('知識空間只剩 1 條') && line.includes('勾了新增的 3 條裡，2 條這次放不下')) pass(`差異畫面講剩多少空間、哪幾條放不下：「${line.trim().slice(0, 50)}…」`)
+    if (line.includes('AI 知識量只剩 1 條') && line.includes('勾了新增的 3 條裡，2 條這次放不下')) pass(`差異畫面講剩多少空間、哪幾條放不下：「${line.trim().slice(0, 50)}…」`)
     else fail('差異畫面沒講空間', line)
     await pg.evaluate(() => [...document.querySelectorAll('.el-dialog__footer .el-button--primary')].find(b => b.innerText.includes('套用選取的變更'))?.click())
     await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('已套用')), null, 15_000)
     const toasts = await toastsOf(pg)
-    if (applies.length === 1 && toasts.some(x => x.includes('還有 2 條新增因為知識空間滿了沒加'))) pass('套用完講還有 2 條因為空間滿了沒加（不是整批失敗、也不是沉默少收）')
+    if (applies.length === 1 && toasts.some(x => x.includes('還有 2 條新增因為 AI 知識量滿了沒加'))) pass('套用完講還有 2 條因為空間滿了沒加（不是整批失敗、也不是沉默少收）')
     else fail('套用完沒講沒加的條數', JSON.stringify({ applies: applies.length, toasts }))
     await pg.close()
   }
@@ -2109,7 +2109,7 @@ try {
       const restore = url.pathname.match(/^\/api\/ai\/knowledge\/([^/]+)\/restore$/)
       if (restore && req.method() === 'POST') {
         restores.push(restore[1])
-        if (restore[1] === 'old-0') return errorJson(403, '知識空間滿了，先刪掉用不到的再還原')
+        if (restore[1] === 'old-0') return errorJson(403, 'AI 知識量滿了，先刪掉用不到的再還原')
         // 跟真的伺服器一樣：還原了就不在回收桶（之後重查的總數、清單都少這一條）
         binRows.splice(binRows.findIndex(r => r.id === restore[1]), 1)
         return json({ id: restore[1], status: 'indexed' })
@@ -2267,9 +2267,9 @@ try {
 
     // 還原失敗（空間滿）→ 講伺服器給的原因、那一條留著
     await pg.evaluate(() => [...document.querySelectorAll('.src-bin-row')].find(r => r.querySelector('.src-bin-row__title')?.innerText === '舊版第 1 條')?.querySelector('.el-button')?.click())
-    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('知識空間滿了')), null, 8000)
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(x => x.innerText.includes('AI 知識量滿了')), null, 8000)
     const full = await binState()
-    if (restores.includes('old-0') && full?.titles.includes('舊版第 1 條')) pass('還原時空間滿了 → 講伺服器給的原因（「知識空間滿了⋯」）、那一條留在回收桶')
+    if (restores.includes('old-0') && full?.titles.includes('舊版第 1 條')) pass('還原時空間滿了 → 講伺服器給的原因（「AI 知識量滿了⋯」）、那一條留在回收桶')
     else fail('還原失敗沒講原因或那一條不見了', JSON.stringify({ restores, kept: full?.titles.includes('舊版第 1 條'), toasts: await toastsOf(pg) }))
 
     // 翻到上限還沒找到 → 講「更早的還沒找」、按「繼續往前找」接著找

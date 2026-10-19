@@ -102,7 +102,7 @@ export async function regenerateOverviewCard(
     }
     catch (e) {
       if ((e as { statusCode?: number })?.statusCode !== 403) throw e
-      console.warn(`[overview] ${workspaceId}/${sourceId} 知識空間滿了，這輪不新建總表`)
+      console.warn(`[overview] ${workspaceId}/${sourceId} AI 知識量滿了，這輪不新建總表`)
       return 'skipped'
     }
   }

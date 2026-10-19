@@ -55,6 +55,13 @@ export type WorkspaceAlertId =
   | 'quotaExceeded'
   /** 本期則數快用完（達 80% 門檻、或照目前速度會在期末前用完）。AI 還在回，是提前量 */
   | 'quotaRunningOut'
+  /**
+   * AI 知識量（方案的知識條數上限）滿了：新的知識加不進去（匯入、手寫、採用建議、試算表新列都會被擋），
+   * AI 照常用已有的回答（`D-131`⑤，2026-10-19）。以前要按下去才收到「滿了」。
+   */
+  | 'knowledgeQuotaFull'
+  /** AI 知識量快滿了（達 80%，跟則數 `quotaRunningOut` 同一把尺 `QUOTA_NEAR_THRESHOLD`）。還加得進去，是提前量 */
+  | 'knowledgeQuotaRunningOut'
   /** 自動扣款失敗，寬限期中 */
   | 'paymentPastDue'
   /** 發票開立失敗 */
@@ -153,6 +160,9 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   llmError: 'AI 服務近 24 小時失敗過',
   quotaExceeded: '本期回覆則數用完了',
   quotaRunningOut: '回覆則數快用完了',
+  // `D-131`：名字跟官網、條款、方案頁同一個（AI 知識量）
+  knowledgeQuotaFull: 'AI 知識量滿了',
+  knowledgeQuotaRunningOut: 'AI 知識量快滿了',
   // ⛔標題必須把「這期／下期」講出來（2026-08-28 老闆拍板）：這兩顆同在帳單頁，
   // 原本叫「自動扣款沒有成功」與「付款成功但自動扣款沒綁好」——文案用詞重疊 26%（全表最高），
   // 並列在清單裡幾乎分不出來。差別本來就只有一個字：壞的是**這期**還是**下期**。
@@ -222,6 +232,9 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   handoffSuggested: 'suggestion',
   quotaExceeded: 'critical',
   quotaRunningOut: 'warning',
+  // ⛔ 滿了也只是 warning：客人問問題照樣有人答（AI 用已有的知識），受影響的是「加新的」——不進紅點、不推 LINE
+  knowledgeQuotaFull: 'warning',
+  knowledgeQuotaRunningOut: 'warning',
   paymentPastDue: 'critical',
   handoffNotifyMissing: 'warning',
   // 同一份名單的「一部分」：其他人照樣收得到，客人的找真人仍然有人知道 → 跟上一顆同級

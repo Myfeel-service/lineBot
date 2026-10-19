@@ -79,7 +79,7 @@ export const CARDS_PER_PAGE_ESTIMATE = 5
 
 /**
  * 先幫他勾哪幾頁（回網址）。
- * @param room 知識空間還能放幾條；null＝不限或讀不到（只照 maxPages）
+ * @param room AI 知識量還能放幾條；null＝不限或讀不到（只照 maxPages）
  * @param maxPages 一次最多幾頁（整站一次上限）
  */
 export function recommendSitePages(pages: Array<SitePageLike & { imported?: boolean }>, opts: { room: number | null, maxPages: number }): string[] {

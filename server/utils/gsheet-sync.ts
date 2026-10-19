@@ -69,7 +69,7 @@ export interface GsheetSyncResult {
 export function gsheetSyncAuditNote(name: string, r: GsheetSyncResult): string {
   return `${name}：新增 ${r.added}、更新 ${r.updated}、刪除 ${r.deleted}`
     + (r.manualKept ? `；有 ${r.manualKept} 條因為在後台改過，沒有跟著表格更新` : '')
-    + (r.quotaSkipped ? `；有 ${r.quotaSkipped} 列因為知識空間滿了沒有新增` : '')
+    + (r.quotaSkipped ? `；有 ${r.quotaSkipped} 列因為 AI 知識量滿了沒有新增` : '')
     + (r.excludedSkipped ? `；有 ${r.excludedSkipped} 列你在後台刪掉過，照你的意思沒有再收` : '')
 }
 

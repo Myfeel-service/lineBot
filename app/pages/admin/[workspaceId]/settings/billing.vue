@@ -74,8 +74,9 @@
                 :text-inside="true"
                 :format="() => `${planState.percentRaw}%`"
               />
+              <!-- `D-131`⑤：下面多了一條 AI 知識量，兩條要各自講自己是什麼，句首帶名字 -->
               <p class="text-xs text-muted">
-                本期已用 <strong>{{ planState.used.toLocaleString() }}</strong> / {{ planState.limit.toLocaleString() }} 則
+                AI 回覆：本期已用 <strong>{{ planState.used.toLocaleString() }}</strong> / {{ planState.limit.toLocaleString() }} 則
                 <!-- 帳單頁是最該問得到「則是什麼」的地方：這裡的數字直接決定要不要升級 -->
                 <el-tooltip placement="top" :content="REPLY_UNIT_TIP">
                   <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
@@ -94,6 +95,29 @@
               </p>
             </div>
             <p v-else class="text-xs text-muted">客製額度,無固定則數上限。</p>
+
+            <!-- `D-131`⑤（2026-10-19）：AI 知識量的進度條，跟上面則數那條同一個樣子、同一把尺
+                 （deriveUsageState：80% 變橘、滿了變紅）。以前方案頁只有則數，知識量要按下去才收到「滿了」。
+                 data-tour="bill-knowledge"：「AI 知識量快滿了／滿了」提醒會把這一塊圈起來（同 bill-quota 的做法）。
+                 不限條數的方案（企業／內部）、或讀不到時整塊不顯示（⛔ 不猜一個數字給人看）。 -->
+            <div v-if="knowledgeState && knowledgeState.limit != null" class="billing-quota-block" data-tour="bill-knowledge">
+              <el-progress
+                :percentage="knowledgeState.percent"
+                :color="knowledgeState.color"
+                :stroke-width="16"
+                :text-inside="true"
+                :format="() => `${knowledgeState?.percentRaw ?? 0}%`"
+              />
+              <p class="text-xs text-muted">
+                AI 知識量：已用 <strong>{{ knowledgeState.used.toLocaleString() }}</strong> / {{ knowledgeState.limit.toLocaleString() }} 條
+                <el-tooltip placement="top" :content="KNOWLEDGE_UNIT_TIP">
+                  <el-icon class="admin-unit-info"><InfoFilled /></el-icon>
+                </el-tooltip>
+              </p>
+              <p class="text-xs text-muted">
+                滿了之後<strong>加不進新的知識</strong>，AI 照常用已有的回答；刪掉不需要的或升級方案就能再加。
+              </p>
+            </div>
 
             <!-- 續訂狀態：自動扣款這件事必須一眼看得到，而且**隨時退得掉**。
                  取消按鈕的顯示條件是 canCancel（= 還有生效中的委託），不是 autoRenew——
@@ -466,7 +490,8 @@
 <script setup lang="ts">
 import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
-import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { KNOWLEDGE_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { deriveUsageState } from '~~/shared/billing/plan-state'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
@@ -492,6 +517,26 @@ const statementNotice = computed(() => cardStatementNotice({
 
 const upgradeOpen = ref(false)
 const loading = ref(false)
+
+/**
+ * AI 知識量（`D-131`⑤）：用了幾條／上限幾條。讀知識庫自己那支（`/api/ai/knowledge/quota`，跟加入視窗同一個數）。
+ * ⛔ 不塞進方案摘要（plan-summary）：那支外殼每一頁都打，多數知識量要三次聚合查詢，只有這一頁用得到。
+ * null＝還沒讀到、讀不到、或不限條數 → 整塊不顯示。
+ */
+const knowledgeQuota = ref<{ used: number, limit: number | null } | null>(null)
+const knowledgeState = computed(() => {
+  const q = knowledgeQuota.value
+  return q && q.limit != null ? deriveUsageState(q.limit, q.used) : null
+})
+async function loadKnowledgeQuota() {
+  try {
+    const res = await apiFetch<{ quota: { used: number, limit: number | null } | null }>('/api/ai/knowledge/quota')
+    knowledgeQuota.value = res?.quota ?? null
+  }
+  catch {
+    knowledgeQuota.value = null
+  }
+}
 
 interface OrderRow {
   merchantOrderNo: string
@@ -1004,7 +1049,7 @@ async function loadInvoiceProfile() {
 
 async function reloadAll() {
   loading.value = true
-  try { await Promise.all([loadPlanSummary(), loadOrders(), loadInvoiceProfile()]) }
+  try { await Promise.all([loadPlanSummary(), loadOrders(), loadInvoiceProfile(), loadKnowledgeQuota()]) }
   finally { loading.value = false }
 }
 

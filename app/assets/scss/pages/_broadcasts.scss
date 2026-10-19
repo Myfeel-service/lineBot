@@ -443,6 +443,40 @@
   color: var(--text-primary);
 }
 
+// `D-131`：方案鎖住的推播（免費不能發、輕量／入門不能分眾）。
+// ⛔ 不用紅也不用黃：沒有東西壞掉，是這個方案就長這樣——而且句尾指得出怎麼解（查看方案／找管理員）。
+// 鈕跟在句子後面（行內），不推到最右邊：「要成長以上的方案」跟「查看方案」是同一口氣讀完的。
+.bc-plan-lock {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  // 1440 實測：不加的話折成「…方案才能」／「用。查看方案」——單字吊在第二行開頭；
+  // ⛔ pretty 量過沒用（照樣 34／6），balance 才把兩行拉平（守門員 plan-check.mjs 量的）
+  text-wrap: balance;
+
+  &--inline { margin-top: 8px; }
+
+  &__icon {
+    margin-right: 4px;
+    vertical-align: -2px;
+  }
+
+  &__ask { margin-left: 4px; }
+
+  .el-button.is-link {
+    height: auto;
+    margin-left: 6px;
+    padding: 0;
+    font-size: inherit;
+    vertical-align: baseline;
+  }
+}
+
 // 「訊息已送出、不用重發」是這面板上最該被看到的一句，不能用淺灰小字說
 .bc-postsend-note {
   margin: 0;

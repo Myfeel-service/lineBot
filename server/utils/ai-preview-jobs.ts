@@ -86,7 +86,7 @@ export interface ExistingMatch {
   name: string
   chunkCount: number
   /**
-   * 換掉這一份會空出多少知識空間：不含草稿、不含回收桶（跟額度同一把尺，見 countSourceQuotaChunks）。
+   * 換掉這一份會空出多少 AI 知識量：不含草稿、不含回收桶（跟額度同一把尺，見 countSourceQuotaChunks）。
    * ⛔ 畫面不可以拿 chunkCount 算：它含草稿，伺服器卻不算——畫面說「直接匯入 30 條」，按下去整批被擋
    *    （2026-10-12 code review：開帳精靈建的網址 30 條都是草稿）。數不出來就沒有這一格，畫面退回 chunkCount
    */

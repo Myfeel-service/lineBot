@@ -71,7 +71,7 @@ export interface DigestTodo {
   suggestions: number
   tagSuggestUsers: number
   /**
-   * 試算表因為知識空間滿了還沒收的列數（各份加總，`C-308`）：店家在表格加了新品、以為 AI 會跟上，
+   * 試算表因為 AI 知識量滿了還沒收的列數（各份加總，`C-308`）：店家在表格加了新品、以為 AI 會跟上，
    * 其實一列都沒學進去——以前只有點進那一份才看得到。沒帶＝0（預覽等舊呼叫端不用改）
    */
   quotaSkippedRows?: number
@@ -170,7 +170,7 @@ export function buildDigestLines(input: DigestInput): string[] | null {
   if (todo.outdatedSources) todoLines.push(`${todo.outdatedSources} 份資料內容變了，等你確認要不要更新`)
   if (todo.failedSources) todoLines.push(`${todo.failedSources} 份資料同步失敗，AI 還在用舊內容`)
   if (todo.expiredCards) todoLines.push(`${todo.expiredCards} 條知識已到期下架`)
-  if (todo.quotaSkippedRows) todoLines.push(`試算表有 ${todo.quotaSkippedRows} 列因為知識空間滿了還沒收`)
+  if (todo.quotaSkippedRows) todoLines.push(`試算表有 ${todo.quotaSkippedRows} 列因為 AI 知識量滿了還沒收`)
   if (todo.suggestions) todoLines.push(`${todo.suggestions} 個常被問、AI 卻答不好的主題，草稿已擬好`)
   if (todo.tagSuggestUsers) todoLines.push(`${todo.tagSuggestUsers} 位客人的標籤建議等你決定`)
   if (todo.warnings) {

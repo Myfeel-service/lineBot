@@ -284,7 +284,7 @@ export default defineEventHandler(async (event) => {
     after: { name: String(source.data.name ?? ''), added, updated, deleted, failedItemsCount: errors.length, ...(quotaSkipped ? { quotaSkipped } : {}) },
     note: `${String(source.data.name ?? '')}：新增 ${added}、覆蓋 ${updated}、刪除 ${deleted}、保留 ${kept}`
       // ⛔ 空間不夠沒建的要講（`C-308`⑪）：只寫「新增 3」，看的人會以為網頁上的新內容都收了
-      + (quotaSkipped ? `；知識空間滿了，還有 ${quotaSkipped} 條新的沒有加進來` : '')
+      + (quotaSkipped ? `；AI 知識量滿了，還有 ${quotaSkipped} 條新的沒有加進來` : '')
       + (errors.length ? `；⚠️ 有 ${errors.length} 條沒套用成功，還停在舊版` : '')
       + (divergentKeeps ? `；有 ${divergentKeeps} 條刻意保留成跟來源不一樣` : ''),
   }, db)
@@ -295,7 +295,7 @@ export default defineEventHandler(async (event) => {
     updated,
     deleted,
     kept,
-    /** 知識空間不夠、這次沒建的新增條數（`C-308`⑪）；0＝都收了。畫面要講「還有 N 條沒加進來」 */
+    /** AI 知識量不夠、這次沒建的新增條數（`C-308`⑪）；0＝都收了。畫面要講「還有 N 條沒加進來」 */
     quotaSkipped,
     errors,
     chunkCount: newChunkCount,

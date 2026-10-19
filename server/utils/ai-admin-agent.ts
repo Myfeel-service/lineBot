@@ -412,8 +412,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
   },
   get_knowledge_status: {
     description: '知識庫現況:資料幾份與各狀態(成功/失敗)、知識有幾條(liveCount＝AI 回客人用得到的;waitingForReview＝還在「等你看過」、客人問不會用到的,兩個分開講⛔不要相加)、'
-      + '知識空間用了幾條／上限幾條／還剩幾條(space)、Google 試算表因為空間滿了還沒收進來的列數(sheetRowsNotAdded)。'
-      + '問「知識庫有幾條 / 還剩多少空間 / 有沒有匯入失敗 / 試算表有幾列沒收 / 資料狀態」時用。',
+      + 'AI 知識量用了幾條／上限幾條／還剩幾條(space；對店家一律叫「AI 知識量」、單位「條」)、Google 試算表因為 AI 知識量滿了還沒收進來的列數(sheetRowsNotAdded)。'
+      + '問「知識庫有幾條 / AI 知識量還剩多少（店家也會說成「空間」）/ 有沒有匯入失敗 / 試算表有幾列沒收 / 資料狀態」時用。',
     requires: 'ai.read',
     mutates: false,
     async run(db, workspaceId) {

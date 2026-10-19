@@ -92,7 +92,7 @@ describe('順利的一天（拍板選項 B：照發，一行）', () => {
 describe('試算表因為空間滿了沒收的列（`C-308`）', () => {
   it('有沒收的列 → 列進「今天可以處理」、指路知識庫；沒帶這一格（舊呼叫端）照舊不出現', () => {
     const out = text({ todo: { ...base.todo, quotaSkippedRows: 12 } })
-    expect(out).toContain('試算表有 12 列因為知識空間滿了還沒收')
+    expect(out).toContain('試算表有 12 列因為 AI 知識量滿了還沒收')
     expect(digestPlaces({ waiting: base.waiting, todo: { ...base.todo, quotaSkippedRows: 12 } })).toContain('「AI 知識庫」')
     expect(text()).not.toContain('還沒收')
   })
