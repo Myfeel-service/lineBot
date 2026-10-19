@@ -49,12 +49,16 @@ export interface FestivalOutcomeFestival {
   id: string
   name: string
   date: string
+  /** 店家自己的檔期（`D-122`②）：名稱比對改用整個檔期名、不看節日關鍵字表 */
+  own?: boolean
 }
 
 export interface FestivalOutcome {
   festivalId: string
   name: string
   date: string
+  /** 店家自己的檔期（`D-122`②）：「沒有為節日發的推播」那句要改口 */
+  own?: boolean
   /** 算進這一檔的推播（為這一檔發的、而且不是試發），由近到遠 */
   broadcasts: BroadcastOutcome[]
   /** 建了但一個人都沒送出去的則數 */
@@ -169,8 +173,29 @@ function festivalBlockers(festivalName: string): string[] {
   return out
 }
 
+/**
+ * 自己的檔期比名稱時用的：除了空白，連常見的分隔符號一起拿掉。
+ * 店家的推播常寫成「小滑手_開賣」「週年慶-早鳥」，檔期卻叫「小滑手開賣」「週年慶」——
+ * 只拿掉空白的話底線那種永遠對不上。
+ */
+function looseForMatch(s: string): string {
+  return normalizeForMatch(s).replace(/[_\-－—–・·.。,，、/／|｜:：!！?？~～'"「」『』()（）[\]【】]/g, '')
+}
+
+/**
+ * 自己的檔期（`D-122`②）：推播名稱裡有**整個檔期名**才算。
+ * ⛔ 不拆字、不用節日的關鍵字表（「會員日」拆成「會員」會把每一則會員推播都算進來），
+ *   也不去尾巴的「節／日」——名字是店家自己取的，照他取的比。
+ * ⛔ 兩個字以下不比（「開賣」這種太短，會撞到每一檔）。
+ */
+function nameMatchesOwnEvent(broadcastName: string, eventName: string): boolean {
+  const k = looseForMatch(eventName)
+  return [...k].length > 2 && looseForMatch(broadcastName).includes(k)
+}
+
 /** 推播名稱裡有沒有這個節日的字（先把「包著它、但講別的日子」的長字拿掉再比）。 */
-function nameMatchesFestival(broadcastName: string, festivalName: string): boolean {
+function nameMatchesFestival(broadcastName: string, festivalName: string, own = false): boolean {
+  if (own) return nameMatchesOwnEvent(broadcastName, festivalName)
   let name = normalizeForMatch(broadcastName)
   // 換成名稱裡不會出現的字元：直接刪掉的話，前後兩段接起來可能拼出新的關鍵字
   for (const longer of festivalBlockers(festivalName)) name = name.split(longer).join('\u0000')
@@ -184,17 +209,18 @@ function matchInRange(
   festivalName: string,
   fromMs: number,
   toMs: number,
+  own = false,
 ): 'linked' | 'named' | null {
   if (b.festivalId) return festivalId && b.festivalId === festivalId ? 'linked' : null
   if (Number.isNaN(fromMs) || Number.isNaN(toMs) || b.atMs == null || !Number.isFinite(b.atMs)) return null
   if (b.atMs < fromMs || b.atMs > toMs) return null
-  return nameMatchesFestival(b.name, festivalName) ? 'named' : null
+  return nameMatchesFestival(b.name, festivalName, own) ? 'named' : null
 }
 
 /**
  * 這則推播是不是為了這一檔發的（`D-121`①）。
- * - `linked`：從「為這一檔擬推播」建立的（帶 `festivalId`）
- * - `named`：沒帶 `festivalId`，但名稱裡有節日名，而且落在節日前 30 天到後 7 天內
+ * - `linked`：從「為這一檔擬推播」建立的、或在推播頁「設成檔期」的（帶 `festivalId`）
+ * - `named`：沒帶 `festivalId`，但名稱裡有節日名（自己的檔期：整個檔期名），而且落在前 30 天到後 7 天內
  * - `null`：都不是。⛔ 不再照「前後兩週」的日期猜
  */
 export function broadcastFestivalMatch(
@@ -202,7 +228,7 @@ export function broadcastFestivalMatch(
   festival: FestivalOutcomeFestival,
 ): 'linked' | 'named' | null {
   const center = dateToMs(festival.date)
-  return matchInRange(b, festival.id, festival.name, center - NAMED_WINDOW_BEFORE_DAYS * DAY, center + (NAMED_WINDOW_AFTER_DAYS + 1) * DAY)
+  return matchInRange(b, festival.id, festival.name, center - NAMED_WINDOW_BEFORE_DAYS * DAY, center + (NAMED_WINDOW_AFTER_DAYS + 1) * DAY, festival.own === true)
 }
 
 /** 組出一檔的回顧。 */
@@ -219,6 +245,7 @@ export function buildOneOutcome(
     festivalId: festival.id,
     name: festival.name,
     date: festival.date,
+    ...(festival.own ? { own: true } : {}),
     broadcasts: mine.filter(b => b.sentCount > OUTCOME_TEST_SEND_MAX),
     zeroSent,
     testSends,
@@ -284,7 +311,7 @@ export function broadcastResultText(b: BroadcastOutcome, nowMs: number): string 
 export function outcomeSummary(outcomes: readonly FestivalOutcome[], nowMs: number): { label: string, lines: OutcomeLine[] } {
   if (!outcomes.length) return { label: '', lines: [] }
   const lines: OutcomeLine[] = []
-  const without: string[] = []
+  const without: FestivalOutcome[] = []
 
   for (const o of outcomes) {
     const notes: string[] = []
@@ -293,7 +320,7 @@ export function outcomeSummary(outcomes: readonly FestivalOutcome[], nowMs: numb
 
     if (!o.broadcasts.length) {
       if (notes.length) lines.push({ before: '', after: `${o.name}有 ${notes.join('；')}。` })
-      else without.push(o.name)
+      else without.push(o)
       continue
     }
     const shown = o.broadcasts.slice(0, OUTCOME_BROADCASTS_PER_FESTIVAL)
@@ -309,12 +336,14 @@ export function outcomeSummary(outcomes: readonly FestivalOutcome[], nowMs: numb
     const anySent = outcomes.some(o => o.broadcasts.length > 0)
     const all = without.length === outcomes.length
     // 名單照時間由早到晚念（「中元節、中秋節、國慶日」）；上面的推播行則是最近的先講
-    const names = [...without].reverse().join('、')
+    const names = without.map(o => o.name).reverse().join('、')
+    // `D-122`②：裡面有店家自己的檔期時不能說「為節日」——週年慶不是節日
+    const forWhat = without.some(o => o.own) ? (without.length > 1 ? '為這幾檔' : '為這一檔') : '為節日'
     lines.push({
       before: '',
       after: anySent
-        ? `${names}沒有為節日發的推播。`
-        : `${names}${all && without.length > 1 ? '都' : ''}沒有為節日發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。`,
+        ? `${names}沒有${forWhat}發的推播。`
+        : `${names}${all && without.length > 1 ? '都' : ''}沒有${forWhat}發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。`,
     })
   }
 

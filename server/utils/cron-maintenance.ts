@@ -45,8 +45,11 @@ import {
   TAIWAN_FESTIVALS,
   festivalReminderText,
   hasFestivalInWindow,
-  pickFestivalReminder,
+  type FestivalReminder,
+  type ReminderPlan,
+  type TaiwanFestival,
 } from '~~/shared/taiwan-festivals'
+import { pickDigestFestival } from './festival-digest-pick'
 import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
@@ -1071,6 +1074,9 @@ type FestivalSentState = Record<string, Record<string, number>>
  *
  * 不清的話這份 doc 會逐年變肥（每個 workspace 每年二十幾筆），而且過期的 key 會讓
  * 日後改節日表時難以看出哪些還有效。表上已被刪掉的 id 也一併清掉。
+ *
+ * @param ownFestivals 這個帳號自己的檔期（`D-122`②）。⛔ 一定要帶：不帶的話它們不在節日表上，
+ *   會被當成「表上已刪掉」清掉，隔天同一個里程碑又講一次。被刪掉的自己的檔期照樣清。
  */
 async function recordFestivalReminder(
   stateRef: FirebaseFirestore.DocumentReference,
@@ -1079,11 +1085,12 @@ async function recordFestivalReminder(
   festivalId: string,
   milestone: number,
   today: string,
+  ownFestivals: readonly TaiwanFestival[] = [],
 ): Promise<void> {
   const patch: Record<string, unknown> = { [festivalId]: milestone }
   for (const id of Object.keys(current)) {
     if (id === festivalId) continue
-    const f = TAIWAN_FESTIVALS.find(x => x.id === id)
+    const f = TAIWAN_FESTIVALS.find(x => x.id === id) ?? ownFestivals.find(x => x.id === id)
     if (!f || daysBetween(today, f.date) < 0) patch[id] = FieldValue.delete()
   }
   await stateRef.set({ [workspaceId]: patch }, { merge: true })
@@ -1252,14 +1259,16 @@ export async function dailyBacklogDigest(db: Firestore) {
   await stateRef.set({ __lastScanMs: nowMs }, { merge: true }).catch(() => {})
 
   // ── 節慶提醒的前置準備 ────────────────────────────────────────────
-  // 只有「真的有節日進入 7 天內」才讀提醒進度（1 次讀取），一年裡大多數日子完全跳過。
+  // 提醒進度（1 次讀取）要用到才讀：節日表上有一檔進入 7 天內、或某個帳號自己的檔期快到了（`D-122`②）。
+  // 一整輪只讀一次，一年裡大多數日子完全不讀。
   const festivalWindowOpen = hasFestivalInWindow(today)
   /** 週一＝摘要尾巴附「本週顧客觀察」（D-25 洞察週報；同節慶的掛法：搭同一則，不另發） */
   const weeklyWindowOpen = isTaipeiMonday(today)
   const festivalStateRef = db.collection('cronState').doc('festival-digest')
-  let festivalState: FestivalSentState = {}
-  if (festivalWindowOpen) {
-    festivalState = ((await festivalStateRef.get()).data() ?? {}) as FestivalSentState
+  let festivalState: FestivalSentState | null = null
+  const loadFestivalState = async (): Promise<FestivalSentState> => {
+    if (!festivalState) festivalState = ((await festivalStateRef.get()).data() ?? {}) as FestivalSentState
+    return festivalState
   }
 
   // 每天都要發（2026-09-17 拍板選項 B）→ 對象是**全部**工作區，不再只有「有積壓的」。
@@ -1275,12 +1284,9 @@ export async function dailyBacklogDigest(db: Firestore) {
   let festivalsSent = 0
   for (const ws of targetWorkspaces) {
     if (state[ws] === today) continue // 今天發過（便宜早退；真正的判斷在 claimDailyDigest）
-    // 節慶判定排在讀設定**之前**：純記憶體比對，不用多讀一次設定
-    const reminder = festivalWindowOpen ? pickFestivalReminder(today, festivalState[ws] ?? {}) : null
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
-    const festival = cfg.festivalTips ? reminder : null
     // 休假日整天不發（服務時間有開 + 勾了週六日休息）。摘要是照著資料上的標記每天重
     // 喊一次,今天跳過不會漏掉任何一條——上班日那則照樣會把週末累積的全部講完。
     // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
@@ -1314,11 +1320,29 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
     if (!(await claimDailyDigest(db, stateRef, ws, today))) continue
 
-    // 摘要既然要發了,順路查一次黃級異常(D-36①):黃級只在後台顯示,「推播沒送出去」
-    // 這種事商家幾天不開後台就永遠不知道。只跑營運類探針(canSettings:false＝
-    // 純 Firestore 窄查詢,不打 LINE/LIFF 外部 API)。
-    // ⛔刻意只搭已經要發的摘要,不讓黃級異常單獨觸發——單獨觸發得每輪對全租戶跑探針,
-    // 成本形狀跟 08-11 讀取費暴衝同款。查掛了就當沒有,不准拖垮摘要本體。
+    /**
+     * 今天要講哪一檔、那一檔排了沒（`D-122`①②）。
+     * ⭐ 排在認領**之後**：要讀自己的檔期／收起來的／推播三份，只有真的要發的帳號才花。
+     * 跟首頁卡片讀同一份資料、用同一支判斷（`festival-digest-pick.ts`）：
+     * 收起來的那一檔不講、排好的講排在哪天、草稿講還沒排、自己的檔期跟節日一樣提醒。
+     */
+    let festival: FestivalReminder | null = null
+    let festivalPlan: ReminderPlan | null = null
+    let ownFestivals: TaiwanFestival[] = []
+    if (cfg.festivalTips) {
+      const pick = await pickDigestFestival(db, ws, today, {
+        festivalWindowOpen,
+        loadSent: async () => (await loadFestivalState())[ws] ?? {},
+      }).catch((e) => {
+        // ⛔ 這段壞了只少講節日，不准拖垮摘要本體
+        console.warn('[festival-digest] pick failed:', ws, e)
+        return null
+      })
+      festival = pick?.reminder ?? null
+      festivalPlan = pick?.plan ?? null
+      ownFestivals = pick?.ownFestivals ?? []
+    }
+
     /**
      * 節慶提醒客製化（`C-223`＝`D-21` Phase 2）。
      *
@@ -1327,15 +1351,24 @@ export async function dailyBacklogDigest(db: Firestore) {
      *    算下來每個節日每個帳號只花一次 LLM。
      * ⛔ **失敗一律回 `null` 退回通用句**：客製不出來時整段消失，商家會以為
      *    這個節日系統漏掉了——那比沒客製糟得多。
+     * `D-122`：那一檔已經排好／發出去／發送失敗時，7 天那一句講的是推播、不講切角 → 不花這次 LLM；
+     *   自己的檔期沒有通用切角可以客製，也不花。
      */
     let tailoredAngle = ''
-    if (festival && festival.milestone === 7) {
+    const angleShown = !festivalPlan || festivalPlan.status === 'draft'
+    if (festival && festival.milestone === 7 && angleShown && !festival.festival.own) {
+      const target = festival
       tailoredAngle = await getStoreProfile(ws, db)
-        .then(p => tailorFestivalAngle(ws, p, festival.festival, festival.daysUntil))
+        .then(p => tailorFestivalAngle(ws, p, target.festival, target.daysUntil))
         .then(v => v ?? '')
         .catch(() => '')
     }
 
+    // 摘要既然要發了,順路查一次黃級異常(D-36①):黃級只在後台顯示,「推播沒送出去」
+    // 這種事商家幾天不開後台就永遠不知道。只跑營運類探針(canSettings:false＝
+    // 純 Firestore 窄查詢,不打 LINE/LIFF 外部 API)。
+    // ⛔刻意只搭已經要發的摘要,不讓黃級異常單獨觸發——單獨觸發得每輪對全租戶跑探針,
+    // 成本形狀跟 08-11 讀取費暴衝同款。查掛了就當沒有,不准拖垮摘要本體。
     const digestWarnings = await collectWorkspaceAlerts(db, ws, { canSettings: false, canOperate: true })
       .then(async (items) => {
         const active = new Set(items.filter(a => a.state === 'active').map(a => a.id))
@@ -1373,7 +1406,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       yesterday,
       waiting: digestWaiting,
       todo: digestTodo,
-      festivalText: festival ? festivalReminderText(festival, tailoredAngle) : '',
+      festivalText: festival ? festivalReminderText(festival, tailoredAngle, festivalPlan) : '',
       weeklyLines: insights ?? [],
       unknownNotes,
       link: digestLink,
@@ -1405,8 +1438,8 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 只有真的送出去才記里程碑：上面拆章重來時,這個節日還要能再講一次
     if (festival) {
       await recordFestivalReminder(
-        festivalStateRef, ws, festivalState[ws] ?? {},
-        festival.festival.id, festival.milestone, today,
+        festivalStateRef, ws, (await loadFestivalState())[ws] ?? {},
+        festival.festival.id, festival.milestone, today, ownFestivals,
       )
       festivalsSent++
     }

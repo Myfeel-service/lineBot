@@ -23,7 +23,7 @@
  * ⛔ 多租戶紀律：`angle` 一句話必須**跨產業都成立**（餐飲、電商、美業、批發都讀得懂），
  * 不可以寫任何特定客戶的產品或術語。要客製到商家自己的商品是日後 Phase 2 的事。
  */
-import { daysBetween } from './time'
+import { daysBetween, taipeiDateTime } from './time'
 
 export interface TaiwanFestival {
   /**
@@ -40,6 +40,12 @@ export interface TaiwanFestival {
   angle: string
   /** 是不是連假：只影響「前一天」那句的最後一項提醒（值班 vs 顧線上客服） */
   longWeekend?: boolean
+  /**
+   * 店家自己加的檔期（`D-122`②：週年慶、新品開賣）。節日表上的一律沒有這一欄。
+   * 自己的檔期沒有跨產業的 `angle`（傳空字串），提醒與擬文案都要吃得下空的切角。
+   * 存法與規則見 `shared/marketing-events.ts`。
+   */
+  own?: boolean
 }
 
 /** 節日前幾天要提醒。由遠到近，語氣一路從「規劃」收到「最後確認」。 */
@@ -108,12 +114,23 @@ export type SentMilestones = Readonly<Record<string, number>>
  * 「掃 workspaces 清單、讀提醒狀態」那些查詢——2026-08-11 讀取費暴衝的教訓是
  * 「掃全部再跳過」最貴，能不查就不要查。
  */
-export function hasFestivalInWindow(today: string): boolean {
+export function hasFestivalInWindow(today: string, extra: readonly TaiwanFestival[] = []): boolean {
   const maxDays = Math.max(...FESTIVAL_REMIND_DAYS)
-  return TAIWAN_FESTIVALS.some((f) => {
+  return [...TAIWAN_FESTIVALS, ...extra].some((f) => {
     const d = daysBetween(today, f.date)
     return d >= 0 && d <= maxDays
   })
+}
+
+/**
+ * 挑提醒時要多看的東西（`D-122`①②）。
+ * - `extra`：店家自己加的檔期，跟節日表一起排。
+ * - `skipped`：卡片上按了「這次不做」的那幾檔（`marketingCalendarSkips` 的 key）。
+ *   ⛔ 收起來的那一檔不提醒——卡片說不做、LINE 還在叫他做，等於系統沒在聽他說話。
+ */
+export interface FestivalReminderOptions {
+  extra?: readonly TaiwanFestival[]
+  skipped?: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -125,10 +142,19 @@ export function hasFestivalInWindow(today: string): boolean {
  *
  * 同一天有兩個節日都到期時**只回最近的那一個**：一則訊息塞兩段節慶會失焦，另一個
  * 節日沒被記成已送出，明天自然會輪到它。
+ *
+ * `D-122`：店家自己的檔期（`opts.extra`）跟節日一起排；同一天到期時**自己的先講**——
+ * 那是他親手加的，節日表上的不一定跟他有關。收起來的那幾檔（`opts.skipped`）不講。
  */
-export function pickFestivalReminder(today: string, sent: SentMilestones = {}): FestivalReminder | null {
+export function pickFestivalReminder(
+  today: string,
+  sent: SentMilestones = {},
+  opts: FestivalReminderOptions = {},
+): FestivalReminder | null {
   const candidates: FestivalReminder[] = []
-  for (const festival of TAIWAN_FESTIVALS) {
+  const skipped = opts.skipped ?? {}
+  for (const festival of [...TAIWAN_FESTIVALS, ...(opts.extra ?? [])]) {
+    if (skipped[festival.id]) continue
     const daysUntil = daysBetween(today, festival.date)
     if (daysUntil < 0) continue // 已經過了
     // 已到期或已錯過的里程碑（休假日補講靠這裡：剩 5 天時里程碑 7 仍算到期）
@@ -143,8 +169,9 @@ export function pickFestivalReminder(today: string, sent: SentMilestones = {}): 
     if (typeof already === 'number' && already <= milestone) continue
     candidates.push({ festival, milestone, daysUntil })
   }
-  // 不必排序：節日表本身依日期排序（`taiwan-festivals.test.ts`「依日期排序」那條在守），
-  // 所以候選也是由近到遠，第一個就是最近的那個節日。
+  // 節日表本身依日期排序（`taiwan-festivals.test.ts`「依日期排序」那條在守），但自己的檔期是接在後面的，
+  // 所以要再排一次：近的先；同一天自己的先（sort 是穩定的，同一天兩個節日照表上的順序）
+  candidates.sort((a, b) => a.daysUntil - b.daysUntil || Number(Boolean(b.festival.own)) - Number(Boolean(a.festival.own)))
   return candidates[0] ?? null
 }
 
@@ -170,22 +197,75 @@ function monthDay(date: string): string {
  *   1 天前：講「最後確認」清單
  */
 /**
+ * 已經為這一檔建好的推播（`D-122`①），提醒照它改口。形狀跟卡片的 `PlannedBroadcast` 一樣
+ * （`shared/marketing-calendar.ts`，好幾則時用 `pickPlanned` 挑最該講的那一則）。
+ * `atMs`：排程的是排程時間、發完的是發完時間、草稿與發送中是 null。
+ */
+export interface ReminderPlan {
+  name: string
+  status: 'draft' | 'scheduled' | 'processing' | 'completed' | 'failed'
+  atMs: number | null
+}
+
+/** 毫秒 → 台灣時間「10/16 20:00」（跟卡片上「✓ 已排程 11/09 20:00」同一種寫法：`plannedStatusText`） */
+function taipeiMonthDayTime(ms: number): string {
+  return taipeiDateTime(ms).slice(5).replace('-', '/')
+}
+
+/**
+ * 那則推播現在怎麼了，一小段話。草稿回空字串（草稿另外講「還沒排」）。
+ * ⛔ 時間一律台灣時間，跟卡片同一種寫法——卡片寫 10/16 20:00、LINE 寫別的時間，他會以為排了兩次。
+ */
+function planStatusPhrase(p: ReminderPlan): string {
+  const name = `「${p.name}」`
+  switch (p.status) {
+    case 'scheduled': return p.atMs != null ? `${name}排在 ${taipeiMonthDayTime(p.atMs)} 了` : `${name}排好了`
+    case 'processing': return `${name}正在發送`
+    case 'completed': return p.atMs != null ? `${name}${taipeiMonthDayTime(p.atMs).slice(0, 5)} 發出去了` : `${name}發出去了`
+    default: return ''
+  }
+}
+
+/**
  * @param angleOverride 客製化的切角（`C-223`）。給了就取代通用的 `angle`；
  *   ⛔ 傳空字串或不傳＝照舊用通用句——**客製不出來時整段不可以消失**，
  *   商家會以為這個節日系統漏掉了。
+ * @param plan 已經為這一檔建好的推播（`D-122`①，卡片上「✓ 已排程…」那一則）。
+ *   ⛔ 排好了就不要再叫他「今天就去排」：改講排在哪天、提醒確認庫存和出貨。
+ *   草稿講「還沒排」，其餘照舊。不給＝照舊（還沒有推播、或查不到）。
+ *
+ * 自己的檔期（`festival.own`）沒有通用切角：7 天那一句直接接「建議…準備好」。
  */
-export function festivalReminderText(r: FestivalReminder, angleOverride = ''): string {
+export function festivalReminderText(r: FestivalReminder, angleOverride = '', plan: ReminderPlan | null = null): string {
   const when = dayPhrase(r.daysUntil)
   const { name, longWeekend } = r.festival
   const angle = String(angleOverride ?? '').trim() || r.festival.angle
+  const service = longWeekend ? '連假期間客服值班排好了沒' : '當天有沒有人顧線上客服'
+  const head = r.milestone === 7
+    ? `${when}就是${name}（${monthDay(r.festival.date)}）。`
+    : r.milestone === 3 ? `${when}就是${name}。` : `${when}就是${name}！`
+
+  // ── 已經排好／發出去了：講排在哪天，⛔ 不再叫他去排 ──
+  const done = plan && plan.status !== 'draft' && plan.status !== 'failed' ? planStatusPhrase(plan) : ''
+  if (done) {
+    return r.milestone === 1
+      ? `${head}${done}，最後確認兩件事：庫存和出貨來不來得及、${service}。`
+      : `${head}${done}，記得確認庫存和出貨來不來得及。`
+  }
+  // ── 排了但沒發出去：叫他去看卡在哪（卡片上那一列是「發送失敗」）──
+  if (plan?.status === 'failed') return `${head}「${plan.name}」沒有發出去，到後台「推播」看看卡在哪。`
+
+  // ── 還是草稿：照舊提醒去排，並講是哪一則還沒排 ──
+  const draft = plan?.status === 'draft' ? `你有一則草稿「${plan.name}」還沒排` : ''
   switch (r.milestone) {
     case 7:
-      return `${when}就是${name}（${monthDay(r.festival.date)}）。${angle}，建議這幾天先把檔期優惠、贈品和圖文素材準備好。`
+      return `${head}${angle ? `${angle}，建議` : '建議'}這幾天先把檔期優惠、贈品和圖文素材準備好。${draft ? `${draft}。` : ''}`
     case 3:
-      return `${when}就是${name}。建議今天就到後台「推播」把節慶訊息排進去，內容記得講清楚下單與出貨時間。`
+      return draft
+        ? `${head}${draft}，建議今天就到後台「推播」排進去，內容記得講清楚下單與出貨時間。`
+        : `${head}建議今天就到後台「推播」把${r.festival.own ? '這一檔的訊息' : '節慶訊息'}排進去，內容記得講清楚下單與出貨時間。`
     case 1:
     default:
-      return `${when}就是${name}！最後確認三件事：推播排了沒、庫存和出貨來不來得及、`
-        + `${longWeekend ? '連假期間客服值班排好了沒' : '當天有沒有人顧線上客服'}。`
+      return `${head}${draft ? `${draft}。` : ''}最後確認三件事：推播排了沒、庫存和出貨來不來得及、${service}。`
   }
 }

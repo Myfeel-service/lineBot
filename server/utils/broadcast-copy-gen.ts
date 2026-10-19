@@ -84,8 +84,10 @@ export function buildCopyPrompt(profile: StoreProfileDoc, festival: TaiwanFestiv
   return [
     `你是一位資深行銷企劃，要幫一家店寫 ${BROADCAST_DRAFT_VARIANTS} 版「${festival.name}」要發給客人的 LINE 訊息。`,
     '',
-    `節日：${festival.name}（${festival.date}）`,
-    `這個節日的通用切角：${festival.angle}`,
+    // `D-122`②：店家自己的檔期（週年慶、新品開賣）沒有跨產業的通用切角，⛔ 不要塞一行空的「通用切角：」給模型
+    ...(festival.own
+      ? [`檔期：${festival.name}（${festival.date}）——這是店家自己的檔期，不是國定節日；只照名稱與下面的店家資料寫，⛔ 不要自己編活動內容。`]
+      : [`節日：${festival.name}（${festival.date}）`, `這個節日的通用切角：${festival.angle}`]),
     '',
     '這家店：',
     storeProfileForPrompt(profile),

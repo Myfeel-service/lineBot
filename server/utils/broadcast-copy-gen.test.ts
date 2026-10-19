@@ -135,4 +135,14 @@ describe('buildCopyPrompt', () => {
   it('沒填商品時不會留下空括號', () => {
     expect(buildCopyPrompt(profileOf({ products: '' }), midAutumn, '')).not.toContain('（）')
   })
+
+  it('`D-122`②：自己的檔期講「這是店家自己的檔期」，⛔ 不塞一行空的「通用切角：」', () => {
+    const own = { id: 'own-anniv00001', date: '2026-10-24', name: '週年慶', angle: '', own: true }
+    const p = buildCopyPrompt(profileOf(), own, '')
+    expect(p).toContain('檔期：週年慶（2026-10-24）')
+    expect(p).toContain('店家自己的檔期')
+    expect(p).not.toContain('通用切角')
+    // 節日照舊（對照組）
+    expect(t).toContain('這個節日的通用切角：禮盒與送禮的需求會明顯升溫')
+  })
 })

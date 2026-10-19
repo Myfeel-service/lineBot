@@ -139,9 +139,13 @@
         </template>
         <!-- 複製成一則新草稿（全站同一顆「⋯」）。
              ⛔ 已發送的也要給：最常見的用法正是「上次那則改一下再發一次」 -->
+        <!-- `D-122`②「設成檔期」：只給**已排程**、還沒綁任何一檔的推播（⛔ 不從推播名稱猜，只收他親手按的） -->
         <AdminMoreMenu
           v-if="can('broadcast.write') && !isCreating && selectedItem"
-          :items="[{ command: 'duplicate', label: '複製', icon: CopyDocument, disabled: duplicating }]"
+          :items="[
+            { command: 'duplicate', label: '複製', icon: CopyDocument, disabled: duplicating },
+            { command: 'setEvent', label: '設成檔期', icon: Calendar, show: canSetAsEvent },
+          ]"
           @command="onHeaderCommand"
         />
       </div>
@@ -728,11 +732,22 @@
       </div>
     </template>
   </el-dialog>
+
+  <!-- `D-122`②：已排程的推播「設成檔期」（名稱、日期先帶這則推播的） -->
+  <AdminMarketingEventDialog
+    v-model:visible="setEventDialog.visible"
+    :workspace-id="workspaceId"
+    mode="fromBroadcast"
+    :initial="setEventDialog.initial"
+    :broadcast-id="setEventDialog.broadcastId"
+    @saved="onEventSet"
+  />
 </template>
 
 <script setup lang="ts">
-import { CopyDocument, Lock, Plus, Promotion } from '@element-plus/icons-vue'
+import { Calendar, CopyDocument, Lock, Plus, Promotion } from '@element-plus/icons-vue'
 import { broadcastLockText, broadcastPlanBlockReason, tierAllowsAudience, type BroadcastTier } from '~~/shared/billing/plans'
+import type { MarketingEvent } from '~~/shared/marketing-events'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
@@ -1551,6 +1566,39 @@ async function saveDraft(): Promise<boolean> {
 // 右上「⋯」選單：目前只有複製
 function onHeaderCommand(cmd: string | number | object) {
   if (cmd === 'duplicate') void duplicateBroadcast()
+  if (cmd === 'setEvent') openSetEvent()
+}
+
+/**
+ * `D-122`②：把這一則已排程的推播「設成檔期」——首頁「接下來的檔期」多一檔，這則就是它排好的推播
+ * （卡片講排在哪天、早上的 LINE 提醒跟著改口、發完回顧看得到幾個人打開）。
+ * ⛔ 只給已排程、還沒綁任何一檔的（從「為這一檔擬推播」來的已經有一檔了）；後端在交易裡再驗一次。
+ */
+const canSetAsEvent = computed(() =>
+  can('marketing.write')
+  && selectedItem.value?.status === 'scheduled'
+  && !selectedItem.value?.festivalId)
+const setEventDialog = reactive<{ visible: boolean, initial: { name?: string, date?: string }, broadcastId: string }>({
+  visible: false,
+  initial: {},
+  broadcastId: '',
+})
+function openSetEvent() {
+  const item = selectedItem.value
+  if (!item || !canSetAsEvent.value) return
+  const at = parseFirestoreDate(item.scheduleAt)
+  Object.assign(setEventDialog, {
+    visible: true,
+    broadcastId: String(item.id),
+    // 先帶這則推播的名字與排程那天（台灣日期），他再改成檔期真正的名字與日子
+    initial: { name: String(item.name ?? ''), date: at ? taipeiDate(at) : '' },
+  })
+}
+function onEventSet(saved: MarketingEvent) {
+  // 這一則已經綁上了：「⋯」裡的「設成檔期」要跟著消失（⛔ 不動表單，免得被當成有沒存的修改）
+  const item = broadcasts.value.find(b => b.id === setEventDialog.broadcastId)
+  if (item) item.festivalId = saved.id
+  showToast(`已設成檔期「${saved.name}」，首頁「接下來的檔期」看得到。`, 'success')
 }
 
 /**

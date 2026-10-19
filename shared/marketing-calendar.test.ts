@@ -9,8 +9,10 @@ import {
   emptyCalendarFacts,
   hasOwnReasons,
   pickPlanned,
+  plannedForFestival,
   plannedStatusText,
   seasonMatchesFestival,
+  type CalendarBroadcastRow,
   type CalendarFacts,
   type PlannedBroadcast,
 } from './marketing-calendar'
@@ -219,5 +221,48 @@ describe('pickPlanned／plannedStatusText（已經為這一檔建好的推播）
     expect(plannedStatusText(p('completed', Date.UTC(2026, 9, 7, 17)))).toBe('已發送 10/08')
     expect(plannedStatusText(p('draft'))).toBe('草稿，還沒排程')
     expect(plannedStatusText(p('failed'))).toBe('發送失敗')
+  })
+})
+
+describe('自己的檔期進月曆（D-122②）', () => {
+  const own = (id: string, date: string, name: string) => ({ id, date, name, angle: '', own: true })
+
+  it('跟節日排在一起、照日期；帶 own 記號、沒有通用切角', () => {
+    const list = buildMarketingCalendar('2026-10-11', profileOf(), () => facts(), undefined, () => [], [
+      own('own-launch0001', '2026-11-20', '新品開賣'),
+      own('own-anniv00001', '2026-10-24', '週年慶'),
+    ])
+    expect(list.map(e => e.name)).toEqual(['重陽節', '週年慶', '萬聖節', '雙 11 購物節', '新品開賣', '聖誕節', '元旦（跨年）'])
+    const anniv = list.find(e => e.festivalId === 'own-anniv00001')!
+    expect(anniv).toMatchObject({ own: true, generalAngle: '', inDays: 13, soon: true })
+    // 節日那幾檔不帶 own（卡片靠它決定給「這次不做」還是「修改／刪除」）
+    expect(list.find(e => e.name === '重陽節')).not.toHaveProperty('own')
+  })
+
+  it('同一天：自己的排前面（跟早上的提醒同一個先後）', () => {
+    const list = buildMarketingCalendar('2026-10-11', profileOf(), () => facts(), undefined, () => [], [own('own-same000001', '2026-10-31', '萬聖派對')])
+    const i = list.findIndex(e => e.name === '萬聖派對')
+    expect(list[i + 1]?.name).toBe('萬聖節')
+  })
+
+  it('視窗外的自己的檔期不列（只收 90 天內，這裡是保險）', () => {
+    const list = buildMarketingCalendar('2026-10-11', profileOf(), () => facts(), undefined, () => [], [own('own-far0000001', '2027-03-01', '春季新品')])
+    expect(list.some(e => e.name === '春季新品')).toBe(false)
+  })
+})
+
+describe('plannedForFestival：卡片與早上的 LINE 提醒共用（D-122①）', () => {
+  const row = (over: Partial<CalendarBroadcastRow> = {}): CalendarBroadcastRow =>
+    ({ id: 'b1', name: '重陽敬老早鳥', status: 'scheduled', atMs: 1, matchAtMs: Date.UTC(2026, 9, 16, 12), ...over })
+  const ninth = TAIWAN_FESTIVALS.find(f => f.id === 'doubleninth-2026')!
+
+  it('名稱有節日名、時間對得上的排程推播算這一檔；只回卡片要的四個欄位', () => {
+    expect(plannedForFestival([row()], ninth)).toEqual([{ id: 'b1', name: '重陽敬老早鳥', status: 'scheduled', atMs: 1 }])
+  })
+
+  it('綁在這一檔的（設成檔期／從這裡擬的）算；綁在別檔的不算', () => {
+    const own = { id: 'own-anniv00001', name: '週年慶', date: '2026-10-24', own: true }
+    expect(plannedForFestival([row({ name: '早鳥', festivalId: own.id })], own)).toHaveLength(1)
+    expect(plannedForFestival([row({ festivalId: 'halloween-2026' })], ninth)).toEqual([])
   })
 })

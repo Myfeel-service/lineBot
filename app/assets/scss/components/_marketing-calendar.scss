@@ -180,11 +180,35 @@
     }
   }
 
+  // `D-122`②「自己的」：店家自己加的那一檔。外框小膠囊，⛔ 不用底色——底色那幾顆是推播的狀態
+  &__own {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 6px;
+    padding: 0 7px;
+    border: 1px solid var(--el-border-color);
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 18px;
+    color: var(--el-text-color-regular);
+    white-space: nowrap;
+    vertical-align: 1px;
+  }
+
   &__cta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
+  }
+
+  // 「＋ 加自己的檔期」：跟每一列的日期切在同一條線（左內距同一個變數）
+  &__add-own {
+    padding: 0 var(--mkt-pad-x);
+
+    .el-link {
+      font-size: 12.5px;
+    }
   }
 
   // 收起來的那幾檔（`C-236`）。
@@ -275,5 +299,30 @@
     &__past {
       grid-template-columns: minmax(0, 1fr);
     }
+  }
+}
+
+// 自己的檔期：加／改／設成檔期的小視窗（`D-122`②，`AdminMarketingEventDialog.vue`）
+.mkt-event {
+  display: grid;
+  gap: 14px;
+
+  &__lead {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
+  // ⚠️ Element 的 `.el-date-editor.el-input` 寫死 220px 寬、載入順序又在後面——夾父層才蓋得掉
+  .mkt-event__date.el-date-editor {
+    width: 100%;
+  }
+
+  &__error {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-color-danger);
   }
 }

@@ -2,6 +2,8 @@
   行銷月曆卡（`D-85` / `C-224`）：未來 90 天有哪些檔期、每一檔該做什麼。
   2026-10-11 `D-121` 改版（示意頁 artifact `6boYgvH3V2h26Gy1Tzcx5e` v1）：
   快到的那一檔攤開、其他一行一檔；「還不認識你的店」只講一次；回顧收成最下面一行、改看 LINE 的人數。
+  2026-10-19 `D-122`②（示意頁 v2 最下面那張）：店家可以「＋ 加自己的檔期」（週年慶、新品開賣），
+  跟節日一樣攤開、擬推播、提醒、回顧；列上標「自己的」，攤開給「修改／刪除」。
 
   掛在後台首頁（＝客服對話統計頁）。⛔ 不加側欄項目——它不是一個功能，
   是「這一季要做什麼」的提醒，跟首頁的其他數字住在一起才看得到。
@@ -35,6 +37,8 @@
         <div v-if="!entries.length" class="mkt-cal__muted">
           未來 90 天沒有重要節日，可以專心顧日常。
         </div>
+        <!-- `D-122`②：自己的檔期讀不到。⛔ 不可以當成一檔都沒加（他會以為加了沒存到） -->
+        <p v-if="ownEventsFailed" class="mkt-cal__muted">⚠️ 這次讀不到你加的檔期，按「重新載入」再試一次。</p>
 
         <template v-else>
           <!-- 還不認識這家店：整張卡只有通用建議，這件事只在這裡講一次 -->
@@ -74,10 +78,14 @@
                 <span class="mkt-cal__when">{{ shortDate(e.date) }}</span>
                 <span class="mkt-cal__name">{{ e.name }}</span>
                 <span class="mkt-cal__angle">
+                  <!-- `D-122`②：店家自己加的那幾檔，攤開時也看得出是自己的 -->
+                  <span v-if="e.own" class="mkt-cal__own">自己的</span>
                   <template v-if="openId !== e.festivalId">
                     <template v-if="plannedOf(e)">
                       <span :class="['mkt-cal__chip', chipTone(e)]">{{ chipText(e) }}</span>「{{ plannedOf(e)?.name }}」
                     </template>
+                    <!-- 自己的檔期沒有通用切角：講它現在的狀態 -->
+                    <template v-else-if="e.own">還沒有推播</template>
                     <template v-else>{{ e.generalAngle }}</template>
                   </template>
                 </span>
@@ -86,7 +94,7 @@
               </button>
 
               <div v-if="openId === e.festivalId" class="mkt-cal__body">
-                <p class="mkt-cal__angle-full">{{ e.generalAngle }}</p>
+                <p v-if="e.generalAngle" class="mkt-cal__angle-full">{{ e.generalAngle }}</p>
 
                 <!-- ① 為什麼——每一條都帶出處。湊不出來就整段不出現 -->
                 <template v-if="e.reasons.length">
@@ -115,12 +123,10 @@
                   ③ 按鈕。`G-102`／`G-109`：兩顆各照自己的端點擋（`draft`＝`broadcast.write`、`skip`＝`marketing.write`）。
                   `C-236`「這次不做」⛔ 不是刪除：`festivalId` 含年份，明年那一檔會自己回來。
                 -->
-                <div v-if="plannedOf(e)" class="mkt-cal__cta">
-                  <el-button size="small" type="primary" plain @click="goViewBroadcast(plannedOf(e)?.id ?? '')">查看推播</el-button>
-                </div>
-                <div v-else-if="can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
+                <div v-if="plannedOf(e) || can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
+                  <el-button v-if="plannedOf(e)" size="small" type="primary" plain @click="goViewBroadcast(plannedOf(e)?.id ?? '')">查看推播</el-button>
                   <el-button
-                    v-if="can('broadcast.write')"
+                    v-else-if="can('broadcast.write')"
                     size="small"
                     type="primary"
                     plain
@@ -130,7 +136,21 @@
                   >
                     {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
                   </el-button>
-                  <el-button v-if="can('marketing.write')" size="small" text :loading="skippingId === e.festivalId" @click="skipEntry(e)">
+                  <!--
+                    `D-122`②：自己的檔期是他親手加的，給「修改／刪除」，⛔ 不給「這次不做」（那是給節日表用的，明年會回來）。
+                    排好推播之後一樣改得了：延期是常有的事。
+                  -->
+                  <template v-if="e.own && can('marketing.write')">
+                    <el-button size="small" text @click="openEditEvent(e)">修改</el-button>
+                    <el-button size="small" text :loading="deletingId === e.festivalId" @click="deleteEvent(e)">刪除</el-button>
+                  </template>
+                  <el-button
+                    v-else-if="!plannedOf(e) && !e.own && can('marketing.write')"
+                    size="small"
+                    text
+                    :loading="skippingId === e.festivalId"
+                    @click="skipEntry(e)"
+                  >
                     這次不做
                   </el-button>
                 </div>
@@ -164,6 +184,14 @@
         </template>
 
         <!--
+          `D-122`②：店家自己的檔期（週年慶、新品開賣）。加進來跟節日一樣：快到時攤開、可以擬推播、
+          早上的 LINE 提醒、發完在下面那一行看得到成效。⛔ 不從推播名稱猜，只收他親手加的。
+        -->
+        <div v-if="can('marketing.write')" class="mkt-cal__add-own">
+          <el-link type="primary" :underline="false" @click="openAddEvent">＋ 加自己的檔期</el-link>
+        </div>
+
+        <!--
           `C-55`② / `C-240` / `D-121`：上一檔做得怎麼樣，收在最下面一行。
           只算為節日發的推播、成效是 LINE 的人數（規則在 `shared/festival-outcome.ts`）。
           ⛔ 回看窗內一檔都沒有就整段不出現——不要留一個空殼。
@@ -180,6 +208,14 @@
         </div>
       </template>
     </div>
+
+    <AdminMarketingEventDialog
+      v-model:visible="eventDialog.visible"
+      :workspace-id="workspaceId"
+      :mode="eventDialog.mode"
+      :initial="eventDialog.initial"
+      @saved="onEventSaved"
+    />
   </div>
 </template>
 
@@ -196,6 +232,8 @@ import {
 } from '~~/shared/marketing-skips'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 import { STORE_PROFILE_EDIT_CAPABILITIES } from '~~/shared/permissions'
+import { eventDeleteConfirmText, eventSavedText, type MarketingEvent } from '~~/shared/marketing-events'
+import { ElMessageBox } from 'element-plus'
 
 const props = defineProps<{ workspaceId: string }>()
 
@@ -233,6 +271,8 @@ const skippedEntries = computed(() => splitBySkip(entries.value, skipMap.value).
 const loading = ref(false)
 const loaded = ref(false)
 const loadError = ref('')
+/** `D-122`②：自己的檔期讀不到（⛔ 不是「一檔都沒加」） */
+const ownEventsFailed = ref(false)
 
 /**
  * 哪一檔攤開（`D-121`）。他還沒動過＝最近的那一檔；按過就照他的（可以全部收起來）。
@@ -275,6 +315,7 @@ async function reload() {
       outcomeLines: OutcomeLine[]
       outcomeIntegrity: { truncated: boolean, failed: boolean }
       skippedFestivalIds: string[]
+      ownEventsFailed?: boolean
     }>('/api/marketing-calendar')
     entries.value = (r.entries ?? []).map(e => ({ ...e, planned: Array.isArray(e.planned) ? e.planned : [] }))
     headline.value = r.headline ?? ''
@@ -284,6 +325,7 @@ async function reload() {
     outcomeLines.value = Array.isArray(r.outcomeLines) ? r.outcomeLines : []
     outcomeIntegrity.value = r.outcomeIntegrity ?? { truncated: false, failed: false }
     skippedIds.value = Array.isArray(r.skippedFestivalIds) ? r.skippedFestivalIds : []
+    ownEventsFailed.value = r.ownEventsFailed === true
     loaded.value = true
   }
   catch (e: unknown) {
@@ -347,6 +389,55 @@ async function setSkip(e: { festivalId: string, name: string }, skip: boolean) {
 
 const skipEntry = (e: { festivalId: string, name: string }) => setSkip(e, true)
 const restoreEntry = (e: { festivalId: string, name: string }) => setSkip(e, false)
+
+/**
+ * `D-122`②：店家自己的檔期——加、改、刪。存好就整張卡重載（攤開哪一檔、排了沒、回顧都由後端算）。
+ */
+const eventDialog = reactive<{
+  visible: boolean
+  mode: 'create' | 'edit'
+  initial: { id?: string, name?: string, date?: string }
+}>({ visible: false, mode: 'create', initial: {} })
+const deletingId = ref('')
+
+function openAddEvent() {
+  Object.assign(eventDialog, { visible: true, mode: 'create', initial: {} })
+}
+function openEditEvent(e: CalendarEntry) {
+  Object.assign(eventDialog, { visible: true, mode: 'edit', initial: { id: e.festivalId, name: e.name, date: e.date } })
+}
+async function onEventSaved(saved: MarketingEvent, isNew: boolean) {
+  ElMessage.success(eventSavedText(saved.name, isNew))
+  // 加的那一檔攤開給他看（他剛加的就是他現在要看的）
+  if (isNew) openChoice.value = saved.id
+  await reload()
+}
+async function deleteEvent(e: CalendarEntry) {
+  if (deletingId.value) return
+  try {
+    await ElMessageBox.confirm(eventDeleteConfirmText(e.name), '刪除檔期', {
+      confirmButtonText: '刪除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+      type: 'warning',
+    })
+  }
+  catch { return }
+  deletingId.value = e.festivalId
+  try {
+    await apiFetch('/api/marketing-calendar', { method: 'POST', body: { op: 'delete', id: e.festivalId } })
+    ElMessage.success(`「${e.name}」刪掉了。`)
+    // 攤開的就是刪掉的那一檔 → 回到「最近那一檔攤開」（⛔ 不要留一個對不到任何一列的選擇）
+    if (openChoice.value === e.festivalId) openChoice.value = undefined
+    await reload()
+  }
+  catch (err: unknown) {
+    ElMessage.error((err as { data?: { statusMessage?: string } })?.data?.statusMessage || '這次沒刪成功，請再試一次')
+  }
+  finally {
+    deletingId.value = ''
+  }
+}
 
 /**
  * 「為這一檔擬推播」（`C-225`）。

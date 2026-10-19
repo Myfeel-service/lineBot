@@ -99,6 +99,11 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'broadcast.testRecipientAdd': '把一位好友加進「常找來看稿的人」',
   'broadcast.testRecipientRemove': '從「常找來看稿的人」拿掉一位',
 
+  // 首頁「接下來的檔期」裡店家自己加的檔期（`D-122`②）。名字記在備註
+  'marketingEvent.create': '加了一個自己的檔期',
+  'marketingEvent.put': '改了一個自己的檔期',
+  'marketingEvent.delete': '刪掉了一個自己的檔期',
+
   // 機器人模組：改了客人立刻收到不一樣的東西
   'flow.create': '新增了一個機器人模組',
   'flow.put': '改了一個機器人模組',
@@ -317,6 +322,9 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   name: '名稱',
   title: '標題',
   status: '狀態',
+  // `D-122`②：自己的檔期是哪一天、從哪一則推播「設成檔期」的
+  date: '日期',
+  broadcastId: '從哪一則推播設的',
   // `C-309`：知識講「條」、所屬講「資料」（⚠️ columnsCount 的「卡片」是輪播訊息的卡片，不是知識，不改）
   cardStatus: '這條知識的狀態',
   question: '客人會問的問題',

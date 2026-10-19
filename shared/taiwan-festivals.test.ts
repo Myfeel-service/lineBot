@@ -198,3 +198,96 @@ describe('里程碑常數', () => {
     expect([...FESTIVAL_REMIND_DAYS]).toEqual([7, 3, 1])
   })
 })
+
+/**
+ * `D-122`①（2026-10-19）：早上的 LINE 提醒跟首頁卡片同步。
+ * 以前提醒只記得「講過幾次」，卡片上排好了推播，3 天前照樣叫他「今天就去排」。
+ */
+describe('提醒跟卡片同步：那一檔排了沒（D-122①）', () => {
+  // 重陽 2026-10-18；10/15＝前 3 天
+  const ninth3 = () => pickFestivalReminder('2026-10-15', { 'doubleninth-2026': 7 })!
+  /** 台灣 10/16 20:00 */
+  const AT_1016_2000 = Date.UTC(2026, 9, 16, 12)
+
+  it('已排程：照示意頁那一句講排在哪天，⛔ 不再叫他去排', () => {
+    const t = festivalReminderText(ninth3(), '', { name: '重陽敬老早鳥', status: 'scheduled', atMs: AT_1016_2000 })
+    expect(t).toBe('再過 3 天就是重陽節。「重陽敬老早鳥」排在 10/16 20:00 了，記得確認庫存和出貨來不來得及。')
+    expect(t).not.toContain('建議今天就到後台')
+  })
+
+  it('還是草稿：照舊提醒去排，並講是哪一則還沒排', () => {
+    const t = festivalReminderText(ninth3(), '', { name: '重陽敬老早鳥', status: 'draft', atMs: null })
+    expect(t).toBe('再過 3 天就是重陽節。你有一則草稿「重陽敬老早鳥」還沒排，建議今天就到後台「推播」排進去，內容記得講清楚下單與出貨時間。')
+  })
+
+  it('還沒有推播：一字不改（跟上線前同一句）', () => {
+    expect(festivalReminderText(ninth3(), '', null))
+      .toBe('再過 3 天就是重陽節。建議今天就到後台「推播」把節慶訊息排進去，內容記得講清楚下單與出貨時間。')
+    expect(festivalReminderText(ninth3())).toBe(festivalReminderText(ninth3(), '', null))
+  })
+
+  it('已排程的 7 天與 1 天：講排在哪天，前一天不再問「推播排了沒」', () => {
+    const plan = { name: '中秋禮盒早鳥', status: 'scheduled' as const, atMs: Date.UTC(2026, 8, 23, 12) }
+    const t7 = festivalReminderText(pickFestivalReminder('2026-09-18')!, '', plan)
+    expect(t7).toBe('再過 7 天就是中秋節（09/25）。「中秋禮盒早鳥」排在 09/23 20:00 了，記得確認庫存和出貨來不來得及。')
+    const t1 = festivalReminderText(pickFestivalReminder('2026-09-24', { 'midautumn-2026': 3 })!, '', plan)
+    expect(t1).toBe('明天就是中秋節！「中秋禮盒早鳥」排在 09/23 20:00 了，最後確認兩件事：庫存和出貨來不來得及、連假期間客服值班排好了沒。')
+    expect(t1).not.toContain('推播排了沒')
+  })
+
+  it('發完了講哪天發的；發送失敗叫他去看卡在哪（⛔ 不講「排好了」）', () => {
+    const sent = festivalReminderText(ninth3(), '', { name: '重陽早鳥', status: 'completed', atMs: Date.UTC(2026, 9, 12, 12) })
+    expect(sent).toBe('再過 3 天就是重陽節。「重陽早鳥」10/12 發出去了，記得確認庫存和出貨來不來得及。')
+    const failed = festivalReminderText(ninth3(), '', { name: '重陽早鳥', status: 'failed', atMs: null })
+    expect(failed).toBe('再過 3 天就是重陽節。「重陽早鳥」沒有發出去，到後台「推播」看看卡在哪。')
+  })
+})
+
+describe('收起來的那一檔不提醒（D-122①）', () => {
+  it('卡片上按了「這次不做」→ 不講它', () => {
+    expect(pickFestivalReminder('2026-10-15', {}, { skipped: { 'doubleninth-2026': 1 } })).toBeNull()
+  })
+
+  it('同一天兩檔、收掉近的那一檔 → 講另一檔（不是整段消失）', () => {
+    // 2027 重陽 10/08、國慶 10/10：10/07 兩個都到期
+    const r = pickFestivalReminder('2027-10-07', {}, { skipped: { 'doubleninth-2027': 1 } })
+    expect(r!.festival.id).toBe('nationalday-2027')
+  })
+
+  it('沒收的照講（對照組）', () => {
+    expect(pickFestivalReminder('2026-10-15', {}, { skipped: { 'halloween-2026': 1 } })!.festival.id).toBe('doubleninth-2026')
+  })
+})
+
+describe('自己的檔期也提醒（D-122②）', () => {
+  const own = { id: 'own-abc123', date: '2026-10-24', name: '週年慶', angle: '', own: true }
+
+  it('7／3／1 天各講一次，跟節日同一套', () => {
+    expect(pickFestivalReminder('2026-10-17', { 'doubleninth-2026': 1 }, { extra: [own] })).toMatchObject({ milestone: 7, festival: { id: own.id } })
+    expect(pickFestivalReminder('2026-10-21', { [own.id]: 7 }, { extra: [own] })).toMatchObject({ milestone: 3 })
+    expect(pickFestivalReminder('2026-10-23', { [own.id]: 3 }, { extra: [own] })).toMatchObject({ milestone: 1 })
+    expect(pickFestivalReminder('2026-10-22', { [own.id]: 3 }, { extra: [own] })).toBeNull()
+  })
+
+  it('沒有通用切角：7 天那一句直接接「建議」，不留空的「，」', () => {
+    const t = festivalReminderText(pickFestivalReminder('2026-10-17', { 'doubleninth-2026': 1 }, { extra: [own] })!)
+    expect(t).toBe('再過 7 天就是週年慶（10/24）。建議這幾天先把檔期優惠、贈品和圖文素材準備好。')
+  })
+
+  it('3 天前不說「節慶訊息」（週年慶不是節慶）', () => {
+    const t = festivalReminderText(pickFestivalReminder('2026-10-21', { [own.id]: 7 }, { extra: [own] })!)
+    expect(t).toContain('把這一檔的訊息排進去')
+    expect(t).not.toContain('節慶')
+  })
+
+  it('跟節日同一天：自己的先講（那是他親手加的）', () => {
+    const sameDay = { ...own, date: '2026-10-31' }
+    const r = pickFestivalReminder('2026-10-30', { 'halloween-2026': 3 }, { extra: [sameDay] })
+    expect(r!.festival.id).toBe(own.id)
+  })
+
+  it('節日表沒有一檔在 7 天內、自己的檔期有 → 閘門要開', () => {
+    expect(hasFestivalInWindow('2026-11-20')).toBe(false)
+    expect(hasFestivalInWindow('2026-11-20', [{ ...own, date: '2026-11-25' }])).toBe(true)
+  })
+})

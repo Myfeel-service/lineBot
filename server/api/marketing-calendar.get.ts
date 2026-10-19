@@ -1,27 +1,26 @@
-import type { Firestore } from 'firebase-admin/firestore'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { getMarketingSkips } from '~~/server/utils/marketing-skips'
+import { getMarketingEvents } from '~~/server/utils/marketing-events'
+import { loadCalendarBroadcasts } from '~~/server/utils/marketing-calendar-broadcasts'
 import { matchAudienceTags, productKeywords, type AudienceTagLike } from '~~/shared/festival-audience'
 import {
-  broadcastFestivalMatch,
   buildFestivalOutcomes,
   findLastYearFestivalBroadcast,
   outcomeSummary,
-  type BroadcastOutcome,
 } from '~~/shared/festival-outcome'
-import { parseStoredLineStats } from '~~/shared/broadcast-line-stats'
 import {
   buildMarketingCalendar,
   calendarHeadline,
+  plannedForFestival,
   type CalendarFacts,
   type PlannedBroadcast,
 } from '~~/shared/marketing-calendar'
+import { ownEventFestival, type MarketingEvent } from '~~/shared/marketing-events'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
-import { parseFirestoreDate } from '~~/shared/firestore-date'
 import { taipeiDate } from '~~/shared/time'
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 
@@ -48,78 +47,10 @@ import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festival
  *   同一件事兩種答案，正是這個專案踩過最多次的形狀。
  */
 
-/** 掃描上限。撞到要回報，⛔ 不可以讓人把截斷後的數字當全部。 */
-const BROADCAST_SCAN_LIMIT = 300
-
-/** 還沒送完、可以算「已經為這一檔準備好」的狀態 */
-const PLANNED_STATUSES = new Set(['draft', 'scheduled', 'processing', 'completed', 'failed'])
-
-/** Firestore 時間欄位 → 毫秒。走全站共用的 `parseFirestoreDate`（⛔ 不在端點裡再寫一份） */
-function toMs(v: unknown): number | null {
-  return parseFirestoreDate(v)?.getTime() ?? null
-}
-
-/**
- * 把這個帳號的推播**掃一趟**撈回來，給「上一檔的回顧」「去年這一檔」「這一檔已經排了」三個用途共用
- * （08-11 讀取費暴衝的教訓：⛔ 不要每個節日各查一次）。
- *
- * ⚠️ **2026-09-23（`C-240`）修過兩個靜默無效**：狀態值是 `completed` 不是 `sent`、時間在 `completedAt` 不在 `sentAt`。
- * ⭐ **2026-10-11（`D-121`）不再掃點擊紀錄**：成效改讀推播那一筆上存好的 LINE 人數（`lineStats`），
- *   我們自己的點擊紀錄只數得出次數、而且 `C-301` 以前漏掉所有圖片上的連結。
+/*
+ * 推播掃一趟的那支（`loadCalendarBroadcasts`）2026-10-19（`D-122`）搬到 `server/utils/marketing-calendar-broadcasts.ts`：
+ * 早上的 LINE 提醒也要知道「這一檔排了沒」，⛔ 兩邊各寫一份就會一邊說排好了、一邊叫他去排。
  */
-async function loadBroadcasts(
-  db: Firestore,
-  workspaceId: string,
-): Promise<{ sent: BroadcastOutcome[], planned: (PlannedBroadcast & { festivalId?: string, matchAtMs: number | null })[], truncated: boolean, failed: boolean }> {
-  try {
-    // 單欄位等值查詢：⛔ 不加 orderBy 以免要複合索引
-    const snap = await db.collection('broadcasts')
-      .where('workspaceId', '==', workspaceId)
-      .select('name', 'sentCount', 'completedAt', 'scheduleAt', 'createdAt', 'status', 'festivalId', 'lineStats')
-      .limit(BROADCAST_SCAN_LIMIT + 1)
-      .get()
-
-    const sent: BroadcastOutcome[] = []
-    const planned: (PlannedBroadcast & { festivalId?: string, matchAtMs: number | null })[] = []
-    for (const doc of snap.docs.slice(0, BROADCAST_SCAN_LIMIT)) {
-      const v = doc.data() as Record<string, unknown>
-      const status = String(v.status ?? '')
-      const name = String(v.name ?? '（沒有名稱）').slice(0, 40)
-      const festivalId = v.festivalId ? String(v.festivalId) : undefined
-      const completedAt = toMs(v.completedAt)
-      const scheduleAt = toMs(v.scheduleAt)
-
-      // ⛔ 只認真的送完的那些；`cancelled` 與還沒送的不算成效
-      if ((status === 'completed' || status === 'failed') && completedAt != null) {
-        sent.push({
-          id: doc.id,
-          name,
-          atMs: completedAt,
-          sentCount: Number(v.sentCount ?? 0),
-          ...(festivalId ? { festivalId } : {}),
-          line: parseStoredLineStats(v.lineStats),
-        })
-      }
-      if (PLANNED_STATUSES.has(status)) {
-        planned.push({
-          id: doc.id,
-          name,
-          status: status as PlannedBroadcast['status'],
-          atMs: status === 'scheduled' ? scheduleAt : (status === 'completed' || status === 'failed') ? completedAt : null,
-          ...(festivalId ? { festivalId } : {}),
-          // 名稱對節日時拿來比日期的時間：排程的看排程時間、發完的看發完時間、草稿看建立時間
-          matchAtMs: scheduleAt ?? completedAt ?? toMs(v.createdAt),
-        })
-      }
-    }
-    return { sent, planned, truncated: snap.size > BROADCAST_SCAN_LIMIT, failed: false }
-  }
-  catch (e) {
-    // ⛔ 查不到就回空＋`failed`（＝這幾條理由不出現），不可以編一個數字
-    console.warn('[marketing-calendar] 推播掃描失敗：', workspaceId, e)
-    return { sent: [], planned: [], truncated: false, failed: true }
-  }
-}
 
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'workspace.read')
@@ -162,16 +93,28 @@ export default defineEventHandler(async (event) => {
     .catch(() => null)
 
   // 推播掃一趟，給「去年這一檔」「上一檔的回顧」「這一檔已經排了」共用（⛔ 不要每個節日各查一次）
-  const bc = await loadBroadcasts(db, workspaceId)
+  const bc = await loadCalendarBroadcasts(db, workspaceId)
   // 他自己收起來的那幾檔（`C-236`）。查不到就當成沒收，⛔ 不要讓它擋住整張卡
   const skips = await getMarketingSkips(db, workspaceId).catch(() => ({}))
+  /**
+   * 店家自己的檔期（`D-122`②）。⛔ 查不到要講出來（`ownEventsFailed`）：
+   * 靜靜少了他親手加的那幾檔，他會以為加了沒存到。
+   */
+  let ownEventsFailed = false
+  const ownEvents: MarketingEvent[] = await getMarketingEvents(db, workspaceId).catch((e) => {
+    console.warn('[marketing-calendar] 自己的檔期讀不到：', workspaceId, e)
+    ownEventsFailed = true
+    return []
+  })
+  const ownFestivals = ownEvents.map(ownEventFestival)
 
   // 輪廓裡的主打商品＝配對的主軸（`C-235`）。每一檔都是同一批詞，先算一次。
   const products = productKeywords(String(profile.fields?.products?.value ?? ''))
 
   const factsOf = (f: TaiwanFestival): CalendarFacts => {
-    // `D-121`：去年這一檔「為它發的」推播，跟回顧同一條歸屬規則（⛔ 不再照日期猜）
-    const ly = findLastYearFestivalBroadcast(f, TAIWAN_FESTIVALS, bc.sent)
+    // `D-121`：去年這一檔「為它發的」推播，跟回顧同一條歸屬規則（⛔ 不再照日期猜）。
+    // 自己的檔期沒有「去年這一檔」：名字是他今年取的，去年同一天不一定是同一件事
+    const ly = f.own ? null : findLastYearFestivalBroadcast(f, TAIWAN_FESTIVALS, bc.sent)
     return {
       friendCount,
       matchedTags: matchAudienceTags(tags, counts, {
@@ -183,14 +126,14 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // `D-121`：已經為這一檔建好的推播（從這裡擬的，或名稱裡有節日名的），卡片直接講排在哪天
-  const plannedOf = (f: TaiwanFestival): PlannedBroadcast[] => bc.planned
-    .filter(p => broadcastFestivalMatch({ name: p.name, atMs: p.matchAtMs, festivalId: p.festivalId }, f) !== null)
-    .map(({ id, name, status, atMs }) => ({ id, name, status, atMs }))
+  // `D-121`：已經為這一檔建好的推播（從這裡擬的，或名稱裡有節日名的），卡片直接講排在哪天。
+  // ⛔ 跟早上的 LINE 提醒同一支（`plannedForFestival`）
+  const plannedOf = (f: TaiwanFestival): PlannedBroadcast[] => plannedForFestival(bc.planned, f)
 
-  const entries = buildMarketingCalendar(today, profile, factsOf, undefined, plannedOf)
+  const entries = buildMarketingCalendar(today, profile, factsOf, undefined, plannedOf, ownFestivals)
   const ready = isStoreProfileReady(profile)
-  const outcomes = buildFestivalOutcomes(today, TAIWAN_FESTIVALS, bc.sent)
+  // `D-122`②：回顧也算自己的檔期（發完看得到幾個人打開、點連結）
+  const outcomes = buildFestivalOutcomes(today, [...TAIWAN_FESTIVALS, ...ownFestivals], bc.sent)
   const summary = outcomeSummary(outcomes, Date.now())
   return {
     today,
@@ -208,6 +151,8 @@ export default defineEventHandler(async (event) => {
      *   後端濾掉的話「收起來的還原不回來」，那就變成靜靜消失了。
      */
     skippedFestivalIds: Object.keys(skips),
+    /** `D-122`②：自己的檔期讀不到。卡片要講「讀不到你加的檔期」，⛔ 不可以當成一檔都沒加 */
+    ownEventsFailed,
     headline: calendarHeadline(),
     entries,
 

@@ -11,6 +11,8 @@ import {
   productKeywords,
   type AudienceTagLike,
 } from '~~/shared/festival-audience'
+import { getMarketingEvents } from '~~/server/utils/marketing-events'
+import { isOwnEventId, ownEventFestival } from '~~/shared/marketing-events'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { BROADCAST_DRAFT_VARIANTS, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
@@ -31,12 +33,16 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event).catch(() => ({})) as { festivalId?: string }
   const festivalId = String(body?.festivalId ?? '').trim()
-  const festival = TAIWAN_FESTIVALS.find(f => f.id === festivalId)
+  const db = getDb()
+  // `D-122`②：店家自己的檔期也可以擬（id 是 `own-` 開頭，從這個帳號自己的那份找；⛔ 找不到別家的）
+  const own = isOwnEventId(festivalId)
+    ? (await getMarketingEvents(db, workspaceId)).find(e => e.id === festivalId)
+    : undefined
+  const festival = own ? ownEventFestival(own) : TAIWAN_FESTIVALS.find(f => f.id === festivalId)
   if (!festival) {
     throw createError({ statusCode: 400, statusMessage: '找不到這個檔期' })
   }
 
-  const db = getDb()
   const profile = await getStoreProfile(workspaceId, db)
   if (!isStoreProfileReady(profile)) {
     // ⛔ 誠實擋下來，不要生一堆空話

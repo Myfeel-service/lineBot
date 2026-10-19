@@ -355,3 +355,58 @@ describe('節日關鍵字互相包含（審查第 2 條）', () => {
     expect(pairs).toBeGreaterThanOrEqual(1)
   })
 })
+
+/**
+ * `D-122`②：店家自己的檔期。歸屬照現在的規則（從這一檔擬的／設成檔期的，或推播名稱裡有檔期名的），
+ * ⛔ 但比的是**整個檔期名**，不是節日的關鍵字表。
+ */
+describe('自己的檔期的歸屬（D-122②）', () => {
+  const LAUNCH = { id: 'own-launch0001', name: '小滑手開賣', date: '2026-09-29', own: true }
+
+  it('⭐ 真資料：推播「小滑手_開賣」算進檔期「小滑手開賣」（底線、空白、橫線都不影響）', () => {
+    expect(broadcastFestivalMatch(bc(), LAUNCH)).toBe('named')
+    expect(broadcastFestivalMatch(bc({ name: '小滑手 - 開賣' }), LAUNCH)).toBe('named')
+  })
+
+  it('從這一檔擬的／設成檔期的＝linked；綁在別檔的不算', () => {
+    expect(broadcastFestivalMatch(bc({ name: '隨便取的名字', festivalId: LAUNCH.id }), LAUNCH)).toBe('linked')
+    expect(broadcastFestivalMatch(bc({ festivalId: 'midautumn-2026' }), LAUNCH)).toBeNull()
+  })
+
+  it('⛔ 不拆字：同一系列的別檔（「小滑手_超早鳥倒數」）不算進「小滑手開賣」', () => {
+    expect(broadcastFestivalMatch(bc({ name: '小滑手_超早鳥倒數', atMs: at('2026-09-25') }), LAUNCH)).toBeNull()
+  })
+
+  it('⛔ 不去尾巴的「日」：「會員日」不會變成「會員」把每一則會員推播都吃進來', () => {
+    const memberDay = { id: 'own-member0001', name: '會員日', date: '2026-10-20', own: true }
+    expect(broadcastFestivalMatch(bc({ name: '會員專屬好禮', atMs: at('2026-10-15') }), memberDay)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ name: '十月會員日', atMs: at('2026-10-15') }), memberDay)).toBe('named')
+  })
+
+  it('⛔ 兩個字以下的檔期名不比名稱（「開賣」會撞到每一檔），只認綁定的', () => {
+    const short = { id: 'own-short00001', name: '開賣', date: '2026-09-29', own: true }
+    expect(broadcastFestivalMatch(bc(), short)).toBeNull()
+    expect(broadcastFestivalMatch(bc({ festivalId: short.id }), short)).toBe('linked')
+  })
+
+  it('時間窗跟節日一樣（前 30 天到後 7 天）', () => {
+    expect(broadcastFestivalMatch(bc({ atMs: at('2026-07-01') }), LAUNCH)).toBeNull()
+  })
+
+  it('回顧：自己的檔期有推播就一行講 LINE 人數（示意頁那一行）', () => {
+    const s = outcomeSummary(buildFestivalOutcomes('2026-10-11', [LAUNCH], [bc()]), NOW)
+    expect(s.label).toBe('上一檔')
+    expect(s.lines.map(outcomeLineText)).toEqual(['小滑手開賣「小滑手_開賣」送 2,187 人，785 人打開，443 人點連結（LINE 官方統計）'])
+  })
+
+  it('回顧：沒發推播的自己的檔期，⛔ 不說「沒有為節日發」（週年慶不是節日）', () => {
+    const anniversary = { id: 'own-anniv00001', name: '週年慶', date: '2026-10-01', own: true }
+    const one = outcomeSummary(buildFestivalOutcomes('2026-10-11', [anniversary], []), NOW)
+    expect(one.lines.map(outcomeLineText)).toEqual(['週年慶沒有為這一檔發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。'])
+    const mixed = outcomeSummary(buildFestivalOutcomes('2026-10-11', [MIDAUTUMN, anniversary, NATIONAL], []), NOW)
+    expect(mixed.lines.map(outcomeLineText)).toEqual(['中秋節、週年慶、國慶日都沒有為這幾檔發的推播。從這裡擬的推播，發完會在這裡看到幾個人打開、幾個人點。'])
+    // 對照組：全是節日時一字不改
+    expect(outcomeSummary(buildFestivalOutcomes('2026-10-11', [MIDAUTUMN, NATIONAL], []), NOW).lines.map(outcomeLineText)[0])
+      .toContain('都沒有為節日發的推播')
+  })
+})

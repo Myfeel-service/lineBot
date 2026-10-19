@@ -15,6 +15,7 @@
  *    文案要能被測試釘住——這是商家每天會看到的東西。
  */
 
+import { broadcastFestivalMatch } from './festival-outcome'
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from './taiwan-festivals'
 import { daysBetween, taipeiDateTime } from './time'
 import {
@@ -72,6 +73,27 @@ export function pickPlanned(list: readonly PlannedBroadcast[]): PlannedBroadcast
     PLANNED_ORDER[a.status] - PLANNED_ORDER[b.status] || (a.atMs ?? Infinity) - (b.atMs ?? Infinity))[0]!
 }
 
+/** 掃推播時每一則留下的東西（`server/utils/marketing-calendar-broadcasts.ts` 組出來） */
+export interface CalendarBroadcastRow extends PlannedBroadcast {
+  /** 從「為這一檔擬推播」建的、或「設成檔期」的：那一檔的 id */
+  festivalId?: string
+  /** 名稱對檔期時拿來比日期的時間：排程的看排程時間、發完的看發完時間、草稿看建立時間 */
+  matchAtMs: number | null
+}
+
+/**
+ * 已經為這一檔建好的推播（`D-121`；`D-122` 起卡片與早上的 LINE 提醒**共用這一支**）。
+ * ⛔ 不要在別處再寫一份判斷：卡片說「已排程」、LINE 卻叫他「今天就去排」，正是 `D-122`① 要修的事。
+ */
+export function plannedForFestival(
+  rows: readonly CalendarBroadcastRow[],
+  f: { id: string, name: string, date: string, own?: boolean },
+): PlannedBroadcast[] {
+  return rows
+    .filter(p => broadcastFestivalMatch({ name: p.name, atMs: p.matchAtMs, festivalId: p.festivalId }, f) !== null)
+    .map(({ id, name, status, atMs }) => ({ id, name, status, atMs }))
+}
+
 /** 那則推播現在的狀態，一小段話（「已排程 11/09 20:00」）。時間一律台灣時間。 */
 export function plannedStatusText(p: PlannedBroadcast): string {
   const md = (ms: number) => taipeiDateTime(ms).slice(5, 10).replace('-', '/')
@@ -111,6 +133,11 @@ export interface CalendarEntry {
   actions: string[]
   /** 已經為這一檔建好的推播（`D-121`）。空陣列＝還沒有 */
   planned: PlannedBroadcast[]
+  /**
+   * 店家自己加的檔期（`D-122`②）。卡片上標「自己的」、給「修改／刪除」而不是「這次不做」；
+   * `generalAngle` 是空字串（沒有跨產業的切角）。
+   */
+  own?: boolean
 }
 
 /** 這家店的旺季答案跟這個節日對不對得上。 */
@@ -189,16 +216,26 @@ export function buildActions(profile: StoreProfileDoc | null | undefined, f: Tai
   return out
 }
 
-/** 產出未來 N 天的月曆。`facts` 給每個節日各一份（呼叫端算好）。 */
+/**
+ * 產出未來 N 天的月曆。`facts` 給每個節日各一份（呼叫端算好）。
+ *
+ * @param ownEvents 店家自己的檔期（`D-122`②，`ownEventFestival` 轉好的）。跟節日排在一起，
+ *   ⛔ 待遇一樣：快到時攤開、可以擬推播、講得出已經排了哪一則。同一天的話自己的排前面
+ *   （跟早上的 LINE 提醒同一個先後，`pickFestivalReminder`）。
+ */
 export function buildMarketingCalendar(
   today: string,
   profile: StoreProfileDoc | null | undefined,
   factsOf: (f: TaiwanFestival) => CalendarFacts,
   windowDays = CALENDAR_WINDOW_DAYS,
   plannedOf: (f: TaiwanFestival) => PlannedBroadcast[] = () => [],
+  ownEvents: readonly TaiwanFestival[] = [],
 ): CalendarEntry[] {
   const out: CalendarEntry[] = []
-  for (const f of TAIWAN_FESTIVALS) {
+  const all = [...TAIWAN_FESTIVALS, ...ownEvents]
+    .map((f, i) => ({ f, i }))
+    .sort((a, b) => a.f.date.localeCompare(b.f.date) || Number(Boolean(b.f.own)) - Number(Boolean(a.f.own)) || a.i - b.i)
+  for (const { f } of all) {
     const inDays = daysBetween(today, f.date)
     if (inDays < 0 || inDays > windowDays) continue
     const facts = factsOf(f)
@@ -212,6 +249,7 @@ export function buildMarketingCalendar(
       reasons: buildReasons(profile, f, facts),
       actions: buildActions(profile, f, inDays),
       planned: plannedOf(f),
+      ...(f.own ? { own: true } : {}),
     })
   }
   return out

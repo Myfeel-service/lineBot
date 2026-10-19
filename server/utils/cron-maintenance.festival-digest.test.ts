@@ -72,10 +72,18 @@ interface Options {
   festivalState?: Record<string, Record<string, number>>
   /** workspaces 集合裡有哪些帳號（節慶提醒要靠這份才撈得到沒積壓的帳號） */
   workspaceIds?: string[]
+  /** `D-122`：卡片上按了「這次不做」的那幾檔（marketingCalendarSkips/{WS}.skips） */
+  skips?: Record<string, number>
+  /** `D-122`：店家自己的檔期（marketingCalendarEvents/{WS}.events） */
+  ownEvents?: Record<string, { name: string, date: string, createdAt: number }>
+  /** `D-122`：這個帳號的推播（卡片「已排程…」與提醒都從這裡判斷） */
+  broadcasts?: Record<string, unknown>[]
 }
 
 function makeDb(opts: Options = {}) {
-  const { pendingUserIds = [], festivalState = {}, workspaceIds = [WS] } = opts
+  const { pendingUserIds = [], festivalState = {}, workspaceIds = [WS], skips, ownEvents, broadcasts = [] } = opts
+  /** 每個集合被讀了幾次（驗「沒有要講的日子不花讀取」） */
+  const reads: Record<string, number> = {}
 
   const backlogState: Record<string, any> = {}
   const festState: Record<string, any> = structuredClone(festivalState)
@@ -112,9 +120,30 @@ function makeDb(opts: Options = {}) {
   }
 
   let workspaceScans = 0
+  /** 一個帳號一份文件的那種集合（只有 WS 有資料） */
+  const perWorkspaceDoc = (name: string, field: string, value: unknown) => ({
+    doc: (id: string) => ({
+      get: async () => {
+        reads[name] = (reads[name] ?? 0) + 1
+        const has = id === WS && value !== undefined
+        return { exists: has, data: () => (has ? { [field]: value } : undefined) }
+      },
+    }),
+  })
   const db = {
     collection(name: string) {
       if (name === 'cronState') return { doc: (id: string) => refs[id] ?? docRef(id, {}) }
+      if (name === 'marketingCalendarSkips') return perWorkspaceDoc(name, 'skips', skips)
+      if (name === 'marketingCalendarEvents') return perWorkspaceDoc(name, 'events', ownEvents)
+      if (name === 'broadcasts') {
+        // ⚠️ 摘要的異常探針本來就會查推播；「檔期那一趟掃描」認它的 select（帶 festivalId 那一支）
+        const q = query(broadcasts.map((b, i) => ({ id: String(b.id ?? `b${i}`), data: () => b })))
+        q.select = (...fields: string[]) => {
+          if (fields.includes('festivalId')) reads.calendarScan = (reads.calendarScan ?? 0) + 1
+          return q
+        }
+        return q
+      }
       if (name === 'workspaces') {
         workspaceScans++
         return query(workspaceIds.map(id => ({ id, data: () => ({}) })))
@@ -122,6 +151,7 @@ function makeDb(opts: Options = {}) {
       if (name === 'users') {
         return { doc: () => ({ get: async () => ({ data: () => ({ displayName: '某客人' }) }) }) }
       }
+      if (name !== 'conversationSessions') reads[name] = (reads[name] ?? 0) + 1
       if (name === 'conversationSessions') {
         // 逐工作區查：先 where('workspaceId')，再 where('status')。只有 WS 有人在等
         const forWs = (ws: string) => {
@@ -145,7 +175,7 @@ function makeDb(opts: Options = {}) {
     },
   } as any
 
-  return { db, backlogState, festState, workspaceScans: () => workspaceScans }
+  return { db, backlogState, festState, workspaceScans: () => workspaceScans, reads }
 }
 
 function settings(extra: Record<string, unknown> = {}) {
@@ -314,5 +344,121 @@ describe('沒有節日的日子不要白花讀取', () => {
     expect(pushMessage).toHaveBeenCalledTimes(1)
     expect(sentText().split('\n')).toHaveLength(1)
     expect(sentText()).toContain('沒有人在等')
+  })
+
+  it('`D-122`：沒有一檔要講的日子，只讀「自己的檔期」那一份，不讀收起來的、不掃推播', async () => {
+    vi.setSystemTime(NOW_NO_FESTIVAL)
+    const { db, reads } = makeDb()
+    await dailyBacklogDigest(db)
+
+    expect(reads.marketingCalendarEvents).toBe(1)
+    expect(reads.marketingCalendarSkips).toBeUndefined()
+    expect(reads.calendarScan).toBeUndefined()
+  })
+
+  it('對照組：有一檔要講的日子，收起來的與推播都要讀（證明上面那條量得到）', async () => {
+    const { db, reads } = makeDb() // NOW＝中秋前 7 天
+    await dailyBacklogDigest(db)
+
+    expect(reads.marketingCalendarSkips).toBe(1)
+    expect(reads.calendarScan).toBe(1)
+  })
+})
+
+/**
+ * `D-122`①（2026-10-19）：早上的提醒跟首頁卡片同步。
+ * 以前只記得「講過幾次」：卡片上收起來的照樣提醒、排好推播的 3 天前照樣叫他「今天就去排」。
+ */
+describe('提醒跟卡片同步（D-122①）', () => {
+  /** 台北 2026-10-15（四）11:00＝重陽（10/18）前 3 天 */
+  const NOW_NINTH_3 = Date.UTC(2026, 9, 15, 3, 0, 0)
+  /** 台灣 10/16 20:00 */
+  const AT_1016_2000 = Date.UTC(2026, 9, 16, 12)
+  const ninthSent = { [WS]: { 'doubleninth-2026': 7 } }
+  const bcDoc = (over: Record<string, unknown> = {}) => ({
+    id: 'bc-ninth', workspaceId: WS, name: '重陽敬老早鳥', status: 'scheduled',
+    scheduleAt: { _seconds: AT_1016_2000 / 1000 }, createdAt: { _seconds: Date.UTC(2026, 9, 10) / 1000 }, ...over,
+  })
+
+  beforeEach(() => vi.setSystemTime(NOW_NINTH_3))
+
+  it('已排程：講排在哪天（示意頁那一句），⛔ 不再叫他今天去排', async () => {
+    const { db, festState } = makeDb({ festivalState: ninthSent, broadcasts: [bcDoc()] })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 3 天就是重陽節。「重陽敬老早鳥」排在 10/16 20:00 了，記得確認庫存和出貨來不來得及。')
+    expect(sentText()).not.toContain('建議今天就到後台')
+    expect(festState[WS]).toEqual({ 'doubleninth-2026': 3 })
+  })
+
+  it('還是草稿：照舊提醒去排，並講是哪一則還沒排', async () => {
+    const { db } = makeDb({ festivalState: ninthSent, broadcasts: [bcDoc({ status: 'draft', scheduleAt: null })] })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 3 天就是重陽節。你有一則草稿「重陽敬老早鳥」還沒排，建議今天就到後台「推播」排進去')
+  })
+
+  it('還沒有推播（對照組）：跟以前同一句', async () => {
+    const { db } = makeDb({ festivalState: ninthSent })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 3 天就是重陽節。建議今天就到後台「推播」把節慶訊息排進去')
+  })
+
+  it('⛔ 綁在別檔的推播不算這一檔（跟卡片同一條歸屬規則）', async () => {
+    const { db } = makeDb({ festivalState: ninthSent, broadcasts: [bcDoc({ name: '重陽雙11早鳥', festivalId: 'double11-2026' })] })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('建議今天就到後台「推播」把節慶訊息排進去')
+  })
+
+  it('卡片上按了「這次不做」：不提醒它，也不記里程碑（還原之後還講得到）', async () => {
+    const { db, festState } = makeDb({ festivalState: ninthSent, skips: { 'doubleninth-2026': 1 } })
+    await dailyBacklogDigest(db)
+
+    expect(pushMessage).toHaveBeenCalledTimes(1) // 摘要照發
+    expect(sentText()).not.toContain('重陽')
+    expect(sentText()).not.toContain('🎉')
+    expect(festState[WS]).toEqual({ 'doubleninth-2026': 7 })
+  })
+
+  it('已經排好的那一檔，7 天那一句不花客製的 LLM（反正不講切角）', async () => {
+    vi.setSystemTime(NOW) // 中秋前 7 天
+    const scheduled = { id: 'bc-mid', workspaceId: WS, name: '中秋禮盒早鳥', status: 'scheduled', scheduleAt: { _seconds: Date.UTC(2026, 8, 23, 12) / 1000 } }
+    const a = makeDb({ broadcasts: [scheduled] })
+    await dailyBacklogDigest(a.db)
+    expect(sentText()).toContain('🎉 再過 7 天就是中秋節（09/25）。「中秋禮盒早鳥」排在 09/23 20:00 了')
+    expect(a.reads.storeProfiles).toBeUndefined()
+
+    // 對照組：還沒排的照舊去讀輪廓客製（證明上面那條量得到）
+    pushMessage.mockClear()
+    const b = makeDb()
+    await dailyBacklogDigest(b.db)
+    expect(b.reads.storeProfiles).toBe(1)
+  })
+})
+
+describe('店家自己的檔期也提醒（D-122②）', () => {
+  const OWN = 'own-anniv-0000-0001'
+  /** 台北 2026-09-01：節日表上最近的中秋還有 24 天（節日閘門關著） */
+  const ownEvents = { [OWN]: { name: '週年慶', date: '2026-09-08', createdAt: 1 } }
+
+  it('節日表沒有一檔快到、自己的檔期 7 天後 → 照樣提醒，並記里程碑', async () => {
+    vi.setSystemTime(NOW_NO_FESTIVAL)
+    const { db, festState } = makeDb({ ownEvents })
+    const tally = await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 7 天就是週年慶（09/08）。建議這幾天先把檔期優惠、贈品和圖文素材準備好。')
+    expect(festState[WS]).toEqual({ [OWN]: 7 })
+    expect(tally).toMatchObject({ festivalReminders: 1 })
+  })
+
+  it('⛔ 記別的節日時不可以把自己的檔期當成「表上沒有」清掉（不然隔天同一句又講一次）', async () => {
+    // 中秋前 7 天；自己的檔期 9/23（5 天後）已經講過 7 天那次、還沒到 3 天那次
+    const own = { [OWN]: { name: '週年慶', date: '2026-09-23', createdAt: 1 } }
+    const { db, festState } = makeDb({ ownEvents: own, festivalState: { [WS]: { [OWN]: 7, 'own-deleted-0000': 3 } } })
+    await dailyBacklogDigest(db)
+
+    expect(festState[WS]).toEqual({ [OWN]: 7, 'midautumn-2026': 7 }) // 刪掉的那一檔照樣清
   })
 })
