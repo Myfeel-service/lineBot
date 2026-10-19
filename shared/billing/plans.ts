@@ -14,6 +14,8 @@
 //  組織只做帳號分組與帳務歸屬，本身不再有方案／額度。
 // ═══════════════════════════════════════════════════════════════════
 
+import type { EmailAttempt } from './email-retry'
+
 /** 計費方案 ID（掛在 workspace/OA 訂閱層）。test/internal 僅供 super admin 指派。 */
 export type BillingPlanId = 'free' | 'lite' | 'starter' | 'growth' | 'pro' | 'enterprise' | 'test' | 'internal'
 
@@ -376,6 +378,40 @@ export interface WorkspaceSubscription {
    * 額度信由每日對帳寄，靠這個防止同期同門檻重寄；near→over 會因值不同而各寄一次。
    */
   quotaEmailSentFor?: string | null
+  /**
+   * 已寄出「自動扣款失敗」信的那一期（值 = 當期 currentPeriodStart；`B-49`）。
+   * 以前首次失敗寄一封、寄失敗也沒人知道；現在寄成功才記，沒記到的由每日對帳補寄。
+   */
+  chargeFailedEmailSentFor?: string | null
+  /** 上面那期其實沒寄：找不到帳務信箱（超管清單要分得出「寄了」跟「沒有信箱可寄」） */
+  chargeFailedEmailNoRecipientFor?: string | null
+  /**
+   * 各種帳務信「寄失敗、還在重試」的紀錄（`B-49`）。寄成功的不會留在這裡（那種記在各自的 SentFor）。
+   * 規則（冷卻、上限）在 shared/billing/email-retry.ts。⚠️ 寫入一律走點狀路徑
+   * `subscription.emailAttempts.<種類>`，不可整包覆寫訂閱。
+   */
+  emailAttempts?: {
+    renewal?: EmailAttempt
+    quota?: EmailAttempt
+    chargeFailed?: EmailAttempt
+    downgrade?: EmailAttempt
+  }
+  /**
+   * 因為自動扣款一直沒成功（寬限期滿）被降回免費方案的紀錄（`B-16`）。
+   * 由每日對帳在「真的降級落地」那一刻寫入（payment.ts runPaymentReconcile），
+   * 「已降回免費」通知信照它寄、超管扣款失敗清單與帳單頁照它講「哪天、從哪個方案降下來」。
+   * 客戶重新付款開通時整份訂閱重建，這筆會跟著消失。
+   */
+  nonPaymentDowngrade?: {
+    /** 降級前的方案 */
+    fromPlanId: BillingPlanId
+    /** 降級落地的那一天（台北日期） */
+    on: string
+    /** 通知信處理完了沒（寄成功，或根本沒有帳務信箱可寄，才標 true） */
+    emailSent: boolean
+    /** true＝其實沒寄：找不到帳務信箱 */
+    noRecipient?: boolean
+  } | null
 }
 
 // ── helpers ────────────────────────────────────────────────────────

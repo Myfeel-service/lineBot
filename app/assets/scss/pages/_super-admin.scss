@@ -949,3 +949,58 @@ $cost-host: #8a6f5a;
   &--pad { padding: 0 1.15rem 1rem; }
   &--warn { color: var(--color-warning, #b45309); }
 }
+
+// 帳務信（`B-50`）：「標籤｜值」兩欄，跟發票明細的 .bid-row 同一個排法（標籤欄固定寬、值可換行）
+.sa-email-health {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  &__row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  &__label {
+    flex: 0 0 72px;
+    font-size: 0.78rem;
+    color: var(--color-text-secondary, #6b7280);
+  }
+
+  &__value {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  // SES 回的原文（AccessDenied…）：要看得到全文才知道去哪修
+  &__error {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.75rem;
+    color: var(--color-error, #b91c1c);
+  }
+}
+
+// 超管改方案的確認框（`B-43`④）：先列「改了什麼」，再講錢與客戶那邊的影響；⚠️ 那幾句用紅字
+.sa-plan-confirm {
+  font-size: 0.85rem;
+  line-height: 1.7;
+
+  &__title {
+    margin: 0 0 4px;
+    font-weight: 600;
+  }
+
+  &__list {
+    margin: 0 0 10px;
+    padding-left: 1.2em;
+  }
+
+  &__warn {
+    color: var(--color-error, #b91c1c);
+  }
+}

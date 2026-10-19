@@ -26,9 +26,12 @@ vi.mock('~~/server/utils/image-read-failures', async orig => ({
   readImageReadFailureEvents: vi.fn(),
 }))
 vi.mock('firebase-admin/firestore', () => ({ Timestamp: { fromMillis: (ms: number) => ({ toMillis: () => ms }) } }))
+vi.mock('~~/server/utils/billing-dunning', () => ({ readDunningRows: vi.fn(async () => []) }))
+vi.mock('~~/server/utils/email', () => ({ readEmailDeliveryHealth: vi.fn() }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getQuery', () => ({}))
+vi.stubGlobal('useRuntimeConfig', () => ({ public: { paymentEnabled: true } }))
 
 const db = {
   collection: (name: string) => {
@@ -49,11 +52,44 @@ const db = {
 
 const { default: handler } = await import('./alerts-overview.get')
 const { readImageReadFailureEvents } = await import('~~/server/utils/image-read-failures')
+const { readDunningRows } = await import('~~/server/utils/billing-dunning')
+const { readEmailDeliveryHealth } = await import('~~/server/utils/email')
 const call = () => (handler as unknown as (e: unknown) => Promise<any>)({})
+
+const HEALTH = {
+  configured: true, from: 'noreply@lineminime.com', region: 'ap-northeast-1',
+  lastSuccessAt: 1000, lastSuccessSubject: 's', lastFailureAt: null, lastFailureSubject: null, lastFailureError: null,
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.mocked(readImageReadFailureEvents).mockResolvedValue({ events: [], truncated: false })
+  vi.mocked(readDunningRows).mockResolvedValue([])
+  vi.mocked(readEmailDeliveryHealth).mockResolvedValue(HEALTH)
+})
+
+describe('GET /api/admin/super/alerts-overview：自動扣款失敗＋帳務信（`B-43`②／`B-50`）', () => {
+  it('扣款失敗清單原樣帶出；寄信狀態加上「付款有沒有開」', async () => {
+    const row = { workspaceId: 'ws1', state: 'past_due' }
+    vi.mocked(readDunningRows).mockResolvedValueOnce([row as any])
+    const res = await call()
+    expect(res.dunning).toEqual([row])
+    expect(res.email).toEqual({ ...HEALTH, paymentEnabled: true })
+  })
+
+  it('🔴 扣款失敗清單查不了 → null，不是「沒有人扣款失敗」；其他區照常', async () => {
+    vi.mocked(readDunningRows).mockRejectedValueOnce(new Error('UNAVAILABLE'))
+    const res = await call()
+    expect(res.dunning).toBeNull()
+    expect(res.workspaces).toHaveLength(1)
+  })
+
+  it('🔴 寄信紀錄讀不到 → null，不是「沒問題」', async () => {
+    vi.mocked(readEmailDeliveryHealth).mockRejectedValueOnce(new Error('UNAVAILABLE'))
+    const res = await call()
+    expect(res.email).toBeNull()
+  })
 })
 
 describe('GET /api/admin/super/alerts-overview：客人傳的圖讀不出來', () => {

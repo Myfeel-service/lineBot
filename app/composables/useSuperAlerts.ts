@@ -7,7 +7,7 @@
  *
  * 端點本身有 5 分鐘整包快取，這裡的 60 秒 TTL 只是省 HTTP 往返。
  */
-import { superAlertsNav } from '~~/shared/super-alerts-nav'
+import { pastDueAccountCount, superAlertsNav } from '~~/shared/super-alerts-nav'
 import type { SuperAlertsOverviewPayload } from '~~/shared/types/super-alerts'
 
 const REFRESH_TTL_MS = 60_000
@@ -60,5 +60,11 @@ export function useSuperAlerts() {
     return typeof n === 'number' && n > 0 ? n : 0
   })
 
-  return { data, loading, error, checkedAt, refresh, navSeverity, navTip, leadsDotCount }
+  /**
+   * 側欄「金流總覽」的紅點（`B-43`②）：有帳號自動扣款失敗、還在寬限期。
+   * 判定跟「異常總覽」那顆點同一支（shared/super-alerts-nav.ts），查不到不亮。
+   */
+  const pastDueDotCount = computed<number>(() => pastDueAccountCount(data.value))
+
+  return { data, loading, error, checkedAt, refresh, navSeverity, navTip, leadsDotCount, pastDueDotCount }
 }

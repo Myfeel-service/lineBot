@@ -9,7 +9,9 @@
 //  兩邊各自重算就會出現「畫面說扣 399、實際扣 799」——那是客訴，不是顯示瑕疵。
 // ═══════════════════════════════════════════════════════════════════
 
-import { BILLING_PLAN_ORDER, getBillingPlan, type BillingPlanId, type WorkspaceSubscription } from './plans'
+import { BILLING_PLAN_ORDER, getBillingPlan, isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from './plans'
+import { GRACE_DAYS } from './period'
+import { addDays } from '../time'
 
 /**
  * 下一期生效的方案 = 已排程的變更（pendingPlanId）優先，否則沿用現行方案。
@@ -80,4 +82,37 @@ export function resolveRecurringCharge(sub: WorkspaceSubscription): RecurringCha
     creditRemaining: balance - creditUsed,
     fullyCovered: amount <= 0,
   }
+}
+
+/**
+ * 這筆訂閱現在該不該被自動續扣。
+ *
+ * 純函式,好測也好講：**只有 roll 已經把它推進新一期、標成 past_due 的自動續訂才算 due**。
+ * active 的不扣（本期已付）、按過取消的不扣、沒 Token 的不扣（扣不了）、
+ * 免費／企業／內部方案不扣（沒有月費或走合約）。
+ *
+ * 2026-10-20（`B-43`④）從 server/utils/payuni-recurring.ts **原封不動搬來**（那邊照樣匯出同一支）：
+ * 超管改方案的確認框要用同一個條件講「存檔後會不會被扣款」——條件寫兩份就會漂，
+ * 漂掉的那天確認框說不會扣、排程照扣。⛔ 改這裡＝改續扣排程本身，要跑 payuni-recurring 的測試。
+ */
+export function isDueForRecurringCharge(sub: WorkspaceSubscription | null | undefined, today: string): boolean {
+  if (!sub) return false
+  if (sub.status !== 'past_due') return false
+  if (sub.autoRenew !== true || sub.cancelAtPeriodEnd === true) return false
+  if (!sub.payuniCardToken) return false
+  // 沒有本期起日 = 壞資料（手動塞的 doc / 寫入中斷）:算不出單號也判不了寬限期,不能碰。
+  if (!sub.currentPeriodStart) return false
+  // **寬限期已過** → 這筆該被降級,不是再扣一次。
+  // 少了這道檢查,只要「降級沒被寫回 Firestore」就會變成每天重扣同一張被拒的卡
+  // （降級的落地由 runPaymentReconcile 的 past_due 那一段負責,這裡是第二道保險）。
+  if (addDays(sub.currentPeriodStart, GRACE_DAYS) < today) return false
+  if (!isSelfServePaidPlan(sub.planId)) return false
+  // 用「下一期實際會開通的方案」判斷（降級排程可能把它換掉）——若排的是不可自助續扣的
+  // 方案（客製／內部）就不該由程式刷卡,交給人處理。
+  const { planId: nextPlanId, price } = resolveRecurringCharge(sub)
+  if (!isSelfServePaidPlan(nextPlanId)) return false
+  if (price == null || price <= 0) return false
+  // 今天已經試過（成功會變 active,所以走到這裡代表今天已失敗或還在等 UNKNOWN 結果）
+  if (sub.lastChargeDate === today) return false
+  return true
 }

@@ -168,6 +168,20 @@ describe('buildPlanView — 前端顯示視圖', () => {
   it('canceled → 顯示為免費層（與攔截一致,不會「顯示 pro 但只給免費層額度」）', () => {
     expect(buildPlanView(sub('pro', 'canceled'))?.id).toBe('free')
   })
+
+  it('🔴 `B-16`：扣款失敗中 → 帶上「哪天前沒扣到、哪天起降回免費」（帳單頁黃色警示照它講日子）', () => {
+    const v = buildPlanView({ ...sub('starter', 'past_due'), currentPeriodStart: '2026-10-20', currentPeriodEnd: '2026-11-19' }, '2026-10-21')
+    expect(v?.graceLastDay).toBe('2026-10-23')
+    expect(v?.downgradeOn).toBe('2026-10-24')
+    expect(buildPlanView(sub('starter', 'active'))?.graceLastDay).toBeNull()
+  })
+
+  it('`B-16`：近 30 天因扣不到款降回免費 → 帶上從哪個方案、哪天；重新付費或太久以前的不帶', () => {
+    const down = { ...sub('free', 'active'), nonPaymentDowngrade: { fromPlanId: 'starter' as const, on: '2026-10-24', emailSent: true } }
+    expect(buildPlanView(down, '2026-10-30')?.nonPaymentDowngrade).toEqual({ fromPlanName: '入門', on: '2026-10-24' })
+    expect(buildPlanView(down, '2026-12-30')?.nonPaymentDowngrade).toBeNull()
+    expect(buildPlanView({ ...down, planId: 'lite' }, '2026-10-30')?.nonPaymentDowngrade).toBeNull()
+  })
 })
 
 describe('getWorkspaceSubscription', () => {

@@ -163,7 +163,7 @@ import {
 import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
-import { describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
+import { checkoutInvoiceLine, describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
 
 /**
  * 「每月則數」欄位旁那顆 ⓘ 的說明（`D-9`，2026-08-22 拍板）。
@@ -394,12 +394,9 @@ async function checkout(p: BillingPlan) {
   // 就地填（checkoutInvoice），不再要求先去帳單頁設定——發票品名與買方一經開立就
   // 改不掉（要走作廢重開），所以確認框要照「實際會開的那一份」講。
   // 載具那種不寄通知信（發票直接進載具），所以措辭跟著換，不要說「寄到」。
-  const inv = checkoutInvoice.value
-  const invoiceLine = invoiceEnabled && inv
-    ? (String(inv.carrierNum ?? '').trim()
-        ? `發票：${describeInvoiceProfile(inv)}（存入載具，不另寄通知信）`
-        : `發票：${describeInvoiceProfile(inv)}，通知寄到 ${String(inv.buyerEmail ?? '').trim() || '你的登入信箱'}`)
-    : ''
+  // ⭐ 這句跟帳單頁「繼續付款」「換一張卡付款」共用 checkoutInvoiceLine（`B-44`⑩）：三條結帳路徑講同一句；
+  //    發票設定讀不到（null）時照實講讀不到，不再整行消失。
+  const invoiceLine = invoiceEnabled ? checkoutInvoiceLine(checkoutInvoice.value) : ''
   const statement = cardStatementNotice({
     statementName: String(config.public.cardStatementName || ''),
     legalCompanyName: String(config.public.legalCompanyName || ''),

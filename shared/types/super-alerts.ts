@@ -5,6 +5,8 @@
  */
 import type { WorkspaceAlertItem } from './alerts'
 import type { UsageRatioVerdict } from '../billing/usage-ratio'
+import type { DunningRow } from '../billing/dunning'
+import type { EmailHealthInput } from '../billing/email-health'
 
 export interface SuperAlertsWorkspace {
   id: string
@@ -44,6 +46,17 @@ export interface SuperAlertsOverviewPayload {
    * `C-163` 那次從 8/17 壞到 9/6、45 張圖中鏢，全程沒有人知道。null＝這次查不到（⛔不等於沒有）
    */
   imageReadFailures: SuperImageReadFailures | null
+  /**
+   * 自動扣款失敗（`B-43`②，2026-10-20）：還在寬限期的＋近 14 天因扣不到款降回免費的。
+   * 以前只有客戶收得到通知，我們自己不知道。還在寬限期的那幾列讓側欄「異常總覽」「金流總覽」亮紅點。
+   * null＝這次查不到（⛔不等於沒有）
+   */
+  dunning: DunningRow[] | null
+  /**
+   * 寄信設定（`B-50`，2026-10-20）：設定齊不齊、最近一次寄成功／寄失敗。所有帳務信都靠它，
+   * 以前壞掉也沒有任何地方看得到。null＝這次查不到紀錄（⛔不等於沒問題）
+   */
+  email: EmailHealthInput | null
 }
 
 export interface SuperImageReadFailures {

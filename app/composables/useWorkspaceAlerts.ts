@@ -13,6 +13,7 @@ import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { AI_CALL_CEILING_REMEDY } from '~~/shared/billing/call-ceiling'
+import { BILLING_PLANS } from '~~/shared/billing/plans'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AlertFixOpId } from '~~/shared/types/alert-fix'
 import type { Capability } from '~~/shared/permissions'
@@ -337,7 +338,9 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'paymentPastDue',
     icon: CreditCard,
-    impact: '服務目前照常，但一直扣不到款會被降回免費方案、AI 停止回覆。請更新付款方式，或改用手動付款。',
+    // `B-16`（2026-10-20）：哪天降級寫在 detail（後端照扣款失敗信同一把尺算）。這裡講後果與出路：
+    // ⛔ 以前寫「AI 停止回覆」「或改用手動付款」——降回免費還有每期 N 則、也沒有「手動付款」這個功能
+    impact: `服務目前照常，換一張卡付款就能補上；沒補上的話，免費方案每期只有 ${BILLING_PLANS.free.answeredQuota} 則 AI 回覆。`,
     cta: '去處理付款',
     requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,

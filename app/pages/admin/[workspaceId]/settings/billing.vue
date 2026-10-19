@@ -145,8 +145,13 @@
               <span class="text-xs">
                 <!-- 帶上金流回的真實原因（卡片過期／額度不足／被銀行拒絕）——
                      只說「扣款未成功」等於叫客戶自己猜要修什麼。 -->
-                <template v-if="planView.lastChargeError">原因：{{ planView.lastChargeError }}。</template>
-                服務仍在正常運作，我們每天會再試一次。請確認信用卡是否過期或額度不足；幾天內仍未扣款成功，方案會降回免費層。
+                <template v-if="planView.lastChargeError">原因：{{ failReasonText(planView.lastChargeError) }}。</template>
+                服務照常可以用，我們每天會再試一次。
+                <!-- `B-16`：以前只寫「幾天內」——哪天降級跟扣款失敗信同一把尺（graceDeadline），講到日子 -->
+                <template v-if="planView.graceLastDay && planView.downgradeOn">
+                  到 <strong>{{ monthDayText(planView.graceLastDay) }}</strong>還沒扣款成功，{{ monthDayText(planView.downgradeOn) }}起會降回免費方案。
+                </template>
+                <template v-else>幾天內還沒扣款成功，會降回免費方案。</template>
               </span>
               <!-- 卡不能用的當下就給出路。少了這顆按鈕，客戶只能等被降級再來找客服。 -->
               <div v-if="canUpdateCard" class="billing-renew-row billing-renew-row--tight">
@@ -156,6 +161,14 @@
               </div>
             </el-alert>
 
+            <!-- `B-16`：因為扣不到款被降回免費之後，方案名字變成「免費」卻沒說為什麼。近 30 天講一行
+                 （「已降回免費」信也寄了同一件事）。重新訂閱就在這張卡右上角，不另放按鈕。 -->
+            <div v-if="planView.nonPaymentDowngrade" class="billing-renew-row" data-tour="bill-downgraded">
+              <span class="text-xs text-muted">
+                自動扣款一直沒成功，{{ monthDayText(planView.nonPaymentDowngrade.on) }}起已從「{{ planView.nonPaymentDowngrade.fromPlanName }}」降回免費方案。
+              </span>
+            </div>
+
             <div v-if="planView.cancelAtPeriodEnd" class="billing-renew-row">
               <span class="text-xs text-muted">
                 已取消自動續訂，服務可用到 <strong>{{ planView.currentPeriodEnd }}</strong>，之後降回免費層。
@@ -163,7 +176,9 @@
             </div>
             <div v-else-if="canCancel" class="billing-renew-row">
               <span class="text-xs text-muted">
-                <template v-if="planView.autoRenew">
+                <!-- 扣款失敗中（past_due）不講「下次扣款 11/20」：上面黃色警示才說每天會再扣一次，同一畫面講兩個扣款日會打架（`B-16`） -->
+                <template v-if="planView.autoRenew && planView.status === 'past_due'">每月自動續訂中</template>
+                <template v-else-if="planView.autoRenew">
                   每月自動續訂中 · 下次扣款 <strong>{{ nextChargeDate }}</strong>
                   <!-- 金額要寫出來：折抵或期末降級都會讓下期金額與方案定價不同，
                        客戶看到「下次扣款日」卻不知道扣多少，才是最容易變成客訴的地方。 -->
@@ -247,7 +262,10 @@
             </el-button>
           </div>
           <div class="card-section-stack">
-            <el-table :data="visibleOrders" size="small" empty-text="尚無付款紀錄">
+            <!-- `B-42`①：讀不到就要說讀不到。以前 catch 吞錯、畫成「尚無付款紀錄」的空表
+                 ＝告訴客戶他從來沒付過錢（照 org 帳務分頁的 ordersError 做法）。 -->
+            <el-alert v-if="ordersError" type="warning" :closable="false" show-icon :title="ordersError" />
+            <el-table v-else :data="visibleOrders" size="small" empty-text="尚無付款紀錄">
               <el-table-column label="日期" min-width="140">
                 <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
               </el-table-column>
@@ -507,7 +525,9 @@ import { aiCallPausedText } from '~/utils/quota-banner-text'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
-import { describeInvoiceProfile } from '~~/shared/types/organization'
+import { checkoutInvoiceLine, describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
+import { monthDayText, plainChargeError } from '~~/shared/billing/dunning'
+import { escapeHtml } from '~~/shared/billing/email-content'
 import type { InvoiceForm } from '~~/app/components/admin/AdminInvoiceProfileForm.vue'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
@@ -666,12 +686,35 @@ const invoiceValid = ref(true)
 /** true = 這個 OA 有自己的專屬設定（不沿用組織）。 */
 const invoiceOverriding = ref(false)
 const invoiceOrgId = ref<string | null>(null)
-const effectiveInvoice = ref<Record<string, string | null>>({})
+/**
+ * 目前生效的發票資訊。⛔ null＝還沒讀到或讀不到（`B-44`⑩／`B-42` 三態）：
+ * 以前預設成空物件 `{}`，讀失敗時會被 describeInvoiceProfile 講成「個人發票・紙本」——
+ * 付款確認框照這個講，就是把「不知道」講成一個可能錯的答案。
+ */
+const effectiveInvoice = ref<InvoiceProfile | null>(null)
+const invoiceProfileError = ref(false)
 
 const workspaceName = computed(() => planView.value?.name ?? '')
 
 /** 一句話說清楚「現在會開出什麼樣的發票」——與發票表單預覽共用 describeInvoiceProfile（口徑一致）。 */
-const effectiveInvoiceLabel = computed(() => describeInvoiceProfile(effectiveInvoice.value))
+const effectiveInvoiceLabel = computed(() => {
+  if (effectiveInvoice.value) return describeInvoiceProfile(effectiveInvoice.value)
+  return invoiceProfileError.value ? '發票設定暫時讀不到，請按右上角「重新載入」再試一次' : '讀取中…'
+})
+
+/**
+ * 付款確認框裡「這筆會開出什麼發票」那一段（`B-44`⑩）：句子跟升級對話框共用 checkoutInvoiceLine。
+ * 還沒填過發票資訊（會開預設的個人紙本）時多一句：要公司統編發票得先去下面填——
+ * 這兩條路沒有升級對話框那種就地填的表單，付下去就照個人紙本開了。
+ * 回傳的是 HTML（確認框用 HTML 字串），動態值一律跳脫。
+ */
+function invoiceConfirmHtml(): string {
+  if (!invoiceEnabled) return ''
+  const inv = effectiveInvoice.value
+  const unset = inv != null && !hasInvoiceProfile(inv)
+  return `<p>${escapeHtml(checkoutInvoiceLine(inv))}</p>`
+    + (unset ? '<p>要開公司統編發票的話，先取消、到這頁下方「發票資訊」填好再付款。</p>' : '')
+}
 
 const INVOICE_STATUS_LABEL: Record<string, string> = { failed: '開立失敗', skipped: '未開立', voided: '已作廢', issued: '—' }
 function invoiceStatusLabel(s?: string | null) { return s ? (INVOICE_STATUS_LABEL[s] ?? '—') : '—' }
@@ -766,7 +809,7 @@ async function copyText(text: string) {
 
 /** 從「沿用組織」切到「專屬設定」：把組織的值當起點帶進表單，不要給他一張空的。 */
 function startOverride() {
-  const p = effectiveInvoice.value
+  const p = effectiveInvoice.value ?? {}
   invoiceForm.buyerUBN = p.buyerUBN ?? ''
   invoiceForm.buyerName = p.buyerName ?? ''
   invoiceForm.buyerEmail = p.buyerEmail ?? ''
@@ -813,11 +856,8 @@ const PAY_TYPE_LABEL: Record<string, string> = {
 }
 function payTypeLabel(t: string | null) { return t ? (PAY_TYPE_LABEL[t] ?? t) : '—' }
 
-// 失敗原因白話化:PAYUNi 的「授權失敗」對一般人不好懂 → 補白話;其餘（金額不符…）已夠白話,原樣顯示。
-const FAIL_REASON_PLAIN: Record<string, string> = {
-  授權失敗: '卡片未通過（銀行未核准這筆交易）',
-}
-function failReasonText(r: string | null | undefined) { return r ? (FAIL_REASON_PLAIN[r] ?? r) : '' }
+// 失敗原因白話化（對照表在 shared/billing/dunning.ts，店家的扣款失敗提醒也用同一份）
+function failReasonText(r: string | null | undefined) { return plainChargeError(r) }
 function fmtTime(ms: number | null) {
   if (!ms) return '—'
   const d = new Date(ms)
@@ -864,9 +904,18 @@ function pollReturnedOrder() {
   }, 4000)
 }
 
+/** 付款紀錄讀不到時的那句話；null＝讀到了（含真的一筆都沒有）。 */
+const ordersError = ref<string | null>(null)
+
 async function loadOrders() {
-  try { orders.value = await apiFetch<OrderRow[]>('/api/payment/orders') }
-  catch { orders.value = [] }
+  try {
+    orders.value = await apiFetch<OrderRow[]>('/api/payment/orders')
+    ordersError.value = null
+  }
+  catch {
+    orders.value = []
+    ordersError.value = '付款紀錄暫時讀不到，請按右上角「重新載入」再試一次'
+  }
 }
 
 // ── 待付款訂單:繼續付款 / 取消 ──────────────────────────────
@@ -882,6 +931,8 @@ async function resumePayment(row: OrderRow) {
   try {
     await ElMessageBox.confirm(
       `<p>將以 NT$${row.amount.toLocaleString()}（含稅）完成「${planName(row.planId)}」方案的付款，接著前往統一金流 PAYUNi 的安全付款頁面。</p>`
+      // `B-44`⑩：付款成功的那一秒就照現行設定開發票（改不掉，要作廢重開）→ 按下去之前講會開什麼
+      + invoiceConfirmHtml()
       // 帳單請款名稱與品牌不同，付款前一定要講（理由見 shared/billing/statement.ts）。
       // 與升級對話框共用同一句，兩條結帳路徑客戶看到的一字不差。
       + `<p>${statementNotice.value}</p>`
@@ -983,7 +1034,11 @@ async function updatePaymentMethod() {
       + (isPastDue
         ? `<p>本期的自動扣款尚未成功，這筆就是補繳；付款完成後「${pv.name}」方案會從今天重新起算一整期。</p>`
         : `<p>目前方案已付到 ${pv.currentPeriodEnd}，這筆等於<b>提前支付下一期</b>——已付的天數不會消失，新一期接在 ${pv.currentPeriodEnd} 之後。</p>`)
-      + `<p>之後每月自動扣款改用新卡。</p><p>${CHECKOUT_CONSENT_TEXT}</p><p>${policyLinks}</p>`,
+      + `<p>之後每月自動扣款改用新卡。</p>`
+      // `B-44`⑩：換卡也是一筆真的付款，付款成功當下就開發票——講清楚會開什麼（跟「繼續付款」、升級對話框同一句）
+      + invoiceConfirmHtml()
+      + `<p>${statementNotice.value}</p>`
+      + `<p>${CHECKOUT_CONSENT_TEXT}</p><p>${policyLinks}</p>`,
       '更新付款方式',
       {
         dangerouslyUseHTMLString: true, // 只放我們自己的字串與政策連結，無使用者輸入
@@ -1046,7 +1101,8 @@ async function loadInvoiceProfile() {
     }>('/api/payment/invoice-profile')
 
     invoiceOrgId.value = res.orgId
-    effectiveInvoice.value = res.effective
+    effectiveInvoice.value = res.effective ?? {}
+    invoiceProfileError.value = false
     invoiceOverriding.value = !res.inherited
 
     const p = res.inherited ? res.effective : res.override
@@ -1056,7 +1112,11 @@ async function loadInvoiceProfile() {
     invoiceForm.carrierNum = p.carrierNum ?? ''
     invoiceForm.loveCode = p.loveCode ?? ''
   }
-  catch { /* 讀不到就留空表單，不擋整頁 */ }
+  catch {
+    // 讀不到不擋整頁，但要記下「讀不到」——摘要與付款確認框才不會把它講成「個人紙本」
+    effectiveInvoice.value = null
+    invoiceProfileError.value = true
+  }
 }
 
 async function reloadAll() {

@@ -133,8 +133,21 @@ async function checkSite() {
       : `這幾個還沒生效：${off.join('、')}。⚠️ 這些值是「打包時」算的 → 改完環境變數必須重新部署才會變`)
 }
 
+// ── ④ 寄信設定（`B-50`）：只看設定在不在，⛔ 不寄信 ────────────────────
+// 帳務信（收據、扣款失敗、續扣提醒、已降回免費）都靠它；寄信層設計成壞了也不拖累金流，所以壞了不會有人發現。
+// 這裡驗不到「真的寄不寄得出去」（要 AWS 權限）——那個看後台「異常總覽 → 帳務信」的最近一次寄成功，
+// 或按那裡的「寄一封測試信給我」。
+function checkEmail() {
+  const from = String(process.env.EMAIL_FROM || '').trim()
+  if (!from) return report(FAIL, '寄信設定', '沒設 EMAIL_FROM → 收據、扣款失敗、續扣提醒一封都寄不出去，而且金流照常、畫面不會報錯')
+  const region = String(process.env.AWS_SES_REGION || process.env.AWS_REGION || '').trim()
+  report(PASS, `寄信設定（寄件人 ${from}）`, region
+    ? `區域 ${region}。真的寄不寄得出去，看後台「異常總覽 → 帳務信」或按「寄一封測試信給我」`
+    : '這份設定檔沒寫區域；線上主機會自帶 AWS_REGION（程式有退路）。真的寄不寄得出去，看後台「異常總覽 → 帳務信」')
+}
+
 console.log('上線前健檢（唯讀：不動錢、不開發票、不發訊息）')
-for (const [name, fn] of [['光貿', checkAmego], ['PAYUNi', checkPayuni], ['網站', checkSite]] as const) {
+for (const [name, fn] of [['光貿', checkAmego], ['PAYUNi', checkPayuni], ['網站', checkSite], ['寄信', checkEmail]] as const) {
   try { await fn() }
   catch (e) { report(FAIL, `${name} 檢查沒跑完`, (e as Error).message) }
 }
@@ -144,4 +157,5 @@ console.log(failures === 0 ? `${PASS} 全部通過` : `${FAIL} 有 ${failures} �
 console.log(`${INFO} 這支驗不到的兩件事，只有真實交易能證明：`)
 console.log('   · PAYUNi 的 IP 白名單有沒有生效（它先擋 Token 才檢查 IP，假 Token 測不出來）')
 console.log('   · 客人實際刷卡的付款頁能不能成功收款')
+console.log('   · 帳務信真的寄得出去（看後台「異常總覽 → 帳務信」，或按「寄一封測試信給我」）')
 process.exit(failures === 0 ? 0 : 1)

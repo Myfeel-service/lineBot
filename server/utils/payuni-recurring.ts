@@ -42,10 +42,9 @@ import { createPendingOrder, settlePaidOrder, PAYMENT_ORDERS_COLLECTION } from '
 import { assertPayuniKeys, chargeCreditToken, isCreditChargeIndeterminate, type PayuniKeys } from './payuni'
 import { fulfillPayuniTrade } from './payuni-fulfill'
 import { sendChargeFailedNotification, sendReceiptNotification } from './billing-emails'
-import { GRACE_DAYS } from '~~/shared/billing/period'
-import { resolveRecurringCharge } from '~~/shared/billing/recurring'
-import { getBillingPlan, isSelfServePaidPlan, type WorkspaceSubscription } from '~~/shared/billing/plans'
-import { addDays, taipeiDate } from '~~/shared/time'
+import { isDueForRecurringCharge, resolveRecurringCharge } from '~~/shared/billing/recurring'
+import { getBillingPlan, type WorkspaceSubscription } from '~~/shared/billing/plans'
+import { taipeiDate } from '~~/shared/time'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 
@@ -99,33 +98,10 @@ export function recurringOrderNo(workspaceId: string, periodStart: string, attem
 }
 
 /**
- * 這筆訂閱現在該不該被自動續扣。
- *
- * 純函式,好測也好講：**只有 roll 已經把它推進新一期、標成 past_due 的自動續訂才算 due**。
- * active 的不扣（本期已付）、按過取消的不扣、沒 Token 的不扣（扣不了）、
- * 免費／企業／內部方案不扣（沒有月費或走合約）。
+ * 這筆訂閱現在該不該被自動續扣——規則本體在 shared/billing/recurring.ts（2026-10-20 原封不動搬過去，
+ * 讓超管改方案的確認框講「存檔後會不會被扣款」時用同一個條件，`B-43`④）。這裡照樣匯出，呼叫端不用改。
  */
-export function isDueForRecurringCharge(sub: WorkspaceSubscription | null | undefined, today: string): boolean {
-  if (!sub) return false
-  if (sub.status !== 'past_due') return false
-  if (sub.autoRenew !== true || sub.cancelAtPeriodEnd === true) return false
-  if (!sub.payuniCardToken) return false
-  // 沒有本期起日 = 壞資料（手動塞的 doc / 寫入中斷）:算不出單號也判不了寬限期,不能碰。
-  if (!sub.currentPeriodStart) return false
-  // **寬限期已過** → 這筆該被降級,不是再扣一次。
-  // 少了這道檢查,只要「降級沒被寫回 Firestore」就會變成每天重扣同一張被拒的卡
-  // （降級的落地由 runPaymentReconcile 的 past_due 那一段負責,這裡是第二道保險）。
-  if (addDays(sub.currentPeriodStart, GRACE_DAYS) < today) return false
-  if (!isSelfServePaidPlan(sub.planId)) return false
-  // 用「下一期實際會開通的方案」判斷（降級排程可能把它換掉）——若排的是不可自助續扣的
-  // 方案（客製／內部）就不該由程式刷卡,交給人處理。
-  const { planId: nextPlanId, price } = resolveRecurringCharge(sub)
-  if (!isSelfServePaidPlan(nextPlanId)) return false
-  if (price == null || price <= 0) return false
-  // 今天已經試過（成功會變 active,所以走到這裡代表今天已失敗或還在等 UNKNOWN 結果）
-  if (sub.lastChargeDate === today) return false
-  return true
-}
+export { isDueForRecurringCharge }
 
 /**
  * 搶下「今天由我來扣這個帳號」的權利。
@@ -362,8 +338,10 @@ export async function chargeDueRecurring(
       console.warn('[payuni:recurring] 續扣失敗', doc.id, merchantOrderNo, authz.outerStatus, message)
       await recordChargeError(doc.id, message, db)
       // 首次失敗才寄提醒（第 1 次嘗試）——每天重試都寄會變騷擾。
+      // 這封寄失敗的話，每日對帳的通知信階段會補寄（`B-49`，見 billing-emails.ts ①.6）；
+      // 信裡寫明哪天前沒扣到就降回免費（`B-16`），日期由這一期的起日算。
       if (sub.chargeAttempts === 1) {
-        await sendChargeFailedNotification({ workspaceId: doc.id, planId: charge.planId }, db)
+        await sendChargeFailedNotification({ workspaceId: doc.id, planId: charge.planId, periodStart }, db, now)
       }
     }
     catch (e) {

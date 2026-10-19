@@ -98,6 +98,21 @@ export function describeInvoiceProfile(p: InvoiceProfile | null | undefined): st
   return '個人發票・紙本'
 }
 
+/**
+ * 付款前確認框那一句「這筆會開出什麼發票、通知寄到哪」（`B-44`⑩）。
+ * 升級對話框、帳單頁的「繼續付款」「換一張卡付款」三條結帳路徑共用——發票一開就改不掉（要作廢重開），
+ * 三個地方講的必須一樣。
+ *
+ * `null`＝發票設定讀不到 → 照實講讀不到，⛔ 不猜「個人紙本」（讀失敗的空物件會被描述成個人紙本，`B-42` 同款假空狀態）。
+ * 載具那種不寄通知信（發票直接進載具），所以措辭跟著換，不要說「寄到」。
+ */
+export function checkoutInvoiceLine(p: InvoiceProfile | null | undefined): string {
+  if (!p) return '發票：暫時讀不到你的發票設定，付款後會照「發票資訊」那一區的設定開立。不確定的話先取消、重新載入再付款。'
+  const label = describeInvoiceProfile(p)
+  if (String(p.carrierNum ?? '').trim()) return `發票：${label}（存入載具，不另寄通知信）`
+  return `發票：${label}，通知寄到 ${String(p.buyerEmail ?? '').trim() || '你的登入信箱'}`
+}
+
 /** 發票資訊有沒有被填過（全空 = 沒填，該回退到組織的預設值）。 */
 export function hasInvoiceProfile(p: InvoiceProfile | null | undefined): boolean {
   if (!p) return false

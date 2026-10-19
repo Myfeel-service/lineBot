@@ -51,6 +51,26 @@
               <div class="sa-pay-stat__value">{{ summary.invoiceFailedCount }} 筆</div>
               <div class="sa-pay-stat__hint">客戶端顯示「開立中」，每日自動補開</div>
             </div>
+            <!-- `B-43`②：扣款失敗以前只有客戶收得到通知，我們自己不知道 -->
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--danger': pastDueCount > 0 }">
+              <div class="sa-pay-stat__label">自動扣款失敗</div>
+              <div class="sa-pay-stat__value">{{ dunning ? `${pastDueCount} 個帳號` : '查不到' }}</div>
+              <div class="sa-pay-stat__hint">{{ dunning ? '還在寬限期、每天再扣一次' : '不等於沒有，明細在下面' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 扣款失敗清單（`B-43`②）：與異常總覽同一張表（AdminDunningTable） -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">自動扣款失敗</span>
+            </div>
+            <span class="text-xs text-muted">還在寬限期＋近 {{ RECENT_DOWNGRADE_DAYS }} 天降回免費的</span>
+          </div>
+          <div class="card-section-stack">
+            <el-alert v-if="!loading && dunningLoaded && dunning === null" type="warning" title="這次查不到這份清單（不等於沒有），按「重新整理」再試一次" :closable="false" show-icon />
+            <AdminDunningTable v-else v-loading="loading" :rows="dunning ?? []" />
           </div>
         </div>
 
@@ -345,6 +365,7 @@
 
 <script setup lang="ts">
 import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { RECENT_DOWNGRADE_DAYS, type DunningRow } from '~~/shared/billing/dunning'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '金流總覽 — 超級管理員' })
@@ -591,12 +612,20 @@ async function copyText(text: string | null) {
   }
 }
 
+// ── 自動扣款失敗（`B-43`②）── null＝查不到（⛔不畫成「沒有人扣款失敗」）
+const dunning = ref<DunningRow[] | null>([])
+/** 讀過一次才講「查不到」：還沒讀到之前不該先跳一條黃色警示 */
+const dunningLoaded = ref(false)
+const pastDueCount = computed(() => (dunning.value ?? []).filter(r => r.state === 'past_due').length)
+
 async function load() {
   loading.value = true
   try {
-    const res = await apiFetch<{ orders: PayOrder[]; summary: Summary }>('/api/admin/super/payments')
+    const res = await apiFetch<{ orders: PayOrder[]; summary: Summary; dunning: DunningRow[] | null }>('/api/admin/super/payments')
     orders.value = res.orders
     summary.value = res.summary
+    dunning.value = res.dunning
+    dunningLoaded.value = true
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '讀取失敗', 'error')

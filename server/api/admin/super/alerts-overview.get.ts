@@ -7,6 +7,9 @@ import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { pendingMarks, readMarkDocsByReason, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
 import { readSuperAlertsCache, writeSuperAlertsCache } from '~~/server/utils/super-alerts-cache'
 import { readImageReadFailureEvents, summarizeImageReadFailures } from '~~/server/utils/image-read-failures'
+import { readDunningRows } from '~~/server/utils/billing-dunning'
+import { readEmailDeliveryHealth } from '~~/server/utils/email'
+import { taipeiDate } from '~~/shared/time'
 
 /**
  * GET /api/admin/super/alerts-overview — 全站異常總覽（C-91，2026-08-27 拍板執行）。
@@ -114,7 +117,23 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
       return null
     })
 
-  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads, aiMistakes, imageReadFailures }
+  // 自動扣款失敗（`B-43`②）：客戶收得到通知、我們以前收不到。查失敗回 null（⛔不當成「沒有人扣款失敗」）
+  const dunning = await readDunningRows(db, taipeiDate())
+    .catch((e) => {
+      console.error('[super-alerts] 扣款失敗清單查不了：', String((e as Error)?.message ?? e).slice(0, 300))
+      return null
+    })
+
+  // 寄信設定（`B-50`）：所有帳務信都走同一個出口，壞了金流照常、只有信沒出去——以前沒有地方看得到
+  const config = useRuntimeConfig(event)
+  const email = await readEmailDeliveryHealth()
+    .then(h => ({ ...h, paymentEnabled: Boolean((config.public as Record<string, unknown> | undefined)?.paymentEnabled) }))
+    .catch((e) => {
+      console.error('[super-alerts] 寄信紀錄查不了：', String((e as Error)?.message ?? e).slice(0, 300))
+      return null
+    })
+
+  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads, aiMistakes, imageReadFailures, dunning, email }
   writeSuperAlertsCache(payload)
   return payload
 })

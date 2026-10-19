@@ -1,5 +1,6 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 import type { BillingPlanId } from '../billing/plans'
+import type { EmailAttempt } from '../billing/email-retry'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Collection: paymentOrders
@@ -58,6 +59,11 @@ export interface PaymentOrderDoc {
    * 因為同一個帳號可能先後有兩筆沒綁成的首期單，各自都該被提醒到。
    */
   rebindEmailSentAt?: unknown
+  /**
+   * 上面那封提醒信寄失敗、還在重試的紀錄（`B-49`）：寄成功才寫 rebindEmailSentAt，
+   * 失敗只記這筆（試過幾次、最後一次什麼時候），冷卻與上限見 shared/billing/email-retry.ts。
+   */
+  rebindEmailAttempt?: EmailAttempt | null
   /** 約定卡末四碼（非憑證，稽核／客服對帳用）。 */
   cardLast4?: string | null
   /**

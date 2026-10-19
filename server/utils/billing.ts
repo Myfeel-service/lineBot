@@ -21,15 +21,18 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 import type { BillingPlan, BillingPlanId, WorkspaceSubscription } from '~~/shared/billing/plans'
-import { DEFAULT_BILLING_PLAN_ID, effectiveAnsweredQuota, getBillingPlan } from '~~/shared/billing/plans'
+import { DEFAULT_BILLING_PLAN_ID, effectiveAnsweredQuota, getBillingPlan, isSelfServePaidPlan } from '~~/shared/billing/plans'
 import { newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
 import { resolveRecurringCharge } from '~~/shared/billing/recurring'
+import { graceDeadline } from '~~/shared/billing/dunning'
 import type { PlanView } from '~~/shared/billing/plan-state'
 import type { QuotaExceedStrategy } from '~~/shared/types/ai-knowledge'
 import { aiCallCeilingOf, isAiCallCeilingHit } from '~~/shared/billing/call-ceiling'
-import { taipeiDate } from '~~/shared/time'
+import { addDays, taipeiDate } from '~~/shared/time'
 
 const TTL_MS = 60 * 1000
+/** 帳單頁「已因扣不到款降回免費」那一行留幾天（之後就是一般的免費帳號）。 */
+const NON_PAYMENT_NOTICE_DAYS = 30
 
 /** 快取原始訂閱；`sub: null` = workspace 沒掛訂閱（視為免費層）。讀取失敗**不進快取**。 */
 const subCache = new Map<string, { sub: WorkspaceSubscription | null; expiresAt: number }>()
@@ -59,10 +62,19 @@ export function effectivePlanOf(sub: WorkspaceSubscription): { plan: BillingPlan
 }
 
 /** 由訂閱組出「對前端顯示用」的方案視圖。 */
-export function buildPlanView(sub: WorkspaceSubscription | null): PlanView | null {
+export function buildPlanView(sub: WorkspaceSubscription | null, today: string = taipeiDate()): PlanView | null {
   if (!sub) return null
   const { plan, quota } = effectivePlanOf(sub)
   const next = resolveRecurringCharge(sub)
+  const pastDueDeadline = sub.status === 'past_due' && sub.currentPeriodStart ? graceDeadline(sub.currentPeriodStart) : null
+
+  /** 近 30 天因扣不到款降回免費、而且現在還是免費（重新付費就不講了） */
+  function recentNonPaymentDowngrade(s: WorkspaceSubscription): PlanView['nonPaymentDowngrade'] {
+    const np = s.nonPaymentDowngrade
+    if (!np?.on || isSelfServePaidPlan(s.planId)) return null
+    if (np.on < addDays(today, -NON_PAYMENT_NOTICE_DAYS)) return null
+    return { fromPlanName: getBillingPlan(np.fromPlanId).name, on: np.on }
+  }
   return {
     id: plan.id,
     name: plan.name,
@@ -81,6 +93,10 @@ export function buildPlanView(sub: WorkspaceSubscription | null): PlanView | nul
     cardLast4: sub.payuniCardLast4 ?? null,
     // 只在寬限期（等扣款）時才有意義；續扣成功時 settlePaidOrder 已清掉這個欄位。
     lastChargeError: sub.status === 'past_due' ? (sub.lastChargeError ?? null) : null,
+    // 扣款失敗的期限（`B-16`）：帳單頁黃色警示寫「X 月 X 日前沒扣到就降回免費」，跟信同一把尺
+    graceLastDay: pastDueDeadline?.lastDay ?? null,
+    downgradeOn: pastDueDeadline?.downgradeOn ?? null,
+    nonPaymentDowngrade: recentNonPaymentDowngrade(sub),
     // 下期方案／折抵／實扣金額：與續扣排程共用同一支純函式,畫面說扣多少就真的扣多少。
     pendingPlanId: next.planId === sub.planId ? null : next.planId,
     pendingPlanName: next.planId === sub.planId ? null : getBillingPlan(next.planId).name,

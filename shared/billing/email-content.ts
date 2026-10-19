@@ -125,26 +125,71 @@ export function receiptEmail(p: {
 }
 
 // ── 2. 扣款失敗 ─────────────────────────────────────────────
+// `B-16`（2026-10-20）：以前只寫「以免方案到期後被降回免費層」——哪一天沒講，客人不知道要多急。
+// 日期由 shared/billing/dunning.ts 的 graceDeadline 算，跟帳單頁黃色警示、實際降級同一把尺。
 export function chargeFailedEmail(p: {
   brandName: string
   workspaceName: string
   planName: string
   manageUrl: string
+  /** 寬限期最後一天（`10 月 23 日` 這種講法，呼叫端用 monthDayText 轉好） */
+  lastDayText: string
+  /** 這天起降回免費方案 */
+  downgradeOnText: string
 }): EmailContent {
-  const subject = `[${p.brandName}] 自動扣款失敗，請更新付款方式`
-  const body
-    = paragraph(`「${p.workspaceName}」的 ${p.planName}方案本期自動扣款失敗（常見原因是信用卡過期或額度不足）。`)
-    + paragraph('服務目前仍在寬限期內可正常使用。請盡快更新付款方式，以免方案到期後被降回免費層。')
-    + button('前往更新付款方式', p.manageUrl)
+  // ⛔ 刻意不把金流回的原文放進信裡：那串有時是我們自己的問題（例如 PAYUNi 回「不提供此IP幕後交易，<我們的 IP>」），
+  //    寫進信裡會把內部 IP 寄給客人、還叫他換卡。真實原因在帳單頁與超管扣款失敗清單看得到。
+  const subject = `[${p.brandName}] 自動扣款失敗，${p.lastDayText}前請換一張卡`
+  const lines = [
+    `「${p.workspaceName}」的 ${p.planName}方案這期自動扣款沒有成功（常見原因是信用卡過期或額度不足）。`,
+    `服務照常可以用，我們每天會再試一次。到 ${p.lastDayText}還沒扣款成功，${p.downgradeOnText}起會降回免費方案。`,
+  ]
+  const body = lines.map(paragraph).join('') + button('換一張卡付款', p.manageUrl)
   const html = shell(p.brandName, '自動扣款失敗', body)
-  const text = [
-    '自動扣款失敗',
-    `「${p.workspaceName}」的 ${p.planName}方案本期自動扣款失敗（常見原因是信用卡過期或額度不足）。`,
-    '服務目前仍在寬限期內可正常使用。請盡快更新付款方式，以免方案到期後被降回免費層。',
-    '',
-    `更新付款方式：${p.manageUrl}`,
-  ].join('\n')
+  const text = ['自動扣款失敗', ...lines, '', `換一張卡付款：${p.manageUrl}`].join('\n')
   return { subject, html, text }
+}
+
+// ── 2.5 已降回免費方案（寬限期滿還沒扣到）────────────────────
+// `B-16`：以前降級之後什麼都不寄，客人是發現 AI 沒在回才知道。
+// ⛔ 口徑要準：服務沒有停，是變成免費方案（每期 N 則 AI 回覆，數字由呼叫端讀方案表，不寫死）；
+//    用完的後果跟額度信、AdminQuotaBanner 同一句（自動回應照常，需要 AI 回答的轉真人）。
+export function downgradedEmail(p: {
+  brandName: string
+  workspaceName: string
+  /** 降級前的方案 */
+  planName: string
+  /** 降級那天（`10 月 24 日`） */
+  onText: string
+  /** 免費方案每期 AI 回覆則數 */
+  freeQuota: number
+  manageUrl: string
+}): EmailContent {
+  const subject = `[${p.brandName}] 「${p.workspaceName}」已降回免費方案`
+  const lines = [
+    `「${p.workspaceName}」的 ${p.planName}方案自動扣款一直沒有成功，${p.onText}起已降回免費方案。我們不會再向這張卡扣款。`,
+    `免費方案每期有 ${p.freeQuota.toLocaleString('en-US')} 則 AI 回覆；用完後需要 AI 回答的問題會轉給真人客服，自動回應不受影響。`,
+    `想恢復 ${p.planName}方案，到後台重新訂閱就好。`,
+  ]
+  const body = lines.map(paragraph).join('') + button('重新訂閱', p.manageUrl)
+  const html = shell(p.brandName, '已降回免費方案', body)
+  const text = ['已降回免費方案', ...lines, '', `重新訂閱：${p.manageUrl}`].join('\n')
+  return { subject, html, text }
+}
+
+// ── 2.6 寄信設定的測試信（超管自己按的，`B-50`）────────────────
+// 只寄給按的那位超管：收得到＝寄件網域、SES 權限、寄件人設定都還活著。
+export function testEmail(p: { brandName: string, sentAtText: string, from: string }): EmailContent {
+  const subject = `[${p.brandName}] 寄信測試（${p.sentAtText}）`
+  const lines = [
+    `這是一封測試信，${p.sentAtText}從後台「異常總覽」寄出。收得到就代表帳務信（收據、扣款失敗、續扣提醒）寄得出去。`,
+    `寄件人：${p.from}`,
+  ]
+  return {
+    subject,
+    html: shell(p.brandName, '寄信測試', lines.map(paragraph).join('')),
+    text: ['寄信測試', ...lines].join('\n'),
+  }
 }
 
 // ── 3. 續扣前提醒 ───────────────────────────────────────────

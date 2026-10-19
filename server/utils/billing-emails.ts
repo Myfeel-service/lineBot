@@ -1,12 +1,13 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
-import { sendEmail, isEmailConfigured } from './email'
+import { sendEmail, isEmailConfigured, type SendEmailResult } from './email'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { getQuotaAnswered } from './ai-usage'
 import { effectivePlanOf } from './billing'
 import {
   receiptEmail,
   chargeFailedEmail,
+  downgradedEmail,
   renewalReminderEmail,
   rebindCardEmail,
   quotaEmail,
@@ -15,6 +16,8 @@ import { RENEWAL_BIND_WINDOW_MS } from './workspace-alerts'
 import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import { getBillingPlan, isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
+import { graceDeadline, monthDayText } from '~~/shared/billing/dunning'
+import { emailAttemptAllowed, emailAttemptsExhausted, nextEmailAttempt, type EmailAttempt } from '~~/shared/billing/email-retry'
 import { taipeiDate } from '~~/shared/time'
 import { resolveInvoiceProfile, type OrganizationDoc, type WorkspaceDoc } from '~~/shared/types/organization'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
@@ -24,7 +27,67 @@ import type { PaymentOrderDoc } from '~~/shared/types/payment'
  *
  * 收件人 = 帳務信箱：發票 email（組織預設、OA 可覆寫）→ 組織登記擁有者 email。
  * 所有函式**永不 throw**——呼叫端都在金流 webhook / 排程對帳路徑上，寄信失敗不能拖累主流程。
+ *
+ * ⛔ `B-49`（2026-10-20）：「這期寄過了」的記號**只在寄成功（或根本沒有收件人）時才記**。
+ *    以前寄完就無條件記，而 sendEmail 永不丟錯——SES 壞掉時每一封都被記成寄過、再也不重寄。
+ *    寄失敗只記一筆「試過幾次」，下一輪排程照 shared/billing/email-retry.ts 的冷卻與上限再試。
  */
+
+/**
+ * 一封帳務信的結果。
+ * - sent：寄出去了 → 記「寄過」
+ * - no_recipient：沒有帳務信箱 → 也記「寄過」（寄不了，不必每 10 分鐘重算；同改版前的取捨）
+ * - failed：寄信那層回錯（SES 拒寄、權限掉了…）→ 只記試過幾次，等下一輪
+ * - not_configured：SES 沒設定 → 什麼都不記（設定好之後該寄的還是會寄）
+ * - waiting：上次寄失敗、還在冷卻或已用完次數 → 這輪不試
+ */
+export type BillingEmailOutcome = 'sent' | 'no_recipient' | 'failed' | 'not_configured' | 'waiting'
+
+function outcomeOf(r: SendEmailResult): BillingEmailOutcome {
+  if (r.ok) return 'sent'
+  return r.skipped ? 'not_configured' : 'failed'
+}
+
+interface UpdatableRef { update: (data: Record<string, unknown>) => Promise<unknown> }
+
+/**
+ * 依寄信結果寫回記號：成功／沒收件人 → `done`；失敗 → 只在 `attemptField` 記試過幾次。
+ * 寫不進去只留 log（信的結果已經定了，記號沒寫到頂多下一輪多試一次）。
+ */
+async function settleEmailOutcome(p: {
+  outcome: BillingEmailOutcome
+  label: string
+  id: string
+  ref: UpdatableRef
+  key: string
+  prev: EmailAttempt | null | undefined
+  nowMs: number
+  done: Record<string, unknown>
+  /** 沒有收件人時要寫的（預設同 done）；超管清單要分得出「寄了」跟「沒有信箱可寄」的，另外多記一格 */
+  noRecipient?: Record<string, unknown>
+  attemptField: string
+}): Promise<void> {
+  try {
+    if (p.outcome === 'sent') {
+      await p.ref.update(p.done)
+      return
+    }
+    if (p.outcome === 'no_recipient') {
+      await p.ref.update(p.noRecipient ?? p.done)
+      return
+    }
+    if (p.outcome !== 'failed') return
+    const attempt = nextEmailAttempt(p.prev, p.key, p.nowMs)
+    await p.ref.update({ [p.attemptField]: attempt })
+    if (emailAttemptsExhausted(attempt))
+      console.error(`[billing-email] ${p.label}試了 ${attempt.attempts} 次都寄不出去，不再重試`, p.id, p.key)
+    else
+      console.warn(`[billing-email] ${p.label}寄不出去（第 ${attempt.attempts} 次），之後再試`, p.id, p.key)
+  }
+  catch (e) {
+    console.error(`[billing-email] ${p.label}的寄送記號寫不進去`, p.id, (e as Error)?.message)
+  }
+}
 
 function brandName(): string {
   const c = useRuntimeConfig()
@@ -105,25 +168,58 @@ export async function sendReceiptNotification(orderId: string, db: Firestore = g
 }
 
 /**
- * 扣款失敗提醒（定期定額續期失敗）。呼叫端只在 outcome=past_due（首次失敗）時呼叫。
+ * 扣款失敗提醒（每期自動續扣失敗）。一期只寄一封：續扣排程在**第一次**失敗時呼叫；
+ * 那次寄失敗的，由每日對帳（sendDueBillingEmails ①.6）照冷卻規則補寄。
+ *
+ * 信裡寫明「哪天前沒扣到就降回免費」（`B-16`）——日期跟帳單頁、實際降級同一把尺（graceDeadline）。
+ * `periodStart` = 扣款失敗的那一期起日（past_due 的 currentPeriodStart），也是「這期寄過了」的記號值。
  */
 export async function sendChargeFailedNotification(
-  p: { workspaceId: string, planId: BillingPlanId },
+  p: { workspaceId: string, planId: BillingPlanId, periodStart: string },
   db: Firestore = getDb(),
-): Promise<void> {
+  now: Date = new Date(),
+): Promise<BillingEmailOutcome> {
   try {
+    const ref = db.collection('workspaces').doc(p.workspaceId)
+    const snap = await ref.get()
+    const sub = snap.exists ? (snap.data() as WorkspaceDoc).subscription : undefined
+    if (sub?.chargeFailedEmailSentFor === p.periodStart) return 'sent' // 這期已寄過（重跑／補寄撞上）
+    const prev = sub?.emailAttempts?.chargeFailed
+    const nowMs = now.getTime()
+    if (!emailAttemptAllowed(prev, p.periodStart, nowMs)) return 'waiting'
+
     const { email, workspaceName } = await resolveBillingRecipient(p.workspaceId, db)
-    if (!email) return
-    const content = chargeFailedEmail({
-      brandName: brandName(),
-      workspaceName,
-      planName: getBillingPlan(p.planId).name,
-      manageUrl: billingUrl(p.workspaceId),
+    const { lastDay, downgradeOn } = graceDeadline(p.periodStart)
+    const outcome: BillingEmailOutcome = email
+      ? outcomeOf(await sendEmail({
+          to: email,
+          ...chargeFailedEmail({
+            brandName: brandName(),
+            workspaceName,
+            planName: getBillingPlan(p.planId).name,
+            manageUrl: billingUrl(p.workspaceId),
+            lastDayText: monthDayText(lastDay),
+            downgradeOnText: monthDayText(downgradeOn),
+          }),
+        }))
+      : 'no_recipient'
+    await settleEmailOutcome({
+      outcome,
+      label: '扣款失敗信',
+      id: p.workspaceId,
+      ref,
+      key: p.periodStart,
+      prev,
+      nowMs,
+      done: { 'subscription.chargeFailedEmailSentFor': p.periodStart },
+      noRecipient: { 'subscription.chargeFailedEmailSentFor': p.periodStart, 'subscription.chargeFailedEmailNoRecipientFor': p.periodStart },
+      attemptField: 'subscription.emailAttempts.chargeFailed',
     })
-    await sendEmail({ to: email, ...content })
+    return outcome
   }
   catch (e) {
     console.error('[billing-email] 扣款失敗信寄送失敗', p.workspaceId, (e as Error)?.message)
+    return 'failed'
   }
 }
 
@@ -141,25 +237,41 @@ const QUOTA_NEAR_RATIO = 0.8
 /** 每次對帳最多掃描的 workspace 數（防單日大掃描；超過只 log，不硬跑爆）。 */
 const RECONCILE_SCAN_CAP = 2000
 
+export interface DueBillingEmailsSummary {
+  renewalReminders: number
+  quotaNotices: number
+  rebindNotices: number
+  /** 補寄的扣款失敗信（第一次失敗那封沒寄出去的） */
+  chargeFailedNotices: number
+  /** 「已降回免費」信 */
+  downgradeNotices: number
+  /** 這一輪寄失敗的封數（各自會照冷卻規則再試） */
+  failed: number
+}
+
 /**
- * 每日對帳的通知信階段：① 續扣前提醒 ② 額度快用完/已用完。
+ * 每日對帳的通知信階段：① 續扣前提醒 ①.5 綁卡提醒 ①.6 扣款失敗信補寄 ② 額度快用完/已用完 ③ 已降回免費。
  * **只有在 SES 設定齊全時才會執行**（未設定 → 直接回 0，連掃描都不做）——
  * 這讓「SES 還沒開通」的現狀完全零成本、零風險。
  *
- * 冪等：兩者都把「已寄的期別」記在訂閱上（renewalReminderSentFor / quotaEmailSentFor），
- * 每日重跑不會重寄同一期同一封。
+ * 冪等：「已寄的期別」記在訂閱／訂單上（renewalReminderSentFor / quotaEmailSentFor / rebindEmailSentAt /
+ * chargeFailedEmailSentFor / nonPaymentDowngrade.emailSent），**寄成功才記**（`B-49`），每輪重跑不會重寄。
+ * 寄失敗的記在 emailAttempts，照冷卻（3 小時）與上限（5 次）重試，見 shared/billing/email-retry.ts。
  */
 export async function sendDueBillingEmails(
   now: Date = new Date(),
   db: Firestore = getDb(),
-): Promise<{ renewalReminders: number, quotaNotices: number, rebindNotices: number }> {
-  if (!isEmailConfigured()) return { renewalReminders: 0, quotaNotices: 0, rebindNotices: 0 }
+): Promise<DueBillingEmailsSummary> {
+  const summary: DueBillingEmailsSummary = { renewalReminders: 0, quotaNotices: 0, rebindNotices: 0, chargeFailedNotices: 0, downgradeNotices: 0, failed: 0 }
+  if (!isEmailConfigured()) return summary
 
   const today = taipeiDate(now)
+  const nowMs = now.getTime()
   const brand = brandName()
-  let renewalReminders = 0
-  let quotaNotices = 0
-  let rebindNotices = 0
+  const count = (outcome: BillingEmailOutcome, field: Exclude<keyof DueBillingEmailsSummary, 'failed'>) => {
+    if (outcome === 'sent') summary[field]++
+    else if (outcome === 'failed') summary.failed++
+  }
 
   // ── ① 續扣前提醒：本期末在 [today, today+N] 且自動續訂中 ──────────
   const windowEnd = (() => {
@@ -187,21 +299,36 @@ export async function sendDueBillingEmails(
       //    這是 shared/billing/recurring.ts 存在的唯一理由,不要繞過它。
       const next = resolveRecurringCharge(sub)
       if (next.price == null) continue
+      const key = sub.currentPeriodEnd
+      const prev = sub.emailAttempts?.renewal
+      if (!emailAttemptAllowed(prev, key, nowMs)) continue // 上次寄失敗、還在冷卻（或已放棄）
       const { email, workspaceName } = await resolveBillingRecipient(doc.id, db)
-      if (email) {
-        const content = renewalReminderEmail({
-          brandName: brand,
-          workspaceName,
-          planName: getBillingPlan(next.planId).name,
-          amount: next.amount,
-          chargeDate: addOneDay(sub.currentPeriodEnd),
-          manageUrl: billingUrl(doc.id),
-        })
-        await sendEmail({ to: email, ...content })
-        renewalReminders++
-      }
-      // 不論有無收件人都記旗標，避免每天重掃重試（沒 email 的帳號寄不了，不必天天重算）
-      await doc.ref.update({ 'subscription.renewalReminderSentFor': sub.currentPeriodEnd })
+      const outcome: BillingEmailOutcome = email
+        ? outcomeOf(await sendEmail({
+            to: email,
+            ...renewalReminderEmail({
+              brandName: brand,
+              workspaceName,
+              planName: getBillingPlan(next.planId).name,
+              amount: next.amount,
+              chargeDate: addOneDay(sub.currentPeriodEnd),
+              manageUrl: billingUrl(doc.id),
+            }),
+          }))
+        : 'no_recipient'
+      count(outcome, 'renewalReminders')
+      // 寄成功（或沒有收件人，寄不了也不必天天重算）才記「這期寄過」；寄失敗只記試過幾次（`B-49`）
+      await settleEmailOutcome({
+        outcome,
+        label: '續扣提醒',
+        id: doc.id,
+        ref: doc.ref,
+        key,
+        prev,
+        nowMs,
+        done: { 'subscription.renewalReminderSentFor': key },
+        attemptField: 'subscription.emailAttempts.renewal',
+      })
     }
   }
   catch (e) {
@@ -227,23 +354,63 @@ export async function sendDueBillingEmails(
       if (!createdMs || createdMs < cutoff) continue // 太舊的不追（多半已人工處理）
       const wid = String(o.workspaceId ?? '').trim()
       if (!wid) continue
+      const key = doc.id
+      const prev = o.rebindEmailAttempt
+      if (!emailAttemptAllowed(prev, key, nowMs)) continue
       const { email, workspaceName } = await resolveBillingRecipient(wid, db)
-      if (email) {
-        const content = rebindCardEmail({
-          brandName: brand,
-          workspaceName,
-          planName: getBillingPlan(o.planId as BillingPlanId).name,
-          manageUrl: billingUrl(wid),
-        })
-        await sendEmail({ to: email, ...content })
-        rebindNotices++
-      }
-      // 不論有無收件人都記旗標（同續扣提醒的理由：沒 email 的帳號不必天天重算）
-      await doc.ref.update({ rebindEmailSentAt: new Date() })
+      const outcome: BillingEmailOutcome = email
+        ? outcomeOf(await sendEmail({
+            to: email,
+            ...rebindCardEmail({
+              brandName: brand,
+              workspaceName,
+              planName: getBillingPlan(o.planId as BillingPlanId).name,
+              manageUrl: billingUrl(wid),
+            }),
+          }))
+        : 'no_recipient'
+      count(outcome, 'rebindNotices')
+      // 同續扣提醒：寄成功／沒收件人才記；寄失敗只記試過幾次（`B-49`）
+      await settleEmailOutcome({
+        outcome,
+        label: '綁卡提醒',
+        id: doc.id,
+        ref: doc.ref,
+        key,
+        prev,
+        nowMs,
+        done: { rebindEmailSentAt: now },
+        attemptField: 'rebindEmailAttempt',
+      })
     }
   }
   catch (e) {
     console.error('[billing-email] 綁卡提醒階段失敗', (e as Error)?.message)
+  }
+
+  // ── ①.6 扣款失敗信補寄（`B-49`）──────────────────────────────────
+  // 第一次扣款失敗時續扣排程會當場寄一封（payuni-recurring.ts）；那封寄失敗的話以前就永遠沒寄出去。
+  // 這裡撿「這期扣失敗過、但信還沒寄成功」的，照冷卻規則補。寬限期已過的不寄（改寄「已降回免費」，③）。
+  try {
+    const pastDue = await db.collection('workspaces').where('subscription.status', '==', 'past_due').get()
+    for (const doc of pastDue.docs) {
+      const sub = (doc.data() as WorkspaceDoc).subscription
+      const periodStart = sub?.currentPeriodStart
+      if (!sub || !periodStart) continue
+      if (sub.chargePeriodStart !== periodStart || !((sub.chargeAttempts ?? 0) >= 1)) continue // 這期還沒扣過
+      if (!String(sub.lastChargeError ?? '').trim()) continue // 沒有失敗原因＝還在等結果（UNKNOWN），不是失敗
+      if (sub.chargeFailedEmailSentFor === periodStart) continue
+      if (rollSubscriptionToCurrentPeriod(sub, today).downgraded) continue
+      const outcome = await sendChargeFailedNotification({
+        workspaceId: doc.id,
+        planId: resolveRecurringCharge(sub).planId,
+        periodStart,
+      }, db, now)
+      count(outcome, 'chargeFailedNotices')
+    }
+  }
+  catch (e) {
+    console.error('[billing-email] 扣款失敗信補寄階段失敗', (e as Error)?.message)
   }
 
   // ── ② 額度快用完 / 已用完：掃描有訂閱的帳號，比對用量 ────────────
@@ -269,27 +436,94 @@ export async function sendDueBillingEmails(
 
       const sentFor = `${sub.currentPeriodStart}:${kind}`
       if (sub.quotaEmailSentFor === sentFor) continue // 這期這門檻已寄過
+      const prev = sub.emailAttempts?.quota
+      if (!emailAttemptAllowed(prev, sentFor, nowMs)) continue
 
       const { email, workspaceName } = await resolveBillingRecipient(doc.id, db)
-      if (email) {
-        const content = quotaEmail({
-          brandName: brand,
-          workspaceName,
-          planName: getBillingPlan(sub.planId).name,
-          used,
-          quota,
-          kind,
-          manageUrl: billingUrl(doc.id),
-        })
-        await sendEmail({ to: email, ...content })
-        quotaNotices++
-      }
-      await doc.ref.update({ 'subscription.quotaEmailSentFor': sentFor })
+      const outcome: BillingEmailOutcome = email
+        ? outcomeOf(await sendEmail({
+            to: email,
+            ...quotaEmail({
+              brandName: brand,
+              workspaceName,
+              planName: getBillingPlan(sub.planId).name,
+              used,
+              quota,
+              kind,
+              manageUrl: billingUrl(doc.id),
+            }),
+          }))
+        : 'no_recipient'
+      count(outcome, 'quotaNotices')
+      await settleEmailOutcome({
+        outcome,
+        label: '額度信',
+        id: doc.id,
+        ref: doc.ref,
+        key: sentFor,
+        prev,
+        nowMs,
+        done: { 'subscription.quotaEmailSentFor': sentFor },
+        attemptField: 'subscription.emailAttempts.quota',
+      })
     }
   }
   catch (e) {
     console.error('[billing-email] 額度通知階段失敗', (e as Error)?.message)
   }
 
-  return { renewalReminders, quotaNotices, rebindNotices }
+  // ── ③ 已降回免費方案（`B-16`）──────────────────────────────────────
+  // 降級落地時 runPaymentReconcile 會在訂閱上留 nonPaymentDowngrade（emailSent=false）；這裡照它寄一封。
+  // 以前降級之後什麼都不寄，客人是發現 AI 沒在回才知道。
+  try {
+    const downs = await db.collection('workspaces')
+      .where('subscription.nonPaymentDowngrade.emailSent', '==', false)
+      .get()
+    for (const doc of downs.docs) {
+      const raw = (doc.data() as WorkspaceDoc).subscription
+      const np = raw?.nonPaymentDowngrade
+      if (!raw || !np?.on) continue
+      // 降級之後又付了款（或晚到的扣款成功把方案救回來）→ 不寄「已降回免費」，直接收掉這筆
+      if (isSelfServePaidPlan(rollSubscriptionToCurrentPeriod(raw, today).sub.planId)) {
+        await doc.ref.update({ 'subscription.nonPaymentDowngrade.emailSent': true })
+          .catch(e => console.warn('[billing-email] 已恢復付費的降級記號收不掉', doc.id, (e as Error)?.message))
+        continue
+      }
+      const key = np.on
+      const prev = raw.emailAttempts?.downgrade
+      if (!emailAttemptAllowed(prev, key, nowMs)) continue
+      const { email, workspaceName } = await resolveBillingRecipient(doc.id, db)
+      const outcome: BillingEmailOutcome = email
+        ? outcomeOf(await sendEmail({
+            to: email,
+            ...downgradedEmail({
+              brandName: brand,
+              workspaceName,
+              planName: getBillingPlan(np.fromPlanId).name,
+              onText: monthDayText(np.on),
+              freeQuota: getBillingPlan('free').answeredQuota ?? 0,
+              manageUrl: billingUrl(doc.id),
+            }),
+          }))
+        : 'no_recipient'
+      count(outcome, 'downgradeNotices')
+      await settleEmailOutcome({
+        outcome,
+        label: '已降回免費信',
+        id: doc.id,
+        ref: doc.ref,
+        key,
+        prev,
+        nowMs,
+        done: { 'subscription.nonPaymentDowngrade.emailSent': true },
+        noRecipient: { 'subscription.nonPaymentDowngrade.emailSent': true, 'subscription.nonPaymentDowngrade.noRecipient': true },
+        attemptField: 'subscription.emailAttempts.downgrade',
+      })
+    }
+  }
+  catch (e) {
+    console.error('[billing-email] 已降回免費信階段失敗', (e as Error)?.message)
+  }
+
+  return summary
 }

@@ -43,6 +43,18 @@
               <div class="sa-pay-stat__value">{{ imgValue }}</div>
               <div class="sa-pay-stat__hint">{{ imgHint }}</div>
             </div>
+            <!-- `B-43`②：扣款失敗以前只有客戶收得到通知 -->
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--danger': pastDueCount > 0 }">
+              <div class="sa-pay-stat__label">自動扣款失敗</div>
+              <div class="sa-pay-stat__value">{{ dunningValue }}</div>
+              <div class="sa-pay-stat__hint">{{ dunningHint }}</div>
+            </div>
+            <!-- `B-50`：寄信壞了金流照常、只有信沒出去 -->
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--danger': emailState === 'broken', 'sa-pay-stat--alert': emailState === 'unsent' }">
+              <div class="sa-pay-stat__label">帳務信</div>
+              <div class="sa-pay-stat__value">{{ emailValue }}</div>
+              <div class="sa-pay-stat__hint">{{ emailHint }}</div>
+            </div>
           </div>
           <p v-if="data?.truncated" class="sa-alerts-foot sa-alerts-foot--pad sa-alerts-foot--warn">
             ⚠️ 帳號數已達單次掃描上限，下表沒有涵蓋全部帳號。
@@ -199,6 +211,55 @@
             </template>
           </div>
         </div>
+
+        <!-- `B-43`②：扣款失敗以前只有客戶收得到通知（信、帳單頁、店家 LINE），我們自己不知道 -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">自動扣款失敗</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="sa-alerts-foot">還在寬限期的（每天再扣一次）＋近 {{ RECENT_DOWNGRADE_DAYS }} 天因為扣不到款降回免費的。原因是「IP」之類的話，多半是我們這邊的設定問題，不是客人的卡。</p>
+            <el-alert v-if="data && data.dunning === null" type="warning" title="這次查不到這份清單（不等於沒有），按「重新檢查」再試一次" :closable="false" show-icon />
+            <AdminDunningTable v-else v-loading="loading" :rows="data?.dunning ?? []" />
+          </div>
+        </div>
+
+        <!-- `B-50`：寄信設定壞了以前沒有任何地方看得到（金流照常、只有信沒出去） -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">帳務信（收據、扣款失敗、續扣提醒）</span>
+            </div>
+            <el-button size="small" :loading="sendingTestEmail" @click="sendTestEmail">寄一封測試信給我</el-button>
+          </div>
+          <div class="card-section-stack">
+            <el-alert v-if="data && data.email === null" type="warning" title="這次查不到寄信紀錄（不等於沒問題），按「重新檢查」再試一次" :closable="false" show-icon />
+            <div v-else-if="data?.email" class="sa-email-health">
+              <div class="sa-email-health__row">
+                <span class="sa-email-health__label">寄件人</span>
+                <span v-if="data.email.configured" class="sa-email-health__value">{{ data.email.from }}<span class="text-xs text-muted">（{{ data.email.region }}）</span></span>
+                <el-tag v-else :type="data.email.paymentEnabled ? 'danger' : 'info'" size="small">沒設定（EMAIL_FROM 或區域）</el-tag>
+              </div>
+              <div class="sa-email-health__row">
+                <span class="sa-email-health__label">最近寄成功</span>
+                <span class="sa-email-health__value">
+                  <template v-if="data.email.lastSuccessAt">{{ mdhmText(data.email.lastSuccessAt) }}<span class="text-xs text-muted">　{{ data.email.lastSuccessSubject }}</span></template>
+                  <span v-else class="text-xs text-muted">還沒有</span>
+                </span>
+              </div>
+              <div v-if="data.email.lastFailureAt" class="sa-email-health__row">
+                <span class="sa-email-health__label">最近寄失敗</span>
+                <span class="sa-email-health__value">
+                  {{ mdhmText(data.email.lastFailureAt) }}<span class="text-xs text-muted">　{{ data.email.lastFailureSubject }}</span>
+                  <span class="sa-email-health__error">{{ data.email.lastFailureError }}</span>
+                </span>
+              </div>
+            </div>
+            <p class="sa-alerts-foot">測試信只會寄到你登入的信箱（{{ myEmail || '—' }}）。寄失敗的帳務信每 3 小時再試一次、最多 5 次。</p>
+          </div>
+        </div>
       </div>
     </template>
   </AdminSplitLayout>
@@ -208,7 +269,10 @@
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { USAGE_RATIO_FLAG_THRESHOLD, USAGE_RATIO_MIN_INVOCATIONS } from '~~/shared/billing/usage-ratio'
 import type { UsageRatioVerdict } from '~~/shared/billing/usage-ratio'
-import type { SuperAiMistake, SuperAlertsWorkspace, SuperImageReadFailureRow } from '~~/shared/types/super-alerts'
+import type { SuperAiMistake, SuperAlertsOverviewPayload, SuperAlertsWorkspace, SuperImageReadFailureRow } from '~~/shared/types/super-alerts'
+import { pastDueAccountCount } from '~~/shared/super-alerts-nav'
+import { RECENT_DOWNGRADE_DAYS } from '~~/shared/billing/dunning'
+import { emailHealthState } from '~~/shared/billing/email-health'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '全站異常總覽' })
@@ -285,6 +349,64 @@ const imgHint = computed(() => {
 
 function openImageConversation(row: SuperImageReadFailureRow) {
   navigateTo(`/admin/${row.workspaceId}/conversations?userId=${encodeURIComponent(row.lastConversationId)}`)
+}
+
+// ── 自動扣款失敗（`B-43`②）──
+const pastDueCount = computed(() => pastDueAccountCount(data.value))
+const dunningValue = computed(() => {
+  if (!data.value) return '—'
+  return data.value.dunning ? `${pastDueCount.value} 個帳號` : '查不到'
+})
+const dunningHint = computed(() => {
+  if (!data.value) return '檢查中…'
+  const rows = data.value.dunning
+  if (!rows) return '不等於沒有，明細在下面'
+  const down = rows.filter(r => r.state === 'downgraded').length
+  return down ? `還在寬限期；近 ${RECENT_DOWNGRADE_DAYS} 天另有 ${down} 個已降回免費` : '還在寬限期、每天再扣一次'
+})
+
+// ── 帳務信（`B-50`）──
+const { user } = useAuth()
+const myEmail = computed(() => String(user.value?.email ?? ''))
+const emailState = computed(() => (data.value?.email ? emailHealthState(data.value.email) : null))
+const EMAIL_STATE_TEXT = { ok: '寄得出去', broken: '寄不出去', unsent: '還沒寄過', off: '沒有設定' } as const
+const emailValue = computed(() => {
+  if (!data.value) return '—'
+  return emailState.value ? EMAIL_STATE_TEXT[emailState.value] : '查不到'
+})
+/** 結論先行：壞了講壞在哪，好的講最近一次什麼時候寄出去 */
+const emailHint = computed(() => {
+  const e = data.value?.email
+  if (!data.value) return '檢查中…'
+  if (!e) return '不等於沒問題，明細在最下面'
+  switch (emailState.value) {
+    case 'broken': return e.configured ? `最近一封寄失敗（${mdhmText(e.lastFailureAt ?? 0)}）` : '付款開著，但寄信設定不齊'
+    case 'unsent': return '設定齊了、還沒寄出過——按最下面的測試信確認'
+    case 'off': return '付款也沒開，不需要'
+    default: return `最近寄出 ${mdhmText(e.lastSuccessAt ?? 0)}`
+  }
+})
+
+const sendingTestEmail = ref(false)
+/**
+ * ⛔ 不呼叫 refresh({ force: true })：那會把全部帳號的異常重新探測一輪（含 LINE API），只為了更新寄信那一格。
+ * 端點寄完回最新的寄信狀態，這裡就地換掉那一格就好。
+ */
+async function sendTestEmail() {
+  sendingTestEmail.value = true
+  try {
+    const r = await apiFetch<{ ok: boolean, to: string, error?: string, health: SuperAlertsOverviewPayload['email'] }>(
+      '/api/admin/super/test-email', { method: 'POST' })
+    if (data.value && r.health) data.value = { ...data.value, email: r.health }
+    if (r.ok) showToast(`已寄到 ${r.to}，去收信看看（也看一下垃圾郵件）`, 'success')
+    else showToast(`寄不出去：${r.error ?? '原因不明'}`, 'error')
+  }
+  catch (e) {
+    showToast((e as { data?: { statusMessage?: string } })?.data?.statusMessage ?? '寄不出去，請再試一次', 'error')
+  }
+  finally {
+    sendingTestEmail.value = false
+  }
 }
 
 onMounted(() => { refresh() })

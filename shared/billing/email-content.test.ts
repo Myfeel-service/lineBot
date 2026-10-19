@@ -3,8 +3,10 @@ import {
   escapeHtml,
   receiptEmail,
   chargeFailedEmail,
+  downgradedEmail,
   renewalReminderEmail,
   quotaEmail,
+  testEmail,
 } from './email-content'
 
 describe('escapeHtml', () => {
@@ -76,14 +78,60 @@ describe('receiptEmail', () => {
 })
 
 describe('chargeFailedEmail', () => {
-  it('主旨提到更新付款方式，內文帶管理連結', () => {
-    const { subject, html, text } = chargeFailedEmail({
-      brandName: 'MYFEEL', workspaceName: '小福商店', planName: '成長',
-      manageUrl: 'https://app.example.com/admin/ws1/settings/billing',
-    })
+  const base = {
+    brandName: 'MYFEEL', workspaceName: '小福商店', planName: '成長',
+    manageUrl: 'https://app.example.com/admin/ws1/settings/billing',
+    lastDayText: '10 月 23 日', downgradeOnText: '10 月 24 日',
+  }
+
+  it('主旨提到扣款失敗，內文帶管理連結', () => {
+    const { subject, html, text } = chargeFailedEmail(base)
     expect(subject).toContain('扣款失敗')
     expect(html).toContain('https://app.example.com/admin/ws1/settings/billing')
     expect(text).toContain('https://app.example.com/admin/ws1/settings/billing')
+  })
+
+  it('🔴 `B-16`：寫明哪天前沒扣到、哪天起降回免費（以前只寫「以免方案到期後被降回免費層」）', () => {
+    const { subject, html, text } = chargeFailedEmail(base)
+    expect(subject).toContain('10 月 23 日前')
+    for (const body of [html, text]) {
+      expect(body).toContain('到 10 月 23 日還沒扣款成功，10 月 24 日起會降回免費方案')
+      expect(body).not.toContain('以免方案到期後')
+    }
+  })
+})
+
+describe('downgradedEmail（`B-16`：降級之後以前什麼都不寄）', () => {
+  const p = {
+    brandName: 'MYFEEL', workspaceName: '小福商店', planName: '成長',
+    onText: '10 月 24 日', freeQuota: 50, manageUrl: 'https://app.example.com/b',
+  }
+
+  it('講哪天、從哪個方案降下來；免費方案還剩幾則；不會再扣這張卡', () => {
+    const { subject, html, text } = downgradedEmail(p)
+    expect(subject).toContain('已降回免費方案')
+    for (const body of [html, text]) {
+      expect(body).toContain('成長方案自動扣款一直沒有成功，10 月 24 日起已降回免費方案')
+      expect(body).toContain('每期有 50 則 AI 回覆')
+      expect(body).toContain('不會再向這張卡扣款')
+      expect(body).toContain('https://app.example.com/b')
+    }
+  })
+
+  it('用完的後果跟額度信同一句（自動回應不受影響），不誇大成全部轉真人', () => {
+    expect(downgradedEmail(p).text).toContain('需要 AI 回答的問題會轉給真人客服，自動回應不受影響')
+  })
+
+  it('帳號名稱會跳脫（HTML 版）', () => {
+    expect(downgradedEmail({ ...p, workspaceName: '<b>x</b>' }).html).not.toContain('<b>x</b>')
+  })
+})
+
+describe('testEmail（`B-50`）', () => {
+  it('主旨帶寄出時間，內文講寄件人', () => {
+    const { subject, text } = testEmail({ brandName: 'MiniMe', sentAtText: '2026-10-20 14:05', from: 'noreply@lineminime.com' })
+    expect(subject).toBe('[MiniMe] 寄信測試（2026-10-20 14:05）')
+    expect(text).toContain('noreply@lineminime.com')
   })
 })
 

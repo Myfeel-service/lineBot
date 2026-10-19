@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  checkoutInvoiceLine,
   DEFAULT_MAX_WORKSPACES_PER_ORG,
   hasInvoiceProfile,
   resolveInvoiceProfile,
@@ -55,5 +56,26 @@ describe('resolveInvoiceProfile — 組織預設 + 官方帳號覆寫', () => {
 
   it('組織與 OA 都沒填 → 空（開個人紙本發票）', () => {
     expect(resolveInvoiceProfile(null, null)).toEqual({})
+  })
+})
+
+describe('checkoutInvoiceLine（付款前「會開出什麼發票」，三條結帳路徑共用；`B-44`⑩）', () => {
+  it('公司統編 → 講統編與抬頭、通知寄到哪', () => {
+    expect(checkoutInvoiceLine({ buyerUBN: '83610942', buyerName: '麥菲爾股份有限公司', buyerEmail: 'ap@example.com' }))
+      .toBe('發票：公司發票（統編 83610942・麥菲爾股份有限公司），通知寄到 ap@example.com')
+  })
+
+  it('載具 → 不說「寄到」（發票直接進載具）', () => {
+    expect(checkoutInvoiceLine({ carrierNum: '/ABC1234' })).toBe('發票：個人發票・存入手機條碼載具 /ABC1234（存入載具，不另寄通知信）')
+  })
+
+  it('沒填過 → 個人紙本、通知寄到登入信箱', () => {
+    expect(checkoutInvoiceLine({})).toBe('發票：個人發票・紙本，通知寄到 你的登入信箱')
+  })
+
+  it('🔴 讀不到（null）→ 照實講讀不到，⛔ 不猜成「個人紙本」', () => {
+    const line = checkoutInvoiceLine(null)
+    expect(line).toContain('暫時讀不到')
+    expect(line).not.toContain('紙本')
   })
 })

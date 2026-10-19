@@ -17,6 +17,7 @@ import { invalidateWorkspaceSubscriptionCache } from './billing'
 import { addDays, dayOfDate, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
 import { isSelfServePaidPlan, type BillingPlanId, type WorkspaceSubscription } from '~~/shared/billing/plans'
 import { anchorDayOf, confirmRenewal, newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/billing/period'
+import { isNonPaymentDowngrade } from '~~/shared/billing/dunning'
 import { cancelCardBinding, type PayuniCardMandate, type PayuniKeys } from './payuni'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 import type { PaymentOrderDoc, PaymentOrderKind, PaymentOrderStatus } from '~~/shared/types/payment'
@@ -610,6 +611,12 @@ export async function runPaymentReconcile(
       else {
         console.warn('[payment] 降級時解除卡片約定失敗,Token 留著下次再試', doc.id, r.outerStatus, r.message)
       }
+    }
+
+    // 因為扣不到款（寬限期滿）而降級 → 留一筆紀錄（`B-16`）:「已降回免費」通知信照它寄,
+    // 超管扣款失敗清單與帳單頁照它講哪天、從哪個方案降下來。只加這一格,降級本身不變。
+    if (isNonPaymentDowngrade(sub, rolled)) {
+      rolled.sub.nonPaymentDowngrade = { fromPlanId: sub.planId, on: today, emailSent: false }
     }
 
     await doc.ref.update({ subscription: rolled.sub, updatedAt: FieldValue.serverTimestamp() })

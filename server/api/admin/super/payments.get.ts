@@ -2,7 +2,8 @@ import type { Timestamp } from 'firebase-admin/firestore'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { PAYMENT_ORDERS_COLLECTION, summarizePaymentMonth } from '~~/server/utils/payment'
-import { taipeiYyyyMm } from '~~/shared/time'
+import { readDunningRows } from '~~/server/utils/billing-dunning'
+import { taipeiDate, taipeiYyyyMm } from '~~/shared/time'
 import type { PaymentOrderDoc } from '~~/shared/types/payment'
 import type { WorkspaceDoc } from '~~/shared/types/organization'
 
@@ -62,10 +63,19 @@ export default defineEventHandler(async (event) => {
     .get()
   const invoiceFailedCount = failedAgg.data().count
 
+  // 扣款失敗清單（`B-43`②）：還在寬限期的＋近 14 天因扣不到款降回免費的。
+  // ⛔ 查失敗回 null 不回空陣列——空陣列＝「沒有人扣款失敗」，那正是這一區要防的假綠燈。
+  const dunning = await readDunningRows(db, taipeiDate())
+    .catch((e) => {
+      console.error('[super-payments] 扣款失敗清單查不了', (e as Error)?.message)
+      return null
+    })
+
   // month 已含 monthRevenue(淨額) 與 monthCharged / monthRefunded——
   // 算式兩端要一起回,否則畫面上的 NT$0 看起來像壞掉,而不是「退光了」。
   return {
     orders,
     summary: { thisMonth, ...month, pendingCount, invoiceFailedCount, count: orders.length },
+    dunning,
   }
 })

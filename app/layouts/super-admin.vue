@@ -44,6 +44,10 @@
         <NuxtLink to="/admin/super/payments" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/payments') }">
           <el-icon class="nav-icon"><Wallet /></el-icon>
           <span>金流總覽</span>
+          <!-- `B-43`②：有帳號自動扣款失敗、還在寬限期就亮紅（以前只有客戶收得到通知，我們自己不知道） -->
+          <el-tooltip v-if="pastDueDotCount" :content="`有 ${pastDueDotCount} 個帳號自動扣款失敗`" placement="right" :show-after="120">
+            <span class="nav-alert-dot is-critical" role="img" :aria-label="`有 ${pastDueDotCount} 個帳號自動扣款失敗`" />
+          </el-tooltip>
         </NuxtLink>
         <NuxtLink to="/admin/super/costs" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/costs') }">
           <el-icon class="nav-icon"><Coin /></el-icon>
@@ -99,6 +103,6 @@ const { user, logout } = useAuth()
 
 // 全站異常的側欄點（C-91）:layout 掛載抓一次,之後靠 composable 的 TTL＋端點 5 分鐘快取,
 // 換頁不會重掃全租戶
-const { navSeverity: alertsDotSeverity, navTip: alertsDotTip, leadsDotCount, refresh: refreshSuperAlerts } = useSuperAlerts()
+const { navSeverity: alertsDotSeverity, navTip: alertsDotTip, leadsDotCount, pastDueDotCount, refresh: refreshSuperAlerts } = useSuperAlerts()
 onMounted(() => { refreshSuperAlerts() })
 </script>

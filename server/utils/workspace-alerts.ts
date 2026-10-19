@@ -27,6 +27,7 @@ import { collectLiffEndpointChecks, countCampaignsWithoutUsableLiff } from './li
 import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState, deriveUsageState, type PlanUsageState } from '~~/shared/billing/plan-state'
+import { monthDayText, plainChargeError } from '~~/shared/billing/dunning'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 import { normalizeLineUserId } from '~~/shared/line-notify-list'
@@ -1131,8 +1132,12 @@ export async function collectWorkspaceAlerts(
         probe('paymentPastDue', async () => {
           const plan = buildPlanView(await subPromise!)
           if (plan?.status !== 'past_due') return { active: false }
-          const reason = cleanReason(plan.lastChargeError)
-          return { active: true, detail: reason || undefined }
+          // 白話化跟帳單頁同一份對照（授權失敗 → 卡片沒通過…）
+          const reason = cleanReason(plainChargeError(plan.lastChargeError))
+          // 哪天前沒扣到就降回免費（`B-16`）：跟扣款失敗信、帳單頁黃色警示同一個日期
+          const deadline = plan.graceLastDay ? `${monthDayText(plan.graceLastDay)}前沒扣到就降回免費方案` : ''
+          const detail = [reason, deadline].filter(Boolean).join('；')
+          return { active: true, detail: detail || undefined }
         }),
         probe('renewalNotBound', async () => {
           const recent = await countRecentUnboundRenewals(db, wid)

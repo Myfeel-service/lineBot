@@ -41,6 +41,17 @@ export interface PlanView {
    * past_due 時要把它顯示出來——只講「扣款未成功」等於叫客戶自己猜是哪裡出問題。
    */
   lastChargeError?: string | null
+  /**
+   * 扣款失敗時的期限（只有 past_due 才有；`B-16`）：`graceLastDay` 是最後一天還會再扣，
+   * `downgradeOn` 起降回免費方案。由 shared/billing/dunning.ts graceDeadline 算——跟扣款失敗信、實際降級同一把尺。
+   */
+  graceLastDay?: string | null
+  downgradeOn?: string | null
+  /**
+   * 近 30 天因為扣不到款被降回免費的紀錄（`B-16`）：帳單頁講「哪天、從哪個方案降下來」，
+   * 不然客人只看到方案變成「免費」、不知道為什麼。已重新付費的不回。
+   */
+  nonPaymentDowngrade?: { fromPlanName: string, on: string } | null
   /** 已預約於期末生效的方案（降級）；null = 下期沿用現行方案。 */
   pendingPlanId?: BillingPlanId | null
   /** 上者的顯示名稱（前端不用自己去查方案表）。 */

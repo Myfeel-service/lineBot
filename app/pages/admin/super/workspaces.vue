@@ -208,8 +208,10 @@
 </template>
 
 <script setup lang="ts">
+import { h } from 'vue'
 import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS, BILLING_PLAN_ORDER, DEFAULT_BILLING_PLAN_ID } from '~~/shared/billing/plans'
+import { describeSuperSubscriptionEdit, SUBSCRIPTION_STATUS_LABEL, type SuperEditPreview } from '~~/shared/billing/subscription-edit'
 import type { BillingPlanId, SubscriptionStatus } from '~~/shared/billing/plans'
 import { CALL_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { USD_TO_TWD } from '~~/shared/usd-twd'
@@ -262,12 +264,9 @@ const editForm = reactive<{
 })
 
 const planOrder = BILLING_PLAN_ORDER
-const statusOptions: { value: SubscriptionStatus; label: string }[] = [
-  { value: 'active', label: '啟用中' },
-  { value: 'trialing', label: '試用中' },
-  { value: 'past_due', label: '逾期未付' },
-  { value: 'canceled', label: '已取消' },
-]
+// 中文跟改方案確認框同一份（shared/billing/subscription-edit.ts）
+const statusOptions: { value: SubscriptionStatus; label: string }[] = (['active', 'trialing', 'past_due', 'canceled'] as const)
+  .map(value => ({ value, label: SUBSCRIPTION_STATUS_LABEL[value] }))
 
 function planName(id: string): string {
   return BILLING_PLANS[id as BillingPlanId]?.name ?? id
@@ -354,23 +353,64 @@ async function createWorkspace() {
   }
 }
 
+/**
+ * 改方案前的確認框（`B-43`④）：改了什麼、會不會扣錢、客戶那邊會怎樣。
+ * 內容由 shared/billing/subscription-edit.ts 算——跟存檔、跟續扣排程同一支判斷，確認框講的就是實際會發生的事。
+ * 只改名稱／組織／備註不跳（沒動到錢與額度）。回 false＝超管按了「再想想」。
+ * ⛔ 用 VNode 不用 HTML 字串：帳號名稱是外部輸入，不能拼進 innerHTML。
+ */
+async function confirmSubscriptionEdit(subscription: unknown): Promise<boolean> {
+  let preview: SuperEditPreview
+  try {
+    preview = describeSuperSubscriptionEdit(editTarget.value?.subscription ?? null, subscription)
+  }
+  catch {
+    return true // 方案／狀態不合法 → 讓後端照常擋下並回 400，不在這裡另寫一份驗證
+  }
+  if (!preview.changed) return true
+  const section = (title: string, lines: string[], cls = '') => lines.length
+    ? [h('p', { class: 'sa-plan-confirm__title' }, title), h('ul', { class: `sa-plan-confirm__list ${cls}` }, lines.map(l => h('li', l)))]
+    : []
+  try {
+    await ElMessageBox.confirm(
+      h('div', { class: 'sa-plan-confirm' }, [
+        ...section(`「${editForm.name.trim() || editTarget.value?.name}」要改的`, preview.changes),
+        ...section('錢', preview.money),
+        ...section('要特別注意', preview.warnings, 'sa-plan-confirm__warn'),
+        ...section('客戶那邊', preview.customer),
+      ]),
+      '確認修改方案',
+      {
+        confirmButtonText: '確認修改',
+        cancelButtonText: '再想想',
+        type: preview.warnings.length ? 'warning' : 'info',
+      },
+    )
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 async function saveEdit() {
   if (!editForm.name.trim()) return showToast('名稱不能為空', 'error')
+  const subscription = editForm.planId
+    ? {
+        planId: editForm.planId,
+        status: editForm.status,
+        currentPeriodStart: editTarget.value?.subscription?.currentPeriodStart ?? null,
+        currentPeriodEnd: editForm.currentPeriodEnd || null,
+        // 原樣帶回錨定日：若只靠 currentPeriodStart 反推，錨定日 31 的訂閱在經過 2 月
+        // （起日被夾成 28）之後會被永久改成 28，之後再也回不到 31。
+        anchorDay: editTarget.value?.subscription?.anchorDay ?? null,
+        quotaOverride: editForm.quotaOverride ?? null,
+        note: editForm.note.trim() || null,
+      }
+    : null
+  if (!await confirmSubscriptionEdit(subscription)) return
   saving.value = true
   try {
-    const subscription = editForm.planId
-      ? {
-          planId: editForm.planId,
-          status: editForm.status,
-          currentPeriodStart: editTarget.value?.subscription?.currentPeriodStart ?? null,
-          currentPeriodEnd: editForm.currentPeriodEnd || null,
-          // 原樣帶回錨定日：若只靠 currentPeriodStart 反推，錨定日 31 的訂閱在經過 2 月
-          // （起日被夾成 28）之後會被永久改成 28，之後再也回不到 31。
-          anchorDay: editTarget.value?.subscription?.anchorDay ?? null,
-          quotaOverride: editForm.quotaOverride ?? null,
-          note: editForm.note.trim() || null,
-        }
-      : null
     await apiFetch(`/api/admin/super/workspaces/${editTarget.value.id}`, {
       method: 'PATCH',
       body: {
