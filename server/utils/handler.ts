@@ -51,6 +51,7 @@ import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
 import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
 import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
 import { chatSpeakerOf } from '~~/shared/chat-speaker'
+import { contextWindowFlags, type ContextWindowMessage } from '~~/shared/ai-context-window'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
@@ -3799,6 +3800,7 @@ interface AiConvoContext {
  * 認商品要往回看幾則訊息（`C-344`）。2026-10-12 那場：客人 10/9 點了「出貨進度查詢－電淨艙」，
  * 到 10/12 再問「我的會什麼時候出貨」中間隔了 7 則（機器人回覆、問編號、勿擾、真人回覆…），
  * 給 AI 讀的那 8 則剛好看不到那顆按鈕。多讀的幾則只有走到 AI 時才讀。
+ * 除了則數，還有時間上限（`C-4`）：給 AI 讀的 72 小時、認商品 7 天，見 shared/ai-context-window.ts。
  */
 const PRODUCT_CONTEXT_MESSAGES = 16
 /** 給 AI 讀的對話從最近幾則訊息裡挑（沿用原本的 8 則，不因為上面多讀而變長） */
@@ -3806,6 +3808,21 @@ const AI_HISTORY_MESSAGES = 8
 
 type ConvoMessageData = {
   direction?: string; text?: string; messageType?: string; mediaDescription?: string; mediaReadState?: string; sender?: string
+  timestamp?: { toMillis?: () => number }
+  payload?: { actionType?: string }
+}
+
+/** 對話訊息 → 時間窗判斷要的欄位（見 contextWindowFlags） */
+function toContextWindowMessage(m: ConvoMessageData): ContextWindowMessage {
+  const ms = m.timestamp?.toMillis?.()
+  return {
+    direction: m.direction,
+    messageType: m.messageType,
+    sender: m.sender,
+    timestampMs: typeof ms === 'number' && Number.isFinite(ms) ? ms : null,
+    actionType: typeof m.payload?.actionType === 'string' ? m.payload.actionType : undefined,
+    text: m.text,
+  }
 }
 
 async function loadAiConvoContext(fsUserDocId: string, textContent: string, workspaceId: string): Promise<AiConvoContext> {
@@ -3820,6 +3837,9 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string, work
   ])
   const prevAiMeta = (convoSnap?.data() as any)?.aiMeta as AiConversationMeta | undefined
   const newestFirst = (historySnap?.docs ?? []).map(d => d.data() as ConvoMessageData)
+  // 太舊的不讀（`C-4`）：給 AI 讀的 72 小時內、認商品 7 天內、加好友／活動登記帶出來的推播 72 小時內。
+  // 只篩、不多讀：在記憶體裡篩，查詢照舊是「最近 16 則」。
+  const windowFlags = contextWindowFlags(newestFirst.map(toContextWindowMessage), Date.now())
 
   /** 一則訊息變成一句對話；圖片換成讀圖說明（見下面 history 的註解） */
   const toTurn = (m: ConvoMessageData): AiChatTurn => {
@@ -3840,10 +3860,13 @@ async function loadAiConvoContext(fsUserDocId: string, textContent: string, work
     return last && last.role === 'user' && last.text === textContent.trim() ? turns.slice(0, -1) : turns
   }
   // 客人點過的按鈕（「客人點了『客服 - 出貨進度查詢 - 電淨艙…』」）也算——只拿來認商品
-  const productHistory = withoutCurrent([...newestFirst].reverse().map(toTurn).filter(t => t.text))
+  const productHistory = withoutCurrent(
+    newestFirst.filter((_, i) => windowFlags[i]!.forProduct).reverse().map(toTurn).filter(t => t.text),
+  )
 
   // 組裝最近對話（最舊在前）；排除剛存進去的本次訊息，最多帶 6 則
   let history: AiChatTurn[] = newestFirst.slice(0, AI_HISTORY_MESSAGES)
+    .filter((_, i) => windowFlags[i]!.forAi)
     // 客人動作紀錄（「客人點了…」）不是客人說的話：塞進 history 會被 LLM 當成客人的原句
     // 引用（見 shared/customer-action.ts）。要拿它認商品走上面的 productHistory。
     .filter(m => !isCustomerActionMessage(m.messageType))

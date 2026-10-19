@@ -281,3 +281,75 @@ describe('對話脈絡：按鈕紀錄只拿來認商品', () => {
     expect(vi.mocked(answerWithAi)).toHaveBeenCalledTimes(1)
   })
 })
+
+/**
+ * `C-4`：AI 讀的對話有時間上限（給 AI 讀 72 小時、認商品 7 天、加好友／活動登記帶出來的推播 72 小時）。
+ * 以前只看則數：10/16 客人問「我為何 9/3 買是 22900？」，產品鎖認到 65 天前的「乾淨方MAX 開賣通知」，轉真人。
+ */
+describe('對話脈絡有時間上限（C-4）', () => {
+  const at = (msAgo: number) => ({ toMillis: () => Date.now() - msAgo })
+  const H = 60 * 60 * 1000
+  const D = 24 * H
+
+  it('65 天前的開賣通知：認商品那份、給 AI 讀那份都沒有它', async () => {
+    seededMessages = [
+      { direction: 'incoming', messageType: 'text', text: '我為何9/3買是22900？', timestamp: at(0) },
+      { direction: 'outgoing', messageType: 'text', sender: 'bot', text: 'Hi 恭喜你成功啟動專屬開賣通知！ SHARP 最新機種《乾淨方MAX》', timestamp: at(65 * D) },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人從活動「乾淨方max問卷」登記', payload: { actionType: 'campaign_claim' }, timestamp: at(65 * D + 500) },
+      { direction: 'outgoing', messageType: 'image', sender: 'bot', text: '[圖片]', timestamp: at(65 * D + 1000) },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人加入好友', payload: { actionType: 'follow' }, timestamp: at(65 * D + 2000) },
+    ]
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+
+    await handleMessageEvent(textEvent('我為何9/3買是22900？'), { workspaceId: WS })
+
+    const input = vi.mocked(answerWithAi).mock.calls[0]![0]
+    expect(input.productHistory).toEqual([])
+    expect(input.history).toEqual([])
+  })
+
+  it('C-344 那場（按鈕在 3 天多前）：認商品看得到按鈕；給 AI 讀的只剩 72 小時內', async () => {
+    seededMessages = [
+      { direction: 'incoming', messageType: 'text', text: '我的會什麼時候出貨', timestamp: at(0) },
+      { direction: 'outgoing', messageType: 'text', sender: 'human', text: '您好，廠商公告是於 10 月底 依照訂單順序陸續出貨喔', timestamp: at(10 * H) },
+      { direction: 'outgoing', messageType: 'text', sender: 'system', text: '您好,目前為雙十節連休,非客服服務時間', timestamp: at(3.5 * D) },
+      { direction: 'incoming', messageType: 'text', text: 'M20261007002452KOYK', timestamp: at(3.5 * D + 1000) },
+      { direction: 'outgoing', messageType: 'text', sender: 'bot', text: '白您好， 依原廠公告： 商品將於 10 月底 依照訂單順序陸續出貨', timestamp: at(3.5 * D + 60_000) },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人點了「客服 - 出貨進度查詢 - 電淨艙 奇美 靜電集塵空氣清淨機 AP-08SPFG」', payload: { actionType: 'button_module' }, timestamp: at(3.5 * D + 62_000) },
+    ]
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+
+    await handleMessageEvent(textEvent('我的會什麼時候出貨'), { workspaceId: WS })
+
+    const input = vi.mocked(answerWithAi).mock.calls[0]![0]
+    expect(input.productHistory?.map(t => t.text).join('\n')).toContain('出貨進度查詢 - 電淨艙')
+    expect(input.history?.map(t => t.text)).toEqual(['您好，廠商公告是於 10 月底 依照訂單順序陸續出貨喔'])
+  })
+
+  it('8 天前點過的按鈕不拿來認商品（7 天以上）', async () => {
+    seededMessages = [
+      { direction: 'incoming', messageType: 'text', text: '我的會什麼時候出貨', timestamp: at(0) },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人點了「客服 - 出貨進度查詢 - 電淨艙」', payload: { actionType: 'button_module' }, timestamp: at(8 * D) },
+    ]
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+
+    await handleMessageEvent(textEvent('我的會什麼時候出貨'), { workspaceId: WS })
+
+    expect(vi.mocked(answerWithAi).mock.calls[0]![0].productHistory).toEqual([])
+  })
+
+  it('跳過流程的判斷吃同一把尺：65 天前的開賣通知不能讓「何時出貨」繞過流程', async () => {
+    seededMessages = [
+      { direction: 'incoming', messageType: 'text', text: '請問我的訂單什麼時候出貨', timestamp: at(0) },
+      { direction: 'outgoing', messageType: 'text', sender: 'bot', text: '恭喜你成功啟動專屬開賣通知！奇美《電淨艙》', timestamp: at(65 * D) },
+      { direction: 'incoming', messageType: 'customer_action', text: '客人從活動「電淨艙問卷」登記', payload: { actionType: 'campaign_claim' }, timestamp: at(65 * D + 500) },
+    ]
+    vi.mocked(productsInConversation).mockImplementation(async (_w, _t, h) =>
+      (h ?? []).some(t => t.text.includes('電淨艙')) ? { products: new Set(['chimei 電淨艙']), from: 'history' } : null)
+
+    await handleMessageEvent(textEvent('請問我的訂單什麼時候出貨'), { workspaceId: WS })
+
+    expect(vi.mocked(answerWithAi)).not.toHaveBeenCalled()
+    expect(vi.mocked(startScript)).toHaveBeenCalledTimes(1)
+  })
+})
