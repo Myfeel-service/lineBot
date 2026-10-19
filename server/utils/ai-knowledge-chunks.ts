@@ -744,8 +744,12 @@ async function loadTagIndex(db: Firestore, workspaceId: string) {
  */
 export const TAG_RANK_MAX_CANDIDATES = 60
 
-/** 兩個向量的 cosine 相似度；任一邊長度不同或是零向量時回 -1（排到最後，不會被挑中） */
-export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
+/**
+ * 兩個向量的 cosine 相似度；任一邊長度不同或是零向量時回 -1（排到最後，不會被挑中）。
+ * ⛔ 不叫 `cosineSimilarity`：`shared/types/ai-script.ts` 已經有一支同名的（壞資料回 0），
+ * server/utils 的匯出會被自動匯入，同名時 Nuxt 只留一支、另一支被靜靜忽略（typecheck 只印一行 WARN）。
+ */
+export function tagRankCosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (!a?.length || a.length !== b?.length) return -1
   let dot = 0
   let na = 0
@@ -814,7 +818,7 @@ export async function searchChunksByIdentifierTag(
         isOverview: data?.isOverview === true,
         productName: String(data?.productName ?? '').trim() || undefined,
       }
-      return { chunk, relevance: emb ? cosineSimilarity(queryVector!, emb) : -1 }
+      return { chunk, relevance: emb ? tagRankCosine(queryVector!, emb) : -1 }
     })
   if (!rankByQuery) return rows.map(r => r.chunk)
   return rows

@@ -6,7 +6,7 @@
  * 假資料庫照 Firestore 的形狀回：tag 索引那一次查詢（where/select/limit/get）＋ getAll 讀整張卡（含向量）。
  */
 import { describe, expect, it } from 'vitest'
-import { cosineSimilarity, searchChunksByIdentifierTag, TAG_MATCH_SIMILARITY, TAG_RANK_MAX_CANDIDATES } from './ai-knowledge-chunks'
+import { searchChunksByIdentifierTag, TAG_MATCH_SIMILARITY, TAG_RANK_MAX_CANDIDATES, tagRankCosine as cosineSimilarity } from './ai-knowledge-chunks'
 
 interface FakeCard { id: string; title: string; tags: string[]; embedding: number[] | null; status?: string }
 
