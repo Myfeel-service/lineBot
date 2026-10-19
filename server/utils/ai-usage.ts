@@ -19,6 +19,8 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { getWorkspaceSubscription } from './billing'
 import { GEMINI_MODEL_PRICES } from './ai-cost-buckets'
+import { capMapSize } from './bounded-cache'
+import { aiCallsTowardCeiling } from '~~/shared/billing/call-ceiling'
 import { taipeiYyyyMm } from '~~/shared/time'
 import type { AiCostBucketId, AiModelTokenCounts, AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
@@ -95,7 +97,8 @@ export interface UsageDelta {
    *   | 問的商品不在清單（「目前的商品資料裡沒有…」） | `answered: 1, billable: 1`                        | 扣（`D-132`②） |
    *   | 出貨時程題直接答（`C-343`）                    | `answered: 1, billable: 1`                        | 扣   |
    *   | 跟本店無關、AI 婉拒（「超出範圍」那句）       | `answered: 1, unbilledAnswered: 1`                | **不扣**（`D-132`②：其實就是答不出來） |
-   *   | 答不出轉真人／敏感詞／額度用完／AI 壞掉        | `handoffs: 1`                                     | 不扣（對外的賣點） |
+   *   | 答不出轉真人／敏感詞／AI 壞掉                  | `handoffs: 1`                                     | 不扣（對外的賣點） |
+   *   | 額度用完、或這個月 AI 被叫太多次（`C-8`）被擋下 | `handoffs: 1, quotaBlocked: 1`                    | 不扣 |
    *   | 查他那一筆訂單：先送一般規則、再轉真人        | `handoffs: 1`                                     | 不扣（`D-132`①：結局是轉真人） |
    *   | 客人指名「找真人」                            | `handoffs: 1, directHandoffs: 1`                  | 不扣 |
    *   | 客人只傳照片：AI 讀圖、問「想了解什麼」＋猜的按鈕 | `disambiguations: 1, billable: 1`（在 handler）  | 扣（`D-132`③，照反問算） |
@@ -142,6 +145,15 @@ export interface UsageDelta {
    * （2026-08-10 實測：90 次轉真人有 13 次是這種）。恆等式不動：仍同時記 handoffs。
    */
   directHandoffs?: number
+  /**
+   * handoffs 的子集（同 {@link directHandoffs} 的子集慣例）：額度用完、或這個月 AI 被叫太多次（`C-8` 呼叫上限）
+   * 被擋下來，**AI 沒出手**就轉真人的那幾次。恆等式不動：仍同時記 invocations 與 handoffs。
+   *
+   * 為什麼要分出來：呼叫上限數的是「AI 真的被叫了幾次」（`aiCallsTowardCeiling`）。不扣掉這幾次的話，
+   * 則數用完那段期間每則訊息都還在累積次數，訂閱換期、則數歸零之後，這個月的次數早就被灌過上限——
+   * AI 一恢復就又以「被叫太多次」停下來，店家看到的原因是錯的。只從 2026-10-20 部署後起算。
+   */
+  quotaBlocked?: number
   /**
    * 「先問清楚」（反問澄清）之後客人點選、AI 成功答出來的次數。
    * followup 路徑刻意不記 invocations/answered（避免灌水），代價是反問的成果全隱形——
@@ -248,6 +260,7 @@ async function writeAiUsage(workspaceId: string, delta: UsageDelta, db: Firestor
   if (delta.importOutputTokens) updates.importOutputTokens = FieldValue.increment(delta.importOutputTokens)
   if (delta.answeredThenHandoffs) updates.answeredThenHandoffs = FieldValue.increment(delta.answeredThenHandoffs)
   if (delta.directHandoffs) updates.directHandoffs = FieldValue.increment(delta.directHandoffs)
+  if (delta.quotaBlocked) updates.quotaBlocked = FieldValue.increment(delta.quotaBlocked)
   if (delta.followupAnswered) updates.followupAnswered = FieldValue.increment(delta.followupAnswered)
   if (delta.testInputTokens) updates.testInputTokens = FieldValue.increment(delta.testInputTokens)
   if (delta.testOutputTokens) updates.testOutputTokens = FieldValue.increment(delta.testOutputTokens)
@@ -309,6 +322,38 @@ export async function getCurrentMonthUsageCounts(
     answered: Number(d?.answered ?? 0),
     billable: monthlyBillable(d),
   }
+}
+
+/**
+ * 呼叫上限（`C-8`）的次數快取：每則客人訊息都要看一次，不快取就是每則多一次點讀。
+ * 60 秒（同訂閱、維運上限的快取）：次數這個月只會往上加，舊 60 秒頂多讓「停下來」晚一分鐘，
+ * 不會讓已經停的又放行。鍵帶月份——跨月那一刻直接換一格，不會拿上個月的數字擋這個月。
+ */
+const AI_CALLS_CACHE_MS = 60_000
+const aiCallsCache = new Map<string, { expiresAt: number; calls: number }>()
+
+/** 測試用：清掉呼叫次數快取 */
+export function invalidateAiCallsCache() {
+  aiCallsCache.clear()
+}
+
+/**
+ * 這個月（台北日曆月）AI 真的被叫了幾次——呼叫上限的分子（`aiCallsTowardCeiling`：扣掉指名真人、被額度擋下的）。
+ * 讀月結桶，60 秒快取。讀失敗會丟錯，由呼叫端決定 fail-open（護欄那邊一律當 0）。
+ */
+export async function getCurrentMonthAiCalls(
+  workspaceId: string,
+  db: Firestore = getDb(),
+): Promise<number> {
+  const yyyyMm = currentYyyyMm()
+  const key = usageDocId(workspaceId, yyyyMm)
+  const cached = aiCallsCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.calls
+  const snap = await db.collection(AI_USAGE_COLLECTION).doc(key).get()
+  const calls = aiCallsTowardCeiling(snap.exists ? (snap.data() as Partial<AiUsageDoc>) : null)
+  aiCallsCache.set(key, { expiresAt: Date.now() + AI_CALLS_CACHE_MS, calls })
+  capMapSize(aiCallsCache, 2000)
+  return calls
 }
 
 /**

@@ -1,4 +1,6 @@
 import { derivePlanState, type PlanView } from '~~/shared/billing/plan-state'
+import type { AiCallCeilingStatus } from '~~/shared/billing/call-ceiling'
+import { isPausedByCalls } from '~/utils/quota-banner-text'
 import { useWorkspace } from './useWorkspace'
 
 interface PlanSummaryResponse {
@@ -7,6 +9,8 @@ interface PlanSummaryResponse {
   answered: number
   /** 沒有則數上限的方案才有：這個月（台北日曆月）的計費則數，跟 AI 表現頁同一個數（`G-87`） */
   monthBillable?: number | null
+  /** 呼叫上限（`C-8`）：這個月 AI 被叫了幾次、上限幾次、撞到了沒。null＝這個方案不套或讀不到 */
+  callCeiling?: AiCallCeilingStatus | null
 }
 
 /**
@@ -23,6 +27,7 @@ export function usePlanSummary() {
   const rawPlan = useState<PlanView | null>('plan-summary-plan', () => null)
   const rawAnswered = useState('plan-summary-answered', () => 0)
   const rawMonthBillable = useState<number | null>('plan-summary-month-billable', () => null)
+  const rawCallCeiling = useState<AiCallCeilingStatus | null>('plan-summary-call-ceiling', () => null)
   const loading = useState('plan-summary-loading', () => false)
   const rawLoaded = useState('plan-summary-loaded', () => false)
   /**
@@ -56,9 +61,13 @@ export function usePlanSummary() {
   const answered = computed(() => (matchesWorkspace.value ? rawAnswered.value : 0))
   /** null＝有上限的方案（看「本期」那個數）或還沒有資料 */
   const monthBillable = computed(() => (matchesWorkspace.value ? rawMonthBillable.value : null))
+  /** 呼叫上限（`C-8`）：這個月 AI 被叫幾次、上限幾次、撞到了沒 */
+  const callCeiling = computed(() => (matchesWorkspace.value ? rawCallCeiling.value : null))
   const loaded = computed(() => matchesWorkspace.value && rawLoaded.value)
 
   const state = computed(() => derivePlanState(plan.value, answered.value))
+  /** AI 因為這個月被叫太多次先停了、而則數還沒用完（判斷見 utils/quota-banner-text.ts isPausedByCalls） */
+  const pausedByCalls = computed(() => isPausedByCalls(callCeiling.value, state.value.state))
 
   async function load() {
     const wid = workspaceId.value ?? ''
@@ -76,6 +85,7 @@ export function usePlanSummary() {
         rawPlan.value = res.plan
         rawAnswered.value = res.answered ?? 0
         rawMonthBillable.value = res.monthBillable ?? null
+        rawCallCeiling.value = res.callCeiling ?? null
         checkedFor.value = wid
         rawLoaded.value = true
       }
@@ -85,6 +95,7 @@ export function usePlanSummary() {
         rawPlan.value = null
         rawAnswered.value = 0
         rawMonthBillable.value = null
+        rawCallCeiling.value = null
         checkedFor.value = wid // 查失敗也是「這個帳號的結果」：畫面顯示沒有方案，不是別家的方案
         rawLoaded.value = true
       }
@@ -95,5 +106,5 @@ export function usePlanSummary() {
     })
   }
 
-  return { plan, answered, monthBillable, state, loading, loaded, load }
+  return { plan, answered, monthBillable, callCeiling, pausedByCalls, state, loading, loaded, load }
 }

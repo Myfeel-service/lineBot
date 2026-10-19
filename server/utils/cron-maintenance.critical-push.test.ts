@@ -27,8 +27,11 @@ vi.mock('./ai-source-extractors', () => ({ extractUrlText: vi.fn() }))
 vi.mock('./gsheet-sync', () => ({ syncGoogleSheetSource: vi.fn() }))
 vi.mock('./webhook-dedup', () => ({ WEBHOOK_EVENT_LOCKS_COLLECTION: 'webhookEventLocks' }))
 vi.mock('./conversation-session', () => ({ closeConversationSession: vi.fn(), handBackSessionToBot: vi.fn() }))
-const { wasQuotaExhaustedNotified } = vi.hoisted(() => ({ wasQuotaExhaustedNotified: vi.fn(async () => false) }))
-vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOverdueHandoffBatch: vi.fn(), wasQuotaExhaustedNotified }))
+const { wasQuotaExhaustedNotified, wasAiCallCeilingNotified } = vi.hoisted(() => ({
+  wasQuotaExhaustedNotified: vi.fn(async () => false),
+  wasAiCallCeilingNotified: vi.fn(async () => false),
+}))
+vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOverdueHandoffBatch: vi.fn(), wasQuotaExhaustedNotified, wasAiCallCeilingNotified }))
 
 const { pushMessage } = vi.hoisted(() => ({ pushMessage: vi.fn(async () => {}) }))
 vi.mock('./line', () => ({ pushMessage }))
@@ -200,6 +203,21 @@ describe('嚴重異常推播', () => {
     const text = pushedText()
     expect(text).toContain('機器人收不到客人訊息')
     expect(text).not.toContain('本期回覆則數用完了')
+  })
+
+  it('`C-8` AI 被叫太多次:這個月的專屬那則（🚫 AI 先停下來了）已送達 → 彙總讓路', async () => {
+    wasAiCallCeilingNotified.mockResolvedValue(true)
+    collectWorkspaceAlerts.mockResolvedValue([alert('aiCallCeiling')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushMessage).not.toHaveBeenCalled()
+  })
+
+  it('`C-8` 專屬那則還沒送達 → 彙總照講,講的是「被叫太多次」不是則數用完', async () => {
+    wasAiCallCeilingNotified.mockResolvedValue(false)
+    collectWorkspaceAlerts.mockResolvedValue([alert('aiCallCeiling')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushedText()).toContain('AI 被叫太多次、大多答不出來，先停下來了')
+    expect(pushedText()).not.toContain('本期回覆則數用完了')
   })
 
   it('🔴 一則都沒送成功就不記「已通知」，下一輪要重試', async () => {

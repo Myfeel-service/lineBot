@@ -93,6 +93,17 @@
                 用完之後，<strong>需要 AI 回答的問題會改成轉給真人客服</strong>，自動回應不受影響；
                 升級方案後立刻恢復。
               </p>
+              <!-- `C-8`：則數還沒用完、AI 卻因為這個月被叫太多次先停了。頁頂橫幅在這一頁不顯示，
+                   不在這裡講的話，人看到「12 / 50 則」會以為還在答、或以為壞掉了。說法跟橫幅同一份 -->
+              <el-alert
+                v-if="planPausedByCalls"
+                type="error"
+                :closable="false"
+                show-icon
+                title="AI 已停止自動回覆"
+              >
+                <span class="text-xs">{{ aiCallPausedText(planCallCeiling?.calls) }}</span>
+              </el-alert>
             </div>
             <p v-else class="text-xs text-muted">客製額度,無固定則數上限。</p>
 
@@ -492,6 +503,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { KNOWLEDGE_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { deriveUsageState } from '~~/shared/billing/plan-state'
+import { aiCallPausedText } from '~/utils/quota-banner-text'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
@@ -504,7 +516,7 @@ useHead({ title: useAdminTitle('訂閱與付款') })
 const route = useRoute()
 const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
-const { plan: planView, state: planState, load: loadPlanSummary } = usePlanSummary()
+const { plan: planView, state: planState, callCeiling: planCallCeiling, pausedByCalls: planPausedByCalls, load: loadPlanSummary } = usePlanSummary()
 
 const config = useRuntimeConfig()
 const invoiceEnabled = Boolean(config.public.invoiceEnabled)

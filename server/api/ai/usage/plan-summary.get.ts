@@ -1,7 +1,8 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getCurrentMonthUsageCounts, getQuotaAnswered } from '~~/server/utils/ai-usage'
-import { buildPlanView, getWorkspaceSubscription } from '~~/server/utils/billing'
+import { buildPlanView, effectivePlanOf, getWorkspaceSubscription } from '~~/server/utils/billing'
+import { getAiCallCeilingStatus } from '~~/server/utils/reply-quota'
 
 /**
  * GET /api/ai/usage/plan-summary
@@ -33,5 +34,17 @@ export default defineEventHandler(async (event) => {
     ? (await getCurrentMonthUsageCounts(workspaceId, db)).billable
     : null
 
-  return { plan, answered, monthBillable }
+  /**
+   * 呼叫上限（`C-8`）：則數還沒用完、AI 卻因為這個月被叫太多次先停了——後台橫幅與方案頁要講「停了」跟原因，
+   * 否則畫面寫「本期已用 12 / 50 則」、客人卻全被轉真人，店家只會以為壞掉了。
+   * 跟護欄讀同一支（同一份 60 秒快取），只有則數有上限的方案才讀。讀不到就不給（null）：⛔ 不猜「停了」。
+   */
+  const callCeiling = sub
+    ? await getAiCallCeilingStatus(workspaceId, {
+      quota: plan?.answeredQuota ?? null,
+      internal: effectivePlanOf(sub).plan.internal === true,
+    }, db).catch(() => null)
+    : null
+
+  return { plan, answered, monthBillable, callCeiling }
 })

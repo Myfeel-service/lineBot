@@ -1,6 +1,6 @@
 <template>
-  <div v-if="show" class="quota-banner" :class="`quota-banner--${state.state}`" :role="state.state === 'over' ? 'alert' : 'status'">
-    <span class="quota-banner__icon"><el-icon><component :is="state.state === 'over' ? CircleCloseFilled : WarningFilled" /></el-icon></span>
+  <div v-if="show" class="quota-banner" :class="`quota-banner--${tone}`" :role="tone === 'over' ? 'alert' : 'status'">
+    <span class="quota-banner__icon"><el-icon><component :is="tone === 'over' ? CircleCloseFilled : WarningFilled" /></el-icon></span>
 
     <div class="quota-banner__body">
       <p class="quota-banner__title">{{ title }}</p>
@@ -10,9 +10,11 @@
     </div>
 
     <div class="quota-banner__actions">
-      <el-button type="primary" size="small" @click="upgradeOpen = true">升級方案</el-button>
+      <!-- `C-8` 被叫太多次而停：真正有用的是補知識（升級只是把上限拉高），所以那顆當主按鈕 -->
+      <el-button v-if="pausedByCalls" type="primary" size="small" @click="goUnanswered">看 AI 答不出來的問題</el-button>
+      <el-button :type="pausedByCalls ? 'default' : 'primary'" size="small" @click="upgradeOpen = true">升級方案</el-button>
       <!-- 已經停止回覆時不給關閉：那是服務中斷，不是提醒 -->
-      <el-button v-if="state.state === 'near'" size="small" text @click="dismiss">稍後再說</el-button>
+      <el-button v-if="tone === 'near'" size="small" text @click="dismiss">稍後再說</el-button>
     </div>
 
     <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="plan?.id ?? null" />
@@ -21,6 +23,7 @@
 
 <script setup lang="ts">
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
+import { quotaBannerDesc } from '~/utils/quota-banner-text'
 /**
  * 額度快用完 / 已用完的升級提示。
  *
@@ -33,12 +36,14 @@ import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
  *     分開寫是為了各自跟著自己那支端點走（`G-109`）。
  *   · `near`（≥80%）→ 警告，可關閉（關閉只對「這個帳號的這一期」有效，下一期會再出現）。
  *   · `over`（100%）→ **不可關閉**。那不是提醒，那是 AI 已經停止回覆的服務中斷。
+ *   · AI 因為這個月被叫太多次先停了（`C-8`，則數還沒用完）→ 跟 `over` 同一個份量、不可關閉，
+ *     說法講原因（大多答不出來）與能做的事（補知識），主按鈕是「看 AI 答不出來的問題」。
  *   · 客製 / 內部方案（無額度上限）→ 永遠不顯示。
  *   · 帳單頁本身不顯示（升級按鈕就在那頁上，再掛一條橫幅只是噪音）。
  */
 const route = useRoute()
 const { workspaceId, can } = useWorkspace()
-const { plan, state, load } = usePlanSummary()
+const { plan, state, callCeiling, pausedByCalls, load } = usePlanSummary()
 
 const upgradeOpen = ref(false)
 const dismissed = ref(false)
@@ -49,31 +54,42 @@ const dismissKey = computed(() =>
 )
 
 const onBillingPage = computed(() => route.path.includes('/settings/billing'))
+const onAiUsagePage = computed(() => route.path.endsWith('/ai-usage'))
+
+/**
+ * 橫幅的份量：則數用完、或 AI 因為這個月被叫太多次先停了（`C-8`），都是「AI 已經停了」的紅色、不可關閉。
+ * 後者則數還沒用完（用完的話照則數那套講），所以不能只看 state。
+ */
+const tone = computed(() => (pausedByCalls.value ? 'over' : state.value.state))
 
 const show = computed(() => {
   if (!can('billing.manage') || onBillingPage.value) return false
   if (!plan.value || plan.value.answeredQuota == null) return false // 客製 / 內部方案：無上限
-  if (state.value.state === 'over') return true // 服務已中斷 → 一律顯示，不理會關閉
-  return state.value.state === 'near' && !dismissed.value
+  // `C-8`：被叫太多次而停的那顆提醒（aiCallCeiling）就落在 AI 表現頁，那頁的提醒帶已經把同一段話講完、
+  // 還有「帶我看」——再掛橫幅＝同一段話上下講兩遍（同「帳單頁不掛」的理由）
+  if (pausedByCalls.value && onAiUsagePage.value) return false
+  if (tone.value === 'over') return true // 服務已中斷 → 一律顯示，不理會關閉
+  return tone.value === 'near' && !dismissed.value
 })
 
 const title = computed(() => {
-  if (state.value.state === 'over') return 'AI 已停止自動回覆'
+  if (tone.value === 'over') return 'AI 已停止自動回覆'
   return `本期額度只剩 ${state.value.remaining?.toLocaleString() ?? 0} 則`
 })
 
-// ⚠️ 文案要準確：額度用完時**規則與腳本照常運作**，只有「原本由 AI 接手回答」的訊息
-//    才會改成轉真人（見 server/utils/ai-answer.ts 的 quota 護欄）。寫成「所有訊息都轉真人」
-//    會誇大，而客戶一用就會發現不是那樣——嚇唬人換來的升級，換來的是不信任。
-const desc = computed(() => {
-  const used = state.value.used.toLocaleString()
-  const limit = state.value.limit?.toLocaleString() ?? ''
-  if (state.value.state === 'over') {
-    // ⛔「自動回應」不是「自動回覆」：後者 2026-08-09 已下架併進前者，側欄上找不到那四個字（`D-82`）
-    return `本期 ${limit} 則已用完。自動回應仍正常運作，但需要 AI 回答的問題現在都會轉給真人客服。升級後立即恢復。`
-  }
-  return `本期已用 ${used} / ${limit} 則。用完後需要 AI 回答的問題會改為轉給真人客服（自動回應不受影響）。`
-})
+function goUnanswered() {
+  void navigateTo(`/admin/${workspaceId.value}/ai-usage`)
+}
+
+// 說法在 utils/quota-banner-text.ts（純函式、有測試；方案頁那格也吃同一支）。
+// `C-8`：被叫太多次而停，後果那句跟則數用完一字不差（C-341），前面講原因、後面講怎麼辦（跟 LINE 通知、提醒同一份）
+const desc = computed(() => quotaBannerDesc({
+  state: state.value.state,
+  used: state.value.used,
+  limit: state.value.limit,
+  pausedByCalls: pausedByCalls.value,
+  calls: callCeiling.value?.calls ?? null,
+}))
 
 function dismiss() {
   dismissed.value = true

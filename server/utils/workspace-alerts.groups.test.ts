@@ -97,6 +97,8 @@ describe('collectWorkspaceAlerts 權限分組（要跟前端註冊表的 require
     expect(ids.has('lineWebhookBroken')).toBe(false)
     expect(ids.has('quotaExceeded')).toBe(false)
     expect(ids.has('maintenanceStalled')).toBe(false)
+    // `C-8`：前端標 usage.read（管理員級）；⛔ 放營運組＝每日摘要每天對每個帳號多讀一次訂閱
+    expect(ids.has('aiCallCeiling')).toBe(false)
   })
 
   it('只有 canSettings：operate 級的不回、帳單/連線類照回', async () => {
@@ -112,6 +114,7 @@ describe('collectWorkspaceAlerts 權限分組（要跟前端註冊表的 require
     expect(ids.has('aiDraftsWaiting')).toBe(false)
     expect(ids.has('maintenanceStalled')).toBe(true)
     expect(ids.has('lineWebhookBroken')).toBe(true)
+    expect(ids.has('aiCallCeiling')).toBe(true)
   })
 })
 

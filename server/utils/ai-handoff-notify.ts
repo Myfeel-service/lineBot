@@ -15,7 +15,8 @@ import { getAiSettings } from './ai-settings'
 import { buildHandoffNotifyText, buildOverdueBatchText } from '~~/shared/line-notify-messages'
 import { getDb } from './firebase'
 import { resolveAnsweredQuota } from './billing'
-import { isServiceHoursDnd } from '~~/shared/time'
+import { isServiceHoursDnd, taipeiYyyyMm } from '~~/shared/time'
+import { AI_CALL_CEILING_REMEDY } from '~~/shared/billing/call-ceiling'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
@@ -266,9 +267,32 @@ export async function maybeWarnQuotaThreshold(params: {
 // 80% 是預告,100% 是事故現場:AI 已停止回覆,需要 AI 回答的客人訊息開始轉真人(或降級模型)。
 // 這件事等不了「下次有人打開後台」——每期最多一則,是全系統資訊價值最高的一則錢。
 // 標記與 80% 預警共用 aiQuotaAlerts doc,各記各的鍵(兩者一期各發一次)。
+/**
+ * 呼叫上限（`C-8`）那則通知的期別鍵：一個台北月一則（次數按台北日曆月算，下個月 1 號歸零）。
+ * ⛔ ai-answer.ts（發）與 {@link wasAiCallCeilingNotified}（異常彙總讓路）都要用這支，組法對不上就會重複推。
+ */
+export function aiCallCeilingNotifyKey(): string {
+  return `c_${taipeiYyyyMm()}`
+}
+
+/**
+ * 兩種「停下來了」各記各的章（同一份 aiQuotaAlerts doc）：則數用完是 exhausted*、呼叫上限是 ceiling*。
+ * ⛔ 不能共用一組鍵：兩件事的期別不同（訂閱週期 vs 台北月），共用的話一件事蓋章會把另一件的「已送達」洗掉，
+ *    異常彙總就會以為沒送過、同一天再推一次。
+ */
+const STOP_NOTICE_FIELDS = {
+  replies: { sent: 'exhaustedPeriodKey', attemptKey: 'exhaustedAttemptKey', attemptAt: 'exhaustedAttemptAtMs', sentAt: 'exhaustedAt' },
+  calls: { sent: 'ceilingPeriodKey', attemptKey: 'ceilingAttemptKey', attemptAt: 'ceilingAttemptAtMs', sentAt: 'ceilingAt' },
+} as const
+
 export async function maybeNotifyQuotaExhausted(params: {
   workspaceId: string
-  /** 期間識別鍵,同 maybeWarnQuotaThreshold 的 periodKey 規則 */
+  /**
+   * 為什麼停（`C-8`）：`replies`＝則數用完（預設，含 token 上限那種）；`calls`＝這個月 AI 被叫太多次、大多答不出來。
+   * 客人那邊兩種一模一樣，給店家的這一則要分得出來——原因不同，能做的事也不同（補知識 vs 升級）。
+   */
+  cause?: 'replies' | 'calls'
+  /** 期間識別鍵,同 maybeWarnQuotaThreshold 的 periodKey 規則；呼叫上限用 {@link aiCallCeilingNotifyKey} */
   periodKey: string
   /** 通知內容的用量描述(例「本期 AI 回覆則數 1000/1000」) */
   usageText: string
@@ -276,26 +300,30 @@ export async function maybeNotifyQuotaExhausted(params: {
   action: 'handoff' | 'downgrade'
   db: Firestore
 }): Promise<void> {
+  const cause = params.cause ?? 'replies'
+  const f = STOP_NOTICE_FIELDS[cause]
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
   if (!cfg?.enabled || !cfg.lineUserIds.length) return
 
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
-  const st = snap.data() as { exhaustedPeriodKey?: string, exhaustedAttemptKey?: string, exhaustedAttemptAtMs?: number } | undefined
-  if (st?.exhaustedPeriodKey === params.periodKey) return
+  const st = snap.data() as Record<string, unknown> | undefined
+  if (st?.[f.sent] === params.periodKey) return
   // 全滅退避與「送達才記帳」同 maybeWarnQuotaThreshold(C-89),理由見該處註解
-  if (st?.exhaustedAttemptKey === params.periodKey && Date.now() - (st.exhaustedAttemptAtMs ?? 0) < QUOTA_PUSH_RETRY_MS) return
-  await ref.set({ exhaustedAttemptKey: params.periodKey, exhaustedAttemptAtMs: Date.now() }, { merge: true })
+  if (st?.[f.attemptKey] === params.periodKey && Date.now() - Number(st?.[f.attemptAt] ?? 0) < QUOTA_PUSH_RETRY_MS) return
+  await ref.set({ [f.attemptKey]: params.periodKey, [f.attemptAt]: Date.now() }, { merge: true })
 
   const consequence = params.action === 'handoff'
     // ⛔ 不是「全部」:自動回應照常,只有需要 AI 回答的才轉(跟後台 AdminQuotaBanner 同一句)
     ? '從現在起,需要 AI 回答的客人訊息會轉給真人客服(自動回應照常),請盯緊後台「對話」頁。'
     : '已自動改用較精簡的模型繼續回覆,品質可能略降。'
-  const msg: messagingApi.TextMessage = {
-    type: 'text',
-    text: `🚫 AI 額度已用完\n${params.usageText}。\n${consequence}\n要恢復請至後台調整方案,或等下期額度重置。`,
-  }
+  // 呼叫上限：後果那句跟則數用完一字不差，原因（標題＋用量句）與怎麼辦（補知識）不同。
+  // 怎麼辦那句跟後台同一份，只把標點換成這則訊息其他幾行用的半形（同一則裡全形半形混著很刺眼）
+  const text = cause === 'calls'
+    ? `🚫 AI 先停下來了\n${params.usageText}。\n${consequence}\n${AI_CALL_CEILING_REMEDY.replace(/，/g, ',').replace(/；/g, ';')}`
+    : `🚫 AI 額度已用完\n${params.usageText}。\n${consequence}\n要恢復請至後台調整方案,或等下期額度重置。`
+  const msg: messagingApi.TextMessage = { type: 'text', text }
   const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
@@ -303,8 +331,18 @@ export async function maybeNotifyQuotaExhausted(params: {
     }
   })
   if (results.some(r => r.status === 'fulfilled')) {
-    await ref.set({ exhaustedPeriodKey: params.periodKey, exhaustedAt: FieldValue.serverTimestamp() }, { merge: true })
+    await ref.set({ [f.sent]: params.periodKey, [f.sentAt]: FieldValue.serverTimestamp() }, { merge: true })
   }
+}
+
+/**
+ * 這個月的「🚫 AI 先停下來了」（呼叫上限）是不是已經**送達**過了——異常彙總推播判斷要不要讓路
+ * （同 {@link wasQuotaExhaustedNotified} 的理由與規則：只認送達才蓋的章）。
+ */
+export async function wasAiCallCeilingNotified(workspaceId: string, db: Firestore): Promise<boolean> {
+  const snap = await db.collection('aiQuotaAlerts').doc(workspaceId).get()
+  const sentKey = (snap.data() as Record<string, unknown> | undefined)?.[STOP_NOTICE_FIELDS.calls.sent]
+  return sentKey === aiCallCeilingNotifyKey()
 }
 
 /**

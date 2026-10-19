@@ -39,7 +39,7 @@ const { getDb, convSet, deliverySet } = vi.hoisted(() => {
 })
 vi.mock('./firebase', () => ({ getDb }))
 
-import { notifyHandoffToStaff, notifyOverdueHandoffBatch, maybeNotifyQuotaExhausted, maybeWarnQuotaThreshold } from './ai-handoff-notify'
+import { aiCallCeilingNotifyKey, notifyHandoffToStaff, notifyOverdueHandoffBatch, maybeNotifyQuotaExhausted, maybeWarnQuotaThreshold, wasAiCallCeilingNotified } from './ai-handoff-notify'
 
 function settingsWith(mode: 'always' | 'missed_only') {
   return {
@@ -285,6 +285,76 @@ describe('maybeNotifyQuotaExhausted', () => {
     })
     expect(pushMessage).toHaveBeenCalledTimes(2)
     expect(stale.set.mock.calls[1]![0]).toHaveProperty('exhaustedPeriodKey', 'p_2026-08-01')
+  })
+})
+
+/**
+ * `C-8` 呼叫上限：客人那邊跟則數用完一模一樣，給店家的這一則要分得出原因、給得出能做的事。
+ */
+describe('maybeNotifyQuotaExhausted — AI 被叫太多次（`C-8`）', () => {
+  const callsParams = (db: any) => ({
+    workspaceId: 'WS', cause: 'calls' as const, periodKey: aiCallCeilingNotifyKey(),
+    usageText: '這個月 AI 被叫了 2345 次、大多答不出來(上限 2000 次)', action: 'handoff' as const, db,
+  })
+
+  it('🔴 講「先停下來了」與原因，後果那句跟則數用完一字不差，給得出能做的事（補知識）', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db } = makeAlertsDb(undefined)
+    await maybeNotifyQuotaExhausted(callsParams(db))
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('🚫 AI 先停下來了')
+    expect(text).toContain('這個月 AI 被叫了 2345 次、大多答不出來')
+    // C-341 對齊的那句（跟則數用完同一句）
+    expect(text).toContain('從現在起,需要 AI 回答的客人訊息會轉給真人客服(自動回應照常),請盯緊後台「對話」頁。')
+    expect(text).toContain('補進知識庫')
+    expect(text).toContain('下個月 1 號自動恢復')
+    // ⛔ 不是則數用完：不講「額度已用完」「等下期額度重置」
+    expect(text).not.toContain('額度已用完')
+    expect(text).not.toContain('下期額度重置')
+    // 同一則裡的標點一致（其他幾行是半形）
+    expect(text).not.toMatch(/[，；]/)
+  })
+
+  it('則數用完那則照舊講「額度已用完」（兩種說法分得出來）', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db } = makeAlertsDb(undefined)
+    await maybeNotifyQuotaExhausted({
+      workspaceId: 'WS', periodKey: 'p_2026-10-01', usageText: '本期 AI 回覆則數 200/200', action: 'handoff', db,
+    })
+    const text = (pushMessage.mock.calls[0]![1] as any)[0].text as string
+    expect(text).toContain('🚫 AI 額度已用完')
+    expect(text).not.toContain('被叫')
+  })
+
+  it('🔴 蓋自己的章（ceiling*），⛔ 不碰則數用完的章——共用的話一件事會把另一件的「已送達」洗掉', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const { db, set } = makeAlertsDb({ exhaustedPeriodKey: 'p_2026-10-01' })
+    await maybeNotifyQuotaExhausted(callsParams(db))
+    expect(set).toHaveBeenCalledTimes(2)
+    expect(set.mock.calls[0]![0]).toHaveProperty('ceilingAttemptKey', aiCallCeilingNotifyKey())
+    expect(set.mock.calls[1]![0]).toHaveProperty('ceilingPeriodKey', aiCallCeilingNotifyKey())
+    for (const [patch] of set.mock.calls) {
+      expect(patch).not.toHaveProperty('exhaustedPeriodKey')
+      expect(patch).not.toHaveProperty('exhaustedAttemptKey')
+    }
+  })
+
+  it('一個月一則：這個月已送達就不再推；則數用完已送達不影響這則', async () => {
+    getAiSettings.mockResolvedValue(settingsWith('always'))
+    const sent = makeAlertsDb({ ceilingPeriodKey: aiCallCeilingNotifyKey() })
+    await maybeNotifyQuotaExhausted(callsParams(sent.db))
+    expect(pushMessage).not.toHaveBeenCalled()
+
+    const otherSent = makeAlertsDb({ exhaustedPeriodKey: aiCallCeilingNotifyKey() })
+    await maybeNotifyQuotaExhausted(callsParams(otherSent.db))
+    expect(pushMessage).toHaveBeenCalled()
+  })
+
+  it('wasAiCallCeilingNotified：只認這個月送達的章', async () => {
+    expect(await wasAiCallCeilingNotified('WS', makeAlertsDb({ ceilingPeriodKey: aiCallCeilingNotifyKey() }).db)).toBe(true)
+    expect(await wasAiCallCeilingNotified('WS', makeAlertsDb({ ceilingPeriodKey: 'c_202609' }).db)).toBe(false)
+    expect(await wasAiCallCeilingNotified('WS', makeAlertsDb({ ceilingAttemptKey: aiCallCeilingNotifyKey() }).db)).toBe(false)
+    expect(await wasAiCallCeilingNotified('WS', makeAlertsDb(undefined).db)).toBe(false)
   })
 })
 

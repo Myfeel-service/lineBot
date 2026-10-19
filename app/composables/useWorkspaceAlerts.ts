@@ -12,6 +12,7 @@
 import type { Component } from 'vue'
 import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Odometer, Opportunity, Pointer, Promotion, Reading, Refresh, Service, Tickets, Tools } from '@element-plus/icons-vue'
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
+import { AI_CALL_CEILING_REMEDY } from '~~/shared/billing/call-ceiling'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AlertFixOpId } from '~~/shared/types/alert-fix'
 import type { Capability } from '~~/shared/permissions'
@@ -299,6 +300,20 @@ const ALERTS: AlertDefinition[] = [
     requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     anchor: { selector: '[data-tour="bill-quota"]', note: '這一區是本期用量；趁還沒停，按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+  },
+  {
+    // `C-8`：AI 被叫的次數到了則數額度的 10 倍。後果那句跟 quotaExceeded 一字不差（C-341 對齊的那句），
+    // 原因在標題（ALERT_LABELS），怎麼辦跟後台橫幅／LINE 同一份（AI_CALL_CEILING_REMEDY）
+    id: 'aiCallCeiling',
+    icon: Odometer,
+    impact: `AI 已經停止回覆，需要 AI 回答的客人訊息現在會轉給真人處理（自動回應照常）。${AI_CALL_CEILING_REMEDY}`,
+    cta: '看 AI 答不出來的問題',
+    // 後端探針在帳單組（跟則數那兩顆共用訂閱讀取，見 workspace-alerts.ts）＝管理員級；
+    // 講的是方案的用量上限（則數 × 10），跟方案資訊同一個門檻 `usage.read`。管理員也有補知識的權限
+    requires: 'usage.read',
+    // 不帶 ?reason=：AI 表現頁的清單預設就是「答不出來（可補知識）」
+    route: wid => `/admin/${wid}/ai-usage`,
+    anchor: { selector: '[data-tour="usg-cases"]', note: '這裡列著 AI 答不出來的問題，按「補知識」把答案補進去，AI 下次就答得出來。' },
   },
   {
     // `D-131`⑤：照抄上面兩顆則數的機制（同一頁、同一個圈法、同一把 80% 尺），只是後果比較輕——AI 照常回答

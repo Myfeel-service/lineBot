@@ -16,7 +16,8 @@ import { aiUsageOfError, type AiCallUsage } from './ai-usage-calls'
 import { getAiSettings } from './ai-settings'
 import { redactAiSettingsForRole } from './ai-settings-redact'
 // ⛔ 只取唯讀的三支（讀訂閱／組方案視圖／讀本期已用則數）——本檔的鐵律是不 import 會寫入的東西。
-import { getWorkspaceSubscription, buildPlanView } from './billing'
+import { getWorkspaceSubscription, buildPlanView, effectivePlanOf } from './billing'
+import { getAiCallCeilingStatus } from './reply-quota'
 import { getQuotaAnswered, getCurrentMonthUsageCounts, currentYyyyMm, monthlyBillable } from './ai-usage'
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { listSources } from './ai-knowledge-sources'
@@ -165,6 +166,7 @@ const NO_REPLY_CAUSES = new Set<string>([
   'lineWebhookBroken', // LINE 沒把訊息送進來:什麼都不會回
   'lineChannelConflict', // 訊息只進其中一邊
   'quotaExceeded', // AI 停了,要等真人
+  'aiCallCeiling', // AI 被叫太多次先停了(`C-8`),一樣要等真人
   'humanBacklog', // 轉真人後沒人接
   'firstReplyBacklog', // 一直沒人回
   'aiDraftsWaiting', // 草稿模式擬好沒人送出
@@ -336,6 +338,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + '⛔ 講已用則數時**一定要照抄 usedWindow 那句話**(例如「本期(8/13~9/12)」或「這個月」)——'
       + '有上限的方案按續約日一期、無上限的看日曆月,兩者不是同一個區間,少講窗口就會跟畫面上的數字對不起來。'
       + 'unlimited=true 代表不限則數:只講已用、⛔ 不要講剩餘、百分比或「會被停掉」。'
+      + 'aiPausedTooManyCalls=true 代表則數還沒用完、但這個月 AI 被叫太多次又大多答不出來,AI 已經先停了(需要 AI 回答的轉真人、自動回應照常;'
+      + '下個月 1 號自動恢復,補知識才會讓 AI 答得出來):⛔ 這時不可以說 AI 還在回或「還能用」。'
       + '⛔ 別拿 get_ai_usage 的月數字當「本期已用」,那是另一把尺。'
       // ⛔ 2026-09-18 壓測踩到:問「這個月 AI 花了我多少錢」,它回「已使用 110 則」就結束——
       //    一句「錢我看不到」都沒有,而問的人會把那個數字當成花費。
@@ -372,10 +376,16 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
 
       const used = sub?.currentPeriodStart ? await getQuotaAnswered(workspaceId, sub.currentPeriodStart, db) : 0
       const s = derivePlanState(plan, used)
+      // `C-8`：則數還沒用完、AI 卻因為這個月被叫太多次先停了——沒有這一格的話，它會照 quotaState=ok 說「還能用」。
+      // 跟護欄讀同一支；讀不到就不講（null），⛔ 不猜
+      const ceiling = sub
+        ? await getAiCallCeilingStatus(workspaceId, { quota: s.limit, internal: effectivePlanOf(sub).plan.internal === true }, db).catch(() => null)
+        : null
       return {
         planName: plan?.name ?? '(讀不到訂閱)',
         unlimited: false,
         used: s.used,
+        aiPausedTooManyCalls: ceiling ? ceiling.hit && s.state !== 'over' : null,
         usedWindow: plan?.currentPeriodStart && plan.currentPeriodEnd
           ? `本期(${plan.currentPeriodStart} ~ ${plan.currentPeriodEnd},按續約日算一期,不是日曆月)`
           : '本期',

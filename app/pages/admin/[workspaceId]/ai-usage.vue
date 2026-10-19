@@ -553,7 +553,9 @@ const reasonGroupOptions = [
   // 「自動回覆一直重複」拿掉了:自動回覆功能 2026-08-09 整個下架,server 端已經沒有任何
   // 地方會產生這個原因,只剩舊資料——舊的那幾筆用「全部原因」還是看得到,不是被藏起來。
   { label: 'AI 服務當下不通（你修不了）', value: 'llm_error' },
-  { label: '回覆則數用完（要你處理）', value: 'quota_exceeded' },
+  // `C-8` 之後這個原因有兩種：則數用完、或這個月 AI 被叫太多次先停了（客人那邊同一條路、同一個原因代碼），
+  // 所以不寫「則數」——跟轉真人原因的名字（HANDOFF_REASON_LABELS：「AI 額度已用完」）同一個說法
+  { label: 'AI 額度用完（要你處理）', value: 'quota_exceeded' },
   { label: '全部原因', value: '' },
 ]
 

@@ -7,6 +7,7 @@
  * 流程：
  *   1. 敏感詞掃描（命中 → handoff: sensitive_topic）
  *   2. quota 檢查：2a. 方案則數額度（已訂閱帳號超量 → handoff: quota_exceeded）；
+ *                  2a'. 呼叫上限（這個月 AI 被叫 ≥ 則數額度 × 10 → 一樣 handoff: quota_exceeded，`C-8`）；
  *                  2b. token 內部護欄（handoff_all → handoff；downgrade_model → 改 flash-lite 續答）
  *   3. embed query → 向量搜尋 top-K
  *   4. disambiguation 偵測（先於 grounding）：top-1 在擦邊區 + top-1 / top-2 差距小
@@ -28,10 +29,12 @@ import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeP
 import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText, type GeminiTextModel } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
-import { maybeWarnQuotaThreshold, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
-import { getCurrentMonthTokens, getQuotaAnswered, recordAiUsage, type UsageDelta } from './ai-usage'
+import { aiCallCeilingNotifyKey, maybeWarnQuotaThreshold, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
+import { recordAiUsage, type UsageDelta } from './ai-usage'
+import { readQuotaUsage } from './reply-quota'
+import { aiCallCeilingOf } from '~~/shared/billing/call-ceiling'
 import { mergeUsage, usageFromCalls, withAiCallMeter, type AiCallUsage } from './ai-usage-calls'
-import { resolveAnsweredQuota, resolveQuotaAction } from './billing'
+import { resolveAnsweredQuota, resolveQuotaDecision } from './billing'
 import { getDb } from './firebase'
 import {
   DEFAULT_TOP_K_CHUNKS,
@@ -1804,7 +1807,7 @@ async function answerWithAiMetered(input: AnswerInput, meter: AiCallUsage[]): Pr
   }
 
   // ── 2. quota 護欄 ────────────────────────────────────────
-  // 放在 router/embed 之前：超量時不要再花 LLM。處置由 resolveQuotaAction 決定：
+  // 放在 router/embed 之前：超量時不要再花 LLM。處置由 resolveQuotaDecision 決定：
   //   · 內部/測試方案 → 完全不擋（真無限）。
   //   · 有則數額度   → **只看本期則數**（則數即成本上限；不再疊 token 護欄，否則付費
   //                    方案會在遠低於所購則數處被固定的 token cap 提早切斷）。
@@ -1815,27 +1818,41 @@ async function answerWithAiMetered(input: AnswerInput, meter: AiCallUsage[]): Pr
   //
   // 注意：「先讀用量再答題、答完才記帳」並非嚴格原子——併發訊息可能讓本期用量略為
   // 超過額度（誤差約為同時在途的幾次呼叫）。屬軟性護欄，可接受此誤差。
+  //
+  // `C-8` 呼叫上限（2026-10-20）：有則數上限的帳號，這個月 AI 被叫的次數到了額度的 10 倍也停——
+  // 答不出來不扣則，所以答不出來的呼叫永遠燒不完額度，這是成本的天花板。客人那邊跟則數用完完全同一條路
+  // （quota_exceeded：真人客服那句、待真人、通知值班），只有給店家看的原因不同（見 shared/billing/call-ceiling.ts）。
+  // 用量一律經 readQuotaUsage 讀——客人傳照片那條（isReplyQuotaExhausted）也用它，兩條路同一把尺。
   let answerModel = settings.answerModel
   const billing = await resolveAnsweredQuota(workspaceId, db)
   const tokenCap = settings.quota.monthlyTokenCap
   // 測試呼叫不受額度阻擋（也不消耗額度，見 record 的 tokens-only）：管理員 playground 不該
   // 因真實客服用完額度而被切斷，測試更不該扣客戶買的則數。
   if (!billing.internal && !input.isTest) {
-    let usage: { answered: number; tokens: number } | null = null
-    if (billing.quota != null && billing.periodStart) {
-      usage = { answered: await getQuotaAnswered(workspaceId, billing.periodStart, db), tokens: 0 }
-    }
-    else if (tokenCap > 0) {
-      usage = { answered: 0, tokens: await getCurrentMonthTokens(workspaceId, db) }
-    }
+    const usage = await readQuotaUsage(workspaceId, billing, tokenCap, db)
 
-    const action = usage ? resolveQuotaAction(billing, usage, tokenCap, settings.quota.onExceed) : 'allow'
+    const { action, cause } = usage
+      ? resolveQuotaDecision(billing, usage, tokenCap, settings.quota.onExceed)
+      : { action: 'allow' as const, cause: null }
 
     // 80% 額度預警(fire-and-forget,不增加答題延遲;<80% 連標記文件都不讀)。
     // 額度用完是懸崖(瞬間全轉真人)——先給管理員反應時間。
     // 真的用完那一刻再推一則(每期一次):80% 是預告,100% 是事故現場,
     // 沒有這一則的話 AI 停答只有「下次有人打開後台」才會被發現。
-    if (usage) {
+    if (usage && cause === 'calls') {
+      // 撞到呼叫上限：一個月推一則，講的是「被叫太多次、大多答不出來」，不是則數用完。
+      // ⛔ 不接下面那段則數預警：AI 已經停了，再推「則數快用完」只會讓人以為還在答。
+      const limit = aiCallCeilingOf(billing) ?? 0
+      void maybeNotifyQuotaExhausted({
+        workspaceId,
+        cause: 'calls',
+        periodKey: aiCallCeilingNotifyKey(),
+        usageText: `這個月 AI 被叫了 ${usage.calls ?? 0} 次、大多答不出來(上限 ${limit} 次)`,
+        action: 'handoff',
+        db,
+      }).catch(e => console.error('[quota-exhausted] failed:', e))
+    }
+    else if (usage) {
       const hasCountQuota = billing.quota != null && billing.quota > 0 && !!billing.periodStart
       const ratio = hasCountQuota
         ? usage.answered / billing.quota!
@@ -1861,7 +1878,8 @@ async function answerWithAiMetered(input: AnswerInput, meter: AiCallUsage[]): Pr
     }
 
     if (action === 'handoff') {
-      await record({ invocations: 1, handoffs: 1 })
+      // quotaBlocked：AI 沒出手就被擋下（`C-8`）——呼叫上限要扣掉這幾次，否則則數用完那段期間會把次數灌過上限
+      await record({ invocations: 1, handoffs: 1, quotaBlocked: 1 })
       logHandoff('quota_exceeded')
       return handoff('quota_exceeded')
     }

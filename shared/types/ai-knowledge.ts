@@ -490,6 +490,8 @@ export interface AiUsageDoc {
    */
   /** handoffs 的子集：客人指名真人、AI 沒出手（見 ai-usage.ts UsageDelta 說明） */
   directHandoffs?: number
+  /** handoffs 的子集：額度用完／這個月 AI 被叫太多次，AI 沒出手就轉真人（`C-8`，2026-10-20 起才有） */
+  quotaBlocked?: number
   /** 反問澄清後成功答出的次數（followup 不記 answered，用這顆補能見度） */
   followupAnswered?: number
   testInputTokens?: number

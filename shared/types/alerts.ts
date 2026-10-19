@@ -56,6 +56,12 @@ export type WorkspaceAlertId =
   /** 本期則數快用完（達 80% 門檻、或照目前速度會在期末前用完）。AI 還在回，是提前量 */
   | 'quotaRunningOut'
   /**
+   * 這個月 AI 被叫的次數到了則數額度的 10 倍、大多答不出來，AI 先停下來了（`C-8`，2026-10-20）。
+   * 後果跟 quotaExceeded 一樣（需要 AI 回答的轉真人），原因不同、能做的事也不同（補知識；下個月 1 號自動恢復）。
+   * 則數也用完的時候只亮 quotaExceeded（兩顆同時亮講的是同一個「停了」）。
+   */
+  | 'aiCallCeiling'
+  /**
    * AI 知識量（方案的知識條數上限）滿了：新的知識加不進去（匯入、手寫、採用建議、試算表新列都會被擋），
    * AI 照常用已有的回答（`D-131`⑤，2026-10-19）。以前要按下去才收到「滿了」。
    */
@@ -160,6 +166,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   llmError: 'AI 服務近 24 小時失敗過',
   quotaExceeded: '本期回覆則數用完了',
   quotaRunningOut: '回覆則數快用完了',
+  aiCallCeiling: 'AI 被叫太多次、大多答不出來，先停下來了',
   // `D-131`：名字跟官網、條款、方案頁同一個（AI 知識量）
   knowledgeQuotaFull: 'AI 知識量滿了',
   knowledgeQuotaRunningOut: 'AI 知識量快滿了',
@@ -232,6 +239,7 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   handoffSuggested: 'suggestion',
   quotaExceeded: 'critical',
   quotaRunningOut: 'warning',
+  aiCallCeiling: 'critical',
   // ⛔ 滿了也只是 warning：客人問問題照樣有人答（AI 用已有的知識），受影響的是「加新的」——不進紅點、不推 LINE
   knowledgeQuotaFull: 'warning',
   knowledgeQuotaRunningOut: 'warning',

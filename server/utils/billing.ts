@@ -26,6 +26,7 @@ import { newSubscription, rollSubscriptionToCurrentPeriod } from '~~/shared/bill
 import { resolveRecurringCharge } from '~~/shared/billing/recurring'
 import type { PlanView } from '~~/shared/billing/plan-state'
 import type { QuotaExceedStrategy } from '~~/shared/types/ai-knowledge'
+import { aiCallCeilingOf, isAiCallCeilingHit } from '~~/shared/billing/call-ceiling'
 import { taipeiDate } from '~~/shared/time'
 
 const TTL_MS = 60 * 1000
@@ -202,28 +203,67 @@ export async function resolveAnsweredQuota(
 export type QuotaAction = 'allow' | 'handoff' | 'downgrade'
 
 /**
- * 決定本次呼叫的 quota 處置（純函式，便於測試）。
+ * 為什麼停（給店家看的說法要分得出來，客人那邊一律同一條路）：
+ *   · `replies`：本期則數用完。
+ *   · `calls`：這個月 AI 被叫的次數到了則數額度的 10 倍、大多答不出來（`C-8`，見 shared/billing/call-ceiling.ts）。
+ *   · `tokens`：沒有則數上限的帳號撞到 AI 設定裡的每月用量上限。
+ */
+export type QuotaStopCause = 'replies' | 'calls' | 'tokens'
+
+/** 護欄要看的用量。`calls` 只有「有則數上限」的帳號才讀（沒帶＝0）。 */
+export interface QuotaUsage {
+  /** 本期計費則數（額度桶，按訂閱週期） */
+  answered: number
+  /** 本月 token（只有沒則數上限時才讀） */
+  tokens: number
+  /** 這個月（台北日曆月）AI 真的被叫的次數（`aiCallsTowardCeiling`） */
+  calls?: number
+}
+
+export interface QuotaDecision {
+  action: QuotaAction
+  /** 放行時為 null */
+  cause: QuotaStopCause | null
+}
+
+/**
+ * 決定本次呼叫的 quota 處置與原因（純函式，便於測試）。
  *
  * - **內部 / 測試方案**：完全不擋（真無限）。
- * - **有則數額度**：只看則數。則數本身即封住成本（最高階方案的則數 × 每則 token 就是天花板）,
+ * - **有則數額度**：先看則數；則數沒用完再看**呼叫上限**（`C-8`：這個月 AI 被叫的次數 ≥ 額度 × 10 就停）。
+ *   兩個都到的時候講「則數用完」——那是他買的單位，升級就恢復，比「被叫太多次」好懂。
  *   不再疊 token 護欄——否則付費帳號會在遠低於所購則數處被固定的 token cap 提早切斷
  *   （1M token 約當幾百則,那是照舊免費層校準的機制）。
- * - **無則數上限**（enterprise 客製未設額度 / 訂閱讀取失敗）：token 護欄是唯一煞車。
+ * - **無則數上限**（enterprise 客製未設額度 / 訂閱讀取失敗）：token 護欄是唯一煞車，呼叫上限不套
+ *   （沒有則數可以乘；token 本身就是成本）。
  */
-export function resolveQuotaAction(
+export function resolveQuotaDecision(
   billing: AnsweredQuotaResolution,
-  usage: { answered: number; tokens: number },
+  usage: QuotaUsage,
   tokenCap: number,
   onExceed: QuotaExceedStrategy,
-): QuotaAction {
-  if (billing.internal) return 'allow'
+): QuotaDecision {
+  if (billing.internal) return { action: 'allow', cause: null }
 
   if (billing.quota != null) {
-    return usage.answered >= billing.quota ? 'handoff' : 'allow'
+    if (usage.answered >= billing.quota) return { action: 'handoff', cause: 'replies' }
+    // 呼叫上限跟則數用完走同一條路（轉真人），只是原因不同；⛔ 沒有降級選項——降級還是在花錢叫 AI
+    if (isAiCallCeilingHit(usage.calls ?? 0, aiCallCeilingOf(billing))) return { action: 'handoff', cause: 'calls' }
+    return { action: 'allow', cause: null }
   }
 
   if (tokenCap > 0 && usage.tokens >= tokenCap) {
-    return onExceed === 'handoff_all' ? 'handoff' : 'downgrade'
+    return { action: onExceed === 'handoff_all' ? 'handoff' : 'downgrade', cause: 'tokens' }
   }
-  return 'allow'
+  return { action: 'allow', cause: null }
+}
+
+/** 只要處置、不要原因的呼叫端用這支（跟 {@link resolveQuotaDecision} 同一把尺）。 */
+export function resolveQuotaAction(
+  billing: AnsweredQuotaResolution,
+  usage: QuotaUsage,
+  tokenCap: number,
+  onExceed: QuotaExceedStrategy,
+): QuotaAction {
+  return resolveQuotaDecision(billing, usage, tokenCap, onExceed).action
 }

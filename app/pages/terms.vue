@@ -58,6 +58,9 @@
              POLICY_VERSION 同一天已為 `D-131` 升到 2026-10-19、當時還沒上線，所以併在同一版。 -->
         <li><b>什麼算一則</b>：AI 每出手回答一次算一則，包含為了問清楚需求而反問的那一句；<b>草稿模式下 AI 擬好回覆給客服參考，也算一則</b>；<b>AI 表示無法回答並轉由真人接手、或表示問題與本店無關而婉拒的訊息，不計入額度</b>。同一次回答即使拆成多則訊息送出，仍只計一則。此處的「則」與 LINE 官方帳號本身的訊息額度無關。</li>
         <li><b>其他用量上限</b>：各方案另有團隊成員人數與 AI 知識量（知識卡條數）上限，以本網站定價區與後台顯示為準；達到上限時可刪除既有內容或升級方案。</li>
+        <!-- `C-8`（2026-10-20 老闆照建議）：答不出來不扣則，所以要有呼叫次數的天花板，不然成本沒有上限。
+             倍數直接引用 AI_CALL_CEILING_MULTIPLIER（shared/billing/call-ceiling.ts），改了那個數字這句跟著變、POLICY_VERSION 要一起升。 -->
+        <li><b>AI 呼叫上限</b>：AI 答不出來的訊息不計入額度，但同一個月內 AI 處理的訊息次數達到該方案每期 AI 回覆額度的 {{ AI_CALL_CEILING_MULTIPLIER }} 倍時，AI 會暫停自動回覆，需要 AI 回答的訊息改由真人接手（自動回應照常），於次月 1 日恢復；升級方案會一併提高此上限。不限則數的客製方案不適用本條。</li>
         <!-- `D-131`①：推播各方案不同（後端真的擋），以前條款沒寫。句子照方案表導出來（broadcastTierSummary），
              跟 /product-info 同一句；後半句講方案中途變更時已排好的推播會怎樣（送出端到了時間照樣擋）。 -->
         <li><b>推播</b>：{{ broadcastSummary }}方案中途變更時，新方案不含的推播（含已排好的排程推播）不會送出。</li>
@@ -195,6 +198,7 @@
 
 <script setup lang="ts">
 import { OVERAGE_PER_REPLY_TWD, broadcastTierSummary } from '~~/shared/billing/plans'
+import { AI_CALL_CEILING_MULTIPLIER } from '~~/shared/billing/call-ceiling'
 
 /**
  * 「推播」那一條照方案表導出來（`D-131`）。⚠️ 跟加購單價一樣是條款內容：方案的推播分級一改，

@@ -17,6 +17,7 @@ import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 import { CLAIM_PUSH_MARK_ALERT_WINDOW_MS, readClaimPushMarkFailure } from './claim-push-health'
 import { countOpenQueueSessions, isOpenQueueSession } from './conversation-queue'
 import { buildPlanView, effectivePlanOf, getWorkspaceSubscription } from './billing'
+import { getAiCallCeilingStatus } from './reply-quota'
 import { countWorkspaceChunks } from './ai-knowledge-quota'
 import { capMapSize } from './bounded-cache'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
@@ -1056,6 +1057,23 @@ export async function collectWorkspaceAlerts(
             active: true,
             count: usage.used,
             detail: usage.limit ? `本期已用 ${usage.used} / ${usage.limit} 則` : undefined,
+          }
+        }),
+        probe('aiCallCeiling', async () => {
+          // `C-8`：這個月 AI 被叫的次數到了則數額度的 10 倍＝AI 先停了。跟護欄讀同一支（同一份 60 秒快取），
+          // 畫面說停了就是真的停了。放帳單組：訂閱與本期則數跟上面兩顆共用同一次讀取，不多花；
+          // ⛔ 別搬去營運組——每日摘要每天對每個帳號跑營運組，搬過去就是每個帳號每天多讀一次訂閱。
+          const [sub, answered] = await Promise.all([subPromise!, answeredPromise!])
+          if (!sub) throw new Error('subscription unavailable') // 讀不到 ≠ 沒停：誠實回 unknown
+          const { plan, quota } = effectivePlanOf(sub)
+          const status = await getAiCallCeilingStatus(wid, { quota, internal: plan.internal === true }, db)
+          if (!status?.hit) return { active: false }
+          // 則數也用完了：只亮 quotaExceeded（同一個「停了」，兩顆一起亮只會互相稀釋；則數用完升級就恢復，比較好懂）
+          if (quota != null && answered >= quota) return { active: false }
+          // ⛔ 不帶 count：提醒帶會把它接在標題後面變成「…先停下來了（2345）」，跟 detail 的次數重複講一次
+          return {
+            active: true,
+            detail: `這個月 AI 被叫了 ${status.calls.toLocaleString('en-US')} 次（上限 ${status.limit.toLocaleString('en-US')} 次）`,
           }
         }),
         probe('quotaRunningOut', async () => {

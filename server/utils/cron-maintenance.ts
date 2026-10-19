@@ -28,7 +28,7 @@ import { writeAuditLog } from './audit-log'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
 import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
-import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasQuotaExhaustedNotified } from './ai-handoff-notify'
+import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasAiCallCeilingNotified, wasQuotaExhaustedNotified } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushToNotifyList } from './line-notify-delivery'
 import { adminHomePath, createNotifyLink } from './notify-links'
@@ -1615,6 +1615,11 @@ export async function pushCriticalAlerts(db: Firestore) {
       const already = await wasQuotaExhaustedNotified(wid, settings.quota?.monthlyTokenCap ?? 0, db)
         .catch(() => false) // 查不到就當沒發過 → 照講（漏報比重複糟）
       if (already) criticals = criticals.filter(i => i.id !== 'quotaExceeded')
+    }
+    // 呼叫上限（`C-8`）同一個道理：撞到的當下就有專屬那則（🚫 AI 先停下來了，一個月一次）
+    if (criticals.some(i => i.id === 'aiCallCeiling')) {
+      const already = await wasAiCallCeilingNotified(wid, db).catch(() => false)
+      if (already) criticals = criticals.filter(i => i.id !== 'aiCallCeiling')
     }
     const sent = prev.sent ?? {}
     const fresh = criticals.filter(i => now - (sent[i.id] ?? 0) >= CRITICAL_PUSH_REPEAT_MS)

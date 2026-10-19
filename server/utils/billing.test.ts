@@ -7,7 +7,7 @@ import { BILLING_PLANS } from '~~/shared/billing/plans'
 //    但沒有一條是真的壞掉——那種紅燈只會訓練人忽略紅燈。
 const FREE_QUOTA = BILLING_PLANS.free.answeredQuota
 import type { AnsweredQuotaResolution } from './billing'
-import { buildPlanView, defaultFreeSubscription, getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache, resolveAnsweredQuota, resolveQuotaAction } from './billing'
+import { buildPlanView, defaultFreeSubscription, getWorkspaceSubscription, invalidateWorkspaceSubscriptionCache, resolveAnsweredQuota, resolveQuotaAction, resolveQuotaDecision } from './billing'
 
 const TODAY = '2026-07-28'
 
@@ -220,5 +220,56 @@ describe('resolveQuotaAction — 護欄處置', () => {
     const nolimit = res({ quota: null, planId: null, periodStart: null })
     expect(resolveQuotaAction(nolimit, { answered: 0, tokens: 999 }, 1_000_000, 'handoff_all')).toBe('allow')
     expect(resolveQuotaAction(nolimit, { answered: 0, tokens: 99_999_999 }, 0, 'handoff_all')).toBe('allow')
+  })
+})
+
+/**
+ * `C-8` 呼叫上限（2026-10-20 老闆照建議）：答不出來不扣則＝答不出來的呼叫永遠燒不完額度、成本沒有上限。
+ * 這個月 AI 被叫的次數到了則數額度的 10 倍，就跟則數用完走同一條路（轉真人），原因分得出來。
+ */
+describe('resolveQuotaDecision — 呼叫上限（`C-8`）', () => {
+  const res = (over: Partial<AnsweredQuotaResolution> = {}): AnsweredQuotaResolution => ({
+    quota: 200, planId: 'lite', internal: false, periodStart: '2026-10-01', ...over,
+  })
+
+  it('則數沒用完、被叫 9 倍 → 照常答', () => {
+    expect(resolveQuotaDecision(res(), { answered: 12, tokens: 0, calls: 1_800 }, 0, 'handoff_all'))
+      .toEqual({ action: 'allow', cause: null })
+    // 差一次也還在答（到上限那一次才停）
+    expect(resolveQuotaDecision(res(), { answered: 12, tokens: 0, calls: 1_999 }, 0, 'handoff_all').action).toBe('allow')
+  })
+
+  it('🔴 被叫到 10 倍 → 轉真人，原因是「呼叫太多」不是則數用完', () => {
+    expect(resolveQuotaDecision(res(), { answered: 12, tokens: 0, calls: 2_000 }, 0, 'handoff_all'))
+      .toEqual({ action: 'handoff', cause: 'calls' })
+    expect(resolveQuotaAction(res(), { answered: 12, tokens: 0, calls: 2_000 }, 0, 'handoff_all')).toBe('handoff')
+  })
+
+  it('撞到上限一律轉真人，⛔ 不吃「降級模型繼續答」的設定（降級還是在花錢叫 AI）', () => {
+    expect(resolveQuotaDecision(res(), { answered: 12, tokens: 0, calls: 5_000 }, 1_000_000, 'downgrade_model'))
+      .toEqual({ action: 'handoff', cause: 'calls' })
+  })
+
+  it('則數也用完 → 講「則數用完」（他買的單位、升級就恢復，比較好懂）', () => {
+    expect(resolveQuotaDecision(res(), { answered: 200, tokens: 0, calls: 9_999 }, 0, 'handoff_all'))
+      .toEqual({ action: 'handoff', cause: 'replies' })
+  })
+
+  it('內部／測試方案：被叫再多都不停', () => {
+    const r = res({ internal: true, quota: null, planId: 'internal', periodStart: null })
+    expect(resolveQuotaDecision(r, { answered: 0, tokens: 0, calls: 10_000_000 }, 0, 'handoff_all').action).toBe('allow')
+    // 內部方案就算被設了額度（quotaOverride）也不套
+    expect(resolveQuotaDecision(res({ internal: true }), { answered: 0, tokens: 0, calls: 10_000_000 }, 0, 'handoff_all').action).toBe('allow')
+  })
+
+  it('不限則數（企業沒設額度）：沒有則數可以乘、這條不套，只剩 token 護欄', () => {
+    const nolimit = res({ quota: null, planId: 'enterprise', periodStart: null })
+    expect(resolveQuotaDecision(nolimit, { answered: 0, tokens: 0, calls: 10_000_000 }, 0, 'handoff_all').action).toBe('allow')
+    expect(resolveQuotaDecision(nolimit, { answered: 0, tokens: 2_000_000, calls: 10_000_000 }, 1_000_000, 'handoff_all'))
+      .toEqual({ action: 'handoff', cause: 'tokens' })
+  })
+
+  it('沒帶次數（舊呼叫端）＝0 次，不會誤停', () => {
+    expect(resolveQuotaDecision(res(), { answered: 12, tokens: 0 }, 0, 'handoff_all').action).toBe('allow')
   })
 })
