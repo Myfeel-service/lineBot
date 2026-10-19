@@ -112,6 +112,19 @@ describe('buildLineNotifyPageData', () => {
     const d = await buildLineNotifyPageData({ workspaceId: 'W', uid: 'org-admin', canManage: true })
     expect(d.selfIsMember).toBe(false)
   })
+
+  it('🔴 沒設 NOTIFY_LINKS_ENABLED＝手機預覽畫出「打開這段對話」的連結（`D-105` 預設開）；明講 false 才不畫', async () => {
+    setup()
+    try {
+      vi.stubGlobal('useRuntimeConfig', () => ({ appBaseUrl: 'https://x.test', notifyLinksEnabled: '' }))
+      expect((await buildLineNotifyPageData({ workspaceId: 'W', uid: 'owner1', canManage: true })).linksEnabled).toBe(true)
+      vi.stubGlobal('useRuntimeConfig', () => ({ appBaseUrl: 'https://x.test', notifyLinksEnabled: 'false' }))
+      expect((await buildLineNotifyPageData({ workspaceId: 'W', uid: 'owner1', canManage: true })).linksEnabled).toBe(false)
+    }
+    finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
 
 describe('buildLineNotifySelfStatus', () => {

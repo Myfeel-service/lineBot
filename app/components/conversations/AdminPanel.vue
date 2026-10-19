@@ -4569,7 +4569,7 @@ function openCustomerPanel() {
 }
 
 /** 抽屜裡「AI 建議 → 看這段對話」：先收抽屜，不然切過去的那一場被它蓋著 */
-function openSessionFromPhoneCustomer(sessionId: string) {
+function openSessionFromPhoneCustomer(sessionId?: string) {
   phoneCustomerOpen.value = false
   if (sessionId) void openSessionById(sessionId)
 }
