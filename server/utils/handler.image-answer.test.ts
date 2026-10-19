@@ -665,3 +665,41 @@ describe('客人打字時，AI 看得到他剛傳的照片', () => {
     expect(historyTexts().join()).not.toContain('description')
   })
 })
+
+/**
+ * 讀圖結果記在訊息上（`mediaReadState`）——超管「全站異常總覽」的「客人傳的圖讀不出來」只靠它（`C-164`）。
+ * 以前沒有任何測試鎖這個欄位：它沒寫進去，總覽就永遠是 0 張、看起來一切正常。
+ */
+describe('讀圖結果記在訊息上（超管總覽靠它）', () => {
+  beforeEach(() => setSettings(true))
+
+  function imageMessage(): Record<string, any> | undefined {
+    return [...ctx.messages.values()].find(m => m.messageType === 'image')
+  }
+
+  it('格式壞掉 → 訊息上記 malformed，說明照存（客服至少看得到原文）', async () => {
+    readsAs('{"description":"訂單明細', [], 'malformed')
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(imageMessage()).toMatchObject({ mediaReadState: 'malformed', mediaDescription: '{"description":"訂單明細' })
+  })
+
+  it('🔴 AI 交回空白（也算格式壞掉）→ 一樣記 malformed；沒有說明可寫就不寫空的說明', async () => {
+    readsAs('', [], 'malformed')
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    const msg = imageMessage()
+    expect(msg?.mediaReadState).toBe('malformed')
+    expect(msg).not.toHaveProperty('mediaDescription')
+  })
+
+  it('根本沒讀（AI 沒開／下載失敗）→ 什麼都不記：那不是「壞掉」', async () => {
+    readsAs('', [], 'unavailable')
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(imageMessage()).not.toHaveProperty('mediaReadState')
+  })
+})

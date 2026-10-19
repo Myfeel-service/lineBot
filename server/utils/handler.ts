@@ -2391,7 +2391,8 @@ async function describeAndAttachImage(params: {
 }): Promise<string[]> {
   const { workspaceId, userIdOrDocId, storagePath, contentType } = params
   const { description, questions, state } = await readInboundImage({ workspaceId, storagePath, contentType })
-  if (!description) return questions
+  // AI 交回空白也歸「格式壞掉」：沒有說明可寫，但壞掉這件事照樣要記在訊息上（超管總覽靠它，`C-164`）
+  if (!description && state !== 'malformed') return questions
 
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userIdOrDocId, workspaceId)
@@ -2404,7 +2405,7 @@ async function describeAndAttachImage(params: {
   // 為什麼要存成資料而不是只寫 console：`malformed`＝AI 其實讀懂了、只是交回來的格式壞掉，
   // 客人的問句會少了猜的按鈕。這種失敗在 2026-09-10 之前只進主機日誌（我們沒在看），
   // 正式站上連壞三週沒人知道，最後是靠對話裡漏出來的原文才被發現。
-  const messagePatch: Record<string, unknown> = { mediaDescription: description }
+  const messagePatch: Record<string, unknown> = description ? { mediaDescription: description } : {}
   if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed') {
     messagePatch.mediaReadState = state
   }
@@ -2427,8 +2428,10 @@ async function describeAndAttachImage(params: {
       ? db.collection('conversations').doc(convDocId).collection('messages').doc(messageId)
           .set(messagePatch, { merge: true })
       : Promise.resolve(),
-    db.collection('conversations').doc(convDocId)
-      .set({ lastNonTextInboundSummary: description }, { merge: true }),
+    description
+      ? db.collection('conversations').doc(convDocId)
+          .set({ lastNonTextInboundSummary: description }, { merge: true })
+      : Promise.resolve(),
   ])
   return questions
 }

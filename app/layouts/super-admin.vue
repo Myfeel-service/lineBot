@@ -36,7 +36,7 @@
         <NuxtLink to="/admin/super/alerts" class="nav-item" :class="{ active: route.path.startsWith('/admin/super/alerts') }">
           <el-icon class="nav-icon"><Warning /></el-icon>
           <span>異常總覽</span>
-          <!-- 紅＝排程停擺或有租戶紅色異常;琥珀＝黃級/高成本;沒事不畫（同工作區側欄點的三規則） -->
+          <!-- 紅＝排程停擺、有租戶紅色異常、客人傳的圖連著讀不出來;琥珀＝黃級/高成本;沒事不畫（同工作區側欄點的三規則） -->
           <el-tooltip v-if="alertsDotSeverity" :content="alertsDotTip" placement="right" :show-after="120">
             <span class="nav-alert-dot" :class="`is-${alertsDotSeverity}`" role="img" :aria-label="alertsDotTip" />
           </el-tooltip>
@@ -99,8 +99,6 @@ const { user, logout } = useAuth()
 
 // 全站異常的側欄點（C-91）:layout 掛載抓一次,之後靠 composable 的 TTL＋端點 5 分鐘快取,
 // 換頁不會重掃全租戶
-const { navSeverity: alertsDotSeverity, leadsDotCount, refresh: refreshSuperAlerts } = useSuperAlerts()
-const alertsDotTip = computed(() =>
-  alertsDotSeverity.value === 'critical' ? '有帳號的客人正在受影響，或背景排程停擺' : '有事情建議處理')
+const { navSeverity: alertsDotSeverity, navTip: alertsDotTip, leadsDotCount, refresh: refreshSuperAlerts } = useSuperAlerts()
 onMounted(() => { refreshSuperAlerts() })
 </script>

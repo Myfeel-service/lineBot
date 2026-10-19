@@ -6,6 +6,7 @@ import { getCurrentMonthUsageCounts } from '~~/server/utils/ai-usage'
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { pendingMarks, readMarkDocsByReason, toPendingMarkEvent } from '~~/server/utils/ai-feedback-events'
 import { readSuperAlertsCache, writeSuperAlertsCache } from '~~/server/utils/super-alerts-cache'
+import { readImageReadFailureEvents, summarizeImageReadFailures } from '~~/server/utils/image-read-failures'
 
 /**
  * GET /api/admin/super/alerts-overview — 全站異常總覽（C-91，2026-08-27 拍板執行）。
@@ -102,7 +103,18 @@ export default defineEventHandler(async (event): Promise<SuperAlertsOverviewPayl
       return null
     })
 
-  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads, aiMistakes }
+  // 客人傳的圖讀不出來（`C-164`）：我們系統壞掉、店家修不了，所以只在這裡。
+  // ⛔ 查失敗回 null 不回空：多半是 messages 的 collection-group 索引還沒部署到這個專案，
+  // 回空清單就會變成「近 7 天都沒壞」——`C-163` 那種三週沒人知道的事會再來一次
+  const nowMs = Date.now()
+  const imageReadFailures = await readImageReadFailureEvents(db, nowMs)
+    .then(({ events, truncated: cut }) => summarizeImageReadFailures(events, { nowMs, workspaceNames: wsNames, truncated: cut }))
+    .catch((e) => {
+      console.error('[super-alerts] 「客人傳的圖讀不出來」查不了，總覽那一區看不到（多半是 messages 的 collection-group 索引未部署）：', String((e as Error)?.message ?? e).slice(0, 300))
+      return null
+    })
+
+  const payload: SuperAlertsOverviewPayload = { checkedAt: Date.now(), heartbeat, workspaces, truncated, newLeads, aiMistakes, imageReadFailures }
   writeSuperAlertsCache(payload)
   return payload
 })

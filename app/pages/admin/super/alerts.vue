@@ -38,6 +38,11 @@
               <div class="sa-pay-stat__value">{{ flaggedWsCount }} 個</div>
               <div class="sa-pay-stat__hint">呼叫超過計費則數 {{ USAGE_RATIO_FLAG_THRESHOLD }} 倍才算</div>
             </div>
+            <div class="sa-pay-stat" :class="{ 'sa-pay-stat--danger': imgBurst }">
+              <div class="sa-pay-stat__label">客人傳的圖讀不出來</div>
+              <div class="sa-pay-stat__value">{{ imgValue }}</div>
+              <div class="sa-pay-stat__hint">{{ imgHint }}</div>
+            </div>
           </div>
           <p v-if="data?.truncated" class="sa-alerts-foot sa-alerts-foot--pad sa-alerts-foot--warn">
             ⚠️ 帳號數已達單次掃描上限，下表沒有涵蓋全部帳號。
@@ -153,6 +158,47 @@
             </el-table>
           </div>
         </div>
+
+        <!-- `C-164`：客人傳的圖讀不出來＝我們系統壞掉、店家修不了，只列在這裡 -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">客人傳的圖讀不出來（近 {{ imgWindowDays }} 天）</span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="sa-alerts-foot">AI 讀圖交回來的格式壞掉：客人少了猜的選項，對話裡的圖片說明會是亂碼。店家修不了，要我們修。</p>
+            <el-alert v-if="data && data.imageReadFailures === null" type="warning" title="這次查不到這份清單（不等於沒有）——多半是資料庫索引還沒建好，按「重新檢查」再試一次" :closable="false" show-icon />
+            <template v-else>
+              <el-table
+                v-loading="loading"
+                :data="imgRows"
+                size="small"
+                empty-text="沒有讀不出來的圖。"
+              >
+                <el-table-column label="帳號" prop="workspaceName" min-width="160" />
+                <el-table-column label="張數" width="90" align="right">
+                  <template #default="{ row }">
+                    <span class="sa-alerts-usage">{{ row.count }} 張</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="最近一張" width="130">
+                  <template #default="{ row }">
+                    <span class="sa-alerts-usage">{{ mdhmText(row.lastAtMs) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="" width="100" align="right">
+                  <template #default="{ row }">
+                    <el-button v-if="row.workspaceId" size="small" plain @click="openImageConversation(row)">看對話</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <p v-if="data?.imageReadFailures?.truncated" class="sa-alerts-foot sa-alerts-foot--warn">
+                ⚠️ 太多了，只算了最新的 {{ data.imageReadFailures.total }} 張，更早的沒算進來。
+              </p>
+            </template>
+          </div>
+        </div>
       </div>
     </template>
   </AdminSplitLayout>
@@ -162,7 +208,7 @@
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { USAGE_RATIO_FLAG_THRESHOLD, USAGE_RATIO_MIN_INVOCATIONS } from '~~/shared/billing/usage-ratio'
 import type { UsageRatioVerdict } from '~~/shared/billing/usage-ratio'
-import type { SuperAiMistake, SuperAlertsWorkspace } from '~~/shared/types/super-alerts'
+import type { SuperAiMistake, SuperAlertsWorkspace, SuperImageReadFailureRow } from '~~/shared/types/super-alerts'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '全站異常總覽' })
@@ -205,6 +251,40 @@ async function markMistakeHandled(row: SuperAiMistake) {
   finally {
     handlingMistakeId.value = ''
   }
+}
+
+// ── 客人傳的圖讀不出來（`C-164`）──
+const imgRows = computed<SuperImageReadFailureRow[]>(() => data.value?.imageReadFailures?.workspaces ?? [])
+const imgWindowDays = computed(() => data.value?.imageReadFailures?.windowDays ?? 7)
+const imgBurst = computed(() => data.value?.imageReadFailures?.burst ?? null)
+
+function hmText(ms: number): string {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function mdhmText(ms: number): string {
+  return ms ? `${mdText(ms)} ${hmText(ms)}` : '—'
+}
+
+const imgValue = computed(() => {
+  if (!data.value) return '—'
+  const f = data.value.imageReadFailures
+  return f ? `${f.total} 張` : '查不到'
+})
+
+/** 結論先行：連著壞了就講是哪一段時間（側欄點紅的原因要在這頁第一眼看得到） */
+const imgHint = computed(() => {
+  if (!data.value) return '檢查中…'
+  const f = data.value.imageReadFailures
+  if (!f) return '不等於沒有，明細在最下面'
+  if (f.burst)
+    return `${mdText(f.burst.startMs)} ${hmText(f.burst.startMs)}–${hmText(f.burst.endMs)} 就有 ${f.burst.count} 張，不像偶發`
+  return `近 ${f.windowDays} 天；一小時內 3 張以上才變紅`
+})
+
+function openImageConversation(row: SuperImageReadFailureRow) {
+  navigateTo(`/admin/${row.workspaceId}/conversations?userId=${encodeURIComponent(row.lastConversationId)}`)
 }
 
 onMounted(() => { refresh() })

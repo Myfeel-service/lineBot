@@ -7,7 +7,7 @@
  *
  * 端點本身有 5 分鐘整包快取，這裡的 60 秒 TTL 只是省 HTTP 往返。
  */
-import { severityOf } from '~~/shared/types/alerts'
+import { superAlertsNav } from '~~/shared/super-alerts-nav'
 import type { SuperAlertsOverviewPayload } from '~~/shared/types/super-alerts'
 
 const REFRESH_TTL_MS = 60_000
@@ -45,22 +45,10 @@ export function useSuperAlerts() {
     return task
   }
 
-  /**
-   * 側欄紅點的等級：紅＝排程停擺或有租戶掛紅色異常（客人正在受影響）；
-   * 琥珀＝有黃級異常或高成本帳號；null＝沒事不畫（⛔不畫綠燈——同側欄點三規則）。
-   * 心跳 unknown 刻意不亮點：本機／未部署常態如此，亮了等於永遠亮。
-   */
-  const navSeverity = computed<'critical' | 'warning' | null>(() => {
-    const d = data.value
-    if (!d) return null
-    if (d.heartbeat.state === 'stalled') return 'critical'
-    const anyCritical = d.workspaces.some(w =>
-      w.items.some(i => i.state === 'active' && severityOf(i) === 'critical'))
-    if (anyCritical) return 'critical'
-    const anyWarning = d.workspaces.some(w =>
-      w.usage.flagged || w.items.some(i => i.state === 'active' && severityOf(i) === 'warning'))
-    return anyWarning ? 'warning' : null
-  })
+  /** 側欄點的等級與滑上去那句（判定在 shared/super-alerts-nav.ts，有單元測試） */
+  const nav = computed(() => superAlertsNav(data.value))
+  const navSeverity = computed(() => nav.value.severity)
+  const navTip = computed(() => nav.value.tip)
 
   /**
    * 側欄「潛在客戶名單」的琥珀點（D-43②）：有還沒回覆的新名單就亮。
@@ -72,5 +60,5 @@ export function useSuperAlerts() {
     return typeof n === 'number' && n > 0 ? n : 0
   })
 
-  return { data, loading, error, checkedAt, refresh, navSeverity, leadsDotCount }
+  return { data, loading, error, checkedAt, refresh, navSeverity, navTip, leadsDotCount }
 }
