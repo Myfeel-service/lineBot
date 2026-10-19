@@ -3,50 +3,74 @@
  *
  *   npm run dev -- --port 3318
  *   CHECK_BASE_URL=http://localhost:3318 node --env-file=.env_myfeel scripts/marketing-calendar-check.mjs
+ *   # 不碰正式庫（2026-10-19 `D-122` 加）：假登入＋全部 /api 在瀏覽器攔下，不用任何 .env
+ *   CHECK_FAKE_LOGIN=1 CHECK_BASE_URL=http://localhost:3318 node scripts/marketing-calendar-check.mjs
  *
  * **為什麼要有**：這一輪加的是**模板分支**與**理由文字**，typecheck 與單元測試一條都驗不到
  * 「那句話有沒有真的畫出來」（記憶 `feedback_verify_new_code_actually_runs`）。
  *
- * ⚠️ 連正式庫（myfeel）**唯讀**：只讀 `workspaceMembers` 換 token。
+ * ⚠️ 連正式庫（myfeel）**唯讀**：只讀 `workspaceMembers` 換 token。`CHECK_FAKE_LOGIN=1` 連這個都不做。
  * ⛔ 瀏覽器端所有非 GET 一律攔截擋掉；`/api/marketing-calendar` 一律假造
  *    （要用各種極端狀態驗，正式庫那一份驗不到）。
  */
-import { cert, initializeApp } from 'firebase-admin/app'
-import { getAuth } from 'firebase-admin/auth'
-import { getFirestore } from 'firebase-admin/firestore'
 import puppeteer from 'puppeteer'
 
 const BASE = process.env.CHECK_BASE_URL ?? 'http://localhost:3000'
-const WORKSPACE_ID = process.env.CHECK_WORKSPACE_ID ?? '212405d2-d782-443b-9670-adac3b3e1f99'
+const FAKE_LOGIN = process.env.CHECK_FAKE_LOGIN === '1'
+const WORKSPACE_ID = process.env.CHECK_WORKSPACE_ID ?? (FAKE_LOGIN ? 'w-check' : '212405d2-d782-443b-9670-adac3b3e1f99')
 
-const {
-  FIREBASE_PROJECT_ID: projectId,
-  FIREBASE_CLIENT_EMAIL: clientEmail,
-  FIREBASE_PRIVATE_KEY: privateKey,
-  FIREBASE_API_KEY: apiKey,
-} = process.env
-if (!projectId || !clientEmail || !privateKey || !apiKey) {
-  console.error('缺環境變數（要 --env-file=.env_myfeel）')
-  process.exit(1)
+/** 真登入：用 .env_myfeel 的服務帳號換一顆 token（唯讀） */
+async function realSession() {
+  const { cert, initializeApp } = await import('firebase-admin/app')
+  const { getAuth } = await import('firebase-admin/auth')
+  const { getFirestore } = await import('firebase-admin/firestore')
+  const {
+    FIREBASE_PROJECT_ID: projectId,
+    FIREBASE_CLIENT_EMAIL: clientEmail,
+    FIREBASE_PRIVATE_KEY: privateKey,
+    FIREBASE_API_KEY: apiKey,
+  } = process.env
+  if (!projectId || !clientEmail || !privateKey || !apiKey) {
+    console.error('缺環境變數（要 --env-file=.env_myfeel；不想碰正式庫就用 CHECK_FAKE_LOGIN=1）')
+    process.exit(1)
+  }
+  initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, '\n') }) })
+  const db = getFirestore()
+
+  const members = await db.collection('workspaceMembers').where('workspaceId', '==', WORKSPACE_ID).get()
+  const rows = members.docs.map(d => ({ id: d.id, ...d.data() }))
+  const admin = rows.find(r => r.role === 'owner' || r.role === 'admin') ?? rows[0]
+  if (!admin) { console.error('這個工作區查不到成員'); process.exit(1) }
+  const uid = String(admin.uid ?? admin.id)
+
+  const custom = await getAuth().createCustomToken(uid)
+  const signIn = await (await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: custom, returnSecureToken: true }),
+  })).json()
+  if (!signIn.idToken) { console.error('換 idToken 失敗：', JSON.stringify(signIn)); process.exit(1) }
+  console.log(`登入身分：${(await getAuth().getUser(uid)).email ?? ''}（${admin.role}）`)
+  return { uid, email: (await getAuth().getUser(uid)).email ?? '', apiKey, idToken: signIn.idToken, refreshToken: signIn.refreshToken }
 }
-initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKey.replace(/\\n/g, '\n') }) })
-const db = getFirestore()
 
-const members = await db.collection('workspaceMembers').where('workspaceId', '==', WORKSPACE_ID).get()
-const rows = members.docs.map(d => ({ id: d.id, ...d.data() }))
-const admin = rows.find(r => r.role === 'owner' || r.role === 'admin') ?? rows[0]
-if (!admin) { console.error('這個工作區查不到成員'); process.exit(1) }
-const uid = String(admin.uid ?? admin.id)
+/** 假登入的 token：SDK 只解 payload 不驗簽（記憶 reference_role_simulation_harness） */
+function fakeJwt() {
+  const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
+  const now = Math.floor(Date.now() / 1000)
+  return `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({
+    iss: 'https://securetoken.google.com/fake', aud: 'fake', sub: 'uid-check', user_id: 'uid-check',
+    email: 'check@example.com', email_verified: true, auth_time: now, iat: now, exp: now + 3600,
+    firebase: { sign_in_provider: 'google.com' },
+  })}.fake-signature`
+}
+const FAKE_WORKSPACES = {
+  workspaces: [{ workspaceId: WORKSPACE_ID, name: '守門員', role: 'owner', organizationId: 'o-check', organizationName: '守門員', plan: { id: 'internal', name: '內部／測試' } }],
+  orgAdminOf: [],
+}
 
-const custom = await getAuth().createCustomToken(uid)
-const signIn = await (await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ token: custom, returnSecureToken: true }),
-})).json()
-if (!signIn.idToken) { console.error('換 idToken 失敗：', JSON.stringify(signIn)); process.exit(1) }
-const session = { uid, email: (await getAuth().getUser(uid)).email ?? '', apiKey, idToken: signIn.idToken, refreshToken: signIn.refreshToken }
-console.log(`登入身分：${session.email}（${admin.role}）`)
+const session = FAKE_LOGIN ? null : await realSession()
+if (FAKE_LOGIN) console.log('假登入（不碰正式庫）')
 
 let failed = false
 const fail = msg => { failed = true; console.error(`❌ ${msg}`) }
@@ -66,15 +90,51 @@ async function openPage(fakeReads) {
   page.on('request', (req) => {
     const url = req.url()
     const method = req.method()
+    if (FAKE_LOGIN && /identitytoolkit|securetoken|firestore\.googleapis|firebaseinstallations/.test(url)) { req.abort('failed'); return }
     if (method === 'GET' || method === 'OPTIONS' || !url.includes('/api/')) {
       const fake = method === 'GET' ? fakeReads?.(url) : null
       if (fake) { req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(fake) }); return }
+      // 假登入：伺服器那邊沒有這個人，其餘的 /api 一律在瀏覽器回空的（⛔ 不讓它打到我們的伺服器）
+      if (FAKE_LOGIN && url.startsWith(BASE) && url.includes('/api/')) {
+        const body = url.includes('/api/admin/workspaces/my') ? FAKE_WORKSPACES : {}
+        req.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+        return
+      }
       req.continue()
       return
     }
     blocked.push(`${method} ${url}`)
     req.respond({ status: 500, contentType: 'application/json', body: JSON.stringify({ statusMessage: '守門員擋下了這個寫入' }) })
   })
+  if (FAKE_LOGIN) {
+    // ⚠️ 儲存鍵裡的 apiKey 必須是這個 app 自己在用的那一把（從 /login 頁原始碼抓），照 entry-pages-check 的做法寫 IndexedDB
+    await page.evaluateOnNewDocument(() => {
+      try { window.localStorage.setItem('minime:tour-disabled', '1') }
+      catch { /* 無痕視窗 */ }
+    })
+    await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2', timeout: 120_000 })
+    const key = (await page.content()).match(/AIza[\w-]{20,}/)?.[0]
+    if (!key) { console.error('讀不到 firebaseApiKey'); process.exit(1) }
+    await page.evaluate(async ({ apiKey, idToken }) => {
+      const user = {
+        uid: 'uid-check', email: 'check@example.com', emailVerified: true, isAnonymous: false, providerData: [],
+        stsTokenManager: { refreshToken: 'r', accessToken: idToken, expirationTime: Date.now() + 3600_000 },
+        createdAt: '0', lastLoginAt: '0', apiKey, appName: '[DEFAULT]',
+      }
+      await new Promise((res, rej) => {
+        const r = indexedDB.open('firebaseLocalStorageDb', 1)
+        r.onupgradeneeded = () => r.result.createObjectStore('firebaseLocalStorage', { keyPath: 'fbase_key' })
+        r.onsuccess = () => {
+          const tx = r.result.transaction('firebaseLocalStorage', 'readwrite')
+          tx.objectStore('firebaseLocalStorage').put({ fbase_key: `firebase:authUser:${apiKey}:[DEFAULT]`, value: user })
+          tx.oncomplete = res
+          tx.onerror = () => rej(tx.error)
+        }
+        r.onerror = () => rej(r.error)
+      })
+    }, { apiKey: key, idToken: fakeJwt() })
+    return { ctx, page }
+  }
   await page.evaluateOnNewDocument((s) => {
     const key = `firebase:authUser:${s.apiKey}:[DEFAULT]`
     try {
@@ -269,7 +329,8 @@ const PAGE = `${BASE}/admin/${WORKSPACE_ID}/conversation-stats`
     const count = (re) => (t.match(re) ?? []).length
     const chars = [...t.replace(/\s/g, '')].length
     // ⭐ 回歸鎖釘在量出來的現值（改版前約 1,030 字）。⛔ 不要為了保險放寬——留了空間下次就會被填滿
-    const CHAR_CAP = 272
+    // 2026-10-19 `D-122`②：272 → 279，多的 7 個字就是「＋ 加自己的檔期」那一行（示意頁 v2 那張就有），其他一字沒加
+    const CHAR_CAP = 279
     if (count(/還不認識你的店/g) !== 1) fail(`關 7：「還不認識你的店」講了 ${count(/還不認識你的店/g)} 次，要剛好一次`)
     else if (count(/通用/g) > 1) fail(`關 7：「通用」出現 ${count(/通用/g)} 次（改版前是 7 次）`)
     else if (!t.includes('最近 3 檔')) fail('關 7：回顧那一行的標題不見了')
@@ -343,6 +404,58 @@ const PAGE = `${BASE}/admin/${WORKSPACE_ID}/conversation-stats`
     else pass('關 13：排好的那一檔講得出排在哪天、只給「查看推播」')
     if (process.env.SHOT_DIR) await (await page.$('.mkt-cal'))?.screenshot({ path: `${process.env.SHOT_DIR}/mkt-cal-planned.png` })
   }
+  await ctx.close()
+}
+
+// ── 關 14：店家自己的檔期（`D-122`②，示意頁 v2 最下面那張）──
+// 列上標「自己的」、沒推播講「還沒有推播」；攤開給「修改／刪除」，⛔ 不給「這次不做」；
+// 「＋ 加自己的檔期」跟每一列的日期切在同一條線
+{
+  const data = myfeelToday({ ready: true, hasProducts: true })
+  data.entries.splice(1, 0, {
+    festivalId: 'own-anniv-check-0001', date: '2026-10-24', name: '週年慶', inDays: 13, soon: true, generalAngle: '',
+    reasons: [], actions: [], own: true, planned: [{ id: 'bc-anniv', name: '週年慶早鳥', status: 'draft', atMs: null }],
+  })
+  data.entries.push({
+    festivalId: 'own-launch-check-0001', date: '2026-11-20', name: '新品開賣', inDays: 40, soon: false, generalAngle: '',
+    reasons: [], actions: [], own: true, planned: [],
+  })
+  const { ctx, page } = await openPage(reply(data))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['新品開賣'])
+  if (!r.hit) fail(`關 14：卡片沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else {
+    const rows = await page.evaluate(() => [...document.querySelectorAll('.mkt-cal__row')].map(el => el.innerText.replace(/\s+/g, ' ')))
+    const xs = await page.evaluate(() => ({
+      when: Math.round(document.querySelector('.mkt-cal__when')?.getBoundingClientRect().left ?? -1),
+      add: Math.round(document.querySelector('.mkt-cal__add-own .el-link')?.getBoundingClientRect().left ?? -2),
+    }))
+    const ownRows = rows.filter(t => t.includes('自己的'))
+    if (ownRows.length !== 2) fail(`關 14：「自己的」應該剛好兩列，量到 ${ownRows.length}：${JSON.stringify(rows)}`)
+    else if (!rows[1]?.includes('草稿，還沒排程') || !rows[1]?.includes('「週年慶早鳥」')) fail(`關 14：週年慶那列沒講草稿：${rows[1]}`)
+    else if (!rows.at(-1)?.includes('還沒有推播')) fail(`關 14：新品開賣那列沒講「還沒有推播」：${rows.at(-1)}`)
+    else if (xs.add !== xs.when) fail(`關 14：「＋ 加自己的檔期」沒跟日期切齊（加 ${xs.add}、日期 ${xs.when}）`)
+    else {
+      await page.evaluate(() => document.querySelectorAll('.mkt-cal__row-head')[1]?.click())
+      await new Promise(r2 => setTimeout(r2, 300))
+      const open = await page.evaluate(() => document.querySelectorAll('.mkt-cal__row')[1]?.innerText ?? '')
+      if (!open.includes('修改') || !open.includes('刪除')) fail(`關 14：攤開自己的那一檔沒有「修改／刪除」：${open}`)
+      else if (open.includes('這次不做')) fail('關 14：自己的檔期不該有「這次不做」（那是給節日表、明年會回來的）')
+      else pass('關 14：自己的檔期標得出來、講得出推播狀態、攤開給修改／刪除，「＋ 加自己的檔期」跟日期對齊')
+    }
+    if (process.env.SHOT_DIR) await (await page.$('.mkt-cal'))?.screenshot({ path: `${process.env.SHOT_DIR}/mkt-cal-own.png` })
+  }
+  await ctx.close()
+}
+
+// ── 關 15：未來 90 天一檔都沒有時，「＋ 加自己的檔期」照樣在（⛔ 空卡不可以是死路）──
+{
+  const { ctx, page } = await openPage(reply(calendar({ entries: [] })))
+  await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['未來 90 天沒有重要節日'])
+  if (!r.hit) fail(`關 15：空卡沒畫出來。畫面上是：${r.body.slice(0, 200)}`)
+  else if (!(await cardText(page)).includes('＋ 加自己的檔期')) fail('關 15：空卡沒有「＋ 加自己的檔期」')
+  else pass('關 15：空卡也加得了自己的檔期')
   await ctx.close()
 }
 
