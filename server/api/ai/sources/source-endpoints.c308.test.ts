@@ -37,13 +37,21 @@ vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
   getWorkspaceSourceScan: vi.fn(async () => ({ catalogIds: new Set<string>(), productNames: [] })),
 }))
 
+// 換分組之後那一步（商品名對齊＋學）：這裡只驗「學那一步出錯時」端點怎麼收（`D-129`），學本身在 ai-knowledge-product-group.test
+const { syncSourceProductWithGroup } = vi.hoisted(() => ({ syncSourceProductWithGroup: vi.fn() }))
+vi.mock('~~/server/utils/ai-knowledge-product-group', () => ({
+  RELEARN_PENDING_FIELD: 'productRelearnPending',
+  syncSourceProductWithGroup,
+}))
+
 const STORE: Record<string, Record<string, Record<string, any>>> = {}
 const hooks = { afterFirstChunkQuery: () => {} }
 let chunkQueries = 0
 function docRef(col: string, id: string): any {
   return {
     id,
-    get: async () => ({ id, exists: !!STORE[col]?.[id], data: () => STORE[col]?.[id] }),
+    // 讀出來的是當下的一份（跟 Firestore 一樣）：不然「改之前讀的那份」會跟著後面的寫入一起變，換分組永遠判成沒換
+    get: async () => ({ id, exists: !!STORE[col]?.[id], data: () => (STORE[col]?.[id] ? { ...STORE[col][id] } : undefined) }),
     update: async (p: Record<string, any>) => {
       if (!STORE[col]?.[id]) throw new Error('NOT_FOUND')
       for (const [k, v] of Object.entries(p)) {
@@ -140,6 +148,19 @@ describe('「在後台刪掉、不再收」的列收回來（`D-125`②）', () 
     await run(putHandler)
     expect(STORE.knowledgeSources!.sheet1!.gsheetExcludedTitles).toEqual(['A', 'B'])
     expect(STORE.knowledgeSources!.sheet1!.contentHash).toBe('h1')
+  })
+})
+
+describe('換了分組、學那一步出錯（`D-129`：系統會自己補，不叫他按）', () => {
+  it('搬移照算成功（回 groupSync.error），資料上留「還沒重新學」的記號——排程照這格自己對齊商品名、補學完', async () => {
+    STORE.knowledgeFolders = { g2: { workspaceId: WS, name: '小滑手', order: 0 } }
+    syncSourceProductWithGroup.mockRejectedValueOnce(new Error('Gemini embed: 503'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    body = { folderId: 'g2' }
+    const r = await run(putHandler)
+    expect(r.groupSync).toEqual({ error: true })
+    expect(STORE.knowledgeSources!.sheet1!.productRelearnPending).toBe(true)
+    warn.mockRestore()
   })
 })
 

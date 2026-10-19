@@ -31,7 +31,11 @@ vi.mock('./ai-knowledge-chunks', () => ({
   invalidateWorkspaceProductNames: vi.fn(),
   runIndexOnChunk: vi.fn(async (_db: unknown, id: string) => ({ id, status: 'indexed', embeddingTokens: 10 })),
 }))
-vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./ai-usage', () => ({
+  recordAiUsage: vi.fn(async () => {}),
+  getMaintenanceBudgetStatus: vi.fn(async () => ({ used: 0, cap: 1, blocked: false })),
+}))
+vi.mock('./gemini', () => ({ runWithLlmBudget: vi.fn((_ws: string, fn: () => Promise<unknown>) => fn()) }))
 vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./ai-product-alias', () => ({
   confirmAlias: vi.fn(async () => true),
@@ -54,10 +58,11 @@ function applyUpdate(row: Doc, data: Doc) {
 /** 每一個 batch commit 寫了幾筆（驗「一個 batch 最多 500 筆、要分批」） */
 const COMMITS: number[] = []
 
-function query(col: string, filters: Array<[string, unknown]> = [], fields: string[] | null = null): any {
+function query(col: string, filters: Array<[string, unknown]> = [], fields: string[] | null = null, limit = Infinity): any {
   return {
-    where: (f: string, _op: string, v: unknown) => query(col, [...filters, [f, v]], fields),
-    select: (...fs: string[]) => query(col, filters, fs),
+    where: (f: string, _op: string, v: unknown) => query(col, [...filters, [f, v]], fields, limit),
+    select: (...fs: string[]) => query(col, filters, fs, limit),
+    limit: (n: number) => query(col, filters, fields, n),
     doc: (id: string) => ({
       get: async () => ({ exists: !!STORE[col]?.[id], data: () => (STORE[col]?.[id] ? { ...STORE[col]![id] } : undefined) }),
       update: async (data: Doc) => {
@@ -71,9 +76,19 @@ function query(col: string, filters: Array<[string, unknown]> = [], fields: stri
       const rows = STORE[col] ?? {}
       const docs = Object.keys(rows)
         .filter(id => filters.every(([f, v]) => rows[id]![f] === v))
+        .slice(0, limit)
         .map(id => ({
           id,
-          ref: { col, id },
+          // 排程補學會拿 doc.ref.update 拿掉記號：ref 同時要能當 batch 的目標（col／id）也能自己 update
+          ref: {
+            col,
+            id,
+            update: async (data: Doc) => {
+              const row = STORE[col]?.[id]
+              if (!row) throw new Error(`NOT_FOUND ${col}/${id}`)
+              applyUpdate(row, data)
+            },
+          },
           data: () => (fields ? Object.fromEntries(fields.filter(f => f in rows[id]!).map(f => [f, rows[id]![f]])) : { ...rows[id] }),
         }))
       return { docs, size: docs.length }
@@ -108,7 +123,10 @@ const {
   mergeProductGroupInto,
   markGroupProductSyncPending,
   RELEARN_PENDING_FIELD,
+  RELEARN_PENDING_GRACE_MS,
+  relearnPendingProductSources,
 } = await import('./ai-knowledge-product-group')
+const { getMaintenanceBudgetStatus } = await import('./ai-usage')
 
 const WS = 'ws1'
 const GROUP = '珈樂堤 小滑手全自動義式咖啡機'
@@ -149,7 +167,7 @@ describe('syncSourceProductWithGroup（換了分組，`D-127`）', () => {
     expect(recordAiUsage).toHaveBeenCalledWith(WS, { buildEmbeddingTokens: 20 }, db)
     const audit = vi.mocked(writeAuditLog).mock.calls[0]![0]
     expect(audit).toMatchObject({ action: 'source.put', targetId: 'me', after: { productName: GROUP } })
-    expect(audit.note).toBe(`小滑手說明書.pdf：放進「${GROUP}」，AI 把它當成「${GROUP}」的資料，重新學習 2 條`)
+    expect(audit.note).toBe(`小滑手說明書.pdf：放進「${GROUP}」，AI 把它當成「${GROUP}」的資料，照新的商品名學會 2 條`)
   })
 
   const untouched = () => {
@@ -197,7 +215,7 @@ describe('syncSourceProductWithGroup（換了分組，`D-127`）', () => {
       id === 'c2' ? { id, status: 'failed', failureReason: 'embed failed', embeddingTokens: 0 } : { id, status: 'indexed', embeddingTokens: 10 })
     const res = await syncSourceProductWithGroup(db, WS, 'me', { uid: 'u' })
     expect(res).toMatchObject({ changed: true, relearned: { indexed: 1, failed: 1, failures: [{ id: 'c2' }] } })
-    expect(vi.mocked(writeAuditLog).mock.calls[0]![0].note).toContain('重新學習 1 條、失敗 1 條')
+    expect(vi.mocked(writeAuditLog).mock.calls[0]![0].note).toContain('學會 1 條、1 條還沒學會（會自己再試）')
   })
 
   it('學完拿掉「還沒重新學」的記號（/code-review 第 4 條）', async () => {
@@ -377,5 +395,95 @@ describe('mergeProductGroupInto（兩組是同一台 → 合成一組，/code-re
     await expect(mergeProductGroupInto(db, WS, 'from', 'keep')).rejects.toMatchObject({ statusCode: 404 })
     expect(COMMITS).toEqual([])
     expect(STORE.knowledgeFolders!.from).toBeDefined()
+  })
+})
+
+describe('relearnPendingProductSources（改組名中途關頁、沒學完的，伺服器自己補完，`D-129`）', () => {
+  const NOW = 1_800_000_000_000
+  const ago = (ms: number) => ({ toMillis: () => NOW - ms })
+  const run = (opts: Record<string, unknown> = {}) => relearnPendingProductSources(db, { now: () => NOW, ...opts })
+  // 上面幾段換過 runIndexOnChunk 的假實作（clearAllMocks 不會還原），這一段一律從「都學會」開始
+  beforeEach(() => {
+    vi.mocked(runIndexOnChunk).mockImplementation(async (_db: unknown, id: string) => ({ id, status: 'indexed', embeddingTokens: 10 }) as any)
+  })
+
+  it('記號留下超過 10 分鐘（畫面已經沒在學了）→ 對齊組名、整份學一次、拿掉記號、稽核記成系統排程', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS + 1) } })
+    const r = await run()
+    expect(r).toMatchObject({ relearned: 1, indexed: 2, failed: 0, waitingForPage: 0 })
+    expect(STORE.knowledgeSources!.me!.productName).toBe(GROUP) // 先對齊組名再學
+    expect(vi.mocked(runIndexOnChunk).mock.calls.map(c => c[1]).sort()).toEqual(['c1', 'c2'])
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBeUndefined()
+    const audit = vi.mocked(writeAuditLog).mock.calls[0]![0]
+    expect(audit).toMatchObject({ workspaceId: WS, uid: '', actor: 'system', action: 'source.reindex', targetId: 'me' })
+    expect(audit.note).toBe('小滑手說明書.pdf：換了商品名之後沒學完的，系統自己補學：學會 2 條')
+    expect(audit.note).not.toContain('重新學習')
+  })
+
+  it('⛔ 記號剛留下（10 分鐘內）不碰：畫面多半正在一份份學，搶同一份＝學兩次、錢花兩次', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(60_000) } })
+    const r = await run()
+    expect(r).toMatchObject({ relearned: 0, waitingForPage: 1 })
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBe(true)
+  })
+
+  it('改組名時底下資料沒跟上（分組上的記號）→ 這輪補上名字、不用等 10 分鐘就學（那時畫面沒有在學）', async () => {
+    seed({ folder: { productSyncPending: true } })
+    const r = await run()
+    expect(r.foldersSynced).toBe(1)
+    expect(STORE.knowledgeFolders!.f1!.productSyncPending).toBeUndefined()
+    expect(STORE.knowledgeSources!.me!.productName).toBe(GROUP)
+    expect(r.relearned).toBe(1) // me 換了名字；sib 本來就對、試算表不算
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBeUndefined()
+  })
+
+  it('這家本月 AI 整理用量用完了 → 先不學（⛔ 學下去每一條都會變成學失敗、AI 找不到），記號留著下次再來', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS * 2) } })
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValueOnce({ used: 9, cap: 1, blocked: true })
+    const r = await run()
+    expect(r).toMatchObject({ relearned: 0, skippedBudget: 1 })
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBe(true)
+  })
+
+  it('時間到就不開下一份（一份最多約 9 秒、閘道 30 秒），記號留著下一輪接', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS * 2) } })
+    STORE.knowledgeSources!.sib![RELEARN_PENDING_FIELD] = true
+    STORE.knowledgeSources!.sib!.updatedAt = ago(RELEARN_PENDING_GRACE_MS * 2)
+    let clock = NOW
+    vi.mocked(runIndexOnChunk).mockImplementation(async (_db: unknown, id: string) => {
+      clock += 20_000
+      return { id, status: 'indexed', embeddingTokens: 1 } as any
+    })
+    const r = await relearnPendingProductSources(db, { now: () => clock })
+    expect(r.relearned).toBe(1)
+    expect(r.deferred).toBe(1)
+  })
+
+  it('資料已經刪掉了 → 只拿掉記號（不然每一輪都撿到它、佔名額）', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, isDeleted: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS * 2) } })
+    const r = await run()
+    expect(r).toMatchObject({ cleared: 1, relearned: 0 })
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBeUndefined()
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+  })
+
+  it('學失敗的那幾條照實記；記號照樣拿掉（那幾條本身是 failed，自動重試會接手）', async () => {
+    seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS * 2) } })
+    vi.mocked(runIndexOnChunk).mockImplementation(async (_db: unknown, id: string) =>
+      (id === 'c2' ? { id, status: 'failed', failureReason: 'embed failed', embeddingTokens: 0 } : { id, status: 'indexed', embeddingTokens: 10 }) as any)
+    const r = await run()
+    expect(r).toMatchObject({ relearned: 1, indexed: 1, failed: 1 })
+    expect(STORE.knowledgeSources!.me![RELEARN_PENDING_FIELD]).toBeUndefined()
+    expect(vi.mocked(writeAuditLog).mock.calls[0]![0].note).toContain('學會 1 條、1 條還沒學會（會自己再試）')
+  })
+
+  it('沒有記號＝什麼都不做（平常每 10 分鐘就是兩個空查詢）', async () => {
+    seed()
+    const r = await run()
+    expect(r).toEqual({ foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 })
+    expect(runIndexOnChunk).not.toHaveBeenCalled()
+    expect(writeAuditLog).not.toHaveBeenCalled()
   })
 })

@@ -132,11 +132,16 @@ describe('加好之後那一句', () => {
   })
 
   it('⛔ 沒學成、或試問還答不出來：不說「會用這一條」', () => {
-    expect(addOneDoneToast({ status: 'failed' })).toMatchObject({ tone: 'error' })
     expect(addOneDoneToast({ status: 'failed' }).text).not.toContain('會用這一條')
     const w = addOneDoneToast({ status: 'indexed', verifyDecision: 'handoff' })
     expect(w.tone).toBe('warning')
     expect(w.text).not.toContain('會用這一條')
+  })
+
+  it('沒學成（`D-129`）：講「系統會自己再試」，⛔ 不叫他去按「重新學習」、不上紅色', () => {
+    const f = addOneDoneToast({ status: 'failed', remainingQuestions: 2 })
+    expect(f).toEqual({ text: '加好了，但 AI 還沒學會，系統會自己再試。沒勾的 2 題還在清單上', tone: 'warning' })
+    expect(f.text).not.toContain('重新學習')
   })
 
   it('只回答其中幾題：講沒勾的還在清單上', () => {

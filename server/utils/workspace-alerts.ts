@@ -28,6 +28,7 @@ import { derivePlanState } from '~~/shared/billing/plan-state'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 import { normalizeLineUserId } from '~~/shared/line-notify-list'
+import { isAutoRetryExhausted } from '~~/shared/knowledge-relearn'
 
 /**
  * 工作區「目前異常」的訊號收集核心。
@@ -53,6 +54,11 @@ import { normalizeLineUserId } from '~~/shared/line-notify-list'
  */
 const PROBLEM_SCAN_LIMIT = 20
 const SESSION_SCAN_LIMIT = 200
+/**
+ * 「AI 沒學起來」要讀幾條來數「試完 5 次的」（`D-129`）。只有 count 探到有失敗才讀、只讀兩格。
+ * 開得比 200 大：一次搬家可以失敗兩三百條（10-16 那次 281 條），試完的那幾條排在後面就會被數成 0
+ */
+const FAILED_CHUNK_SCAN_LIMIT = 1000
 /** 缺索引時的退路上限（見 knowledgeOutdated） */
 const FALLBACK_SCAN_LIMIT = 300
 const LLM_ERROR_SCAN_LIMIT = 50
@@ -486,13 +492,25 @@ export async function collectWorkspaceAlerts(
           return n ? { active: true, count: n } : { active: false }
         }),
         probe('knowledgeIndexFailed', async () => {
-          // count() 聚合查詢：兩個等值條件走自動索引合併，不必讀 doc
+          /*
+           * 只算「自動重試用完、還是沒學會」的（`D-129`）：還在 5 次以內的，排程每 10 分鐘自己再試，
+           * 紅燈＋LINE 推播只會讓他以為要自己處理（10-16 搬家那 281 條半小時內就自己好了）。
+           * 先 count 探一下（兩個等值條件走自動索引合併，不讀 doc，多數時候是 0）；有才讀 retryCount 數。
+           * ⛔ 不加 retryCount 的範圍條件：那要另建 (workspaceId, status, retryCount) 複合索引，兩個租戶各部署一次
+           */
           const agg = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
             .where('workspaceId', '==', wid)
             .where('status', '==', 'failed')
             .count()
             .get()
-          const n = agg.data().count
+          if (!agg.data().count) return { active: false }
+          const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
+            .where('workspaceId', '==', wid)
+            .where('status', '==', 'failed')
+            .select('status', 'retryCount')
+            .limit(FAILED_CHUNK_SCAN_LIMIT)
+            .get()
+          const n = snap.docs.filter(d => isAutoRetryExhausted(d.data() as Record<string, unknown>)).length
           return n ? { active: true, count: n } : { active: false }
         }),
         probe('knowledgeWrongAnswers', async () => {

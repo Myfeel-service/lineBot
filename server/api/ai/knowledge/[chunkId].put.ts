@@ -139,7 +139,8 @@ export default defineEventHandler(async (event) => {
     targetId: chunkId,
     before: { title: stored.title },
     after: { title: input.title },
-    note: `${input.title}：改了${what}${relearn ? '，這條會重新學習一次' : ''}${lockNote}`,
+    // `D-129`：店家看得到的字不講「重新學習」
+    note: `${input.title}：改了${what}${relearn ? '，AI 會照新的內容再學一次' : ''}${lockNote}`,
   }, db)
 
   return {

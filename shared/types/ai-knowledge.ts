@@ -98,7 +98,7 @@ export interface KnowledgeFolderDoc {
   general?: boolean
   /**
    * 改了組名（或通用）、底下資料的商品名卻沒跟上（寫入失敗，`D-127` /code-review 第 14 條）。
-   * 體檢照這一格把那幾份列進「還沒重新學」，按重新學習會先對齊組名再學；下次整組跟上了就拿掉。
+   * 排程照這一格把底下資料重新對齊組名、自己補學（`D-129` relearnPendingProductSources；以前是體檢列出來叫他按）；整組跟上了就拿掉。
    */
   productSyncPending?: boolean
   createdAt: Timestamp | FieldValue

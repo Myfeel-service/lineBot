@@ -126,18 +126,19 @@ describe('PUT：沒改就不鎖、不記（`C-308`①）', () => {
     expect(lastAudit().note).toBe('出貨時間：改了標籤；之後不會跟著表格更新（可以在這條解除鎖定）')
   })
 
-  it('只改客人問法 → 上鎖、記「改了客人問法，這條會重新學習一次」（問法也進學習內容）', async () => {
+  it('只改客人問法 → 上鎖、記「改了客人問法，AI 會照新的內容再學一次」（問法也進學習內容）', async () => {
     body = { title: '出貨時間', content: '下單後 3 天出貨', tags: ['出貨'], questions: ['幾天會到？'] }
     await run(putHandler)
     expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1]).toMatchObject({ manualEdit: true, questions: ['幾天會到？'] })
-    expect(lastAudit().note).toContain('改了客人問法，這條會重新學習一次')
+    // `D-129`：操作紀錄是店家看得到的字，不講「重新學習」
+    expect(lastAudit().note).toContain('改了客人問法，AI 會照新的內容再學一次')
   })
 
   it('改了內容和標題 → 兩樣都講', async () => {
     body = { title: '出貨', content: '下單後 5 天出貨', tags: ['出貨'] }
     await run(putHandler)
     expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1]).toMatchObject({ manualEdit: true, contentChanged: true })
-    expect(lastAudit().note).toMatch(/^出貨：改了標題、內容，這條會重新學習一次/)
+    expect(lastAudit().note).toMatch(/^出貨：改了標題、內容，AI 會照新的內容再學一次/)
   })
 })
 
@@ -172,11 +173,11 @@ describe('解除鎖定要真的生效（`C-308`②）', () => {
     expect(r.appliesOn).toBeUndefined()
   })
 
-  it('錯誤訊息講「條」、叫人按「重新學習」（按鈕叫這個名字）', async () => {
+  it('錯誤訊息講「條」、叫人按「再試一次」（`D-129`：停用又沒學成的那一條，編輯框上那顆就叫這個名字）', async () => {
     STORE.knowledgeChunks!.c1!.embedding = null
     STORE.knowledgeChunks!.c1!.status = 'disabled'
     body = { enabled: true }
-    await expect(run(settingsHandler)).rejects.toMatchObject({ statusMessage: '這條知識還沒學好，請先按「重新學習」' })
+    await expect(run(settingsHandler)).rejects.toMatchObject({ statusMessage: '這條知識 AI 還沒學會，請先按上面的「再試一次」' })
   })
 })
 

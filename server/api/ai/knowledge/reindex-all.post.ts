@@ -96,7 +96,7 @@ export default defineEventHandler(async (event) => {
       actor: 'human',
       action: 'knowledge.reindexAll',
       after: { itemsCount: snap.size, chunkIdsCount: indexed, failedCount: failed },
-      note: '讓整個知識庫重新學習一次（會分批跑完，這裡記的是第一批的數字）',
+      note: '讓 AI 把整個知識庫再學一次（會分批跑完，這裡記的是第一批的數字）',
     }, db)
   }
 

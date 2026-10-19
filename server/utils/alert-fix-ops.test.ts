@@ -41,6 +41,35 @@ describe('alert-fix op 註冊表不變量', () => {
 })
 
 /**
+ * `D-129`（2026-10-19）：「有知識 AI 沒學起來」那顆燈只為試完 5 次的亮，「幫我修」也只列那幾條——
+ * 還在自動再試的列進來，確認卡上的條數就跟燈對不上（而且排程本來就會補）。按鈕跟知識庫頁同一個「再試一次」。
+ */
+describe('一鍵修「AI 沒學起來」只動試完 5 次的（`D-129`）', () => {
+  function fakeDb(rows: Array<{ id: string; retryCount: number }>) {
+    const q: any = {}
+    q.where = () => q
+    q.select = () => q
+    q.limit = () => q
+    q.get = async () => ({ docs: rows.map(r => ({ id: r.id, data: () => ({ title: `第 ${r.id} 條`, content: '內容', status: 'failed', retryCount: r.retryCount }) })) })
+    return { collection: () => q } as any
+  }
+
+  it('失敗 1～4 次的不列、5 次以上的才列；按鈕叫「確定再試一次」，⛔ 不講「重新學習」', async () => {
+    const op = ALERT_FIX_OPS['knowledge-retry-index']
+    const p = await op.preview({ db: fakeDb([{ id: 'a', retryCount: 1 }, { id: 'b', retryCount: 5 }, { id: 'c', retryCount: 4 }, { id: 'd', retryCount: 7 }]), workspaceId: 'ws', uid: 'u' })
+    expect(p.state).toBe('fixable')
+    expect(p.items.map(i => i.label)).toEqual(['第 b 條', '第 d 條'])
+    expect(p.summary).toBe('我會讓 AI 把試了 5 次都沒學會的 2 條知識再學一次（內容不會被改動）。還是學不會的會列出原因。')
+    expect(p.confirmLabel).toBe('確定再試一次')
+  })
+
+  it('全都還在自動再試 → 「已經沒有」（燈本來就不會亮）', async () => {
+    const p = await ALERT_FIX_OPS['knowledge-retry-index'].preview({ db: fakeDb([{ id: 'a', retryCount: 2 }]), workspaceId: 'ws', uid: 'u' })
+    expect(p.state).toBe('clear')
+  })
+})
+
+/**
  * `C-309`（2026-10-13）：確認卡、結果、操作紀錄都是店家看的字。知識庫頁講「條」、檔案那一份有「換新版」，
  * 這裡以前講「N 張知識卡」、叫人「重新匯入檔案」（重新匯入會多出一份、壞的那份還在）。
  * op 要打 Firestore 才跑得起來，所以讀原始碼的字串驗（註解不算）。

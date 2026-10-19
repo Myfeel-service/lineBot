@@ -12,6 +12,7 @@ import {
   purgeRecycledKnowledge,
 } from '~~/server/utils/cron-maintenance'
 import { retryStuckChunks } from '~~/server/utils/ai-knowledge-chunks'
+import { relearnPendingProductSources } from '~~/server/utils/ai-knowledge-product-group'
 import { scanNextWorkspaceForDuplicates } from '~~/server/utils/ai-duplicate-scan'
 import { cleanupExpiredPreviewJobs, cleanupOrphanJobFiles, cleanupOrphanUploads } from '~~/server/utils/ai-preview-jobs'
 import { advanceStalePreviewJobs } from '~~/server/utils/ai-preview-job-runner'
@@ -50,6 +51,11 @@ export default defineEventHandler(async (event) => {
   const startedAt = Date.now()
   const tasks: Array<{ name: string; run: () => Promise<unknown> }> = [
     { name: 'ai:retry-stuck-chunks', run: () => retryStuckChunks(db) },
+    /**
+     * 改組名、合成一組、刪分組之後畫面中途關掉、沒學完的那幾份，伺服器自己補完（`D-129`）。
+     * 以前是知識庫「要處理的事」列出來叫店家按「重新學習」。記號留下 10 分鐘內不碰（畫面多半正在學），平常＝兩個空查詢。
+     */
+    { name: 'ai:relearn-pending-sources', run: () => relearnPendingProductSources(db) },
     { name: 'ai:cleanup-preview-jobs', run: () => cleanupExpiredPreviewJobs(db) },
     /**
      * 沒人在看的匯入工作，由這裡接手往前推（`D-50` 簡化 3）。

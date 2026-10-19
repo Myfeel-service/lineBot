@@ -15,6 +15,7 @@
  */
 import { pickFolderForSource } from './knowledge-folder-match'
 import { normalizeProductName } from './product-name-similarity'
+import { KB_AUTO_RETRY_TEXT } from './knowledge-relearn'
 
 export interface ImportGroup {
   id: string
@@ -167,7 +168,7 @@ export function groupChoiceFromKey(key: string, newName: string): ImportGroupCho
 /**
  * 換分組之後伺服器做了什麼（`PUT /api/ai/sources/:id` 回的 `groupSync`，`D-127` 分組就是商品）：
  *  · 商品名改成新組的組名（或搬到通用、不放分組＝清掉），當場重新學過（synced）；
- *  · `{ error: true }` → 搬是搬過去了，重新學習那一步沒成（failed）——簡短講一句，⛔ 不講成搬失敗；
+ *  · `{ error: true }` → 搬是搬過去了，學那一步沒成（failed）——簡短講一句「系統會自己再試」（`D-129`），⛔ 不講成搬失敗；
  *  · 沒有 groupSync ＝商品名沒變（本來就是那一台、試算表／型錄⋯）。
  * `C-320` 時代的「同組好幾個名字要你挑」沒有了：一組只有一個名字（組名）。
  */
@@ -188,10 +189,13 @@ export function parseGroupSync(raw: unknown): GroupSyncOutcome | null {
   }
 }
 
-/** 搬過去了、重新學習沒成（資料頁右上「⋯」有「重新學習這一份」） */
-export const GROUP_SYNC_FAILED_TEXT = '搬過去了，但 AI 還沒重新學會：點開那一份，按右上「⋯ → 重新學習這一份」'
+/**
+ * 搬過去了、學那一步沒成（`D-129`）：伺服器留了「還沒重新學」的記號，排程自己對齊商品名、補學完（relearnPendingProductSources）。
+ * ⛔ 不再叫他去按「⋯ → 重新學習這一份」——那是系統自己會做完的事，叫他按只會讓他以為壞了要自己修。
+ */
+export const GROUP_SYNC_FAILED_TEXT = `搬過去了；${KB_AUTO_RETRY_TEXT}`
 
-/** 一行講完 AI 現在把它當成哪一台（失敗的條數照實講，⛔ 不講成全都學會了） */
+/** 一行講完 AI 現在把它當成哪一台（失敗的條數照實講，⛔ 不講成全都學會了；但沒學會的系統會自己再試，不叫他按） */
 export function groupSyncNoteText(f: GroupSyncOutcome | null): string {
   if (!f) return ''
   if (f.kind === 'failed') return GROUP_SYNC_FAILED_TEXT
@@ -199,7 +203,7 @@ export function groupSyncNoteText(f: GroupSyncOutcome | null): string {
     ? `AI 現在把它當成「${f.productName}」的資料`
     : f.previous ? `AI 不再把它當成「${f.previous}」的資料` : ''
   if (!head) return ''
-  return f.failed > 0 ? `${head}；有 ${f.failed} 條還沒學會，點開那一份按右上「⋯ → 重新學習這一份」` : head
+  return f.failed > 0 ? `${head}；有 ${f.failed} 條還沒學會，系統會自己再試` : head
 }
 
 /**

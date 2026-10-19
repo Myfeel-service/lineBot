@@ -9,9 +9,11 @@
  */
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { embedDocument, estimateTokens, runWithLlmBudget } from './gemini'
-import { recordAiUsage } from './ai-usage'
+import { getMaintenanceBudgetStatus, recordAiUsage } from './ai-usage'
 import { canonicalProductName, getProductAliases, normalizeProductName } from './ai-product-alias'
+import { writeAuditLog } from './audit-log'
 import type { KnowledgeChunkDoc, KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
+import { KNOWLEDGE_MAX_AUTO_RETRIES } from '~~/shared/knowledge-relearn'
 
 export const KNOWLEDGE_CHUNKS_COLLECTION = 'knowledgeChunks'
 
@@ -68,8 +70,35 @@ export function isChunkRecycled(data: any): boolean {
 /** pending 卡超過此時間就算「卡住」，會被排程任務撿回來重試 */
 export const PENDING_STUCK_MS = 5 * 60 * 1000
 
-/** 排程自動重試上限；超過代表非暫時性錯誤（內容問題等），停止無限重試燒 API。手動 reindex 不受限 */
-export const MAX_AUTO_RETRIES = 5
+/**
+ * 排程自動重試上限；超過代表非暫時性錯誤（內容問題等），停止無限重試燒 API。手動 reindex 不受限。
+ * 數字放在 shared（`D-129`）：畫面要照同一個數判斷「系統還會再試」還是「試完了、這時才給按鈕」。
+ */
+export const MAX_AUTO_RETRIES = KNOWLEDGE_MAX_AUTO_RETRIES
+
+/**
+ * 排程自動重試一輪的份量（`D-129`，2026-10-19）。以前一輪只撿全平台 20 條、一條條排隊打：
+ * 10-16 搬家 281 條失敗要 15 輪＝2 個半小時才補完，那段時間客人問到那幾條都找不到。
+ *
+ * 為什麼是這幾個數（費用、速率、時限三邊都要過）：
+ *  · 費用：放寬份量**不會多花錢**——每條最多自動試 5 次（MAX_AUTO_RETRIES），總花費只跟失敗條數有關，份量只決定多快補完。
+ *    一條約 300～1,900 token，gemini-embedding-001 每百萬 token 約 US$0.15：一輪 100 條最多約 US$0.03。
+ *  · 速率：一輪最多打 100 次（failed、卡住的 pending 合計）、同時 5 條（跟加入知識、整份重學同一個併發）。
+ *    ⚠️ 客人問問題也走同一個模型（embedQuery）——撞到每分鐘上限，壞的是回答客人。Gemini 付費第一級公開的是
+ *    每分鐘 3,000 次、100 萬 token，但有人回報實際碰到的是「每區每分鐘 200 次」——所以一輪壓在 100 次，
+ *    就算是 200 次那一種也還留一半給客人和同時在加入的知識。
+ *  · 時限：排程那支（/api/cron/run-tasks）跟其他二十幾項一起跑、閘道 30 秒——過了 15 秒就不再開新的
+ *    （已經開始的做完），沒輪到的下一輪（10 分鐘後）再撿。一條約 0.3 秒，100 條約 6～8 秒就做完。
+ *  ⇒ 281 條約 3 輪＝30 分鐘內補完。
+ */
+export const RETRY_BATCH = 100
+export const RETRY_CONCURRENCY = 5
+export const RETRY_TIME_BUDGET_MS = 15_000
+/**
+ * 這一輪開頭連續失敗這麼多條、一條都沒成功 → 多半是 AI 服務本身在出事（不是那幾條的問題），這輪先停。
+ * 不停的話一輪 100 條每條都 +1 次，服務停擺 50 分鐘就把全部的 5 次機會燒光、整批變成「要人按」。
+ */
+export const RETRY_CIRCUIT_BREAK_AFTER = 10
 
 export interface ChunkInput {
   title: string
@@ -267,6 +296,9 @@ export async function updateKnowledgeChunk(
     status: wasDisabled ? 'disabled' : wasDraft ? 'draft' : 'pending',
     lastIndexedAt: null,
     failureReason: FieldValue.delete(),
+    // 內容換了＝新的一條，自動重試的 5 次從頭算（`D-129`）：試完 5 次沒學會的，畫面建議他「改一下內容再存」——
+    // 不歸零的話，改完剛好碰到 AI 服務忙、失敗一次就又直接變成「要人按」，排程也不會再撿它
+    retryCount: FieldValue.delete(),
   })
 
   return runIndexOnChunk(
@@ -745,17 +777,51 @@ export async function searchChunksByIdentifierTag(
     })
 }
 
+/** ⚠️ 用 type 不用 interface：排程任務的 result 要能當 Record<string, unknown> 回（interface 不行） */
+export type RetryStuckChunksResult = {
+  scanned: number
+  retried: number
+  indexed: number
+  failed: number
+  skippedPermanent: number
+  /** 超過本月 AI 整理用量上限的帳號，這輪跳過（不打、不耗次數，下月自動恢復） */
+  skippedBudget: number
+  /** 這一輪剛好用完 5 次、還是沒學會的（從這一刻起畫面才給「再試一次」） */
+  exhausted: number
+  /** 撿到了但這輪沒輪到（時間到、或 AI 服務看起來在出事先停）——下一輪再撿 */
+  deferred: number
+  /** 開頭連續失敗、一條都沒成功 → 這輪先停（RETRY_CIRCUIT_BREAK_AFTER） */
+  circuitBroken: boolean
+}
+
 /**
- * 撿出 pending 卡住或 failed 的卡片，逐張重試。供排程任務呼叫。
- * 回傳掃到 / 重試 / 成功 / 失敗 的計數。
+ * 撿出 pending 卡住或 failed 的卡片重試。供排程任務呼叫（正式站走 /api/cron/run-tasks，每 10 分鐘一輪）。
+ * 份量、併發、時限、熔斷的數字與理由見 RETRY_BATCH 上面那段（`D-129`）。
+ * 有學會的、或這一輪剛好試完 5 次的，每個帳號記一筆操作紀錄（系統排程）——不然操作紀錄只看得到
+ * 當初「失敗 N 條」那一筆，看的人以為還壞著（`C-335` 10-17 老闆就是這樣問的）。
  */
 export async function retryStuckChunks(
   db: Firestore,
-  opts: { maxBatch?: number; pendingStuckMs?: number } = {},
-): Promise<{ scanned: number; retried: number; indexed: number; failed: number; skippedPermanent: number }> {
-  const maxBatch = opts.maxBatch ?? 20
+  opts: {
+    maxBatch?: number
+    pendingStuckMs?: number
+    concurrency?: number
+    timeBudgetMs?: number
+    circuitBreakAfter?: number
+    /** 測試用：現在幾點（毫秒） */
+    now?: () => number
+  } = {},
+): Promise<RetryStuckChunksResult> {
+  const maxBatch = opts.maxBatch ?? RETRY_BATCH
   const stuckMs = opts.pendingStuckMs ?? PENDING_STUCK_MS
-  const cutoff = new Date(Date.now() - stuckMs)
+  const concurrency = Math.max(1, opts.concurrency ?? RETRY_CONCURRENCY)
+  const timeBudgetMs = opts.timeBudgetMs ?? RETRY_TIME_BUDGET_MS
+  const breakAfter = opts.circuitBreakAfter ?? RETRY_CIRCUIT_BREAK_AFTER
+  const now = opts.now ?? Date.now
+  const startedAt = now()
+  const cutoff = new Date(startedAt - stuckMs)
+  // ⛔ 不讀向量：學過又失敗的卡身上還帶著舊的 768 維向量，一輪 200 條整包拉回來是白花的流量
+  const FIELDS = ['workspaceId', 'title', 'content', 'questions', 'retryCount'] as const
 
   // 撿 failed。必須在查詢層就排除 retryCount 達上限的卡：只靠撈出後 skip 的話，
   // 全平台累積 ≥maxBatch 張永久失敗卡（一份爛 PDF 就夠）後，每次撈到的都是同一批
@@ -765,6 +831,7 @@ export async function retryStuckChunks(
   const failedSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('status', '==', 'failed')
     .where('retryCount', '<', MAX_AUTO_RETRIES)
+    .select(...FIELDS)
     .limit(maxBatch)
     .get()
 
@@ -772,56 +839,118 @@ export async function retryStuckChunks(
   const pendingSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('status', '==', 'pending')
     .where('updatedAt', '<', cutoff)
+    .select(...FIELDS)
     .limit(maxBatch)
     .get()
 
-  const docs = [...failedSnap.docs, ...pendingSnap.docs]
+  const scanned = failedSnap.docs.length + pendingSnap.docs.length
   const seen = new Set<string>()
-  let indexed = 0
-  const tokensByWorkspace = new Map<string, number>()
-  let failed = 0
-  let skippedPermanent = 0
-  for (const doc of docs) {
+  const queue: Array<{ id: string; ref: any; data: any }> = []
+  for (const doc of [...failedSnap.docs, ...pendingSnap.docs]) {
     if (seen.has(doc.id)) continue
     seen.add(doc.id)
-    const data = doc.data()
+    queue.push({ id: doc.id, ref: doc.ref, data: doc.data() })
+  }
 
-    // 連續失敗超過上限 → 非暫時性錯誤（內容問題等），停止自動重試。
-    // 卡片維持 failed 狀態，使用者手動 reindex 仍可重試（成功會歸零 retryCount）。
-    if (Number(data?.retryCount ?? 0) >= MAX_AUTO_RETRIES) {
-      skippedPermanent++
-      continue
-    }
+  let indexed = 0
+  let failed = 0
+  let skippedPermanent = 0
+  let skippedBudget = 0
+  let exhausted = 0
+  let attempts = 0
+  let attemptFailures = 0
+  let circuitBroken = false
+  const tokensByWorkspace = new Map<string, number>()
+  const perWorkspace = new Map<string, { indexed: number; failed: number; exhausted: number }>()
+  const bump = (ws: string, k: 'indexed' | 'failed' | 'exhausted') => {
+    if (!ws) return
+    const s = perWorkspace.get(ws) ?? { indexed: 0, failed: 0, exhausted: 0 }
+    s[k]++
+    perWorkspace.set(ws, s)
+  }
 
-    const content = String(data?.content ?? '')
-    if (!content) {
-      // 空內容推不動：當場標 failed＋滿額 retryCount 讓它離開佇列。原本只 failed++ 不動文件，
-      // updatedAt 永遠不變 → 這張卡每輪都排在「最舊」最前面，把別租戶真正卡住的卡
-      // 擠出 limit 名額（隊頭阻塞），每天還白數 144 次。
-      await doc.ref.update({
-        status: 'failed' satisfies KnowledgeChunkStatus,
-        failureReason: '內容為空，無法建立索引',
-        retryCount: MAX_AUTO_RETRIES,
-        updatedAt: FieldValue.serverTimestamp(),
-      }).catch(() => {})
-      failed++
-      continue
+  // 超過本月 AI 整理用量上限的帳號這輪整個跳過：打了也是 429（不耗次數），白佔名額還會把熔斷誤觸發
+  const budgetBlocked = new Map<string, Promise<boolean>>()
+  const isBudgetBlocked = (ws: string): Promise<boolean> => {
+    if (!ws) return Promise.resolve(false)
+    let p = budgetBlocked.get(ws)
+    if (!p) {
+      p = getMaintenanceBudgetStatus(ws, db).then(s => s.blocked).catch(() => false) // 查不到不擋：打下去還有 runWithLlmBudget 守
+      budgetBlocked.set(ws, p)
     }
-    const ws = typeof data?.workspaceId === 'string' ? data.workspaceId : ''
-    // 不帶 workspaceId:批次迴圈每卡一寫會打爆單一月用量文件,改累計、迴圈後每 workspace 一寫。
-    // 額度境域（C-45）另外圈:超額的 workspace 這輪跳過（429 不耗 retryCount，下月自動恢復）
-    const result = await runWithLlmBudget(ws, () => runIndexOnChunk(db, doc.id, buildEmbeddingText(
-      String(data?.title ?? ''),
-      content,
-      Array.isArray(data?.questions) ? data.questions.map(String) : [],
-    )))
-    if (result.status === 'indexed') {
-      indexed++
-      if (ws) tokensByWorkspace.set(ws, (tokensByWorkspace.get(ws) ?? 0) + result.embeddingTokens)
+    return p
+  }
+
+  let cursor = 0
+  async function worker() {
+    while (cursor < queue.length) {
+      // 時間到、或 AI 服務看起來在出事 → 不再開新的（已經開始的那幾條各自做完）
+      if (circuitBroken || now() - startedAt >= timeBudgetMs) return
+      const item = queue[cursor++]!
+      const data = item.data
+      const prevCount = Number(data?.retryCount ?? 0) || 0
+
+      // 連續失敗超過上限 → 非暫時性錯誤（內容問題等），停止自動重試。
+      // 卡片維持 failed 狀態，使用者手動 reindex 仍可重試（成功會歸零 retryCount）。
+      if (prevCount >= MAX_AUTO_RETRIES) {
+        skippedPermanent++
+        continue
+      }
+
+      const ws = typeof data?.workspaceId === 'string' ? data.workspaceId : ''
+      const content = String(data?.content ?? '')
+      if (!content) {
+        // 空內容推不動：當場標 failed＋滿額 retryCount 讓它離開佇列。原本只 failed++ 不動文件，
+        // updatedAt 永遠不變 → 這張卡每輪都排在「最舊」最前面，把別租戶真正卡住的卡
+        // 擠出 limit 名額（隊頭阻塞），每天還白數 144 次。
+        await item.ref.update({
+          status: 'failed' satisfies KnowledgeChunkStatus,
+          failureReason: '內容為空，無法建立索引',
+          retryCount: MAX_AUTO_RETRIES,
+          updatedAt: FieldValue.serverTimestamp(),
+        }).catch(() => {})
+        failed++
+        exhausted++
+        bump(ws, 'failed')
+        bump(ws, 'exhausted')
+        continue
+      }
+      if (await isBudgetBlocked(ws)) {
+        skippedBudget++
+        continue
+      }
+      // 份量上限算「真的打出去的次數」：跳過的不佔名額
+      if (attempts >= maxBatch) return
+      attempts++
+      // 不帶 workspaceId:批次迴圈每卡一寫會打爆單一月用量文件,改累計、迴圈後每 workspace 一寫。
+      // 額度境域（C-45）另外圈:用量途中剛好超過的，runIndexOnChunk 收到 429 不耗 retryCount，下月自動恢復
+      const result = await runWithLlmBudget(ws, () => runIndexOnChunk(db, item.id, buildEmbeddingText(
+        String(data?.title ?? ''),
+        content,
+        Array.isArray(data?.questions) ? data.questions.map(String) : [],
+      )))
+      if (result.status === 'indexed') {
+        indexed++
+        bump(ws, 'indexed')
+        if (ws) tokensByWorkspace.set(ws, (tokensByWorkspace.get(ws) ?? 0) + result.embeddingTokens)
+      }
+      else {
+        failed++
+        bump(ws, 'failed')
+        // 這一次也沒成＝又用掉一次；剛好用完的，從這一刻起畫面才給「再試一次」
+        if (result.status === 'failed' && prevCount + 1 >= MAX_AUTO_RETRIES) {
+          exhausted++
+          bump(ws, 'exhausted')
+        }
+        // 只數真的打出去又失敗的（空內容那種不是服務的問題）
+        attemptFailures++
+        if (indexed === 0 && attemptFailures >= breakAfter) circuitBroken = true
+      }
     }
-    else {
-      failed++
-    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker))
+  if (circuitBroken) {
+    console.warn(`[ai:retry-stuck-chunks] 開頭連續 ${attemptFailures} 條都沒學會、一條都沒成功：AI 服務可能在出事，這輪先停（剩下的不耗次數，下一輪再試）`)
   }
 
   // 每個 workspace 記一次帳(排程跨租戶,不能混在同一份文件)
@@ -829,5 +958,32 @@ export async function retryStuckChunks(
     if (tokens > 0) await recordAiUsage(ws, { buildEmbeddingTokens: tokens }, db)
   }
 
-  return { scanned: docs.length, retried: seen.size - skippedPermanent, indexed, failed, skippedPermanent }
+  // 操作紀錄（系統排程）：有學會的、或剛好試完 5 次的才記——只是又失敗一次（還會再試）不記，不然服務出事時每 10 分鐘洗一筆
+  for (const [ws, s] of perWorkspace) {
+    if (!s.indexed && !s.exhausted) continue
+    const stillRetrying = s.failed - s.exhausted
+    await writeAuditLog({
+      workspaceId: ws,
+      uid: '',
+      actor: 'system',
+      action: 'knowledge.autoRetry',
+      after: { chunkIdsCount: s.indexed, failedItemsCount: s.failed },
+      note: `之前沒學會的知識，系統自己再試：學會 ${s.indexed} 條`
+        + (stillRetrying > 0 ? `、${stillRetrying} 條還沒學會（會再試）` : '')
+        + (s.exhausted > 0 ? `；${s.exhausted} 條試了 ${KNOWLEDGE_MAX_AUTO_RETRIES} 次都沒學會，要人看一下（知識庫「要處理的事」）` : ''),
+    }, db)
+  }
+
+  const processed = indexed + failed + skippedPermanent + skippedBudget
+  return {
+    scanned,
+    retried: indexed + failed,
+    indexed,
+    failed,
+    skippedPermanent,
+    skippedBudget,
+    exhausted,
+    deferred: Math.max(0, queue.length - processed),
+    circuitBroken,
+  }
 }

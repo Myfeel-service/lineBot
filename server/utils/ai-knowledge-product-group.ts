@@ -24,7 +24,8 @@ import {
   runIndexOnChunk,
 } from './ai-knowledge-chunks'
 import { confirmAlias, invalidateProductAliases, promoteCanonicalName } from './ai-product-alias'
-import { recordAiUsage } from './ai-usage'
+import { getMaintenanceBudgetStatus, recordAiUsage } from './ai-usage'
+import { runWithLlmBudget } from './gemini'
 import { writeAuditLog } from './audit-log'
 import { productNameForGroup, sameProductGroupName } from '~~/shared/knowledge-product-group'
 import { isUsableAlias } from '~~/shared/product-name-similarity'
@@ -101,10 +102,139 @@ export async function relearnSourceChunks(db: Firestore, workspaceId: string, so
 /**
  * 「商品名換了、AI 還沒重新學」的記號（資料上的一格，`D-127` /code-review 第 4、14 條）。
  * 改組名、改成通用、刪分組、合成一組時伺服器只改名字，重新學習交給畫面一份份打——他中途關掉頁面就停在一半，
- * 卡片還帶舊商品名（產品鎖照舊名字擋）。有這個記號，體檢就找得到沒學完的、「要處理的事」叫他按一下補學。
- * relearnSourceChunks 學完就拿掉。
+ * 卡片還帶舊商品名（產品鎖照舊名字擋）。有這個記號，排程就找得到沒學完的、自己補完（relearnPendingProductSources，`D-129`；
+ * 以前是體檢「要處理的事」列出來叫他按一下補學）。relearnSourceChunks 學完就拿掉。
  */
 export const RELEARN_PENDING_FIELD = 'productRelearnPending'
+
+/**
+ * 排程補學的節奏（`D-129`）：
+ *  · 等 10 分鐘才接手：記號剛留下時，畫面多半正在一份份學（一組十幾份、幾分鐘內學完）——搶同一份＝同一份學兩次、錢花兩次。
+ *    畫面中途關掉的那幾份，最多晚 20 分鐘學好；在那之前舊名字已經收成別名，客人照舊名字叫也認得是這一台。
+ *  · 一輪最多看 20 份、過了 12 秒就不開下一份：一份最多約 150 條、約 9 秒（同 reindex 端點），排程那支閘道 30 秒，
+ *    還要跟其他二十幾項一起跑。學不完的下一輪（10 分鐘後）再接。
+ */
+export const RELEARN_PENDING_GRACE_MS = 10 * 60_000
+export const RELEARN_PENDING_SOURCES_PER_ROUND = 20
+export const RELEARN_PENDING_TIME_BUDGET_MS = 12_000
+/** 一輪最多處理幾個「改了組名、底下資料沒跟上」的分組（分組上的 productSyncPending） */
+const RELEARN_PENDING_FOLDERS_PER_ROUND = 10
+
+export interface RelearnPendingResult {
+  /** 分組上「沒跟上」的記號，這輪補上幾組（底下的資料接著留記號、照下面那條路學） */
+  foldersSynced: number
+  /** 這輪學完幾份 */
+  relearned: number
+  indexed: number
+  failed: number
+  /** 還在等畫面學（記號剛留下不到 10 分鐘）的份數 */
+  waitingForPage: number
+  /** 這個帳號本月 AI 整理用量用完了，這輪先不學的份數（⛔ 學下去每一條都會變成學失敗、AI 找不到，比用舊名字更糟） */
+  skippedBudget: number
+  /** 時間到、下一輪再接的份數 */
+  deferred: number
+  /** 資料已經刪掉了、只把記號拿掉的份數 */
+  cleared: number
+}
+
+/**
+ * 改組名、改成通用、刪分組、合成一組之後，畫面中途關掉、沒學完的那幾份——伺服器自己補完（`D-129`，2026-10-19 老闆「按你建議」）。
+ * 以前要他在「要處理的事」看到「有 N 份資料換了商品名，AI 還沒重新學」、自己按「重新學習」；現在那一列拿掉了，排程自己來。
+ *
+ * ① 分組上有 productSyncPending（改組名時底下資料的商品名寫失敗）→ 重跑一次 syncGroupSourcesProduct，底下資料改名＋留記號；
+ * ② 資料上有 productRelearnPending、而且留下超過 10 分鐘 → 先對齊組名、再整份學一次（同畫面打的 reindex 端點）。
+ *    學失敗的那幾條另外由 retryStuckChunks 自動再試（那幾條本身已經是 failed）。
+ * 稽核記成系統排程（⛔ 不掛在當初改組名的人頭上：學的那一刻他不在場）。
+ */
+export async function relearnPendingProductSources(
+  db: Firestore,
+  opts: { now?: () => number; graceMs?: number; perRound?: number; timeBudgetMs?: number } = {},
+): Promise<RelearnPendingResult> {
+  const now = opts.now ?? Date.now
+  const startedAt = now()
+  const graceMs = opts.graceMs ?? RELEARN_PENDING_GRACE_MS
+  const perRound = opts.perRound ?? RELEARN_PENDING_SOURCES_PER_ROUND
+  const timeBudgetMs = opts.timeBudgetMs ?? RELEARN_PENDING_TIME_BUDGET_MS
+  const result: RelearnPendingResult = { foldersSynced: 0, relearned: 0, indexed: 0, failed: 0, waitingForPage: 0, skippedBudget: 0, deferred: 0, cleared: 0 }
+
+  // ① 分組上「沒跟上」的記號：畫面那時拿到 syncFailed、沒有一份份學——沒人在學，底下的資料不用等 10 分鐘
+  const readyNow = new Set<string>()
+  const folderSnap = await db.collection(KNOWLEDGE_FOLDERS_COLLECTION)
+    .where('productSyncPending', '==', true)
+    .limit(RELEARN_PENDING_FOLDERS_PER_ROUND)
+    .get()
+  for (const d of folderSnap.docs) {
+    const wid = String((d.data() as Partial<KnowledgeFolderDoc>).workspaceId ?? '')
+    if (!wid) continue
+    try {
+      const ids = await syncGroupSourcesProduct(db, wid, d.id)
+      for (const id of ids) readyNow.add(id)
+      result.foldersSynced++
+    }
+    catch (e) {
+      console.warn(`[ai:relearn-pending-sources] 分組 ${d.id} 底下的商品名還是沒跟上:`, (e as Error)?.message)
+    }
+  }
+
+  // ② 資料上「還沒重新學」的記號（兩個等值條件都不用：單一欄位等值，自動索引就查得到）
+  const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+    .where(RELEARN_PENDING_FIELD, '==', true)
+    .select('workspaceId', 'name', 'updatedAt', 'isDeleted', 'deletedAt')
+    .limit(perRound)
+    .get()
+  const budgetByWorkspace = new Map<string, boolean>()
+  for (const d of snap.docs) {
+    const s = d.data() as { workspaceId?: string; name?: string; updatedAt?: { toMillis?: () => number }; isDeleted?: boolean; deletedAt?: unknown }
+    const wid = String(s.workspaceId ?? '')
+    if (!wid || s.isDeleted === true || s.deletedAt != null) {
+      // 刪掉的資料不用學了；記號不拿掉的話每一輪都撿到它、佔掉名額
+      await d.ref.update({ [RELEARN_PENDING_FIELD]: FieldValue.delete() }).catch(() => {})
+      result.cleared++
+      continue
+    }
+    const updatedMs = typeof s.updatedAt?.toMillis === 'function' ? s.updatedAt.toMillis() : 0
+    if (!readyNow.has(d.id) && updatedMs > 0 && startedAt - updatedMs < graceMs) {
+      result.waitingForPage++
+      continue
+    }
+    if (now() - startedAt >= timeBudgetMs) {
+      result.deferred++
+      continue
+    }
+    if (!budgetByWorkspace.has(wid)) {
+      budgetByWorkspace.set(wid, await getMaintenanceBudgetStatus(wid, db).then(b => b.blocked).catch(() => false))
+    }
+    if (budgetByWorkspace.get(wid)) {
+      result.skippedBudget++
+      continue
+    }
+    try {
+      // 圈進這個帳號的額度境域：排程沒有請求可以帶出是哪一家，不圈的話用量守門形同關掉
+      const r = await runWithLlmBudget(wid, async () => {
+        await alignSourceProductWithGroup(db, wid, d.id)
+        return relearnSourceChunks(db, wid, d.id)
+      })
+      result.relearned++
+      result.indexed += r.indexed
+      result.failed += r.failed
+      await writeAuditLog({
+        workspaceId: wid,
+        uid: '',
+        actor: 'system',
+        action: 'source.reindex',
+        targetId: d.id,
+        after: { name: String(s.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed },
+        note: `${String(s.name ?? '')}：換了商品名之後沒學完的，系統自己補學：學會 ${r.indexed} 條`
+          + (r.failed ? `、${r.failed} 條還沒學會（會自己再試）` : ''),
+      }, db)
+    }
+    catch (e) {
+      // 記號留著：下一輪再試
+      console.warn(`[ai:relearn-pending-sources] ${d.id} 補學沒成:`, (e as Error)?.message)
+    }
+  }
+  return result
+}
 
 /** Firestore 一個 batch 最多 500 筆：分批寫（每批 400 留餘裕）。一組底下超過 500 份時，以前整批 commit 失敗、什麼都沒寫 */
 async function commitUpdatesInChunks(db: Firestore, updates: Array<{ ref: DocumentReference, data: Record<string, unknown> }>): Promise<void> {
@@ -178,7 +308,8 @@ export async function syncSourceProductWithGroup(
     after: { productName: target, chunkIdsCount: relearned.indexed, failedItemsCount: relearned.failed },
     note: `${String(source.data.name ?? '')}：`
       + (target ? `放進「${group?.name ?? ''}」，AI 把它當成「${target}」的資料` : `不在商品分組裡，AI 不再把它當成「${previous}」的資料`)
-      + `，重新學習 ${relearned.indexed} 條${relearned.failed ? `、失敗 ${relearned.failed} 條` : ''}`,
+      // `D-129`：店家看得到的字不講「重新學習」；沒學會的那幾條排程會自己再試
+      + `，照新的商品名學會 ${relearned.indexed} 條${relearned.failed ? `、${relearned.failed} 條還沒學會（會自己再試）` : ''}`,
   }, db)
 
   return { changed: true, productName: target, previous, source: updated, relearned }
@@ -241,8 +372,9 @@ export async function markGroupProductSyncPending(db: Firestore, folderId: strin
 
 /**
  * 這份資料的商品名改成跟它所在分組一致，**不學**（`D-127`）。有變就留「還沒重新學」的記號。
- * syncSourceProductWithGroup（換組當場學）和 POST /api/ai/sources/:id/reindex（「重新學習這一份」先對齊再學）都走這裡——
- * 改組名到一半斷掉、資料上的商品名沒跟上組名的，按一次「重新學習」就對齊（/code-review 第 14 條）。
+ * syncSourceProductWithGroup（換組當場學）、POST /api/ai/sources/:id/reindex（畫面改組名之後一份份學）、
+ * 排程 relearnPendingProductSources（畫面中途關掉的，`D-129`）都走這裡——改組名到一半斷掉、資料上的商品名沒跟上組名的，
+ * 學那一次就對齊（/code-review 第 14 條）。
  */
 export async function alignSourceProductWithGroup(
   db: Firestore,

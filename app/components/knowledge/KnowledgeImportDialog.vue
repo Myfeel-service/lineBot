@@ -503,10 +503,10 @@
           已建立 {{ siteSummary.ok }} 份資料、共 {{ siteSummary.cards }} 條知識
         </template>
         <div class="text-xs">
-          <!-- 已經建進庫、但 AI 還沒學起來的條數（`D-41` P1⑤）：不講的話這幾條就永遠沒人管，
-               客人問到相關問題會找不到它們。到資料頁按「重新學習」就能修。 -->
+          <!-- 已經建進庫、但 AI 還沒學起來的條數（`D-41` P1⑤）：客人問到相關問題暫時會找不到它們，要講。
+               `D-129`：系統每 10 分鐘自己再試（最多 5 次），⛔ 不叫他去按什麼；試完還不行，知識庫「要處理的事」才會列出來 -->
           <template v-if="siteSummary.notLearned">
-            其中 <strong>{{ siteSummary.notLearned }}</strong> 條 AI 還沒學起來（客人問到會找不到）——到左邊那份資料點開該條按「重新學習」即可。
+            其中 <strong>{{ siteSummary.notLearned }}</strong> 條 AI 還沒學會（客人問到暫時找不到），系統會自己再試。
           </template>
           <template v-if="siteSummary.failed">{{ siteSummary.failed }} 頁失敗（清單上有標原因，可重新勾選再試一次）。</template>
           <template v-if="siteSummary.warned">{{ siteSummary.warned }} 頁帶有提醒，建議進知識庫檢查這幾筆的內容。</template>
@@ -1044,7 +1044,8 @@
     -->
     <div v-if="step === 'result' && result">
       <p class="kb-step-label"><span class="kb-step-count">第 {{ stepProgress.index }} 步，共 {{ stepProgress.total }} 步</span>加好了</p>
-      <!-- 「可用／失敗」是系統的話（`D-124` 新手走查）：失敗其實是「AI 還沒學起來、可以重試」，不是東西壞了 -->
+      <!-- 「可用／失敗」是系統的話（`D-124` 新手走查）：失敗其實是「AI 還沒學會、系統會自己再試」，不是東西壞了。
+           `D-129`：所以「還沒學會」那一格用琥珀不用紅（紅色留給真的要他動手的） -->
       <div class="kb-result-summary">
         <div class="kb-result-stat">
           <span class="kb-result-label">整理出</span>
@@ -1054,8 +1055,8 @@
           <span class="kb-result-label">AI 學會了</span>
           <strong>{{ result.indexed }}</strong>
         </div>
-        <div class="kb-result-stat" :class="result.failed ? 'kb-result-stat--danger' : ''">
-          <span class="kb-result-label">還沒學起來</span>
+        <div class="kb-result-stat" :class="result.failed ? 'kb-result-stat--warning' : ''">
+          <span class="kb-result-label">還沒學會</span>
           <strong>{{ result.failed }}</strong>
         </div>
       </div>
@@ -1084,7 +1085,7 @@
       </div>
       <!--
         按「改」換了一組之後（`D-127` 分組就是商品）：AI 現在把它當成哪一台講一句；
-        搬是搬過去了、重新學習那一步沒成（groupSync.error）：⛔ 不講成搬失敗
+        搬是搬過去了、學那一步沒成（groupSync.error）：⛔ 不講成搬失敗；系統會自己補學（`D-129`）
       -->
       <p v-if="groupSyncNote" class="kb-group-fill" :class="{ 'is-warn': groupSync?.kind === 'failed' }">{{ groupSyncNote }}</p>
 
@@ -1209,40 +1210,20 @@
         <p v-else-if="overviewState === 'none'" class="kb-overview-suggest__text">AI 沒能從這份做出清單（看起來不是商品清單）；其他知識不受影響。</p>
       </div>
 
+      <!--
+        沒學會的那幾條（`D-129`，2026-10-19）：以前每一列一顆「重試」、上面一顆「全部重試」——但系統本來就每 10 分鐘自己再試（最多 5 次），
+        店家按過的次數是 0，按鈕只讓人以為要自己處理。現在只講一句「系統會自己再試」；
+        重試也救不了的（內容太長、空的）照舊講原因＋「要改內容才行」，那是真的要他動手的
+      -->
       <div v-if="result.failed > 0" class="kb-result-failed-list">
-        <div class="kb-failed-head">
-          <!-- `C-320` 減字：「大多是暫時性問題，就在這裡按重試即可」拿掉——每一列自己講原因、重試鈕就在旁邊 -->
-          <p class="kb-section-hint">
-            這幾條 AI 還沒學起來（客人問到會找不到）。
-          </p>
-          <el-button
-            v-if="failedItems.some(i => plainFailure(i.failureReason).retryable)"
-            size="small"
-            type="primary"
-            plain
-            :loading="retryAllRunning"
-            @click="retryAllFailed"
-          >
-            全部重試
-          </el-button>
-        </div>
+        <p class="kb-section-hint">這幾條 AI 還沒學會（客人問到暫時找不到），系統會自己再試。</p>
         <ul class="kb-failed-list">
           <li v-for="item in failedItems" :key="item.id" class="kb-failed-row">
             <div class="kb-failed-row__main">
               <strong>{{ item.title }}</strong>
-              <span class="text-muted text-xs">{{ plainFailure(item.failureReason).text }}</span>
+              <span v-if="!plainIndexFailure(item.failureReason).retryable" class="text-muted text-xs">{{ plainIndexFailure(item.failureReason).text }}</span>
             </div>
-            <el-button
-              v-if="plainFailure(item.failureReason).retryable"
-              size="small"
-              text
-              type="primary"
-              :loading="retryingIds.has(item.id)"
-              @click="retryOne(item)"
-            >
-              重試
-            </el-button>
-            <span v-else class="text-xs text-muted">要改內容才行</span>
+            <span v-if="!plainIndexFailure(item.failureReason).retryable" class="text-xs text-muted">要改內容才行</span>
           </li>
         </ul>
       </div>
@@ -1281,6 +1262,7 @@ import {
   parseGroupSync,
   writeMayHaveLanded,
 } from '~~/shared/knowledge-import-group'
+import { plainIndexFailure } from '~~/shared/knowledge-relearn'
 import { KB_IMPORT_DIALOG_STEPS } from '~/utils/tutorial-topics'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 // 型別要明寫（自動匯入只帶函式，不帶 type）
@@ -1869,7 +1851,7 @@ const removedGroupIds = ref<string[]>([])
 const markedGeneralIds = ref<string[]>([])
 /**
  * 標成通用、刪掉分組之後，商品名被清掉的那幾份一份份重新學（`D-127` /code-review 第 5 條）：伺服器只改名字、回 relearnSourceIds，
- * 以前這裡沒接，卡片一直帶著舊商品名。不等、失敗不講——資料上留了「還沒重新學」的記號，知識庫頁「要處理的事」會列出來
+ * 以前這裡沒接，卡片一直帶著舊商品名。不等、失敗不講——資料上留了「還沒重新學」的記號，排程會自己補學完（`D-129`）
  */
 async function relearnInBackground(res: unknown): Promise<void> {
   const ids = (res as { relearnSourceIds?: string[] } | null)?.relearnSourceIds ?? []
@@ -1932,7 +1914,8 @@ const savedGroup = ref<ImportGroupChoice | null | undefined>(undefined)
 const groupMoving = ref(false)
 /** 按「改」換組之後伺服器做了什麼（`PUT` 回的 groupSync，`D-127`）：AI 現在把它當成哪一台、或沒重新學成 */
 const groupSync = ref<GroupSyncOutcome | null>(null)
-const groupSyncNote = computed(() => groupSyncNoteText(groupSync.value).replace('點開那一份', '打開這一份'))
+// `D-129` 起那句不再叫他「點開那一份按⋯」（系統會自己再試），以前這裡換字的那一步拿掉了
+const groupSyncNote = computed(() => groupSyncNoteText(groupSync.value))
 
 /**
  * 「更新既有那一份」的目標（`C-135`）。
@@ -3733,101 +3716,10 @@ async function makeOverview() {
   }
 }
 
-// ── 失敗就地重試（P1-6） ──────────────────────────────────
-// 原本只寫「可到知識庫點開那一條按重新學習」：要記住 N 個標題、換頁、一條條點。
-// 失敗原因也直接吐後端原文（多半是英文），使用者無從判斷是暫時性還是內容有問題。
-
-/** 後端原文 → 白話一句＋能不能靠重試解決 */
-function plainFailure(reason?: string): { text: string; retryable: boolean } {
-  const r = String(reason ?? '').toLowerCase()
-  if (!r) return { text: '原因不明', retryable: true }
-  if (/timeout|timed out|etimedout|econnreset|socket/.test(r))
-    return { text: '連線逾時（暫時性問題）', retryable: true }
-  if (/429|rate limit|quota|resource.*exhausted/.test(r))
-    return { text: 'AI 服務忙碌中（暫時性問題）', retryable: true }
-  if (/5\d\d|internal|unavailable|bad gateway/.test(r))
-    return { text: 'AI 服務暫時故障（暫時性問題）', retryable: true }
-  if (/too long|exceed|payload|size/.test(r))
-    return { text: '這一條內容太長，AI 讀不下', retryable: false }
-  if (/empty|invalid|no content/.test(r))
-    return { text: '這一條內容有問題（可能是空的或只有符號）', retryable: false }
-  if (/api key|permission|denied|unauthorized|401|403/.test(r))
-    return { text: 'AI 服務金鑰或權限有問題，重試無效，請聯絡我們', retryable: false }
-  return { text: '學習失敗（暫時性問題居多）', retryable: true }
-}
-
-const retryingIds = ref<Set<string>>(new Set())
-const retryAllRunning = ref(false)
-
-/**
- * 重試一條。
- *
- * ⛔ **一定要看回應內容，不可以「沒 throw 就當成功」**（`D-41` P0①，2026-09-03 修）。
- *    `/reindex` 走 `runIndexOnChunk`，那支的 catch 是 **return 不是 throw**——再次失敗時
- *    回的是 HTTP 200 ＋ `{ status: 'failed' }`。原本這裡不看回應一律「可用 +1、失敗 −1」，
- *    於是 AI 服務忙碌時按重試，畫面說「3 條都學會了」而實際 3 條全還是失敗：
- *    客人問到照樣答不出來，而老闆以為修好了。資料頁的同功能本來就會重讀真狀態
- *    （`sources/index.vue` 的 retryChunk），兩邊誠實度不同才是這個 bug 的形狀。
- */
-async function retryOne(item: { id: string; status: string; failureReason?: string }): Promise<boolean> {
-  retryingIds.value = new Set([...retryingIds.value, item.id])
-  try {
-    const res = await apiFetch<{ status?: string; failureReason?: string }>(
-      `/api/ai/knowledge/${item.id}/reindex`,
-      { method: 'POST' },
-    )
-    const row = (result.value?.items ?? []).find(i => i.id === item.id)
-    /**
-     * ⚠️ 判「失敗」要看 `status === 'failed'`，不是「不等於 indexed」（2026-09-03 code review 抓到）：
-     * `runIndexOnChunk` 對**停用中**的卡重算成功時回的是 `status: 'disabled'`（刻意的，
-     * 停用卡不落 failed 才不會被重試佇列復活）。用不等式判的話，那種成功會被報成
-     * 「還是沒學起來：原因不明」。
-     */
-    if (res?.status === 'failed') {
-      if (row) row.failureReason = res?.failureReason || row.failureReason || '重試後仍然失敗'
-      return false
-    }
-    // 就地改狀態：結果頁的統計與清單都跟著更新，不用重新匯入才看得到成果
-    if (row && result.value) {
-      row.status = 'indexed'
-      row.failureReason = undefined
-      result.value.indexed += 1
-      result.value.failed = Math.max(0, result.value.failed - 1)
-    }
-    return true
-  }
-  catch (err: any) {
-    const row = (result.value?.items ?? []).find(i => i.id === item.id)
-    if (row) row.failureReason = apiErrorText(err, row.failureReason ?? '')
-    return false
-  }
-  finally {
-    const next = new Set(retryingIds.value)
-    next.delete(item.id)
-    retryingIds.value = next
-  }
-}
-
-async function retryAllFailed() {
-  // 只重試「可能靠重試解決」的：內容太長之類重試一百次也一樣，別讓人白等
-  const targets = failedItems.value.filter(i => plainFailure(i.failureReason).retryable)
-  if (!targets.length) return
-  retryAllRunning.value = true
-  try {
-    let ok = 0
-    for (const t of targets) {
-      // 逐條而非併發：失敗多半是 AI 服務忙碌，同時打更多只會一起失敗
-      if (await retryOne(t)) ok++
-    }
-    showToast(
-      ok === targets.length ? `${ok} 條都學會了` : `${ok} / ${targets.length} 條成功，其餘可稍後再試`,
-      ok === targets.length ? 'success' : 'error',
-    )
-  }
-  finally {
-    retryAllRunning.value = false
-  }
-}
+// ── 沒學會的那幾條（`D-129`）────────────────────────────────
+// 以前這裡有「重試」「全部重試」（P1-6：原本只寫「可到知識庫點開那一條按重新學習」）。
+// 2026-10-19 拿掉：系統每 10 分鐘自己再試（最多 5 次），剛加完就叫他按＝讓他以為要自己處理。
+// 失敗原因怎麼翻成白話搬到 shared/knowledge-relearn（plainIndexFailure），知識庫頁試完 5 次那幾條也用同一份。
 
 async function runImport() {
   // 與畫面上的按鈕共用同一份判斷（見 willImportChunks、sendChunks 的說明）；
@@ -3932,7 +3824,8 @@ async function runImport() {
         showToast(
           res.failed === 0
             ? `「${name}」已加進知識庫（${res.indexed} 條）`
-            : `「${name}」已加進知識庫：${res.indexed} 條可用、${res.failed} 條 AI 還沒學起來`,
+            // `D-129`：沒學會的系統會自己再試，講出來但不叫他做什麼
+            : `「${name}」已加進知識庫：${res.indexed} 條可用、${res.failed} 條 AI 還沒學會（系統會自己再試）`,
           res.failed === 0 ? 'success' : 'warning',
         )
       }

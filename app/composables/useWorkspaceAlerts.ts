@@ -254,7 +254,8 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'knowledgeIndexFailed',
     icon: Reading,
-    impact: '這些知識存進去了但 AI 讀不到，等於白建——客人問到就會答不出來。',
+    // `D-129`：這顆只為「系統自己試了 5 次都沒學會」的亮（還在自動再試的不算），所以這裡講的就是要人看一下的那幾條
+    impact: '這些知識系統自己試了 5 次，AI 還是沒學會——客人問到就會答不出來。再試一次還是不行的話，改一下內容再存，或聯絡我們。',
     cta: '去看這些知識',
     // 一鍵 `knowledge-retry-index` 是 `knowledge.write`
     requires: 'knowledge.write',

@@ -84,7 +84,9 @@ describe('parseGroupSync（換分組之後 AI 把它當成哪一台，`D-127`）
   it('放進商品分組：AI 現在把它當成那一台；沒學會的條數照實講', () => {
     const f = parseGroupSync({ id: 's', groupSync: { productName: 'SHARP 乾淨方MAX', previous: '', indexed: 8, failed: 2 } })
     expect(f).toEqual({ kind: 'synced', productName: 'SHARP 乾淨方MAX', previous: '', indexed: 8, failed: 2 })
-    expect(groupSyncNoteText(f)).toBe('AI 現在把它當成「SHARP 乾淨方MAX」的資料；有 2 條還沒學會，點開那一份按右上「⋯ → 重新學習這一份」')
+    // `D-129`：沒學會的系統會自己再試，⛔ 不叫他去按「⋯ → 重新學習這一份」
+    expect(groupSyncNoteText(f)).toBe('AI 現在把它當成「SHARP 乾淨方MAX」的資料；有 2 條還沒學會，系統會自己再試')
+    expect(groupSyncNoteText(f)).not.toContain('重新學習')
   })
 
   it('搬到通用、不放分組：AI 不再把它當成原本那一台', () => {
@@ -98,10 +100,10 @@ describe('parseGroupSync（換分組之後 AI 把它當成哪一台，`D-127`）
     expect(groupSyncNoteText(null)).toBe('')
   })
 
-  it('搬過去了、重新學習沒成（{ error: true }）＝講一句，⛔ 不講成搬失敗', () => {
+  it('搬過去了、學那一步沒成（{ error: true }）＝講一句「系統會自己再試」，⛔ 不講成搬失敗、不叫他去按', () => {
     const f = parseGroupSync({ folderId: 'g', groupSync: { error: true } })
     expect(f).toEqual({ kind: 'failed' })
-    expect(groupSyncNoteText(f)).toMatch(/^搬過去了，但 AI 還沒重新學會/)
+    expect(groupSyncNoteText(f)).toBe('搬過去了；AI 還沒學會，系統會自己再試')
   })
 })
 

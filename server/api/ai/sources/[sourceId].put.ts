@@ -10,7 +10,7 @@ import {
   updateSourceSettings,
 } from '~~/server/utils/ai-knowledge-sources'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
-import { syncSourceProductWithGroup } from '~~/server/utils/ai-knowledge-product-group'
+import { RELEARN_PENDING_FIELD, syncSourceProductWithGroup } from '~~/server/utils/ai-knowledge-product-group'
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 
@@ -108,6 +108,13 @@ export default defineEventHandler(async (event) => {
     }
     catch (e) {
       console.warn(`[sources] ${sourceId} group product sync failed:`, (e as Error)?.message)
+      // 留「還沒重新學」的記號（`D-129`）：排程（relearnPendingProductSources）自己對齊組名、補學完，畫面只講「系統會自己補上」。
+      // 對齊那一步已經留過的話這裡是重寫一次；斷在對齊之前的（記號還沒寫）靠這一筆才找得到
+      try {
+        await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+          .update({ [RELEARN_PENDING_FIELD]: true, updatedAt: FieldValue.serverTimestamp() })
+      }
+      catch { /* 記號寫不進去：資料剛被刪、或資料庫一時寫不進去——搬移照樣算成功 */ }
       return { ...result, groupSync: { error: true } }
     }
   }

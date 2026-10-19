@@ -27,7 +27,8 @@ export default defineEventHandler(async (event) => {
   const source = await getSource(db, sourceId, workspaceId)
   if (!source) throw createError({ statusCode: 404, statusMessage: 'source not found' })
 
-  // `D-127`：先把商品名對齊它所在的分組再學（改組名到一半斷掉、資料上的商品名沒跟上組名的，按一次「重新學習」就好）
+  // `D-127`：先把商品名對齊它所在的分組再學（改組名到一半斷掉、資料上的商品名沒跟上組名的，學這一次就對齊）。
+  // `D-129` 起呼叫的是畫面改組名之後一份份學的那一輪；畫面中途關掉的，排程 relearnPendingProductSources 走同一條路補完
   await alignSourceProductWithGroup(db, workspaceId, sourceId)
   const r = await relearnSourceChunks(db, workspaceId, sourceId)
 
@@ -39,7 +40,8 @@ export default defineEventHandler(async (event) => {
     action: 'source.reindex',
     targetId: sourceId,
     after: { name: String(source.data.name ?? ''), itemsCount: r.total, chunkIdsCount: r.indexed, failedItemsCount: r.failed },
-    note: `${String(source.data.name ?? '')}：重新學習 ${r.indexed} 條${r.failed ? `、失敗 ${r.failed} 條` : ''}`,
+    // `D-129`：店家看得到的字不講「重新學習」
+    note: `${String(source.data.name ?? '')}：再學一次，學會 ${r.indexed} 條${r.failed ? `、${r.failed} 條還沒學會（會自己再試）` : ''}`,
   }, db)
 
   return r

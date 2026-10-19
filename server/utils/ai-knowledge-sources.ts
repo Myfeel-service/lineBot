@@ -436,7 +436,7 @@ export async function listChunksBySource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
+): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; retryCount: number; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
@@ -455,6 +455,8 @@ export async function listChunksBySource(
       questions: Array.isArray(data?.questions) ? data.questions.map(String) : [],
       status: String(data?.status ?? 'pending'),
       ...(data?.failureReason ? { failureReason: String(data.failureReason) } : {}),
+      // 學失敗了幾次（`D-129`）：畫面照這個分「系統還會自己再試」跟「試完了，這時才給『再試一次』」
+      retryCount: Number(data?.retryCount ?? 0) || 0,
       isOverview: data?.isOverview === true,
       manuallyEditedAtMs: tsToMs(data?.manuallyEditedAt),
       updatedAtMs: tsToMs(data?.updatedAt),

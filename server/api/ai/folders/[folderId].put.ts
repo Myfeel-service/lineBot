@@ -79,7 +79,7 @@ export default defineEventHandler(async (event) => {
   /*
    * 底下每份換商品名。⛔ 失敗不回 500（/code-review 第 14 條）：組名、別名都已經寫進去了，回 500 畫面會說「儲存失敗」、
    * 他重按儲存時名字已經一樣、這一步再也不跑。照常回 200、帶 syncFailed——畫面講一句；
-   * 分組上留記號，體檢把沒跟上的那幾份列進「還沒重新學」，按重新學習會先對齊組名再學（alignSourceProductWithGroup）
+   * 分組上留記號，排程自己把底下資料對齊組名、補學完（`D-129` relearnPendingProductSources；以前是體檢列出來叫他按）
    */
   let relearnSourceIds: string[] = []
   let syncFailed = false

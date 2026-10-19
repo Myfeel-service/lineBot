@@ -552,6 +552,12 @@
     color: var(--el-color-danger);
   }
 
+  // AI 還沒學會、系統會自己再試（`D-129`）：不是要他動手的事，用琥珀不用紅
+  &--warning {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning-dark-2);
+  }
+
   strong {
     display: block;
     font-size: 24px;
@@ -1364,15 +1370,7 @@
 
 
 
-/* 匯入失敗就地重試(P1-6) */
-.kb-failed-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-
-  .kb-section-hint { margin: 0; }
-}
+/* 加完之後還沒學會的那幾條（`D-129`：只列標題，重試鈕拿掉了——系統會自己再試；內容有問題的那幾條右邊講「要改內容才行」） */
 .kb-failed-row {
   display: flex;
   align-items: center;

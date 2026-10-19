@@ -2413,7 +2413,8 @@ try {
     if (/^Google 試算表・3 條・3\d 分鐘前更新$/.test(sp.meta) && !sp.editor.includes('基本資訊') && !sp.editor.includes('最後同步')) pass(`資料頁「基本資訊」卡拿掉了，名稱下面一行講完：「${sp.meta}」（正常不寫「可用」）`)
     else fail('資料頁還有「基本資訊」卡、或名稱下面那一行不對', JSON.stringify({ meta: sp.meta, card: sp.editor.includes('基本資訊') }))
     const metaOf = t => sp.rows.find(r => r.title === t)?.meta
-    if (JSON.stringify(sp.tabs) === '["全部（3）","AI 沒學起來（1）"]' && metaOf('拿鐵價格') === '' && metaOf('美式價格') === '失敗' && /^有效至 \d{4}-\d{2}-\d{2}$/.test(metaOf('期間限定') ?? '')
+    // `D-129`：學失敗、還在自動再試的那一條（假資料沒有 retryCount＝還在再試）只講「系統會自己再試」，篩選叫「還沒學會」
+    if (JSON.stringify(sp.tabs) === '["全部（3）","還沒學會（1）"]' && metaOf('拿鐵價格') === '' && metaOf('美式價格') === 'AI 還沒學會，系統會自己再試' && /^有效至 \d{4}-\d{2}-\d{2}$/.test(metaOf('期間限定') ?? '')
       && !sp.editor.includes('內容較短') && !/\d 字/.test(sp.editor) && !sp.rows.some(r => r.meta.includes('可用'))) {
       pass('每條只講例外（沒學起來、有效至…），正常的一條底下什麼都不寫；不寫字數、不寫「可用」、沒有「內容較短」小標與篩選')
     }
@@ -2491,8 +2492,9 @@ try {
     await waitFor(pg, visibleDialog, null, 8000)
     await sleep(300)
     const failedDlg = await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(x => x.offsetParent !== null && x.querySelector('.chunk-form'))?.querySelector('.chunk-status-row')?.innerText.replace(/\s+/g, ' ') ?? '')
-    if (failedDlg.includes('失敗') && failedDlg.includes('重新學習')) pass(`沒學起來的那一條照樣掛狀態、給「重新學習」：「${failedDlg.trim()}」`)
-    else fail('沒學起來的那一條沒講狀態', failedDlg)
+    // `D-129`：還在自動再試的那一條講「系統會自己再試」、⛔ 不給按鈕（試完 5 次才給「再試一次」，見 shared/knowledge-relearn 的測試）
+    if (failedDlg.includes('還沒學會') && failedDlg.includes('系統會自己再試') && !failedDlg.includes('再試一次') && !failedDlg.includes('重新學習')) pass(`還在自動再試的那一條照樣掛狀態、不給按鈕：「${failedDlg.trim()}」`)
+    else fail('還在自動再試的那一條狀態不對', failedDlg)
     await pg.evaluate(() => [...document.querySelectorAll('.chunk-footer .el-button')].find(b => b.offsetParent !== null && b.innerText.trim() === '取消')?.click())
     await sleep(600)
 
@@ -3089,7 +3091,7 @@ try {
 
   // ── 第四十四段（`C-320`／`D-127` 分組就是商品）：「資料夾」改叫「分組」；通用的那幾組排最上面、標「通用」；
   //    編輯分組可以改成通用（只送那一格），商品名跟著清掉、底下那幾份一份份重新學；拖曳搬組＝換商品名、講 AI 現在當成哪一台；
-  //    資料頁「⋯」是「移到哪一組／重新學習這一份／刪除」（沒有「AI 認的商品名」了）；
+  //    資料頁「⋯」是「移到哪一組／刪除」（沒有「AI 認的商品名」了；`D-129` 起「重新學習這一份」也拿掉）；
   //    「還沒放進商品分組」的待辦直接打開「移到哪一組」 ──
   if (CHECK_FROM <= 44) {
     const folders = [
@@ -3205,7 +3207,7 @@ try {
     if (folderPuts.length === 1 && folderPuts[0].id === 'c320-prod' && fput.general === true && !('name' in fput) && JSON.stringify(h2.map(h => h.name)) === '["乾淨方MAX","客服 FAQ","通用","C320 除濕機"]' && h2[0].general && editText.includes('刪除分組') && !editText.includes('資料夾')) pass('編輯分組勾「通用」→ 只送 general:true（名字沒改不送）、那一組排進最上面那一段；視窗講「分組」不講資料夾')
     else fail('編輯分組改成通用不對', JSON.stringify({ folderPuts, h2, editText: editText.replace(/\s+/g, ' ').slice(0, 160) }))
     // `D-127`：商品分組的名字那一格叫「商品名」；改成通用＝底下那一份不再是那一台 → 畫面一份份打重新學習、學完講一句
-    const relearnedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    const relearnedToast = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 照新的商品名學好了 1 份資料')), null, 10_000)
     if (/商品名/.test(editText) && reindexes.includes('c320-a') && relearnedToast) pass('`D-127` 商品分組的名字叫「商品名」；改成通用 → 伺服器回要重新學的那一份，畫面接著打重新學習、講「AI 重新學好了 1 份資料」')
     else fail('改成通用之後沒有重新學', JSON.stringify({ label: /商品名/.test(editText), reindexes, relearnedToast, toasts: await toastsOf(pg) }))
 
@@ -3248,7 +3250,7 @@ try {
     else fail('拖到通用時沒講不再當成那一台', JSON.stringify({ cleared, productName: noName.productName, toasts: await toastsOf(pg) }))
     await sleep(3800)
 
-    // 資料頁「⋯」（`D-127`）：移到哪一組／重新學習這一份／刪除，試算表也一樣（⛔ 沒有「AI 認的商品名」了）
+    // 資料頁「⋯」（`D-127`）：移到哪一組／刪除，試算表也一樣（⛔ 沒有「AI 認的商品名」了；`D-129` 起也沒有「重新學習這一份」）
     const MOVE_TITLE = '移到哪一組'
     const openMore = async (item) => {
       await pg.click('.admin-header-actions .admin-more-btn')
@@ -3275,7 +3277,8 @@ try {
     await pg.evaluate(s => document.querySelector(`${s} .el-dialog__footer .el-button:not(.el-button--primary)`)?.click(), SHOWN)
     await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
     await sleep(300)
-    if (sheetMenu.join('／') === '移到哪一組／重新學習這一份／刪除' && sheetHint.startsWith('試算表、型錄一份常講好幾台')) pass(`資料頁「⋯」＝${sheetMenu.join('／')}（沒有「AI 認的商品名」）；試算表選商品分組時講「試算表、型錄一份常講好幾台，放在哪一組都不會整份當成那一台」`)
+    // `D-129`：「重新學習這一份」拿掉了（系統自己補）；只有那一份裡有試了 5 次都沒學會的，才多一項「沒學會的 N 條再試一次」
+    if (sheetMenu.join('／') === '移到哪一組／刪除' && sheetHint.startsWith('試算表、型錄一份常講好幾台')) pass(`資料頁「⋯」＝${sheetMenu.join('／')}（沒有「AI 認的商品名」、沒有「重新學習這一份」）；試算表選商品分組時講「試算表、型錄一份常講好幾台，放在哪一組都不會整份當成那一台」`)
     else fail('資料頁「⋯」或試算表的說明不對', JSON.stringify({ sheetMenu, sheetHint }))
 
     // 「移到哪一組」：選商品分組 → 先講 AI 會把它當成哪一台 → 移過去＝送 folderId、講 AI 現在當成哪一台；資料頁沒有「所屬產品」卡
@@ -3298,12 +3301,15 @@ try {
     }
     else fail('移到哪一組不對', JSON.stringify({ card: editorText.includes('所屬產品'), moveDisabledBefore, moveHint, mPut, movedT, moveClosed }))
 
-    // 「⋯ → 重新學習這一份」：打這一份的重新學習、講學會幾條
+    // `D-129`：「⋯ → 重新學習這一份」拿掉了（換組、改組名之後沒學成的，系統自己補完）——這一份沒有試完 5 次的，選單裡就不該有「再試一次」
     await sleep(800)
-    await openMore('重新學習這一份')
-    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學會了這一份的 2 條')), null, 10_000)
-    if (relearnT && reindexes.includes('c320-c')) pass('「⋯ → 重新學習這一份」→ 打這一份的重新學習、講「AI 重新學會了這一份的 2 條」')
-    else fail('重新學習這一份不對', JSON.stringify({ relearnT, reindexes }))
+    await pg.click('.admin-header-actions .admin-more-btn')
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '刪除'), null, 8000)
+    const looseMenu = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
+    await pg.keyboard.press('Escape')
+    await sleep(300)
+    if (looseMenu.length && !looseMenu.some(t => t.includes('重新學習') || t.includes('再試一次'))) pass(`「⋯」沒有「重新學習這一份」、也沒有「再試一次」（這一份沒有試完 5 次的）：${looseMenu.join('／')}`)
+    else fail('「⋯」還有重新學習／再試一次', JSON.stringify(looseMenu))
 
     // 待辦「還沒放進商品分組」（`D-127`）→「放進分組」直接打開那一份的「移到哪一組」（快上手那份剛被拖到通用、沒有商品名）
     health.noProductSources = [{ id: 'c320-e', name: noName.name, chunkCount: 2 }]
@@ -3595,7 +3601,7 @@ try {
     const candText = await pg.$eval(SHOWN, e => e.innerText.replace(/\s+/g, ' '))
     await pg.evaluate(s => [...document.querySelectorAll(`${s} .src-alias-actions .el-button`)].find(b => b.innerText.includes('是同一台'))?.click(), SHOWN)
     const mergedT = await waitFor(pg, ([k, f]) => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${k}」（搬了 1 份），AI 把它們當成同一台；「${f}」留成客人的叫法`)), [KEEP, FROM], 10_000)
-    const mergeRelearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    const mergeRelearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 照新的商品名學好了 1 份資料')), null, 10_000)
     await sleep(300)
     const groupsAfter = await pg.$$eval('.src-folder-header .src-folder-name', els => els.map(e => e.innerText.trim()))
     const mergeCalls = calls.join('｜')
@@ -3615,7 +3621,7 @@ try {
     await sleep(200)
     await pg.evaluate(s => document.querySelector(`${s} .folder-footer-right .el-button--primary`)?.click(), SHOWN)
     const savedAlias = await waitFor(pg, k => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已儲存；舊名字「${k}」留成客人的叫法`)), KEEP, 8000)
-    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 2 份資料')), null, 10_000)
+    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 照新的商品名學好了 2 份資料')), null, 10_000)
     const renameCalls = calls.join('｜')
     if (savedAlias && relearnT && renameCalls === `rename ${KEEP}→C327 SHARP HEALSIO 2.4L 自動調理零水鍋｜relearn c327-a｜relearn c327-b`) pass(`改組名 → 講「舊名字「${KEEP}」留成客人的叫法」，底下兩份一份份重新學、學完講「AI 重新學好了 2 份資料」（${renameCalls}）`)
     else fail('改組名之後沒有重新學或沒講舊名字', JSON.stringify({ savedAlias, relearnT, calls, toasts: await toastsOf(pg) }))
@@ -3685,14 +3691,12 @@ try {
     const pg = await openImportDialog(fake, SOURCES_PAGE)
     await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 2, null, 30_000)
 
-    // 商品名換了、AI 還沒重新學 →「要處理的事」列出來；按「重新學習」一份份學、學完那一列消失
-    const todoShown = await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('有 1 份資料換了商品名，AI 還沒重新學')), null, 15_000)
-    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('還沒重新學'))?.querySelector('.el-button')?.click())
-    const pendT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
-    const todoGone = await waitFor(pg, () => ![...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('還沒重新學')), null, 10_000)
-    const pendCalls = calls.join('｜')
-    if (todoShown && pendT && todoGone && pendCalls === 'relearn c47-sx') pass('商品名換了 AI 還沒重新學 →「要處理的事」講「有 1 份資料換了商品名，AI 還沒重新學」；按「重新學習」→ 學完講一句、那一列消失')
-    else fail('「還沒重新學」那一列不對', JSON.stringify({ todoShown, pendT, todoGone, calls, todos: await pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.trim())) }))
+    // `D-129`：商品名換了、AI 還沒重新學的（體檢就算還回 relearnPendingSources，舊伺服器）→ 排程自己補完，⛔「要處理的事」不再列、畫面不打學習
+    const todosNow = await waitFor(pg, () => document.querySelectorAll('.src-todo__item').length > 0, null, 15_000)
+      .then(() => pg.$$eval('.src-todo__item', els => els.map(e => e.innerText.trim())))
+    await sleep(1500)
+    if (!todosNow.some(t => t.includes('還沒重新學') || t.includes('重新學習')) && !calls.some(c => c.startsWith('relearn'))) pass('商品名換了 AI 還沒重新學 →「要處理的事」不再列、不叫他按（排程自己補完，`D-129`）')
+    else fail('「還沒重新學」那一列還在／畫面自己打了學習', JSON.stringify({ todosNow, calls }))
 
     // 在 A 的「客人還會怎麼叫它」打 B 的組名 → 存之前講「那一組的資料會搬進這一組」；說是同一台 → 合成一組（⛔ 不送別名）
     calls.length = 0
@@ -3709,7 +3713,7 @@ try {
     const boxTxt = await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
     await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button--primary')?.click())
     const mergedT = await waitFor(pg, ([a, b]) => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes(`已合成一組「${a}」（搬了 1 份），AI 把它們當成同一台；「${b}」留成客人的叫法`)), [A, B], 10_000)
-    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 重新學好了 1 份資料')), null, 10_000)
+    await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 照新的商品名學好了 1 份資料')), null, 10_000)
     await sleep(300)
     const groupsAfter = await pg.$$eval('.src-folder-header .src-folder-name', els => els.map(e => e.innerText.trim()))
     const aliasCalls = calls.join('｜')

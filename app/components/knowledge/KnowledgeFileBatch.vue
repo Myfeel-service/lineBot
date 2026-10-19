@@ -22,7 +22,8 @@
       <div class="text-xs">
         <!-- `C-320` 減字：兩條路（更新原本那一份／另外建一份）就是那一列的兩顆按鈕，這裡不再講一次 -->
         <template v-if="conflictCount"><strong>{{ conflictCount }}</strong> 份跟現有的資料同名，等你決定。</template>
-        <template v-if="notLearnedTotal">其中 <strong>{{ notLearnedTotal }}</strong> 條 AI 還沒學起來（客人問到會找不到）——到那份資料點開該條按「重新學習」即可。</template>
+        <!-- `D-129`：沒學會的系統每 10 分鐘自己再試，⛔ 不叫他去按什麼 -->
+        <template v-if="notLearnedTotal">其中 <strong>{{ notLearnedTotal }}</strong> 條 AI 還沒學會（客人問到暫時找不到），系統會自己再試。</template>
         <template v-if="quotaShortTotal">另有 <strong>{{ quotaShortTotal }}</strong> 條因為知識空間不夠沒收進去（清單上有標是哪幾份）。</template>
         <!-- 「可以再按一次重試」不寫在這裡：空間滿了那幾份的重試鈕是鎖住的（2026-10-12 文字審視），每一列自己講怎麼辦 -->
         <template v-if="failedCount - unsureCount > 0">{{ failedCount - unsureCount }} 份沒有加入（清單上有標原因）。</template>

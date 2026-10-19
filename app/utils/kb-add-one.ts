@@ -8,6 +8,7 @@
  */
 import { countKnowledgeDraftBlanks, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { syncTickedQuestions } from './kb-suggestion-answered'
+import { KB_AUTO_RETRY_TEXT } from '~~/shared/knowledge-relearn'
 
 /** 一條知識的標題上限（跟編輯視窗同一個：maxlength 100） */
 export const ADD_ONE_TITLE_MAX = 100
@@ -148,8 +149,9 @@ export function addOneDoneToast(r: {
 }): { text: string; tone: 'success' | 'warning' | 'error' } {
   const left = Number(r.remainingQuestions ?? 0)
   const leftNote = left > 0 ? `。沒勾的 ${left} 題還在清單上` : ''
+  // 沒學成（`D-129`）：系統每 10 分鐘自己再試（最多 5 次）——⛔ 不叫他去按什麼、不上紅色；試完還不行，知識庫「要處理的事」才會列出來
   if (r.status && r.status !== 'indexed') {
-    return { text: `加好了，但 AI 還沒學會這一條——點開這一條按「重新學習」${leftNote}`, tone: 'error' }
+    return { text: `加好了，但 ${KB_AUTO_RETRY_TEXT}${leftNote}`, tone: 'warning' }
   }
   // 反問也算學會了（相近的有好幾條，AI 先問客人是哪一個），同 kbVerifyOutcome
   if (r.verifyDecision && r.verifyDecision !== 'answered' && r.verifyDecision !== 'disambiguate') {

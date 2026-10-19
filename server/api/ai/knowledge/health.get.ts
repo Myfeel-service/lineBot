@@ -15,7 +15,7 @@ import { isShortChunkContent, needsProductName } from '~~/shared/types/ai-knowle
 import { getWorkspaceProductNames } from '~~/server/utils/ai-knowledge-chunks'
 import { detectAliasCandidates, getProductAliases } from '~~/server/utils/ai-product-alias'
 import { listFolders, type FolderSummary } from '~~/server/utils/ai-knowledge-folders'
-import { productNameForGroup } from '~~/shared/knowledge-product-group'
+import { isAutoRetryExhausted } from '~~/shared/knowledge-relearn'
 
 /** 掃描上限:健檢是彙總訊號,不是完整報表;超大知識庫掃前 N 張已足以暴露問題 */
 const CHUNK_SCAN_LIMIT = 1500
@@ -60,7 +60,8 @@ export default defineEventHandler(async (event) => {
       .where('workspaceId', '==', workspaceId)
       // content 也是「被標寫錯之後改了沒」的依據（`D-135` 看內容指紋，見 wrongAnswerChunks）
       // deletedAt：回收桶的卡要排除——⛔select 沒帶欄位的話讀出來恆 undefined，過濾等於沒過濾
-      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'deletedAt')
+      // retryCount：「學失敗」只列自動重試用完的（`D-129`）
+      .select('title', 'content', 'status', 'sourceId', 'isOverview', 'expiredAt', 'deletedAt', 'retryCount')
       .limit(CHUNK_SCAN_LIMIT)
       .get(),
     getWorkspaceProductNames(db, workspaceId),
@@ -107,15 +108,11 @@ export default defineEventHandler(async (event) => {
    */
   const stalledSources: Array<{ id: string; name: string }> = []
   const noProductSources: Array<{ id: string; name: string; chunkCount: number }> = []
-  /**
-   * 商品名換了、AI 還沒重新學（`D-127` /code-review 第 4 條）：改組名、改成通用、刪分組、合成一組時伺服器只改名字，
-   * 重新學習交給畫面一份份打——他中途關掉就停在一半。資料上留了記號（productRelearnPending），這裡列出來給他按一次補學。
-   * ⛔ 只看記號、不拿「資料商品名≠組名」去比：舊資料（`D-127` 搬家前）全部對不上，列出來叫他按＝跳過搬家把舊名字收成別名那一步。
-   *    唯一例外：分組上有「沒跟上」記號的（改組名時寫入失敗，資料上的記號跟著沒寫進去），那一組才拿組名比
+  /*
+   * ⛔ 「商品名換了、AI 還沒重新學」不再列（`D-129`，2026-10-19）：以前改組名中途關掉頁面，這裡列出來叫他按「重新學習」；
+   * 現在排程自己補完（server/utils/ai-knowledge-product-group 的 relearnPendingProductSources），他什麼都不用做。
    */
-  const relearnPendingSources: Array<{ id: string; name: string }> = []
   const generalFolderIds = new Set(folders.filter(f => f.general).map(f => f.id))
-  const syncPendingFolders = new Map(folders.filter(f => f.productSyncPending).map(f => [f.id, f]))
   for (const d of sourcesSnap.docs) {
     const s = d.data() as any
     /**
@@ -139,10 +136,6 @@ export default defineEventHandler(async (event) => {
     if (needsProductName(s) && !generalFolderIds.has(String(s?.folderId ?? ''))) {
       noProductSources.push({ id: d.id, name, chunkCount: Number(s?.chunkCount ?? 0) })
     }
-    const pendingGroup = syncPendingFolders.get(String(s?.folderId ?? ''))
-    const groupNotSynced = !!pendingGroup && String(s?.productName ?? '').trim()
-      !== productNameForGroup(pendingGroup, { isCatalog: s?.generateOverview === true, isSheet: s?.type === 'gsheet' })
-    if (s?.productRelearnPending === true || groupNotSynced) relearnPendingSources.push({ id: d.id, name })
   }
 
   /**
@@ -189,8 +182,15 @@ export default defineEventHandler(async (event) => {
     }
     const status = String(c?.status ?? '')
     if (status === 'failed') {
-      failedCount++
-      if (failedItems.length < SAMPLE_LIMIT) failedItems.push(item)
+      /*
+       * 只列「自動重試用完、還是沒學會」的（`D-129`）：還在自動再試的（5 次以內）系統會自己補好，
+       * 列在「要處理的事」只會讓他以為要自己動手。判斷跟知識庫頁、小幫手同一支（shared/knowledge-relearn）。
+       * ⛔ 還在再試的也不能落到下面「內容較短」那一格：它不是「沒事」，只是不用他管
+       */
+      if (isAutoRetryExhausted(c)) {
+        failedCount++
+        if (failedItems.length < SAMPLE_LIMIT) failedItems.push(item)
+      }
     }
     else if (status === 'disabled' && c?.expiredAt) {
       expiredCount++
@@ -221,9 +221,8 @@ export default defineEventHandler(async (event) => {
     outdatedSources,
     stalledSources,
     noProductSources,
-    /** 商品名換了、AI 還沒重新學的資料（`D-127`）：畫面一鍵逐份重新學習 */
-    relearnPendingSources,
     shortChunks: { count: shortCount, items: shortItems },
+    /** AI 試了 5 次都沒學會的（還在自動再試的不算，`D-129`） */
     failedChunks: { count: failedCount, items: failedItems },
     expiredChunks: { count: expiredCount, items: expiredItems },
     /**

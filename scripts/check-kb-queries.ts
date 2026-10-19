@@ -74,8 +74,13 @@ const PROBES: Probe[] = [
   { name: '孤兒卡計數', where: 'sources/list.get.ts', run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).where('sourceId', '==', null).count().get()).data().count },
   { name: '重複偵測（內容指紋）', where: 'ai-knowledge-sources.ts findSourceByContentHash', run: async w => (await db.collection('knowledgeSources').where('workspaceId', '==', w).where('appliedContentHash', '==', '__none__').limit(10).get()).size },
   { name: '同名偵測', where: 'ai-preview-jobs.ts findExistingSources', run: async w => (await db.collection('knowledgeSources').where('workspaceId', '==', w).where('name', '==', '__none__').limit(5).get()).size },
-  { name: '重試學失敗的卡（排程）', where: 'ai-knowledge-chunks.ts', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'failed').where('retryCount', '<', 3).limit(20).get()).size },
-  { name: '撿回卡住的卡（排程）', where: 'ai-knowledge-chunks.ts', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'pending').where('updatedAt', '<', cutoff).limit(20).get()).size },
+  // `D-129`：一輪改成最多 100 條、只讀要用的幾格（不讀向量）
+  { name: '重試學失敗的卡（排程）', where: 'ai-knowledge-chunks.ts retryStuckChunks', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'failed').where('retryCount', '<', 5).select('workspaceId', 'title', 'content', 'questions', 'retryCount').limit(100).get()).size },
+  { name: '撿回卡住的卡（排程）', where: 'ai-knowledge-chunks.ts retryStuckChunks', run: async () => (await db.collection('knowledgeChunks').where('status', '==', 'pending').where('updatedAt', '<', cutoff).select('workspaceId', 'title', 'content', 'questions', 'retryCount').limit(100).get()).size },
+  // `D-129`：改組名中途關頁、沒學完的，排程自己補（單一欄位等值＝自動索引）
+  { name: '還沒重新學的資料（排程補學）', where: 'ai-knowledge-product-group.ts relearnPendingProductSources', run: async () => (await db.collection('knowledgeSources').where('productRelearnPending', '==', true).select('workspaceId', 'name', 'updatedAt', 'isDeleted', 'deletedAt').limit(20).get()).size },
+  { name: '底下商品名沒跟上的分組（排程補學）', where: 'ai-knowledge-product-group.ts relearnPendingProductSources', run: async () => (await db.collection('knowledgeFolders').where('productSyncPending', '==', true).limit(10).get()).size },
+  { name: '小幫手：試完 5 次的卡（先 count 再讀兩格）', where: 'workspace-alerts.ts knowledgeIndexFailed', run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).where('status', '==', 'failed').select('status', 'retryCount').limit(1000).get()).size },
   { name: '體檢：全庫掃描', where: 'knowledge/health.get.ts', expectNonEmpty: true, run: async w => (await db.collection('knowledgeChunks').where('workspaceId', '==', w).select('title', 'status').limit(1500).get()).size },
   { name: '體檢：答錯回報', where: 'knowledge/health.get.ts', run: async w => (await db.collection('aiFeedbackEvents').where('workspaceId', '==', w).where('createdAt', '>=', cutoff).orderBy('createdAt', 'desc').limit(100).get()).size },
   { name: '體檢：建議收件匣', where: 'knowledge/health.get.ts', run: async w => (await db.collection('knowledgeSuggestions').where('workspaceId', '==', w).where('status', '==', 'pending').get()).size },

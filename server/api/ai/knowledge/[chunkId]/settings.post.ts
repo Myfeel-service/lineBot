@@ -103,9 +103,10 @@ export default defineEventHandler(async (event) => {
       if (status !== 'indexed' && status !== 'disabled') {
         throw createError({ statusCode: 400, statusMessage: '這條知識還沒學好，無法啟用' })
       }
-      // 按鈕叫「重新學習」（`C-309`：以前叫人按不存在的「重新索引」）
+      // 停用中、又沒有向量的那一條：編輯框上有「再試一次」（`D-129`：停用的不會被排程自動再試，這一顆一開始就給；
+      // 以前叫人按「重新學習」，那顆其實只長在「學失敗」的條目上——停用的那一條上面根本沒有）
       if (!chunk.embedding) {
-        throw createError({ statusCode: 400, statusMessage: '這條知識還沒學好，請先按「重新學習」' })
+        throw createError({ statusCode: 400, statusMessage: '這條知識 AI 還沒學會，請先按上面的「再試一次」' })
       }
       update.status = 'indexed' satisfies KnowledgeChunkStatus
       update.expiredAt = FieldValue.delete()
@@ -150,7 +151,7 @@ export default defineEventHandler(async (event) => {
       // 而 retry 只撈 pending/failed → 沒有任何機制救得回來的殭屍卡。
       if (status === 'disabled' && chunk.expiredAt && body?.enabled !== false) {
         if (!chunk.embedding) {
-          throw createError({ statusCode: 400, statusMessage: '這條知識還沒學好，請先按「重新學習」再延長期限' })
+          throw createError({ statusCode: 400, statusMessage: '這條知識 AI 還沒學會，請先按上面的「再試一次」再延長期限' })
         }
         update.status = 'indexed' satisfies KnowledgeChunkStatus
         update.expiredAt = FieldValue.delete()

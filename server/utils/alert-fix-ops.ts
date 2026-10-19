@@ -42,6 +42,7 @@ import {
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { buildEmbeddingText, KNOWLEDGE_CHUNKS_COLLECTION, runIndexOnChunk } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
+import { isAutoRetryExhausted, KB_RETRY_BUTTON, KNOWLEDGE_MAX_AUTO_RETRIES } from '~~/shared/knowledge-relearn'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { fetchLineWebhookEndpoint, normalizeWebhookCompareUrl, putLineWebhookEndpoint } from './line-webhook-remote'
 
@@ -68,8 +69,10 @@ export interface AlertFixOpDef {
 
 /** 一次最多處理幾筆：一鍵修是「把現在壞的修掉」不是批次工具，上限防極端資料拖垮請求 */
 const FIX_SCAN_LIMIT = 10
-/** 重學知識卡的單次上限（100 × ~300ms / 併發 5 ≈ 6s，留在請求時限內；沒修完可再按一次） */
+/** 再學一次知識卡的單次上限（100 × ~300ms / 併發 5 ≈ 6s，留在請求時限內；沒修完可再按一次） */
 const REINDEX_LIMIT = 100
+/** 挑「試完 5 次的」要先讀幾條失敗的（只讀幾格；跟 knowledgeIndexFailed 那顆燈數的範圍一樣大） */
+const FAILED_SCAN_LIMIT = 1000
 const EMBED_CONCURRENCY = 5
 
 /** 從 $fetch / createError 的失敗物件裡撈一句人看得懂的原因 */
@@ -310,16 +313,22 @@ async function reindexChunks(
   return { indexed, failed: failures.length, failures }
 }
 
-/** status=='failed' 的卡（與 knowledgeIndexFailed probe 同一個等值查詢） */
+/**
+ * 試完 5 次還是沒學會的卡（與 knowledgeIndexFailed probe 同一個判斷，`D-129`）。
+ * ⛔ 還在自動再試的不列：燈只為試完的那幾條亮，「幫我修」卻把還在排隊的也一起打——
+ *    確認卡上的條數就跟燈對不上，而且排程本來就會補。
+ * 讀的是全部失敗的（不加 retryCount 範圍條件＝不用另建索引），在這裡挑；挑完再取前 REINDEX_LIMIT 條。
+ */
 async function listFailedChunks(ctx: AlertFixCtx) {
   const snap = await ctx.db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', ctx.workspaceId)
     .where('status', '==', 'failed')
-    .select('title', 'content', 'questions')
-    .limit(REINDEX_LIMIT)
+    .select('title', 'content', 'questions', 'status', 'retryCount')
+    .limit(FAILED_SCAN_LIMIT)
     .get()
   return snap.docs
-    .filter(d => String((d.data() as Record<string, unknown>).content ?? '').trim())
+    .filter(d => isAutoRetryExhausted(d.data() as Record<string, unknown>) && String((d.data() as Record<string, unknown>).content ?? '').trim())
+    .slice(0, REINDEX_LIMIT)
     .map(d => ({ id: d.id, data: d.data() as Record<string, unknown> }))
 }
 
@@ -356,9 +365,10 @@ function reindexPreview(
     opId,
     alertId,
     state: 'fixable',
-    summary: `我會把${what}的 ${rows.length} 條知識重新學一次（內容不會被改動）。學不起來的會列出原因。`,
+    // `D-129`：店家看的字不再講「重新學習」（那個詞讓人以為是他該定期按的東西），按鈕跟知識庫頁同一個「再試一次」
+    summary: `我會讓 AI 把${what}的 ${rows.length} 條知識再學一次（內容不會被改動）。還是學不會的會列出原因。`,
     items: names,
-    confirmLabel: '確定重新學習',
+    confirmLabel: `確定${KB_RETRY_BUTTON}`,
   }
 }
 
@@ -367,20 +377,20 @@ async function reindexExecute(
   action: string,
   rows: { id: string; data: Record<string, unknown> }[],
 ): Promise<AlertFixExecuteResult> {
-  if (!rows.length) return { ok: true, message: '再查了一次，已經沒有要重學的知識。' }
+  if (!rows.length) return { ok: true, message: '再查了一次，已經沒有要再學的知識。' }
   const r = await reindexChunks(ctx, rows)
   await writeAuditLog({
     workspaceId: ctx.workspaceId,
     uid: ctx.uid,
     actor: 'human',
     action,
-    note: `重學 ${rows.length} 條：成功 ${r.indexed}、失敗 ${r.failed}`,
+    note: `再學一次 ${rows.length} 條：學會 ${r.indexed}、還是沒學會 ${r.failed}`,
   }, ctx.db)
   return {
     ok: r.indexed > 0 || r.failed === 0,
     message: r.failed === 0
-      ? `這 ${rows.length} 條都重新學好了，AI 現在讀得到它們。`
-      : `${r.indexed} / ${rows.length} 條重學成功；還學不起來的列在下面，一直失敗請聯絡我們。`,
+      ? `這 ${rows.length} 條都學會了，AI 現在讀得到它們。`
+      : `${r.indexed} / ${rows.length} 條學會了；還是學不會的列在下面——改一下內容再存，或聯絡我們。`,
     details: r.failures,
   }
 }
@@ -389,7 +399,7 @@ const knowledgeRetryIndex: AlertFixOpDef = {
   alertId: 'knowledgeIndexFailed',
   capability: 'knowledge.write',
   async preview(ctx) {
-    return reindexPreview('knowledge-retry-index', this.alertId, await listFailedChunks(ctx), '學習失敗')
+    return reindexPreview('knowledge-retry-index', this.alertId, await listFailedChunks(ctx), `試了 ${KNOWLEDGE_MAX_AUTO_RETRIES} 次都沒學會`)
   },
   async execute(ctx) {
     return reindexExecute(ctx, 'alert-fix/knowledge-retry-index', await listFailedChunks(ctx))

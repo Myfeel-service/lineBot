@@ -127,8 +127,11 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'knowledge.delete': '刪掉了一條知識',
   'knowledge.restore': '還原了一條刪掉的知識',
   'knowledge.settings': '改了一條知識的設定',
-  'knowledge.reindex': '讓一條知識重新學習',
-  'knowledge.reindexAll': '讓整個知識庫重新學習',
+  // `D-129`：店家看得到的字不再講「重新學習」（畫面上那顆改叫「再試一次」）
+  'knowledge.reindex': '讓 AI 把一條知識再學一次',
+  'knowledge.reindexAll': '讓 AI 把整個知識庫再學一次（維護用）',
+  // 排程自動再試學失敗的知識（`D-129`）：有學會的、或剛好試完 5 次的才記（actor＝system）
+  'knowledge.autoRetry': '系統自己再試了一次沒學會的知識',
   // ⚠️ `knowledge/normalize` 刻意沒有紀錄：那支只是把整理結果**回給前端**，
   //    一個字都沒有寫進資料庫，存不存由使用者按下一步才決定（存的時候走 create／put）。
   'knowledge.reenrich': '幫知識補上「客人會怎麼問」',
@@ -143,7 +146,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'knowledge.previewJobDelete': '取消了一個匯入預覽',
   'source.put': '改了一份資料',
   'source.delete': '刪掉了一份資料（連同它的知識）',
-  'source.reindex': '讓一份資料重新學習',
+  'source.reindex': '讓 AI 把一份資料再學一次',
   'source.overview': '幫一份資料做了「我們有賣什麼」總表',
   'source.gsheetSync': '同步了 Google 試算表',
   'source.resyncApply': '套用了一份網頁資料的更新',
