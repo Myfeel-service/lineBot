@@ -42,6 +42,7 @@ import type {
   HandoffReason,
 } from '~~/shared/types/ai-knowledge'
 import { asksShipTiming, isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
+import { isUsableAlias } from '~~/shared/product-name-similarity'
 import type { ChatSpeaker } from '~~/shared/chat-speaker'
 
 export interface AiChatTurn {
@@ -300,6 +301,87 @@ export function socialCannedReply(text: string, history?: AiChatTurn[]): string 
   return null
 }
 
+/**
+ * 「好的」「收到」「OK」這種純回應（不是問題、也不是道謝）。只看字面、刻意收得很緊：
+ * 帶問號（「OK?」可能是在問可不可以）、帶任何其他字（「好的那運費呢」）都不算。
+ * 「謝謝」不在這裡——那是道謝，照舊回「不客氣」（老闆拍板：招呼語照舊計入則數）。
+ */
+const ACK_WORD = '好的?|好喔|好哦|好唷|好滴|好啊|好呀|好der|ok|okay|okok|okie|收到|了解|瞭解|知道了?|明白了?|懂了|沒問題|可以|行|嗯+|恩+|yes|yep'
+const ACK_RE = new RegExp(`^(?:${ACK_WORD})+(?:了|啦|囉|喔|哦|唷|耶|欸|呦)?$`, 'i')
+/** 只傳這幾個表情也算回應（讚、OK 手勢） */
+const ACK_EMOJI_RE = /[👍👌🆗]/u
+
+export function isAcknowledgementOnly(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || /[?？]/.test(t)) return false
+  const core = t.replace(/[\s!！。.~～、,，()（）…]+/g, '')
+  if (!core || core.length > 10) return false
+  const words = core.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]/gu, '')
+  if (!words) return ACK_EMOJI_RE.test(core)
+  return ACK_RE.test(words)
+}
+
+/** 注音鍵盤（標準排列）：聲母／介音／韻母各在哪幾個鍵，聲調是 3 4 6 7（一聲＝空白鍵） */
+const ZHUYIN_INITIAL_KEYS = new Set('1qaz2wsxedcrfv5tgbyhn')
+const ZHUYIN_MEDIAL_KEYS = new Set('ujm')
+const ZHUYIN_FINAL_KEYS = new Set('8ik,9ol.0p;/-')
+const ZHUYIN_TONE_KEYS = new Set('3467')
+
+/**
+ * 看不懂的一句——**注音輸入法沒切到中文**打出來的英數（正式站 2026-10-19 12:44 的「g. 2l4」＝「收到」，「ji3g4」＝「我是」）。
+ * 整串照注音鍵盤拆得成一個個音節（聲母／介音／韻母＋聲調鍵或空白），而且至少有一個聲調鍵，才算。
+ *
+ * ⛔ 刻意不用「短的英數都當亂碼」：實測正式知識庫，客人只打「app」「usb」AI 原本答得出來（APP 下載方式、USB-C 接收器），
+ *    「GL」「AP8」「HD7」是型號的一部分——這些照注音鍵盤都拆不開（「app」＝ㄇㄣ＋多一個ㄣ），不會被當成亂碼。
+ * ⚠️ 只是「長得像打錯的注音」；answerWithAi 還要再確認這句單獨查不到知識、沒點名商品、不是在回答客服的問題，才不回。
+ */
+export function looksLikeZhuyinTypo(text: string): boolean {
+  const s = String(text || '').trim().toLowerCase()
+  if (!s || s.length > 30 || !/[a-z]/.test(s)) return false
+  let i = 0
+  let syllables = 0
+  let toned = 0
+  while (i < s.length) {
+    const start = i
+    if (ZHUYIN_INITIAL_KEYS.has(s[i]!)) i++
+    if (i < s.length && ZHUYIN_MEDIAL_KEYS.has(s[i]!)) i++
+    if (i < s.length && ZHUYIN_FINAL_KEYS.has(s[i]!)) i++
+    if (i === start) return false
+    syllables++
+    if (i >= s.length) break
+    // 一個音節打完一定接聲調鍵或空白（一聲），否則就不是注音打出來的
+    if (ZHUYIN_TONE_KEYS.has(s[i]!)) {
+      toned++
+      i++
+    }
+    else if (s[i] === ' ') {
+      i++
+    }
+    else {
+      return false
+    }
+    while (s[i] === ' ') i++
+  }
+  return syllables > 0 && toned > 0
+}
+
+/** 最近一則「客服這一側」的話（AI、真人、機器人都算）；沒有就 undefined */
+function lastBotTurn(history: AiChatTurn[] | undefined): AiChatTurn | undefined {
+  for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
+    if (history![i]!.role === 'bot') return history![i]
+  }
+  return undefined
+}
+
+/**
+ * 客人這句是不是「在回答客服剛剛問的具體問題」。是的話「好的」「對」就是答案（「您是想了解粒粒安嗎？」→「好的」），
+ * 不能當成收尾不理他。開放式的「還有其他問題嗎」不算具體問題。
+ */
+function answeringBotQuestion(history: AiChatTurn[] | undefined): boolean {
+  const bot = lastBotTurn(history)
+  return !!bot && botAskedSpecificQuestion(bot.text)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Intent router（意圖路由）
 //  開頭跑一次 flash-lite 分類，跟 embedQuery 並行 → 幾乎不增加延遲。
@@ -369,6 +451,12 @@ const OWN_ORDER_CLUE_RE = new RegExp([
   '幫我查|幫我看一下|查一下我',
   // 時間點＋購買動作（「上禮拜買的」「昨天下的單」）
   '(上週|上禮拜|上個月|前幾天|昨天|前天|剛剛|剛才)[^。？?！!]{0,4}(買|訂|下單|下訂|付款)',
+  // 已經辦過、在問結果（`C-307`⑤，考卷 Q06「已申請退貨，咖啡機貴公司也已收回，請問是否已退款」八次全部沒轉）。
+  // 「申請退貨後多久退款」這種規則問法沒有「已」，不會中
+  '已申請|已收回|已寄回|已退回|是否已(經)?(退款|退費|出貨|寄出)',
+  // 日期緊接著購買動作＝講他那一筆（2026-10-19 正式站「…何時會安排出貨,9/6下單的」）。
+  // ⛔ 日期和動作中間不准夾字：「9/30前下單有優惠嗎」問的是規則
+  '\\d{1,2}\\s*[/／月]\\s*\\d{1,2}\\s*[日號]?\\s*(下單|下的單|下訂|訂購|訂的|購買|買的|付款|付的款|匯款)',
 ].join('|'))
 
 /** 這段話裡有沒有指涉客人自己那一筆訂單（見 {@link OWN_ORDER_CLUE_RE}） */
@@ -814,9 +902,12 @@ export function truncateAtSentence(text: string, maxLen: number): string {
  * exemptChunkIds：一句多問的「子問題錨點卡」——第二問的答案卡常與第一問的卡同來源
  * （價格卡與保固卡都在同一產品頁），照同來源規則會被刪掉 → 第二問漏答。錨點卡一律保留，
  * 且不佔用該來源的名額（同來源分數最高那張照常保留）。
+ *
+ * maxPerSource：同一份來源最多留幾條（預設 1＝分組／反問用的口徑）。進 prompt 那一段用
+ * {@link CONTEXT_MAX_PER_SOURCE}（`C-307`）——一份說明書切成幾十條，只留一條就等於只給 AI 看一頁。
  */
-export function dedupeBySource(chunks: SimilarChunk[], exemptSourceIds?: Set<string>, exemptChunkIds?: Set<string>): SimilarChunk[] {
-  const seen = new Set<string>()
+export function dedupeBySource(chunks: SimilarChunk[], exemptSourceIds?: Set<string>, exemptChunkIds?: Set<string>, maxPerSource = 1): SimilarChunk[] {
+  const kept = new Map<string, number>()
   const out: SimilarChunk[] = []
   for (const c of chunks) {
     const key = c.sourceId
@@ -824,12 +915,25 @@ export function dedupeBySource(chunks: SimilarChunk[], exemptSourceIds?: Set<str
       out.push(c)
       continue
     }
-    if (seen.has(key)) continue
-    seen.add(key)
+    const n = kept.get(key) ?? 0
+    if (n >= maxPerSource) continue
+    kept.set(key, n + 1)
     out.push(c)
   }
   return out
 }
+
+/**
+ * 進 prompt 那一段，同一份資料最多幾條（`C-307`，2026-10-19）。
+ *
+ * 以前跟分組／反問共用「同一份只留一條」：MYFEEL 一份說明書切成幾十條，進 prompt 只剩分數最高那條——
+ * 考卷 Q63「HD7000 煮飯底部黏鍋」只剩「限用物質」那條、黏鍋那兩條被擋在外面，轉真人。
+ * 改成 3：同一份的前 3 條都給 AI 看。分組／反問照舊一份一條（那邊是在數「有幾個不同主題」）。
+ * 2026-10-19 同一天新舊各考兩次（連同同批另外四件）：答對 53／55 → 57／57、答錯 1／2 → 1／0、該答沒答 5／3 → 3／3。
+ * ⚠️ 唯一穩定變差的是 Q50（小耳記是不是耳夾式）：知識庫沒有一條寫「入耳式」，舊版答對是 AI 順著客人的話講；
+ *    多給的配件、規格兩條讓它改照卡片講「置於耳廓上」。要補的是那張卡，不是退回一條。
+ */
+const CONTEXT_MAX_PER_SOURCE = 3
 
 /**
  * 跨來源重複卡去重：同一份內容被兩個來源各匯入一次時，兩張卡相似度幾乎相等，
@@ -1262,22 +1366,64 @@ function buildProductIdentifierIndex(
 }
 
 /**
- * 一段文字裡提到了哪些產品（回正式名、已正規化）。
+ * 一段文字裡「一個認得出商品的字」：它指向哪幾台（products），以及客人打的那一段字還出現在哪幾台的名字裡（owners）。
+ * owners 只有一台＝只屬於那一台的字（商品名、型號、別名：「乾淨方」「DW-UX22FT」「小獴友」）；
+ * 好幾台＝品牌、品類這種共用字（MYFEEL：「SHARP」四台、「除濕機」三台）。
+ */
+export interface ProductMention {
+  products: ReadonlySet<string>
+  owners: ReadonlySet<string>
+}
+
+/** 名字裡含有這一段字的商品（片段比對的「擁有者」） */
+function fragmentOwners(fragment: string, index: Map<string, Set<string>>): Set<string> {
+  const owners = new Set<string>()
+  for (const [id, products] of index) {
+    if (id.includes(fragment)) for (const p of products) owners.add(p)
+  }
+  return owners
+}
+
+/**
+ * 一段文字裡提到商品的每一個字（見 {@link ProductMention}）。
  * 英數識別碼用子字串；中文識別碼要用「最長共同片段 ≥3 字」——卡名的中文是一整段連續字
  * （「自動調理零水鍋」），客人只打其中的短名（「零水鍋」），單向 includes 兩邊都對不上。
+ * 中文的擁有者要看「共同的那一段」而不是整個識別詞：「清淨除濕機」這個詞只屬於 SHARP，
+ * 但客人打的若只是「除濕機」，那一段三台都有。
  */
-function productsMentionedIn(text: string, index: Map<string, Set<string>>): Set<string> {
+function productMentionsIn(text: string, index: Map<string, Set<string>>): ProductMention[] {
   const raw = String(text || '')
-  if (!raw) return new Set()
+  if (!raw) return []
   const lower = raw.toLowerCase()
-  const hits = new Set<string>()
+  const out: ProductMention[] = []
   for (const [id, products] of index) {
-    const hit = /[a-z0-9]/.test(id)
-      ? lower.includes(id)
-      : !!longestCommonRun(raw, id, CJK_NAME_MIN_LEN)
-    if (hit) for (const p of products) hits.add(p)
+    const fragment = /[a-z0-9]/.test(id)
+      ? (lower.includes(id) ? id : '')
+      : longestCommonRun(raw, id, CJK_NAME_MIN_LEN)
+    if (!fragment) continue
+    out.push({ products, owners: fragmentOwners(fragment, index) })
   }
-  return hits
+  return out
+}
+
+/**
+ * 從一句話提到的字決定「在談哪幾台」：**只對到一台的字優先**，品牌、品類這種好幾台共用的字只在沒有更具體的線索時才算。
+ *
+ * 2026-10-19 正式站 11:01：客人打「SHARP「乾淨方MAX」…(DW-UX22FT) 何時會安排出貨,9/6下單的」——
+ * 以前把每個字對到的商品全部聯集：「SHARP」四台＋「除濕機」三台＝6 台，被當成「認不出是哪一台」，
+ * AI 反問「請問您想問的是哪一個商品的出貨時間呢？」；「要不要繞過查詢訂單流程」用同一把尺，也跟著不繞。
+ *
+ * ⛔ 具體的字跟共用的字打架時（「SHARP 全自動咖啡機」：「全自動」只出現在小滑手的名字裡、SHARP 卻沒有小滑手），
+ *    不挑邊、退回全部聯集＝照舊當成認不出一台（出貨題會先問），寧可多問一句也不要鎖錯台。
+ */
+export function pickMentionedProducts(mentions: readonly ProductMention[]): Set<string> {
+  const all = new Set<string>()
+  for (const m of mentions) for (const p of m.products) all.add(p)
+  const specific = new Set<string>()
+  for (const m of mentions) if (m.owners.size === 1) for (const p of m.owners) specific.add(p)
+  if (!specific.size) return all
+  const conflict = mentions.some(m => m.owners.size > 1 && ![...m.owners].some(p => specific.has(p)))
+  return conflict ? all : specific
 }
 
 export interface ActiveProductContext {
@@ -1317,16 +1463,37 @@ export function makeProductMatcher(
   // 別名只認指向清單裡那幾台的（`C-325`）：指向已經沒有資料的名字，鎖上去就是一台什麼資料都沒有的商品
   const known = new Set<string>()
   for (const products of index.values()) for (const p of products) known.add(p)
-  return (t: string) => {
-    const hits = productsMentionedIn(t, index)
-    if (hasAliases) {
-      for (const p of productsByAliasIn(t, aliases!)) {
-        const k = normalizeProductName(p)
-        if (known.has(k)) hits.add(k)
-      }
-    }
-    return hits
+  /** 別名指向的正式名（正規化）；指向的商品已經沒有資料＝空字串 */
+  const aliasTarget = (target: string) => {
+    const k = normalizeProductName(canonicalProductName(target, aliases!))
+    return known.has(k) ? k : ''
   }
+  // 別名也分「只屬於一台」或「好幾台共用」（店家若把「除濕機」設成某一台的叫法，它照樣是三台共用的字）：
+  // 擁有者＝這個別名＋含有這段字的其他別名＋名字裡含這段字的商品
+  const aliasMentionsIn = (t: string): ProductMention[] => {
+    const norm = normalizeProductName(t)
+    if (!norm) return []
+    const out: ProductMention[] = []
+    for (const [key, target] of Object.entries(aliases!)) {
+      if (!key || !isUsableAlias(key) || !norm.includes(key)) continue
+      const k = aliasTarget(target)
+      if (!k) continue
+      const owners = fragmentOwners(key, index)
+      for (const [otherKey, otherTarget] of Object.entries(aliases!)) {
+        if (otherKey.includes(key)) {
+          const ok = aliasTarget(otherTarget)
+          if (ok) owners.add(ok)
+        }
+      }
+      owners.add(k)
+      out.push({ products: new Set([k]), owners })
+    }
+    return out
+  }
+  return (t: string) => pickMentionedProducts([
+    ...productMentionsIn(t, index),
+    ...(hasAliases ? aliasMentionsIn(t) : []),
+  ])
 }
 
 export function activeProductsInContext(
@@ -1833,6 +2000,36 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   let embedTokenEstimate = estimateTokens(text)
 
   /**
+   * AI 不回這一句（`C-307` 之後補，2026-10-19 正式站 12:44）：客人打「好的」、或打出一串看不懂的字（「g. 2l4」），
+   * 以前被當成問題，拿這段對話鎖住的商品去撈第一條，兩次都回「SHARP 乾淨方MAX 的產地是中國」。
+   *
+   * 為什麼選「不回」，不選另外兩種（轉真人確認／請他再說一次）：
+   *   - 走「答不出」那條，客人會收到「需要幫您轉接專員嗎？」——那場客人下一句正是「好的」，
+   *     而「好的」在那個問題後面算同意轉接＝真的把他轉給真人（他其實只是在回真人客服剛講的話）。
+   *   - 回「可以再說一次嗎」也是一則回覆，照 `D-69` 會扣一則（固定回覆、反問都算）＝為了看不懂的字扣店家的錢。
+   *   - 不回：客人不會被打擾、不扣則數；這則訊息在後台照樣是未讀，真人看得到。
+   * 回報：decision='skipped'＋handoffReason='manual'＝LINE 上不回任何訊息（handler 與測試對話頁都已經這樣處理）。
+   * 只記 token（真的花了錢），不記次數——用量頁的「AI 介入次數＝答出＋轉真人＋反問」不能被打破。
+   */
+  const skipQuietly = async (why: string): Promise<AnswerOutput> => {
+    console.log(`[ai-answer] 不回這句（${why}）:`, text.slice(0, 40))
+    await record({ embeddingTokens: embedTokenEstimate, inputTokens: routerIn, outputTokens: routerOut })
+    return {
+      decision: 'skipped',
+      answer: '',
+      confidence: 0,
+      sources: [],
+      handoffReason: 'manual',
+      ...(input.debug ? { debugPrompt: `(不回：${why})` } : {}),
+    }
+  }
+  // 客人在回答客服剛問的具體問題（「您是想了解粒粒安嗎？」→「好的」）時，那句「好的」是答案，照常往下走
+  const replyingToBotQuestion = answeringBotQuestion(input.history)
+  if (!input.isFollowup && !input.followupOf && !replyingToBotQuestion && isAcknowledgementOnly(text)) {
+    return skipQuietly('只是回應，不是問題')
+  }
+
+  /**
    * 這一題用哪一種檢索（`C-250`③）。⛔ 五個檢索點一律走這一支，**不可以有任何一處直接呼叫**
    * `searchSimilarChunks`——漏一處就是「試答讀得到草稿、但追問那一輪讀不到」這種各說各話。
    * ⛔ `includeDrafts` 一定要配 `isTest`：對客人只用看過的卡。
@@ -1844,6 +2041,8 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
 
   let chunks = await searchChunks(queryVector, DEFAULT_TOP_K_CHUNKS)
   let topSimilarity = chunks[0]?.similarity ?? 0
+  /** 這句「自己」撈得到多像的知識（後面補檢索會把對話裡的商品名加進去，那時就分不出這句本身有沒有內容了） */
+  const ownTopSimilarity = topSimilarity
 
   // 已確認的別名對照（上好ㄟ ↔ NWT 威技、客人的叫法 → 正式名）。下面的別名補檢索、同產品分組、產品鎖都吃這一份
   const { aliases: productAliases, aliasLabels: productAliasLabels } = await getProductAliases(db, workspaceId)
@@ -1893,6 +2092,16 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const contextProductLabel = contextProducts && isSingleProductContext(contextProducts)
     ? ([...activeProductNames, ...catalogNames].find(n => productKeyOf(n) === [...contextProducts.products][0]) ?? '')
     : ''
+  // 看不懂的一句（「g. 2l4」＝注音沒切到中文打出的「收到」）：這句自己撈不到夠像的知識、沒點名商品、也不是在回答客服的問題 → 不回（理由見 skipQuietly）。
+  // ⛔ 一定要在下面「補商品名再查一次」之前判斷：補了商品名，亂碼也會撈到那台的卡（正式站就是這樣答出「產地是中國」）。
+  if (
+    !input.isFollowup && !input.followupOf && !replyingToBotQuestion
+    && looksLikeZhuyinTypo(text)
+    && ownTopSimilarity < getGroundingThreshold(settings)
+    && !(productMatcher?.(text).size)
+  ) {
+    return skipQuietly('看不懂這句')
+  }
   // 商品是前面講過／點過的、這句沒再講：補一次「原句＋商品名」檢索併進來（同上面叫法那一段的做法）。
   // 2026-10-12「我的會什麼時候出貨」單句撈回的前 5 張出貨卡裡根本沒有電淨艙——鎖住商品也沒卡可答。
   if (contextProductLabel && contextProducts?.from === 'history') {
@@ -2059,8 +2268,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
 
   // 識別碼精確比對（品號 / SKU / 型號）：embedding 對這類 token 幾乎沒訊號，
   // tags 精確命中直接視為高信心來源。純中文提問零成本跳過（query 沒英數 run 直接回空）。
+  // 帶這句的向量：同一個型號標在幾十條上時，照跟問題的相似度挑（`C-307`①），不是照存放順序拿前 3 條。
   try {
-    const tagHits = await searchChunksByIdentifierTag(db, workspaceId, text)
+    const tagHits = await searchChunksByIdentifierTag(db, workspaceId, text, 3, queryVector)
     if (tagHits.length) {
       const byId = new Map(chunks.map(c => [c.id, c] as const))
       for (const hit of tagHits) {
@@ -2354,8 +2564,16 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // Context 瘦身：同來源去重、低於地板分（grounding 門檻 − 0.05）的卡不進 prompt、
   // 單卡內容截 CONTEXT_CARD_MAX_CHARS。top-1 已過 grounding 門檻，必在地板之上。
   const contextFloor = Math.max(0, getGroundingThreshold(settings) - 0.05)
+  // 同一份資料最多 3 條進 prompt（`C-307`，見 CONTEXT_MAX_PER_SOURCE）；分組／反問用的 dedupedChunks 照舊一份一條。
+  // 從（產品鎖之後的）chunks 重算，先照分數排：上面指名豁免會把卡拉高分。
+  const contextCandidates = dedupeNearIdentical(dedupeBySource(
+    [...chunks].sort((a, b) => b.similarity - a.similarity),
+    catalogSourceIds,
+    subAnchorIds,
+    CONTEXT_MAX_PER_SOURCE,
+  ))
   // 子問題錨點卡一律進 context：它是那個子問題唯一的證據，被地板濾掉就等於那一問沒東西可答。
-  const contextChunks = dedupedChunks.filter(c => c.similarity >= contextFloor || subAnchorIds?.has(c.id))
+  const contextChunks = contextCandidates.filter(c => c.similarity >= contextFloor || subAnchorIds?.has(c.id))
   const contextBlock = contextChunks
     .map((c, i) => {
       // 卡片標題常不帶產品名（維修卡只寫「保護代碼EH」）→ 補上所屬產品，

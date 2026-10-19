@@ -738,33 +738,73 @@ async function loadTagIndex(db: Firestore, workspaceId: string) {
 }
 
 /**
+ * 型號命中的卡最多看幾張再挑（`C-307`①）。一份說明書切成幾十條、每條都標了同一個型號，
+ * 要在裡面挑「跟這個問題最像的」就得先全部拿來比；設上限是讓一個很常見的型號不會一題讀上百張。
+ * 實測 MYFEEL「HD7000」說明書一份就幾十條。每張多一次讀取（一題多幾十次，費用可忽略）。
+ */
+export const TAG_RANK_MAX_CANDIDATES = 60
+
+/** 兩個向量的 cosine 相似度；任一邊長度不同或是零向量時回 -1（排到最後，不會被挑中） */
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  if (!a?.length || a.length !== b?.length) return -1
+  let dot = 0
+  let na = 0
+  let nb = 0
+  for (let i = 0; i < a.length; i++) {
+    const x = Number(a[i])
+    const y = Number(b[i])
+    dot += x * y
+    na += x * x
+    nb += y * y
+  }
+  return na && nb ? dot / Math.sqrt(na * nb) : -1
+}
+
+/** 卡片上存的向量（Firestore VectorValue 或舊資料的陣列）；沒有就回 null */
+function storedEmbedding(data: any): number[] | null {
+  const e = data?.embedding
+  if (!e) return null
+  if (typeof e.toArray === 'function') return e.toArray()
+  return Array.isArray(e) ? e : null
+}
+
+/**
  * 用「識別碼精確比對」找卡。query 沒有任何英數 run 時零成本直接回空陣列
  * （純中文提問完全不會多花 Firestore 讀取）。
+ *
+ * 帶 queryVector（客人這句的向量）時，標了這個型號的卡**照跟問題的相似度**挑前 maxHits 張（`C-307`①）。
+ * ⛔ 以前是照存放順序取前 3 張：MYFEEL「HD7000 煮飯底部黏鍋」撈到的是說明書裡排最前面的
+ *    「限用物質」那幾條，黏鍋、焦掉那兩條（跟問題最像）反而沒進來——客人講得越清楚越答不出來。
+ * 給的分數仍是高信心（型號對上了），只是照相似度遞減一點點，排序才看得出哪張最相關。
+ * 沒帶 queryVector＝舊行為（照存放順序），留給不需要排序的呼叫端。
  */
 export async function searchChunksByIdentifierTag(
   db: Firestore,
   workspaceId: string,
   query: string,
   maxHits = 3,
+  queryVector?: number[],
 ): Promise<SimilarChunk[]> {
   const queryRuns = new Set(extractIdentifierRuns(query))
   if (!queryRuns.size) return []
 
   const index = await loadTagIndex(db, workspaceId)
+  const rankByQuery = !!queryVector?.length
   const matchedIds = index
     .filter(e => e.runs.some(r => queryRuns.has(r)))
-    .slice(0, maxHits)
+    .slice(0, rankByQuery ? TAG_RANK_MAX_CANDIDATES : maxHits)
     .map(e => e.id)
   if (!matchedIds.length) return []
 
   const refs = matchedIds.map(id => db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(id))
   const snaps = await db.getAll(...refs)
   const nowMs = Date.now()
-  return snaps
+  const rows = snaps
     .filter(s => s.exists && s.data()?.status === 'indexed' && chunkStillActive(s.data(), nowMs))
     .map((s) => {
       const data = s.data() as any
-      return {
+      const emb = rankByQuery ? storedEmbedding(data) : null
+      const chunk: SimilarChunk = {
         id: s.id,
         title: String(data?.title ?? ''),
         content: String(data?.content ?? ''),
@@ -774,7 +814,13 @@ export async function searchChunksByIdentifierTag(
         isOverview: data?.isOverview === true,
         productName: String(data?.productName ?? '').trim() || undefined,
       }
+      return { chunk, relevance: emb ? cosineSimilarity(queryVector!, emb) : -1 }
     })
+  if (!rankByQuery) return rows.map(r => r.chunk)
+  return rows
+    .sort((a, b) => b.relevance - a.relevance)
+    .slice(0, maxHits)
+    .map((r, i) => ({ ...r.chunk, similarity: TAG_MATCH_SIMILARITY - 0.01 * i }))
 }
 
 /** ⚠️ 用 type 不用 interface：排程任務的 result 要能當 Record<string, unknown> 回（interface 不行） */
