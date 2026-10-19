@@ -148,9 +148,11 @@
                   </div>
                 </div>
                 <div v-else-if="turn.result.handoffReason === 'manual'" class="pg-skipped">
-                  <p>AI 跳過此題。</p>
+                  <p>這句 AI 不回。</p>
+                  <!-- `C-350`（2026-10-19）：最常見的是客人只回一句「好的／收到」、或打了看不懂的字（注音沒切換）。
+                       以前寫「query 為空、或 AI 流程被設定中斷」——工程詞，而且講的不是真正的原因 -->
                   <p class="text-muted">
-                    可能原因：query 為空、或 AI 流程被設定中斷。LINE 上不會回任何訊息給客人。
+                    客人只是回一句「好的」「收到」，或打了看不懂的字。LINE 上不會回客人；這則在後台照樣算未讀，真人看得到。
                   </p>
                 </div>
                 <div v-else class="pg-handoff-notice">
