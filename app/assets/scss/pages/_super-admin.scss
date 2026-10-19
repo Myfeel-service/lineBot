@@ -908,6 +908,86 @@ $cost-host: #8a6f5a;
   }
 }
 
+/* ── 非 AWS 的固定支出（手填，`D-47`③）───────────────────────
+ * 手填＝可信度跟帳單不同：比例條與圓點用**斜紋**（同「估算」格用虛線框的道理），
+ * 一眼看出這一段不是帳單抓來的。顏色沿用主機的棕（同屬「固定的基本開銷」），只是畫成斜紋。 */
+$cost-fixed: #8a6f5a;
+$cost-fixed-stripes: repeating-linear-gradient(135deg, $cost-fixed 0 3px, rgba(138, 111, 90, 0.35) 3px 6px);
+
+.sa-cost-seg--fixed { background: $cost-fixed-stripes; }
+.sa-cost-dot--fixed { background: $cost-fixed-stripes; }
+
+.sa-fixed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+// 名稱與金額在左、每月攤提靠右對齊、動作在最右；窄螢幕時動作換到下一行
+.sa-fixed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--color-bg-subtle, #f9fafb);
+  font-size: 0.82rem;
+}
+
+.sa-fixed-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.sa-fixed-row__name {
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  overflow-wrap: anywhere;
+}
+
+.sa-fixed-row__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+// 過了續約日：手填的金額可能已經變了（琥珀＝該留意，同 .sa-infra-warn）
+.sa-fixed-row__warn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.sa-fixed-row__val {
+  font-weight: 700;
+  color: var(--color-text-primary, #111827);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sa-fixed-row__actions {
+  display: flex;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .sa-fixed-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .sa-fixed-row__actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
+// 對話框：幣別切換與金額同一列
+.sa-fixed-amount {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
 // ── 全站異常總覽（C-91）─────────────────────────────────────────────
 // 版型照金流總覽：.sa-pay-summary 統計列＋message-card 明細表（.message-card 無內距，
 // 內容一律走 .sa-pay-summary / .card-section-stack 自帶 padding 的容器）

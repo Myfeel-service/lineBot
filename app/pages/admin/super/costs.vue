@@ -25,14 +25,16 @@
         <div class="sa-cost-note">
           這頁放<b>系統本身</b>的三筆錢：<b>AI</b>（Gemini）、<b>資料庫</b>（Firebase）、<b>主機</b>（AWS）。
           前兩筆依實際用量換算，主機是 AWS 帳單金額。<br>
-          <b>LINE 月費與推播、金流手續費、發票、網域不在此</b> —— 那些查不到用量，請看各平台帳單。
+          <!-- `D-47`③（2026-10-20）：網域年費改成可以在最下面手填，這句不再說「網域不在此」 -->
+          <b>LINE 月費與推播、金流手續費、發票不在此</b> —— 那些查不到用量，請看各平台帳單。
+          網域年費這類<b>不在 AWS 帳單上的固定支出</b>，在最下面手填。
         </div>
 
         <!-- 本月總花費：AI ＋ 資料庫（兩者相加＝總額，才並排） -->
         <div class="message-card ar-section-card">
           <div class="sa-cost-body">
             <div class="sa-cost-hero">
-              <div class="sa-cost-hero__label">{{ periodLabel }} 總花費（AI ＋ 資料庫 ＋ 主機）</div>
+              <div class="sa-cost-hero__label">{{ periodLabel }} 總花費（AI ＋ 資料庫 ＋ 主機{{ fixedMonthlyTwd > 0 ? ' ＋ 手填的固定支出' : '' }}）</div>
               <div class="sa-cost-hero__row">
                 <div class="sa-cost-hero__value">{{ ntTwd(grandTotalTwd) }}</div>
                 <span
@@ -55,6 +57,7 @@
                 <span class="sa-cost-seg sa-cost-seg--ai" :style="{ width: grandPct(aiTotalTwd) + '%' }" />
                 <span class="sa-cost-seg sa-cost-seg--infra" :style="{ width: grandPct(infraTotalTwd) + '%' }" />
                 <span class="sa-cost-seg sa-cost-seg--host" :style="{ width: grandPct(hostTotalTwd) + '%' }" />
+                <span class="sa-cost-seg sa-cost-seg--fixed" :style="{ width: grandPct(fixedMonthlyTwd) + '%' }" />
               </div>
               <div class="sa-cost-legend">
                 <div class="sa-cost-legend__item">
@@ -71,6 +74,12 @@
                   <span class="sa-cost-dot sa-cost-dot--host" />
                   <span class="sa-cost-legend__name">主機（AWS）</span>
                   <span class="sa-cost-legend__val">{{ ntTwdSoft(hostTotalTwd) }} ・ {{ grandPct(hostTotalTwd) }}%</span>
+                </div>
+                <!-- `D-47`③：手填的那一筆一定掛「手填」——不是帳單抓來的，數字可能已經過期 -->
+                <div v-if="fixedMonthlyTwd > 0" class="sa-cost-legend__item">
+                  <span class="sa-cost-dot sa-cost-dot--fixed" />
+                  <span class="sa-cost-legend__name">非 AWS 的固定支出<span class="sa-infra-est-tag">手填</span></span>
+                  <span class="sa-cost-legend__val">{{ ntTwd(fixedMonthlyTwd) }} ・ {{ grandPct(fixedMonthlyTwd) }}%</span>
                 </div>
               </div>
             </template>
@@ -547,6 +556,101 @@
             </p>
           </div>
         </div>
+
+        <!--
+          非 AWS 的固定支出（`D-47`③，2026-10-20）：網域年費這類**帳單查不到**的錢，只能手填。
+          ⛔ 手填的東西會過期：卡名旁、上面總額的圖例都掛「手填」，最後是誰什麼時候改的寫在卡尾，
+             過了續約日要提醒回來確認——不然就違反這頁「查不到絕不畫成 0、手填絕不假裝是帳單」的規矩。
+        -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">非 AWS 的固定支出 {{ fixed.status === 'ok' && fixed.items.length ? `每月 ${ntTwd(fixedMonthlyTwd)}` : '' }}</span>
+              <span class="sa-infra-est-tag">手填</span>
+            </div>
+            <el-button v-if="fixed.status === 'ok'" size="small" @click="openFixedEdit(null)">新增</el-button>
+          </div>
+
+          <div v-if="fixedLoading" class="sa-cost-body">
+            <div class="sa-cost-empty">正在讀取⋯</div>
+          </div>
+          <div v-else-if="fixed.status !== 'ok'" class="sa-cost-body">
+            <div class="sa-infra-warn">⚠ 讀不到手填的固定支出：{{ fixed.reason }}。上面的總額不含這一筆。</div>
+          </div>
+          <div v-else class="sa-cost-body">
+            <p class="sa-cost-guide__intro">
+              不在 AWS 帳單上的固定支出（例如網域年費）帳單查不到，只能手填；年繳的攤成每月（÷12）算進上面的總額。
+              <b>這裡的數字是手填的，不是帳單抓來的</b>——續約或漲價時要回來改。
+            </p>
+            <!-- 讀到壞掉的資料：照「過濾掉東西要說得出丟了什麼」講出來，不靜靜少算 -->
+            <div v-if="fixed.dropped" class="sa-infra-warn sa-infra-warn--above-grid">
+              ⚠ 有 <b>{{ fixed.dropped }} 筆</b>資料讀不出來，沒算進總額；按任何一筆的「修改」再儲存一次就會清掉。
+            </div>
+            <div v-if="fixed.items.length" class="sa-fixed-list">
+              <div v-for="row in fixedRows" :key="row.item.id" class="sa-fixed-row">
+                <div class="sa-fixed-row__main">
+                  <span class="sa-fixed-row__name">{{ row.item.name }}</span>
+                  <span class="sa-fixed-row__meta">
+                    {{ fixedCostAmountText(row.item) }}<template v-if="row.item.renewsOn"> ・ 下次續約 {{ row.item.renewsOn }}</template>
+                  </span>
+                  <span v-if="row.renewalPassed" class="sa-fixed-row__warn">已經過了續約日，確認一下金額有沒有變、再把續約日往後改</span>
+                </div>
+                <span class="sa-fixed-row__val">每月 {{ row.monthlyText }}</span>
+                <div class="sa-fixed-row__actions">
+                  <el-button link type="primary" size="small" @click="openFixedEdit(row.item)">修改</el-button>
+                  <el-button link type="danger" size="small" @click="removeFixed(row.item)">刪除</el-button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="sa-cost-empty">還沒有填。例如網域 lineminime.com（GoDaddy，2027-07-13 續約）的年費。</div>
+            <p v-if="fixed.updatedAt" class="sa-cost-est__foot">
+              最後修改：{{ taipeiDateTime(fixed.updatedAt) }}・{{ fixed.updatedBy || '不明' }}。
+              美金照 US$1＝NT${{ USD_TO_TWD }} 換算（跟這頁其他卡同一個匯率）。
+            </p>
+          </div>
+        </div>
+
+        <el-dialog v-model="fixedDialog" :title="fixedEditingId ? '修改固定支出' : '新增固定支出'" width="min(460px, 92vw)">
+          <div class="admin-panel-stack">
+            <div class="admin-field-group">
+              <AdminFieldLabel text="名稱" tight />
+              <el-input v-model="fixedForm.name" :maxlength="FIXED_COST_NAME_MAX" placeholder="例：網域 lineminime.com（GoDaddy）" />
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="多久付一次" tight />
+              <el-radio-group v-model="fixedForm.cycle">
+                <el-radio-button value="yearly">每年</el-radio-button>
+                <el-radio-button value="monthly">每月</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="一次付多少" tight />
+              <div class="sa-fixed-amount">
+                <el-radio-group v-model="fixedForm.currency">
+                  <el-radio-button value="TWD">台幣</el-radio-button>
+                  <el-radio-button value="USD">美金</el-radio-button>
+                </el-radio-group>
+                <el-input-number
+                  v-model="fixedForm.amount"
+                  :min="0"
+                  :max="FIXED_COST_AMOUNT_MAX"
+                  :precision="fixedForm.currency === 'USD' ? 2 : 0"
+                  controls-position="right"
+                />
+              </div>
+              <p class="text-xs text-muted">{{ fixedFormPreview }}</p>
+            </div>
+            <div class="admin-field-group">
+              <AdminFieldLabel text="下次續約日（選填）" tight />
+              <el-date-picker v-model="fixedForm.renewsOn" type="date" value-format="YYYY-MM-DD" placeholder="不知道可以不填" />
+              <p class="text-xs text-muted">過了這一天，卡片會提醒你回來確認金額。</p>
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="fixedDialog = false">取消</el-button>
+            <el-button type="primary" :loading="fixedSaving" @click="saveFixedForm">儲存</el-button>
+          </template>
+        </el-dialog>
       </div>
     </template>
   </AdminSplitLayout>
@@ -564,8 +668,22 @@ import {
   type CostDriver,
   type CostLeaf,
 } from '~~/shared/aws-cost-usage'
+import { ElMessageBox } from 'element-plus'
 import { USD_TO_TWD } from '~~/shared/usd-twd'
 import { billingDayTaipeiSpan } from '~~/shared/google-billing-day'
+import {
+  FIXED_COST_AMOUNT_MAX,
+  FIXED_COST_NAME_MAX,
+  fixedCostAmountText,
+  fixedCostMonthlyTwd,
+  fixedCostRenewalPassed,
+  fixedCostsMonthlyTwd,
+  parseFixedCostItem,
+  type FixedCostCurrency,
+  type FixedCostCycle,
+  type FixedCostItem,
+} from '~~/shared/fixed-costs'
+import { taipeiDate, taipeiDateTime } from '~~/shared/time'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '成本總覽 — 超級管理員' })
@@ -764,6 +882,40 @@ const host = ref<Host>({
 /** 上月主機花費；null＝讀不到 */
 const prevHostCost = ref<number | null>(null)
 
+// ── 非 AWS 的固定支出（手填，`D-47`③）──────────────────────────
+// 三態照舊：載入中／讀不到／有資料。⛔ 讀不到不當 0：hero 的「總額不含…」要點名它
+interface FixedCosts {
+  status: 'ok' | 'unavailable'
+  reason: string
+  items: FixedCostItem[]
+  /** 存著但讀不出來的筆數（沒算進總額，畫面要講） */
+  dropped: number
+  updatedAt: number | null
+  updatedBy: string | null
+}
+const fixedLoading = ref(true)
+const fixed = ref<FixedCosts>({ status: 'unavailable', reason: '', items: [], dropped: 0, updatedAt: null, updatedBy: null })
+/**
+ * 每月攤提的台幣（年繳 ÷12）。手填的是「固定」的錢，每個月都算同一個數——
+ * 所以上月的總額也加同一個數（`prevGrandTwd`），兩個月的組成才一樣、較上月才比得了。
+ */
+const fixedMonthlyTwd = computed(() => fixed.value.status === 'ok' ? fixedCostsMonthlyTwd(fixed.value.items) : 0)
+/** 每一列的每月金額：一次配成整數、加起來＝卡名旁那個數（同主機那張的 allocateRounded，不會差 1 元） */
+const fixedRows = computed(() => {
+  const items = fixed.value.items
+  const monthly = allocateRounded(items.map(it => fixedCostMonthlyTwd(it)), fixedMonthlyTwd.value)
+  const today = taipeiDate()
+  return items.map((item, i) => {
+    const m = monthly[i] ?? 0
+    return {
+      item,
+      // 有花錢但攤到每月不到 1 元 → 「<NT$1」，別印成誤導的 NT$0（同 leafMoney）
+      monthlyText: m === 0 && fixedCostMonthlyTwd(item) > 0 ? '<NT$1' : ntTwd(m),
+      renewalPassed: fixedCostRenewalPassed(item, today),
+    }
+  })
+})
+
 const aiTotalTwd = computed(() => twd(totals.value.totalCostUsd))
 const infraTotalTwd = computed(() => infra.value.status === 'ok' ? twd(infra.value.totals.totalCostUsd) : 0)
 // AWS 帳單幣別通常是 USD，但若帳號本身以台幣結算就直接用，不要再乘一次匯率
@@ -772,7 +924,7 @@ const hostTotalTwd = computed(() => host.value.status === 'ok' ? hostToTwd(host.
 // 折抵金以「正數」呈現（後端存的是負數沖銷項），實付另外算，畫面上三個數字要對得起來
 const hostCreditTwd = computed(() => host.value.status === 'ok' ? Math.abs(hostToTwd(host.value.creditTotal)) : 0)
 const hostNetTwd = computed(() => host.value.status === 'ok' ? hostToTwd(host.value.netTotal) : 0)
-const grandTotalTwd = computed(() => aiTotalTwd.value + infraTotalTwd.value + hostTotalTwd.value)
+const grandTotalTwd = computed(() => aiTotalTwd.value + infraTotalTwd.value + hostTotalTwd.value + fixedMonthlyTwd.value)
 
 function hostPct(cost: number) {
   const top = host.value.services[0]?.cost ?? 0
@@ -853,6 +1005,7 @@ const missingParts = computed(() => {
   const out: string[] = []
   if (!infraLoading.value && infra.value.status !== 'ok') out.push('資料庫')
   if (!hostLoading.value && host.value.status !== 'ok') out.push('主機')
+  if (!fixedLoading.value && fixed.value.status !== 'ok') out.push('手填的固定支出')
   return out
 })
 
@@ -886,6 +1039,8 @@ const prevGrandTwd = computed<number | null>(() => {
   return prevTotalCostUsd.value * USD_TO_TWD
     + (prevInfraCostUsd.value ?? 0) * USD_TO_TWD
     + (prevHostCost.value === null ? 0 : (host.value.currency === 'USD' ? prevHostCost.value * USD_TO_TWD : prevHostCost.value))
+    // 手填的固定支出每個月同一個數：兩邊都加，組成才一樣（見 fixedMonthlyTwd）
+    + fixedMonthlyTwd.value
 })
 
 const grandDeltaPct = computed(() => {
@@ -894,6 +1049,7 @@ const grandDeltaPct = computed(() => {
   const cur = totals.value.totalCostUsd * USD_TO_TWD
     + (infra.value.status === 'ok' ? infra.value.totals.totalCostUsd * USD_TO_TWD : 0)
     + (host.value.status === 'ok' ? hostToTwd(host.value.totalCost) : 0)
+    + fixedMonthlyTwd.value
   return Math.round(((cur - prev) / prev) * 100)
 })
 
@@ -1158,8 +1314,111 @@ async function loadHost() {
   }
 }
 
+// ── 非 AWS 的固定支出（手填）：讀、改、刪 ───────────────────────
+interface FixedCostsResponse {
+  items: FixedCostItem[]
+  dropped?: number
+  updatedAt: number | null
+  updatedBy: string | null
+}
+function applyFixed(res: FixedCostsResponse) {
+  fixed.value = {
+    status: 'ok',
+    reason: '',
+    items: res.items ?? [],
+    dropped: res.dropped ?? 0,
+    updatedAt: res.updatedAt ?? null,
+    updatedBy: res.updatedBy ?? null,
+  }
+}
+
+async function loadFixed() {
+  fixedLoading.value = true
+  try {
+    applyFixed(await apiFetch<FixedCostsResponse>('/api/admin/super/fixed-costs'))
+  }
+  catch (e: any) {
+    fixed.value = { status: 'unavailable', reason: e?.data?.statusMessage || '讀取失敗', items: [], dropped: 0, updatedAt: null, updatedBy: null }
+  }
+  finally {
+    fixedLoading.value = false
+  }
+}
+
+const fixedDialog = ref(false)
+const fixedSaving = ref(false)
+/** 正在改哪一筆；null＝新增 */
+const fixedEditingId = ref<string | null>(null)
+const fixedForm = reactive<{ name: string, amount: number | undefined, currency: FixedCostCurrency, cycle: FixedCostCycle, renewsOn: string | null }>({
+  name: '', amount: undefined, currency: 'TWD', cycle: 'yearly', renewsOn: null,
+})
+
+/** 表單底下那行：填完馬上看得到「攤到每月多少、會進總額」——不用存了才知道 */
+const fixedFormPreview = computed(() => {
+  const amount = Number(fixedForm.amount)
+  if (!Number.isFinite(amount) || amount <= 0) return '年繳的會攤成每月（÷12）算進上面的總額。'
+  const m = fixedCostMonthlyTwd({ amount, currency: fixedForm.currency, cycle: fixedForm.cycle })
+  return `攤到每月約 ${m > 0 && Math.round(m) === 0 ? '<NT$1' : ntTwd(m)}，會算進上面的總額。`
+})
+
+function openFixedEdit(item: FixedCostItem | null) {
+  fixedEditingId.value = item?.id ?? null
+  fixedForm.name = item?.name ?? ''
+  fixedForm.amount = item?.amount
+  fixedForm.currency = item?.currency ?? 'TWD'
+  fixedForm.cycle = item?.cycle ?? 'yearly'
+  fixedForm.renewsOn = item?.renewsOn ?? null
+  fixedDialog.value = true
+}
+
+/** 整份存回去（端點是整份覆寫）；成功回 true */
+async function putFixed(items: FixedCostItem[], okMsg: string): Promise<boolean> {
+  fixedSaving.value = true
+  try {
+    applyFixed(await apiFetch<FixedCostsResponse>('/api/admin/super/fixed-costs', { method: 'PUT', body: { items } }))
+    showToast(okMsg, 'success')
+    return true
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '儲存失敗', 'error')
+    return false
+  }
+  finally {
+    fixedSaving.value = false
+  }
+}
+
+async function saveFixedForm() {
+  const id = fixedEditingId.value ?? `fc_${Date.now().toString(36)}`
+  // 先在前端用同一支檢查擋一次：錯在哪一格當場講，不用等伺服器回 400
+  const parsed = parseFixedCostItem({ id, ...fixedForm })
+  if (!parsed.ok) {
+    showToast(parsed.error, 'error')
+    return
+  }
+  const items = fixedEditingId.value
+    ? fixed.value.items.map(it => (it.id === id ? parsed.item : it))
+    : [...fixed.value.items, parsed.item]
+  if (await putFixed(items, fixedEditingId.value ? '已修改' : '已新增'))
+    fixedDialog.value = false
+}
+
+async function removeFixed(item: FixedCostItem) {
+  try {
+    await ElMessageBox.confirm(`刪掉「${item.name}」？上面的總額會跟著少這一筆。`, '刪除固定支出', {
+      confirmButtonText: '刪除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  }
+  catch {
+    return
+  }
+  await putFixed(fixed.value.items.filter(it => it.id !== item.id), '已刪除')
+}
+
 function load() {
-  return Promise.all([loadAi(), loadInfra(), loadHost()])
+  return Promise.all([loadAi(), loadInfra(), loadHost(), loadFixed()])
 }
 onMounted(load)
 watch(period, load)

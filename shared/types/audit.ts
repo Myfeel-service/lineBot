@@ -216,6 +216,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
    * ⛔ 不要為了讓它現身而硬塞一個 workspaceId 進去。
    */
   'super.allowance': '平台調整了額度',
+  // `D-47`③：成本總覽最下面那張手填的卡（網域年費之類）
+  'super.fixedCosts': '平台改了成本總覽的手填固定支出',
   'super.grantCredit': '平台給了點數',
   'super.leadPatch': '平台更新了名單的狀態',
   'super.orgCreate': '平台建立了一個組織',
