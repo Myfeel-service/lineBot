@@ -1485,6 +1485,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       },
       {
         target: '[data-tour="bc-schedule"]',
+        // `C-352`②：「排程發送」那個選項只給有送出權限的人（跟「驗證並發送」同一項），這一步講的就是它
+        requires: 'broadcast.send',
         title: '現在發，還是約時間發',
         description:
           '選「<strong>排程發送</strong>」就約一個時間，到點自動送出。'

@@ -4,6 +4,7 @@ import { assertBroadcastPlanAllows } from '~~/server/utils/broadcast-plan-gate'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '~~/server/utils/audit-log'
+import { broadcastSaveCapability, can } from '~~/shared/permissions'
 
 /**
  * PUT /api/broadcast/:id
@@ -20,7 +21,8 @@ import { writeAuditLog, auditSnapshot, auditTimeText, diffChangedFields } from '
  * Response: { id: string, ...updatedFields }
  */
 export default defineEventHandler(async (event) => {
-  const { workspaceId, uid } = await requireCapability(event, 'broadcast.write')
+  // 最低門檻＝存草稿；動到排程的（下面）另外要送出權限
+  const { workspaceId, uid, role, isSuperAdmin } = await requireCapability(event, 'broadcast.write')
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'id is required' })
@@ -43,6 +45,21 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event)
+
+  /**
+   * `C-352`②：會讓推播排上時間的動作一律要送出權限（規則在 `broadcastSaveCapability`，推播頁按鈕問同一支）。
+   * 以前這裡只要「寫草稿」，帶排程時間就把推播排上——正式的「確認排程」卻要「送出」，兩條路門檻不一樣。
+   * ⛔ 擋在寫入之前：一個字都不能改進去。
+   */
+  if (broadcastSaveCapability(current.status, body?.scheduleAt) === 'broadcast.send' && !isSuperAdmin && !can(role, 'broadcast.send')) {
+    throw createError({
+      statusCode: 403,
+      statusMessage: current.status === 'scheduled'
+        ? '這則推播已經排好時間了，改它要有發送推播的權限。請找能發推播的同事改。'
+        : '排上發送時間要有發送推播的權限。可以先存成草稿，請能發推播的同事排程。',
+    })
+  }
+
   const updates: Record<string, any> = { updatedAt: FieldValue.serverTimestamp() }
 
   if (body.name !== undefined) updates.name = body.name

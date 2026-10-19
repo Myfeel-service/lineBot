@@ -127,10 +127,17 @@
 
       <div class="admin-field-group">
         <AdminFieldLabel text="④ 要不要順手留一張推播草稿" tight />
-        <el-checkbox v-model="form.createBroadcastDraft">
+        <!-- `C-352`①：這張草稿的對象是這顆標籤（依標籤篩選）——方案發不了就不勾、鎖住，原因講在下面那一行。
+             以前照樣建好一張送不出去的草稿，到推播頁才看到那一格鎖住。 -->
+        <el-checkbox
+          :model-value="form.createBroadcastDraft && !broadcastLock"
+          :disabled="!!broadcastLock"
+          @update:model-value="(v) => (form.createBroadcastDraft = !!v)"
+        >
           建一張「{{ broadcastName || '（先填活動名字）' }}」草稿，對象已選好這顆標籤
         </el-checkbox>
-        <p class="cwz__hint">
+        <AdminBroadcastPlanLock v-if="broadcastLock" :text="broadcastLock" />
+        <p v-else class="cwz__hint">
           ⛔ 只是草稿，<strong>不會發出去</strong>，也不會佔用 LINE 額度。要發的時候到推播頁自己按。
         </p>
       </div>
@@ -172,6 +179,7 @@ import {
 import { suggestTagCode } from '~~/shared/tag-code-suggest'
 import { normalizeUnifiedAction } from '~~/shared/action-schema'
 import { unifiedActionToLineMessages } from '~~/shared/broadcast-content'
+import { broadcastEntryLockText } from '~~/shared/billing/plans'
 
 const props = defineProps<{
   visible: boolean
@@ -237,11 +245,19 @@ const tagNameTouched = ref(false)
 const broadcastName = computed(() => defaultBroadcastName(form.name))
 const outcome = computed(() => summarizeCampaignWizard(steps.value))
 
-/** 送出去的那份輸入：選「沿用既有」時不可以還帶著新標籤名字 */
+/**
+ * `C-352`①：④ 那張草稿發給這顆標籤的人（依標籤篩選）——方案發不了分眾就不建（句子跟推播頁鎖住時同一句）。
+ * 讀不到方案＝不鎖（推播頁跟送出端照擋）。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const broadcastLock = computed(() => broadcastEntryLockText(broadcastTier.value, 'tags'))
+
+/** 送出去的那份輸入：選「沿用既有」時不可以還帶著新標籤名字；方案發不了分眾就不建推播草稿 */
 const effectiveInput = computed<CampaignWizardInput>(() => ({
   ...form,
   newTagName: tagMode.value === 'new' ? form.newTagName.trim() : '',
   existingTagIds: tagMode.value === 'existing' ? form.existingTagIds : [],
+  createBroadcastDraft: form.createBroadcastDraft && !broadcastLock.value,
 }))
 
 const blockedReason = computed(() =>
@@ -258,6 +274,8 @@ watch(() => form.newTagName, (next) => {
 
 watch(() => props.visible, (open) => {
   if (!open) return
+  // ④ 要不要鎖：每次打開問一次（升級完回來就解開）
+  void loadBroadcastTier()
   // 每次打開都從乾淨的狀態開始（⛔ 不要留著上一檔的殘值）
   form.name = ''
   form.newTagName = ''

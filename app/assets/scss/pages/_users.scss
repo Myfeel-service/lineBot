@@ -47,18 +47,24 @@
 
 .users-batch-bar {
   display: flex;
+  // 390 寬實測（`C-352`）：不換行的話「已選 2 位」一字一行、「推播給這 2 位」「取消選取」被擠出框外
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 1rem;
   background: var(--bg-surface);
   border: 1px solid var(--border-active);
   border-radius: var(--radius-md);
+
+  // Element Plus 相鄰按鈕自帶 margin-left: 12px；換行之後第二行開頭會多空一格，間距交給 gap
+  .el-button + .el-button { margin-left: 0; }
 }
 
 .users-batch-info {
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
 .users-table__th--check {

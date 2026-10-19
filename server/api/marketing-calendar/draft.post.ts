@@ -16,6 +16,8 @@ import { isOwnEventId, ownEventFestival } from '~~/shared/marketing-events'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { BROADCAST_DRAFT_VARIANTS, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
+import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
+import { broadcastEntryLockText, broadcastLockText, tierAllowsAudience } from '~~/shared/billing/plans'
 
 /**
  * POST /api/marketing-calendar/draft   Body: { festivalId }
@@ -42,6 +44,15 @@ export default defineEventHandler(async (event) => {
   if (!festival) {
     throw createError({ statusCode: 400, statusMessage: '找不到這個檔期' })
   }
+
+  /**
+   * `C-352`①：方案發不了推播（免費）就不擬——擬了也送不出去，還白花一次 AI。
+   * 首頁卡片在入口就鎖住同一句；這裡是讀不到方案時畫面沒鎖、或直接打 API 的那條路。
+   * 讀不到方案（null）照 fail-open 放行，同推播頁與送出端。
+   */
+  const tier = await workspaceBroadcastTier(workspaceId, db)
+  const planLock = broadcastEntryLockText(tier, 'all')
+  if (planLock) throw createError({ statusCode: 403, statusMessage: planLock })
 
   const profile = await getStoreProfile(workspaceId, db)
   if (!isStoreProfileReady(profile)) {
@@ -71,37 +82,47 @@ export default defineEventHandler(async (event) => {
    */
   let suggestedTagIds: string[] = []
   let audienceNotice = ''
-  try {
-    const snap = await db.collection('tags')
-      .where('workspaceId', '==', workspaceId)
-      .where('status', '==', 'active')
-      .limit(60)
-      .get()
-    const rows: AudienceTagLike[] = snap.docs.map((d) => {
-      const v = d.data() as { name?: string, aiMode?: string, code?: string }
-      return { id: d.id, name: String(v.name ?? ''), aiMode: v.aiMode }
-    })
-    // ⛔ 用 code 反查不要寫死 id：那顆是每個工作區各自建的
-    const excludeTagIds = snap.docs
-      .filter(d => (d.data() as { code?: string }).code === INACTIVE_TAG_CODE)
-      .map(d => d.id)
-
-    const counts: Record<string, number> = rows.length
-      ? await memberCountsForTagIds(db, workspaceId, rows.map(t => t.id)).catch(() => ({} as Record<string, number>))
-      : {}
-
-    const matched = matchAudienceTags(rows, counts, {
-      festivalName: festival.name,
-      products: productKeywords(String(profile.fields?.products?.value ?? '')),
-      excludeTagIds,
-    })
-    suggestedTagIds = matched.suggestions.map(s => s.tagId)
-    audienceNotice = audienceNoticeText(matched)
+  /**
+   * `C-352`①：方案只能發全部好友（輕量／入門）就**不挑標籤**——挑了，推播頁那一格是鎖住的，
+   * 他得自己改回全部好友才送得出去。文案照擬（這顆按鈕要的就是文案），受眾那句直接講推播頁那一句。
+   * ⛔ 不是「偷偷改成全部好友」：標籤是 MiniMe 的建議、不是他挑的；而且帶過去時那一句會講出來。
+   */
+  if (tier && !tierAllowsAudience(tier, 'tags')) {
+    audienceNotice = broadcastLockText(tier) ?? ''
   }
-  catch (e) {
-    // ⛔ 挑不到不是失敗（文案還是有用），但**不可以安靜**：讓他知道這一步沒跑成
-    console.warn('[marketing-draft] 受眾配對失敗：', workspaceId, e)
-    audienceNotice = '這次挑不出受眾（讀標籤時出錯），發送對象要你自己挑。'
+  else {
+    try {
+      const snap = await db.collection('tags')
+        .where('workspaceId', '==', workspaceId)
+        .where('status', '==', 'active')
+        .limit(60)
+        .get()
+      const rows: AudienceTagLike[] = snap.docs.map((d) => {
+        const v = d.data() as { name?: string, aiMode?: string, code?: string }
+        return { id: d.id, name: String(v.name ?? ''), aiMode: v.aiMode }
+      })
+      // ⛔ 用 code 反查不要寫死 id：那顆是每個工作區各自建的
+      const excludeTagIds = snap.docs
+        .filter(d => (d.data() as { code?: string }).code === INACTIVE_TAG_CODE)
+        .map(d => d.id)
+
+      const counts: Record<string, number> = rows.length
+        ? await memberCountsForTagIds(db, workspaceId, rows.map(t => t.id)).catch(() => ({} as Record<string, number>))
+        : {}
+
+      const matched = matchAudienceTags(rows, counts, {
+        festivalName: festival.name,
+        products: productKeywords(String(profile.fields?.products?.value ?? '')),
+        excludeTagIds,
+      })
+      suggestedTagIds = matched.suggestions.map(s => s.tagId)
+      audienceNotice = audienceNoticeText(matched)
+    }
+    catch (e) {
+      // ⛔ 挑不到不是失敗（文案還是有用），但**不可以安靜**：讓他知道這一步沒跑成
+      console.warn('[marketing-draft] 受眾配對失敗：', workspaceId, e)
+      audienceNotice = '這次挑不出受眾（讀標籤時出錯），發送對象要你自己挑。'
+    }
   }
 
   const payload: BroadcastDraftHandoff = {

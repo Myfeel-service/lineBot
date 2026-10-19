@@ -15,6 +15,7 @@ import { ADMIN_OP_LABELS, ADMIN_OP_RISK, adminOpAuditAction } from '~~/shared/ty
 import { AUDIT_ACTION_LABELS } from '~~/shared/types/audit'
 import { CAPABILITIES } from '~~/shared/permissions'
 import { ADMIN_OP_CAPABILITY } from '~~/shared/agent-entry'
+import { BILLING_PLANS, broadcastLockText } from '~~/shared/billing/plans'
 
 const settingsStore: Record<string, any> = {
   serviceHours: { enabled: true, start: '09:00', end: '18:00', weekendOff: true, dndReply: 'x' },
@@ -644,5 +645,62 @@ describe('op：建一則推播草稿（⛔只建草稿，發送永遠留人按�
   it('名稱或內容沒講就先問，⛔不自己編一則推播', () => {
     expect(() => op.normalize({ text: '內容' })).toThrow(AdminOpUserError)
     expect(() => op.normalize({ name: '通知' })).toThrow(AdminOpUserError)
+  })
+
+  /**
+   * `C-352`①：方案發不了這種對象 → 卡片先講、⛔ 不給確認鈕。
+   * 以前照樣建好草稿，他到推播頁才看到那一格鎖住、送不出去——整則白寫。
+   */
+  describe('照方案先講（C-352①）', () => {
+    const plan = (id: 'free' | 'lite' | 'starter' | 'growth') => { planStore = BILLING_PLANS[id] as any }
+
+    it('🔴 輕量／入門方案要發給某個標籤的人 → 卡片主句就是推播頁那一句、只給「知道了」', async () => {
+      seedTag('VIP')
+      for (const id of ['lite', 'starter'] as const) {
+        plan(id)
+        const args = await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' }))
+        const preview = await op.preview(ctx, args)
+        expect(preview.planLocked, id).toBe(true)
+        expect(preview.summary, id).toBe(broadcastLockText('basic'))
+        expect(preview.confirmLabel).toBe('知道了')
+        expect(preview.noop, '⛔ 不可以借用 noop（確認端點會講成「剛剛已經執行過了」）').toBeUndefined()
+        // 他講的內容與對象照樣列出來：看得到「我是要發什麼給誰、為什麼不行」
+        expect(preview.items[1]?.label).toBe('只發給貼了「VIP」的人')
+      }
+    })
+
+    it('🔴 免費方案連全部好友都不行 → 講「不能發推播」那一句', async () => {
+      plan('free')
+      const args = await op.prepare!(ctx, op.normalize({ name: '通知', text: '週末公休' }))
+      const preview = await op.preview(ctx, args)
+      expect(preview.planLocked).toBe(true)
+      expect(preview.summary).toBe(broadcastLockText('none'))
+    })
+
+    it('對照組：輕量方案發全部好友、成長方案發標籤、讀不到方案 → 照常出確認卡', async () => {
+      seedTag('VIP')
+      plan('lite')
+      let preview = await op.preview(ctx, await op.prepare!(ctx, op.normalize({ name: '通知', text: '週末公休' })))
+      expect(preview.planLocked).toBeUndefined()
+      expect(preview.confirmLabel).toBe('確定建草稿')
+
+      plan('growth')
+      preview = await op.preview(ctx, await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' })))
+      expect(preview.planLocked).toBeUndefined()
+
+      planStore = null
+      preview = await op.preview(ctx, await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' })))
+      expect(preview.planLocked).toBeUndefined()
+    })
+
+    it('🔴 提議之後才降級：按確定時再查一次，⛔ 不建草稿、講同一句', async () => {
+      seedTag('VIP')
+      plan('growth')
+      const args = await op.prepare!(ctx, op.normalize({ name: 'VIP 通知', text: '感謝支持', tagName: 'VIP' }))
+      plan('lite')
+      fetchCalls.length = 0
+      await expect(op.execute(ctx, args)).rejects.toThrow(broadcastLockText('basic')!)
+      expect(fetchCalls.some(c => c.url === '/api/broadcast/create')).toBe(false)
+    })
   })
 })

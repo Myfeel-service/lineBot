@@ -147,6 +147,9 @@
                 還沒有這一類的標籤。手動貼的、匯入的刻意不算進來——不然自己批次貼一次就霸佔第一名。
               </p>
               <template v-else>
+                <!-- `C-352`①：方案發不了「依標籤」（輕量／入門只能發全部好友、免費不能發）就先講、每列的按鈕鎖住——
+                     以前點進推播頁才看到那一格鎖住。⛔ 講一次就好（每一列都寫一遍是同一句話講十遍） -->
+                <AdminBroadcastPlanLock v-if="can('broadcast.write') && broadcastLock" :text="broadcastLock" />
                 <el-table :data="p.customerExpressed" size="small" class="friend-stats__table">
                   <el-table-column prop="name" label="標籤" min-width="180" />
                   <!-- ⭐ 這一欄不可以省：2026-09-23 實測，連 AI 看到「問卷_X：1691 位」都會
@@ -161,7 +164,15 @@
                   <el-table-column prop="users" label="幾位客人" width="100" align="right" />
                   <el-table-column label="" width="130" align="right">
                     <template #default="{ row }">
-                      <el-button v-if="can('broadcast.write')" link type="primary" size="small" @click="broadcastTo(row)">
+                      <el-button
+                        v-if="can('broadcast.write')"
+                        link
+                        type="primary"
+                        size="small"
+                        :disabled="!!broadcastLock"
+                        data-entry-broadcast
+                        @click="broadcastTo(row)"
+                      >
                         發推播給這群
                       </el-button>
                     </template>
@@ -315,6 +326,7 @@
 <script setup lang="ts">
 import { PieChart, Refresh } from '@element-plus/icons-vue'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
+import { broadcastEntryLockText } from '~~/shared/billing/plans'
 import {
   cooldownText,
   summarySkipText,
@@ -329,6 +341,13 @@ const { showToast } = useAdminToast()
 // `G-109`：產生報告＝`POST /api/tag/report`（tags.write）；「發推播給這群」是去推播頁開一張草稿，
 // 存下去打 `/api/broadcast/create`（broadcast.write）
 const { apiFetch, workspaceId, can } = useWorkspace()
+
+/**
+ * `C-352`①：「發推播給這群」帶過去的是**一顆標籤**（依標籤篩選）——方案發不了就在這裡先講、按鈕鎖住。
+ * 句子跟推播頁鎖住時同一句（`broadcastEntryLockText`）；讀不到方案＝不鎖（推播頁跟送出端照擋）。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const broadcastLock = computed(() => broadcastEntryLockText(broadcastTier.value, 'tags'))
 
 const report = ref<TagReportDoc | null>(null)
 const allowRegen = ref(false)
@@ -416,8 +435,13 @@ async function generate() {
  *    這邊只有一個標籤 id。用網址參數換來的是「重新整理還在、連結貼得出去」。
  */
 function broadcastTo(row: { tagId: string, name: string }) {
+  if (broadcastLock.value) return showToast(broadcastLock.value, 'error')
   void navigateTo(`/admin/${workspaceId.value}/broadcasts?from=friend-stats&tagId=${encodeURIComponent(row.tagId)}`)
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  // `C-352`①：只有按得到「發推播給這群」的人才需要知道方案能不能分眾（一次讀訂閱，不讀推播清單）
+  if (can('broadcast.write')) void loadBroadcastTier()
+})
 </script>

@@ -121,7 +121,8 @@
             {{ selectedItem.status === 'scheduled' ? '取消排程' : '取消推播' }}
           </el-button>
           <el-button @click="cancelEdit">取消</el-button>
-          <el-button v-if="can('broadcast.write')" :loading="saving" @click="saveDraft">
+          <!-- `C-352`②：已經排好的那一則，「儲存變更」改的是到時間會自動送出去的東西＝要送出權限（同「確認排程」） -->
+          <el-button v-if="can(saveCapability)" :loading="saving" @click="saveDraft">
             {{ selectedItem?.status === 'scheduled' ? '儲存變更' : '儲存草稿' }}
           </el-button>
           <!-- `G-109`：驗證本身是讀取，這顆按到底是 `send`／`schedule`，所以照 `broadcast.send` 擋 -->
@@ -173,12 +174,8 @@
              ⛔ 已經發出去的不講（那時候講方案沒有用）。試發給自己看不受方案限制，照常可以按。 -->
         <div v-if="!isReadOnly && planLock === 'all'" class="message-card bc-section-card" data-tour="bc-plan-lock">
           <div class="card-section-stack">
-            <p class="bc-plan-lock">
-              <el-icon class="bc-plan-lock__icon"><Lock /></el-icon>
-              <span>{{ planLockText }}</span>
-              <el-button v-if="can('billing.manage')" link type="primary" @click="openPlanUpgrade">查看方案</el-button>
-              <span v-else class="bc-plan-lock__ask">升級請找管理員。</span>
-            </p>
+            <!-- `C-352`：這一行跟好友頁、好友統計、檔期卡、活動精靈、小幫手確認卡是同一個元件 -->
+            <AdminBroadcastPlanLock :text="planLockText" />
           </div>
         </div>
 
@@ -202,12 +199,7 @@
                 <el-radio value="tags" :disabled="audienceOptionLocked('tags')">依標籤篩選</el-radio>
                 <el-radio value="import" :disabled="audienceOptionLocked('import')">匯入名單</el-radio>
               </el-radio-group>
-              <p v-if="!isReadOnly && planLock === 'segment'" class="bc-plan-lock bc-plan-lock--inline">
-                <el-icon class="bc-plan-lock__icon"><Lock /></el-icon>
-                <span>{{ planLockText }}</span>
-                <el-button v-if="can('billing.manage')" link type="primary" @click="openPlanUpgrade">查看方案</el-button>
-                <span v-else class="bc-plan-lock__ask">升級請找管理員。</span>
-              </p>
+              <AdminBroadcastPlanLock v-if="!isReadOnly && planLock === 'segment'" :text="planLockText" inline />
             </div>
 
             <!-- 依標籤 -->
@@ -343,7 +335,9 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <div class="admin-field-group">
+            <!-- `C-352`②：「排程發送」是送出的一種（到時間自動送），沒有送出權限的人看不到這個選項（無權限一律隱藏）；
+                 已經排好的那一則照樣看得到排在哪天（那時整張表單是鎖住的，只給看） -->
+            <div v-if="can('broadcast.send') || form.scheduleMode === 'schedule'" class="admin-field-group" data-schedule-field>
               <AdminFieldLabel text="發送時間" tight />
               <el-radio-group v-model="form.scheduleMode" :disabled="isLocked">
                 <el-radio value="now">立即發送</el-radio>
@@ -382,7 +376,7 @@
                 :disabled="isLocked"
               />
               <p v-if="selectedItem?.status === 'scheduled'" class="tags-hint">
-                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="can('broadcast.write')">可以「儲存變更」或「取消排程」。</template>
+                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="can('broadcast.send')">可以「儲存變更」或「取消排程」。</template>
               </p>
               <p v-else-if="can('broadcast.send')" class="tags-hint">
                 按下確認後不會馬上發，要到排程時間才送出；發送對象也是到那個時間點才計算。
@@ -678,13 +672,6 @@
     </template>
   </el-dialog>
 
-  <!-- `D-131`：推播頁鎖住時的「查看方案」（只有管理得了帳單的人看得到那顆鈕） -->
-  <AdminPlanUpgradeDialog
-    v-if="can('billing.manage')"
-    v-model="planUpgradeOpen"
-    :current-plan-id="planSummary?.id ?? null"
-  />
-
   <!-- 驗證 / 發送確認 Dialog -->
   <el-dialog v-model="validateDialogVisible" class="bc-dialog-validate" :title="validateDialogTitle" width="min(440px, 92vw)">
     <div v-if="validateLoading" class="bc-validate-loading">
@@ -745,8 +732,9 @@
 </template>
 
 <script setup lang="ts">
-import { Calendar, CopyDocument, Lock, Plus, Promotion } from '@element-plus/icons-vue'
+import { Calendar, CopyDocument, Plus, Promotion } from '@element-plus/icons-vue'
 import { broadcastLockText, broadcastPlanBlockReason, tierAllowsAudience, type BroadcastTier } from '~~/shared/billing/plans'
+import { broadcastSaveCapability } from '~~/shared/permissions'
 import type { MarketingEvent } from '~~/shared/marketing-events'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
@@ -926,13 +914,7 @@ function audienceOptionLocked(type: 'tags' | 'import'): boolean {
   return !!tier && tier !== 'none' && !tierAllowsAudience(tier, type)
 }
 
-const planUpgradeOpen = ref(false)
-const { plan: planSummary, load: loadPlanSummary } = usePlanSummary()
-function openPlanUpgrade() {
-  // 外殼的額度提醒條多半已經問過方案（同一份共享資料）；沒問過就補問一次，「目前」那一列才標得出來
-  if (!planSummary.value) void loadPlanSummary()
-  planUpgradeOpen.value = true
-}
+// 「查看方案」與付款彈窗都在 AdminBroadcastPlanLock 裡（`C-352`：入口那幾處用同一個元件）
 watch(loading, (now, was) => { if (was && !now) void loadDraftTotal() })
 function toggleDraftFilter() {
   draftFilterOn.value = !draftFilterOn.value
@@ -1008,7 +990,13 @@ const isReadOnly = computed(() => {
  * ⛔ 跟 `isReadOnly` 分開：那一個講的是「這則推播的狀態」（決定要不要顯示報表、
  *    「沒有留存當時的內容」那句話），觀察者看一則草稿時那些話都不成立。
  */
-const isLocked = computed(() => isReadOnly.value || !can('broadcast.write'))
+/**
+ * 存這一則要哪一項能力（`C-352`②，規則在 `broadcastSaveCapability`，端點 `PUT /api/broadcast/:id` 問同一支）：
+ * 草稿＝`broadcast.write`；**已經排好的**＝`broadcast.send`（改它＝改到時間會自動送出去的東西，跟「確認排程」同一道門）。
+ */
+const saveCapability = computed(() =>
+  broadcastSaveCapability(isCreating.value ? null : selectedItem.value?.status))
+const isLocked = computed(() => isReadOnly.value || !can(saveCapability.value))
 
 const importUserIds = computed(() =>
   form.value.importText.split('\n').map((l) => l.trim()).filter(Boolean),
@@ -1524,7 +1512,7 @@ async function cancelEdit() {
 }
 
 async function saveDraft(): Promise<boolean> {
-  if (!assertCan('broadcast.write')) return false
+  if (!assertCan(saveCapability.value)) return false
   const err = validateForm({
     requireScheduleTime: form.value.scheduleMode === 'schedule',
   })

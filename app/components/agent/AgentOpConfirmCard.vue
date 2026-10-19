@@ -2,10 +2,14 @@
   <div class="aa-op" :class="`is-${state}`">
     <div class="aa-op__head">
       <span class="aa-op__title">{{ pending.label }}</span>
-      <span class="aa-op__badge" :class="{ 'is-retired': retired }">{{ badge }}</span>
+      <span class="aa-op__badge" :class="{ 'is-retired': retired || planLocked }">{{ badge }}</span>
     </div>
 
-    <p class="aa-op__summary">{{ pending.preview.summary }}</p>
+    <!-- `C-352`①：方案做不到（例：輕量方案要發給某個標籤的人）——主句就是推播頁鎖住時那一句，後面接「查看方案」 -->
+    <div v-if="planLocked" class="aa-op__summary" data-op-plan-locked>
+      <AdminBroadcastPlanLock :text="pending.preview.summary" bare />
+    </div>
+    <p v-else class="aa-op__summary">{{ pending.preview.summary }}</p>
 
     <ul v-if="pending.preview.items.length" class="aa-op__items">
       <li v-for="(it, i) in pending.preview.items" :key="i">
@@ -25,7 +29,8 @@
     </p>
 
     <div v-else-if="state === 'idle'" class="aa-op__actions">
-      <template v-if="pending.preview.noop">
+      <!-- `C-352`①：方案做不到也只給「知道了」——⛔ 不給確認鈕，按了只會得到一份送不出去的草稿 -->
+      <template v-if="pending.preview.noop || planLocked">
         <!-- ⛔ 也要通知外面把憑證清掉：不清的話這個「已經不用做」的提議，
              會在下一句無關的話裡被當成【上一個提議】再塞回模型面前 -->
         <el-button size="small" @click="dismiss">知道了</el-button>
@@ -78,10 +83,13 @@ const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
 
 /** 這張卡還作不作數（被取代、或使用者已經收回） */
 const retired = computed(() => props.superseded || props.cancelledByUser)
+/** 方案做不到（`C-352`）：沒有東西等他決定，只是講清楚為什麼不做 */
+const planLocked = computed(() => props.pending.preview.planLocked === true)
 
 /** 標題旁那顆徽章：不是最新的那張要講出「這是幾分鐘前的事」 */
 const badge = computed(() => {
   if (props.cancelledByUser) return '你已經說不用了'
+  if (planLocked.value) return '不會執行'
   if (props.superseded) return '已被下面那個取代'
   if (!props.stale || !props.proposedAt) return '還沒執行'
   const mins = Math.floor((Date.now() - props.proposedAt) / 60_000)

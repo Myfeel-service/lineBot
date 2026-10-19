@@ -13,6 +13,16 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
+
+  /**
+   * `planOnly=1`：**只問推播等級**（`C-352`①）——好友頁、好友統計、首頁檔期卡、活動精靈要在入口就講方案限制，
+   * 它們只需要這一格。⛔ 排在讀清單之前：清單是整個推播集合，為了一個等級把每一則都讀一遍是白付讀取費。
+   * 跟 `withPlan` 同一個規矩：只回等級、不回方案名（`G-103`）；null＝讀不到訂閱（畫面不鎖，推播頁與送出端照擋）。
+   */
+  if (query.planOnly) {
+    return { broadcastTier: await workspaceBroadcastTier(workspaceId) }
+  }
+
   const statusFilter = query.status as string | undefined
 
   const broadcasts = await listDocs<BroadcastDoc>('broadcasts', ref =>

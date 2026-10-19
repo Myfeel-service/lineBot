@@ -1420,7 +1420,8 @@ export async function runAdminAgentChat(params: {
           ? '你這次只提到一個時間，但上面的起訖兩端都變了——請對一下「現在」與「改成」那兩行，不是你要的就再跟我說一次。'
           : ''
 
-        const extras = [supersede, extraWarn].filter(Boolean).join('\n')
+        // 方案做不到的卡（`C-352`）沒有確認鈕：「按這張不會連它一起做」那類提醒講的是按下去之後，在這張上沒有意義
+        const extras = rawPreview.planLocked ? '' : [supersede, extraWarn].filter(Boolean).join('\n')
         const preview = cardTextOf(extras
           ? { ...rawPreview, warning: [extras, rawPreview.warning].filter(Boolean).join('\n') }
           : rawPreview)
@@ -1449,7 +1450,11 @@ export async function runAdminAgentChat(params: {
         //    而 answer 講的是查到的資料(則數、異常件數),本來就不會在卡片上——併著檢查等於
         //    每次都判定不合格,然後把使用者問的答案連同提議那句話一起換成卡片主句。
         const answer = String(data?.answer ?? '').trim()
-        const proposeLine = (preview.noop || strayNumbers.length || !text) ? preview.summary : text
+        // `C-352`：方案做不到（planLocked）也一律用後端那句——模型寫的多半是「我幫你建一則…」，跟卡片講反。
+        // 泡泡講「先不做」、原因留在卡片上（`bubble`），⛔ 不讓同一句話在泡泡跟卡片各出現一次
+        const proposeLine = preview.planLocked
+          ? (preview.bubble || preview.summary)
+          : (preview.noop || strayNumbers.length || !text) ? preview.summary : text
 
         return {
           // ⛔ 「本來就是這樣」(noop)時一律用後端查出來的那句話,不採用模型寫的。

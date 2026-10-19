@@ -59,11 +59,20 @@
             C-210：推播頁寫著「想寄給『兩個條件都符合』的人，先到『好友』頁篩出那批人」，
             但這裡以前沒有任何按鈕可以把那批人帶去推播＝照著那句話做會走到死路。
           -->
-          <el-button v-if="can('broadcast.write')" size="small" @click="broadcastToSelected">
+          <!-- `C-352`①：方案發不了「挑出來的人」（輕量／入門只能發全部好友、免費不能發）就鎖住，原因講在下面那一行
+               ——以前照樣帶進推播頁，整則寫完才發現那一格鎖住、送不出去。⛔ 不改成發給全部好友：他勾的就是這幾位 -->
+          <el-button
+            v-if="can('broadcast.write')"
+            size="small"
+            :disabled="!!broadcastLock"
+            data-entry-broadcast
+            @click="broadcastToSelected"
+          >
             ✉ 推播給這 {{ selectedIds.length }} 位
           </el-button>
           <el-button size="small" text @click="selectedIds = []">取消選取</el-button>
         </div>
+        <AdminBroadcastPlanLock v-if="selectedIds.length && can('broadcast.write') && broadcastLock" :text="broadcastLock" />
 
         <!--
           AI 建議待辦條。**這是收件匣真正的入口**——先前唯一的入口是每一列名字後面那顆橘章，
@@ -368,6 +377,7 @@
 <script setup lang="ts">
 import { InfoFilled, User } from '@element-plus/icons-vue'
 import { formatZhDateOnly } from '~~/shared/firestore-date'
+import { broadcastEntryLockText } from '~~/shared/billing/plans'
 import {
   BROADCAST_AUDIENCE_HANDOFF_KEY,
   type BroadcastAudienceHandoff,
@@ -389,6 +399,13 @@ const { can, assertCan } = useAdminOperateGuard()
  */
 const canTagCustomers = computed(() => can('customers.write'))
 const canSelectForBatch = computed(() => canTagCustomers.value || can('broadcast.write'))
+
+/**
+ * `C-352`①：「推播給這 N 位」帶過去的是**匯入名單**（挑出來的人）——方案發不了就在這裡先講、按鈕鎖住。
+ * 句子跟推播頁鎖住時同一句（`broadcastEntryLockText`）；讀不到方案＝不鎖（推播頁跟送出端照擋）。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const broadcastLock = computed(() => broadcastEntryLockText(broadcastTier.value, 'import'))
 
 const {
   users,
@@ -639,6 +656,7 @@ async function refreshUsersOnly() {
  */
 function broadcastToSelected() {
   if (!assertCan('broadcast.write')) return
+  if (broadcastLock.value) return showToast(broadcastLock.value, 'error')
   if (!selectedIds.value.length) {
     showToast('請先勾選至少一位好友', 'error')
     return
@@ -767,5 +785,7 @@ async function removeUserTag(userId: string, tagId: string) {
  */
 onMounted(() => {
   void loadData()
+  // `C-352`①：只有按得到「推播給這 N 位」的人才需要知道方案能不能發（一次讀訂閱，不讀推播清單）
+  if (can('broadcast.write')) void loadBroadcastTier()
 })
 </script>

@@ -510,6 +510,25 @@ export function broadcastPlanBlockReason(tier: BroadcastTier, audienceType: stri
   return tierAllowsAudience(tier, audienceType) ? null : broadcastLockText(tier)
 }
 
+/**
+ * `C-352`①：**帶著發送對象進推播頁的入口**（好友頁「推播給這 N 位」、好友統計「發推播給這群」、
+ * 檔期「為這一檔擬推播」、活動精靈「順手留一張推播草稿」、小幫手擬草稿）在入口就先問這一支：
+ * 這個方案發不了那種對象 → 回推播頁鎖住時**同一句**（`broadcastLockText`），入口當場講、按鈕鎖住；
+ * 發得了、或讀不到方案（`null`＝fail-open，同推播頁與送出端）→ 回 null。
+ *
+ * ⛔ 入口一律「鎖住＋講原因」，**不改成發給全部好友**：這幾個入口帶的就是那群人（勾的人、那顆標籤），
+ *    換成全部好友＝換了收件人（例如只給 VIP 的優惠發給所有人），要他自己決定；
+ *    進了推播頁才發現送不出去，整則推播就白寫了。
+ *    唯一例外是檔期：那一顆按鈕要的是文案，標籤只是 MiniMe 的建議——方案不能分眾時不帶標籤（`marketing-calendar/draft`），
+ *    所以檔期問的是 `'all'`（只有免費方案會鎖）。
+ */
+export function broadcastEntryLockText(
+  tier: BroadcastTier | null | undefined,
+  audienceType: string | null | undefined,
+): string | null {
+  return tier ? broadcastPlanBlockReason(tier, audienceType) : null
+}
+
 /** 檯面上的方案照推播等級分組（下面那句照它寫，跟方案卡同一份來源）。 */
 export function featuredPlanNamesByBroadcastTier(): Record<BroadcastTier, string[]> {
   const out: Record<BroadcastTier, string[]> = { none: [], basic: [], advanced: [] }

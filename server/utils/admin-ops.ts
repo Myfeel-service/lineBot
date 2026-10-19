@@ -33,6 +33,7 @@ import { findEnabledFollowScriptConflict, invalidateScriptsCache, SCRIPTS_COLLEC
 import { invalidateScriptHealthCache } from './script-health'
 import { getWorkspacePlan } from './billing'
 import { planAllowsScripting } from '~~/shared/billing/plans'
+import { broadcastPlanBlockFor } from './broadcast-plan-gate'
 import { scriptTriggerEvent, type ScriptTriggerEvent } from '~~/shared/types/ai-script'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
@@ -905,21 +906,42 @@ const broadcastDraftCreate: AdminOpDef = {
     return String(exists)
   },
 
-  async preview(_ctx, raw) {
+  async preview(ctx, raw) {
     const args = raw as unknown as BroadcastDraftArgs
+    const items = [
+      { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容', verbatim: true },
+      {
+        label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
+        note: args.estimated == null
+          ? '這次算不出大概幾個人（不影響建立）'
+          : `約 ${args.estimated.toLocaleString('en-US')} 人`,
+      },
+    ]
+
+    /**
+     * `C-352`①：方案發不了這種對象（輕量／入門要依標籤、免費根本不能發）→ **卡片先講、不給確認鈕**。
+     * 以前照樣建好草稿，他到推播頁才看到那一格鎖住、送不出去——整則白寫。
+     * 句子是推播頁鎖住時同一句（`broadcastLockText`），卡片接「查看方案」。
+     * ⛔ 不自己改成「發給全部好友」：他講的是那群人，換對象＝換收件人，要他自己再說一次。
+     */
+    const planBlock = await broadcastPlanBlockFor(ctx.workspaceId, args.tagId ? 'tags' : 'all', ctx.db)
+    if (planBlock) {
+      return {
+        opId: 'broadcast-draft-create',
+        summary: planBlock,
+        // 泡泡講決定、卡片講原因（⛔ 兩邊都印那一句＝同一句話出現兩次）
+        bubble: '這則草稿先不建，建了也發不出去。',
+        items,
+        confirmLabel: '知道了',
+        planLocked: true,
+      }
+    }
+
     return {
       opId: 'broadcast-draft-create',
       // `D-116`：以前這句是「⛔ 只是草稿，**不會發出去**」——卡片不吃 markdown，紅色禁止符號像出錯、星號原樣印出
       summary: `我會建一則推播草稿「${args.name}」，只是草稿，不會發出去。`,
-      items: [
-        { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容', verbatim: true },
-        {
-          label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
-          note: args.estimated == null
-            ? '這次算不出大概幾個人（不影響建立）'
-            : `約 ${args.estimated.toLocaleString('en-US')} 人`,
-        },
-      ],
+      items,
       warning: '要不要發、什麼時候發，都要你到推播頁自己按，我不會幫你送出去。發送當下人數會重新計算。',
       confirmLabel: '確定建草稿',
     }
@@ -927,6 +949,9 @@ const broadcastDraftCreate: AdminOpDef = {
 
   async execute(ctx, raw) {
     const args = raw as unknown as BroadcastDraftArgs
+    // 按確定之前再查一次（`C-352`①）：提議到按下去之間方案可能降級；擋下來講的是同一句
+    const planBlock = await broadcastPlanBlockFor(ctx.workspaceId, args.tagId ? 'tags' : 'all', ctx.db)
+    if (planBlock) throw new AdminOpUserError(planBlock)
     // 走既有的建立端點（轉發呼叫者憑證）：欄位驗證與方案權益沿用那一支
     const res = await $fetch<{ id: string }>('/api/broadcast/create', {
       method: 'POST',

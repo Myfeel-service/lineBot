@@ -100,3 +100,22 @@ export function can(role: WorkspaceMemberRole | null | undefined, capability: Ca
  *    以前一邊只看頁、一邊只看存檔，兩項門檻哪天分開，就會一邊給死路、一邊藏錯（2026-09-30 code review）。
  */
 export const STORE_PROFILE_EDIT_CAPABILITIES = ['line.manage', 'ai.settings.write'] as const satisfies readonly Capability[]
+
+/**
+ * `C-352`②：存一則推播（`PUT /api/broadcast/:id`）要哪一項能力。
+ *
+ * **會讓推播排上時間的動作一律要 `broadcast.send`**——跟正式的「確認排程」（`/schedule`）同一道門：
+ *  - 這次帶了排程時間（把草稿排上去、改排程時間）
+ *  - 這一則**已經排好了**：改內容、改對象、把排程拿掉，都是在改「到時間會自動送出去的是什麼」
+ * 其餘（存草稿）＝`broadcast.write`。
+ *
+ * 以前「儲存變更」只看 `broadcast.write`，帶排程時間就能把推播排上——繞過了要 `broadcast.send` 的「確認排程」
+ * 與它前面的驗證視窗（看人數、看名單）。⛔ 端點與推播頁按鈕／欄位都問這一支，兩邊才不會漂。
+ */
+export function broadcastSaveCapability(
+  currentStatus: string | null | undefined,
+  nextScheduleAt?: unknown,
+): 'broadcast.write' | 'broadcast.send' {
+  if (currentStatus === 'scheduled') return 'broadcast.send'
+  return nextScheduleAt !== undefined && nextScheduleAt !== null ? 'broadcast.send' : 'broadcast.write'
+}

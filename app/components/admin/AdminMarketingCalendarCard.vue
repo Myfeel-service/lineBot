@@ -125,13 +125,16 @@
                 -->
                 <div v-if="plannedOf(e) || can('broadcast.write') || can('marketing.write')" class="mkt-cal__cta">
                   <el-button v-if="plannedOf(e)" size="small" type="primary" plain @click="goViewBroadcast(plannedOf(e)?.id ?? '')">查看推播</el-button>
+                  <!-- `C-352`①：方案不能發推播（免費）就鎖住、原因講在下面那一行——擬了也送不出去，還白花一次 AI。
+                       只能發全部好友的方案（輕量／入門）照常擬：要的是文案，MiniMe 不挑標籤（推播頁那一句會講出來） -->
                   <el-button
                     v-else-if="can('broadcast.write')"
                     size="small"
                     type="primary"
                     plain
                     :loading="draftingId === e.festivalId"
-                    :disabled="draftingId !== '' && draftingId !== e.festivalId"
+                    :disabled="!!broadcastLock || (draftingId !== '' && draftingId !== e.festivalId)"
+                    data-entry-broadcast
                     @click="goBroadcast(e)"
                   >
                     {{ draftingId === e.festivalId ? '正在擬文案…' : '為這一檔擬推播' }}
@@ -154,6 +157,7 @@
                     這次不做
                   </el-button>
                 </div>
+                <AdminBroadcastPlanLock v-if="!plannedOf(e) && can('broadcast.write') && broadcastLock" :text="broadcastLock" />
               </div>
             </article>
           </div>
@@ -232,6 +236,7 @@ import {
 } from '~~/shared/marketing-skips'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 import { STORE_PROFILE_EDIT_CAPABILITIES } from '~~/shared/permissions'
+import { broadcastEntryLockText } from '~~/shared/billing/plans'
 import { eventDeleteConfirmText, eventSavedText, type MarketingEvent } from '~~/shared/marketing-events'
 import { ElMessageBox } from 'element-plus'
 
@@ -242,6 +247,14 @@ const { apiFetch } = useWorkspaceApiFetch(() => props.workspaceId)
 // 補輪廓要進得了開帳頁、也存得了輪廓：兩道門都在 `STORE_PROFILE_EDIT_CAPABILITIES`，跟就緒度那一項問同一份
 const { can } = useWorkspace()
 const canEditProfile = computed(() => STORE_PROFILE_EDIT_CAPABILITIES.every(c => can(c)))
+
+/**
+ * `C-352`①：「為這一檔擬推播」只看「發不發得了推播」（`'all'`）——只有免費方案會鎖。
+ * 只能發全部好友的方案照常擬，後端不挑標籤（`marketing-calendar/draft`）；句子跟推播頁鎖住時同一句。
+ * 讀不到方案＝不鎖（後端那支擬之前還會再問一次）。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const broadcastLock = computed(() => broadcastEntryLockText(broadcastTier.value, 'all'))
 
 const entries = ref<CalendarEntry[]>([])
 const headline = ref('')
@@ -446,6 +459,7 @@ async function deleteEvent(e: CalendarEntry) {
  */
 async function goBroadcast(e: CalendarEntry) {
   if (draftingId.value) return // ⛔ 防連點：一次按兩下會打兩次 LLM
+  if (broadcastLock.value) return void ElMessage.error(broadcastLock.value)
   draftingId.value = e.festivalId
   try {
     const r = await apiFetch<BroadcastDraftHandoff>('/api/marketing-calendar/draft', {
@@ -471,5 +485,8 @@ async function goBroadcast(e: CalendarEntry) {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  void reload()
+  if (can('broadcast.write')) void loadBroadcastTier()
+})
 </script>

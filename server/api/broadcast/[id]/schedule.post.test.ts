@@ -12,7 +12,8 @@ const WS = 'ws1'
 vi.mock('firebase-admin/firestore', () => ({ FieldValue: { serverTimestamp: () => '__ts__' } }))
 vi.mock('~~/server/utils/firebase', () => ({ getDb: vi.fn() }))
 vi.mock('~~/server/utils/workspace-auth', () => ({
-  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'u1' })),
+  // 角色要帶：PUT 排程中的推播另外要送出權限（`C-352`②），客服（agent）有
+  requireCapability: vi.fn(async () => ({ workspaceId: WS, uid: 'u1', role: 'agent', isSuperAdmin: false })),
 }))
 vi.mock('~~/server/utils/audit-log', () => ({
   writeAuditLog: vi.fn(async () => {}),
