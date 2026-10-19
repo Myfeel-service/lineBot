@@ -35,6 +35,7 @@ import { autoReplyActionToLineMessages } from '~~/shared/auto-reply-content'
 import { archiveConversationMedia } from './conversation-media'
 import { logHandoffEvent } from './ai-handoff-events'
 import { readInboundImage } from './media-describe'
+import { isReplyQuotaExhausted } from './reply-quota'
 import { clearClaimPushMarkFailure, recordClaimPushMarkFailure } from './claim-push-health'
 import { createImagemapImageToken } from './line-imagemap-image-token'
 import { createUriTagToken } from './line-action-tag-token'
@@ -2086,6 +2087,9 @@ export async function handleMessageEvent(
         : null
       // 接下來會沉默十幾秒（讀圖＋等客人打字），先讓客人看到「輸入中…」才不像已讀不回
       if (role === 'leader') showLoadingAnimation(userId, workspaceId, 20).catch(() => {})
+      // AI 猜的按鈕要算一則（`D-132`③），所以先看額度：用完了就不叫 AI 猜，只問一句、不扣。
+      // 同一批的每一張都要看（負責問的那張會拿其他張猜的選項來用）。只有開了「客人傳的照片」才查。
+      const quotaExhausted = willReplyImage ? await isReplyQuotaExhausted(workspaceId) : false
 
       const lineMessageId = String((event.message as { id?: string }).id || '')
       const archived = await archiveConversationMedia({ workspaceId, lineMessageId, messageType: 'image' })
@@ -2107,6 +2111,7 @@ export async function handleMessageEvent(
           messageIdPromise: savedMessageId,
           storagePath: archived.path,
           contentType: archived.contentType,
+          allowQuestions: !quotaExhausted,
         }).catch((e) => {
           console.error('[media-describe] attach error:', e)
           return []
@@ -2123,6 +2128,7 @@ export async function handleMessageEvent(
             replyToken: event.replyToken!,
             imageAtMs,
             questions,
+            allowGuesses: !quotaExhausted,
           })
           : role
         await recordImageReplyOutcome(convDocId, savedMessageId, outcome)
@@ -2282,9 +2288,13 @@ async function decideImageRole(convDocId: string, imageAtMs: number): Promise<Im
   }
 }
 
-/** 問句：猜的選項（自己這張優先、再補同一批其他張的，去重後最多兩個）＋「找真人」 */
-function buildImageAskMessage(ownQuestions: string[], batchQuestions: string[]): messagingApi.TextMessage {
-  const picked = [...new Set([...ownQuestions, ...batchQuestions])].slice(0, 2)
+/** 猜的選項：自己這張優先、再補同一批其他張的，去重後最多兩個 */
+function pickImageGuesses(ownQuestions: string[], batchQuestions: string[]): string[] {
+  return [...new Set([...ownQuestions, ...batchQuestions])].slice(0, 2)
+}
+
+/** 問句：猜的選項（見 pickImageGuesses；沒有就只剩下面那顆）＋「找真人」 */
+function buildImageAskMessage(picked: string[]): messagingApi.TextMessage {
   const items: messagingApi.QuickReplyItem[] = picked.map(q => ({
     type: 'action',
     action: { type: 'message', label: q, text: q },
@@ -2302,8 +2312,11 @@ async function askAboutImageUnlessCustomerActs(params: {
   replyToken: string
   imageAtMs: number
   questions: string[]
+  /** false＝AI 回覆額度用完：不附任何猜的按鈕（同一批其他張猜的也不用），只問一句、不扣則（`D-132`③） */
+  allowGuesses?: boolean
 }): Promise<ImageReplyOutcome> {
   const { workspaceId, lineUserId, convDocId, sessionId, replyToken, imageAtMs, questions } = params
+  const allowGuesses = params.allowGuesses !== false
   const ref = getDb().collection('conversations').doc(convDocId)
   try {
     let batchQuestions: string[] = []
@@ -2325,7 +2338,8 @@ async function askAboutImageUnlessCustomerActs(params: {
     // 等的這十幾秒內真人可能已經接手
     if (await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false)) return 'suppressed'
 
-    const msg = buildImageAskMessage(questions, batchQuestions)
+    const guesses = allowGuesses ? pickImageGuesses(questions, batchQuestions) : []
+    const msg = buildImageAskMessage(guesses)
     try {
       await replyMessage(replyToken, [msg], workspaceId)
     }
@@ -2334,9 +2348,19 @@ async function askAboutImageUnlessCustomerActs(params: {
       console.error('[image-ask] reply failed:', e)
       return 'replyFailed'
     }
-    // 三件都要等完才結束：回覆送出後 webhook 就回應 LINE、主機隨即凍結，沒等完的寫入會掉——
-    // 後台會看不到這句問句，這場對話也會一直掛在「未首接」
+    // 這幾件都要等完才結束：回覆送出後 webhook 就回應 LINE、主機隨即凍結，沒等完的寫入會掉——
+    // 後台會看不到這句問句，這場對話也會一直掛在「未首接」，扣則也會漏記
     await Promise.all([
+      /**
+       * 附了 AI 猜的按鈕＝AI 讀圖替客人想了要問什麼：照「反問」算一則（`D-132`③，老闆 10-19：
+       * 「應該要吧而且消耗的 token 更多」）。invocations＋disambiguations 一起記，
+       * AI 表現頁「答出＋轉真人＋反問＝AI 出手次數」才湊得滿。
+       * 沒有猜的按鈕（AI 看不出來、或額度用完）＝客人只收到一句固定的問句，不扣。
+       */
+      ...(guesses.length
+        ? [recordAiUsage(workspaceId, { invocations: 1, disambiguations: 1, billable: 1 })
+            .catch(e => console.error('[image-ask] recordAiUsage error:', e))]
+        : []),
       ref.set({ lastImageAskAt: Timestamp.now() }, { merge: true })
         .catch(e => console.error('[image-ask] mark asked error:', e)),
       // 標「系統」：問句是內建文字，後台沒有模組可以改（同「我目前只能閱讀文字」那句引導語）
@@ -2389,9 +2413,11 @@ async function describeAndAttachImage(params: {
   messageIdPromise: Promise<string>
   storagePath: string
   contentType: string
+  /** false＝AI 回覆額度用完，只寫描述、不猜問句（見 readInboundImage） */
+  allowQuestions?: boolean
 }): Promise<string[]> {
-  const { workspaceId, userIdOrDocId, storagePath, contentType } = params
-  const { description, questions, state } = await readInboundImage({ workspaceId, storagePath, contentType })
+  const { workspaceId, userIdOrDocId, storagePath, contentType, allowQuestions } = params
+  const { description, questions, state } = await readInboundImage({ workspaceId, storagePath, contentType, allowQuestions })
   // AI 交回空白也歸「格式壞掉」：沒有說明可寫，但壞掉這件事照樣要記在訊息上（超管總覽靠它，`C-164`）
   if (!description && state !== 'malformed') return questions
 
@@ -2407,7 +2433,8 @@ async function describeAndAttachImage(params: {
   // 客人的問句會少了猜的按鈕。這種失敗在 2026-09-10 之前只進主機日誌（我們沒在看），
   // 正式站上連壞三週沒人知道，最後是靠對話裡漏出來的原文才被發現。
   const messagePatch: Record<string, unknown> = description ? { mediaDescription: description } : {}
-  if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed') {
+  // quotaExhausted 也記：客人那句問句沒附猜的按鈕，是因為額度用完（`D-132`③），不是 AI 看不出來
+  if (state === 'ok' || state === 'noQuestion' || state === 'questionsDropped' || state === 'malformed' || state === 'quotaExhausted') {
     messagePatch.mediaReadState = state
   }
   // 猜的選項也存在這一則上：一次傳好幾張時只有一張負責問，它要拿得到其他張讀出來的選項

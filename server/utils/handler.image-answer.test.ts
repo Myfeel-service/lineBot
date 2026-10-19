@@ -56,8 +56,11 @@ vi.mock('./conversation-media', () => ({
   })),
 }))
 vi.mock('./media-describe', () => ({ readInboundImage: vi.fn() }))
+vi.mock('./reply-quota', () => ({ isReplyQuotaExhausted: vi.fn(async () => false) }))
 
 import { handleMessageEvent } from './handler'
+import { recordAiUsage } from './ai-usage'
+import { isReplyQuotaExhausted } from './reply-quota'
 import { getDb } from './firebase'
 import { replyMessage, showLoadingAnimation } from './line'
 import { getAiSettings } from './ai-settings'
@@ -266,6 +269,88 @@ beforeEach(() => {
   vi.mocked(getDb).mockReturnValue(ctx.db as any)
   vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
   vi.mocked(replyMessage).mockResolvedValue(undefined as any)
+  vi.mocked(isReplyQuotaExhausted).mockResolvedValue(false)
+})
+
+/**
+ * `D-132`③（2026-10-19 老闆：「應該要吧而且消耗的 token 更多」）：只傳照片時 AI 讀圖、猜客人想問什麼做成按鈕，
+ * 那一則照「反問」算一則；額度用完就不叫 AI 猜，只問一句、不扣。
+ */
+describe('客人傳的照片：扣不扣則', () => {
+  beforeEach(() => setSettings(true))
+
+  /** 這次記帳裡要扣客人額度的那幾筆 */
+  const billed = () => vi.mocked(recordAiUsage).mock.calls.map(c => c[1]).filter(d => d.billable)
+
+  it('附了 AI 猜的按鈕 → 照反問算一則（出手次數＋反問一起記），而且在 webhook 結束前記完', async () => {
+    readsAs('鍋子底部白色掉漆', ['瑕疵可以換貨嗎？'])
+    let charged = false
+    // 比其他寫入（30ms）慢：一起並行的話，沒等它也看不出來（第十三種假綠燈）
+    vi.mocked(recordAiUsage).mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 120))
+      charged = true
+    })
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(quickReplyLabels()).toEqual(['瑕疵可以換貨嗎？', '🙋 找真人'])
+    expect(billed()).toEqual([{ invocations: 1, disambiguations: 1, billable: 1 }])
+    // ⛔ 不多等：主機回應完就凍結，沒等完的扣則會漏記
+    expect(charged).toBe(true)
+  })
+
+  it('AI 看不出想問什麼（只剩「找真人」）→ 客人只收到一句固定問句，不扣', async () => {
+    readsAs('在海邊的自拍照', [])
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(quickReplyLabels()).toEqual(['🙋 找真人'])
+    expect(billed()).toEqual([])
+  })
+
+  it('額度用完 → 不叫 AI 猜（讀圖只寫給客服看的描述）、只問一句、不扣；同一批其他張猜的也不用', async () => {
+    vi.mocked(isReplyQuotaExhausted).mockResolvedValue(true)
+    const t = IMAGE_AT()
+    ctx.seed({ direction: 'incoming', messageType: 'image', text: '[圖片]', timestamp: at(t - 1000), mediaQuestions: ['掉漆能送修嗎？'] })
+    readsAs('鍋子底部白色掉漆', ['瑕疵可以換貨嗎？'])
+
+    await handleMessageEvent(imageEvent({ timestamp: t }), { workspaceId: WS })
+
+    expect(vi.mocked(readInboundImage).mock.calls[0]![0]).toMatchObject({ allowQuestions: false })
+    expect(repliedTexts()).toEqual([ASK_TEXT])
+    expect(quickReplyLabels()).toEqual(['🙋 找真人'])
+    expect(billed()).toEqual([])
+    expect(imageOutcomes()).toEqual(['asked'])
+  })
+
+  it('額度還有 → 照常讓 AI 猜（allowQuestions=true）', async () => {
+    readsAs('鍋子底部白色掉漆', ['瑕疵可以換貨嗎？'])
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(vi.mocked(readInboundImage).mock.calls[0]![0]).toMatchObject({ allowQuestions: true })
+  })
+
+  it('客人自己打了字（不問他）→ 這張圖不扣；他那句照一般答題的規則', async () => {
+    const t = IMAGE_AT()
+    ctx.seed({ direction: 'incoming', messageType: 'text', text: '請問出貨時間？', timestamp: at(t + 9000) })
+    readsAs('訂單明細', ['什麼時候出貨？'])
+
+    await handleMessageEvent(imageEvent({ timestamp: t }), { workspaceId: WS })
+
+    expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
+    expect(billed()).toEqual([])
+  })
+
+  it('開關關著 → 連額度都不用查（照舊回引導語）', async () => {
+    setSettings(false)
+    readsAs('破掉的杯子', [])
+
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(vi.mocked(isReplyQuotaExhausted)).not.toHaveBeenCalled()
+    expect(billed()).toEqual([])
+  })
 })
 
 describe('客人傳的照片：開關關著時什麼都不變', () => {
