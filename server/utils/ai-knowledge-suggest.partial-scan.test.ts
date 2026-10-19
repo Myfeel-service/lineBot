@@ -243,9 +243,9 @@ describe('部分採用之後的下一輪掃描（C-311）', () => {
 })
 
 describe('客服標「答錯」：只有「知識庫沒寫」進建議（`D-135`）', () => {
-  it('⑤ 講成別的商品／資料寫錯／該交給真人、舊標記（沒問錯在哪）都不擬成「補一條」', async () => {
+  it('⑤ 資料沒錯是 AI 弄錯了／資料寫錯／該交給真人、舊標記（沒問錯在哪）都不擬成「補一條」', async () => {
     STORE.aiFeedbackEvents = {}
-    const reasons = ['missing', 'wrong_product', 'wrong_data', 'should_handoff', undefined]
+    const reasons = ['missing', 'ai_mistake', 'wrong_data', 'should_handoff', undefined]
     reasons.forEach((reason, i) => {
       STORE.aiFeedbackEvents![`f${i}`] = {
         workspaceId: WS,

@@ -1186,6 +1186,14 @@
     </div>
     <div v-else class="chunk-form">
       <!--
+        對話頁「這題 AI 答錯了 → 資料寫錯或過期了 → 打開來改」帶過來的（`D-136`）：同事已經回給客人的那句。
+        最常見的是出貨日過期，新的日期就在那句裡——照著改，不用切回對話頁去抄
+      -->
+      <div v-if="chunkEditReference" class="chunk-reference">
+        <span class="chunk-reference__label">你回給客人的是</span>
+        <p class="chunk-reference__text">{{ chunkEditReference }}</p>
+      </div>
+      <!--
         索引狀態(編輯既有卡才有)。`C-314`：只在不正常時出現（處理中、沒學起來、等你看過）——
         九成九打開的是「可用」那一條，最上面掛一個綠色「可用」只是多一樣東西要看；
         停用的不掛：下面「AI 可以用這一條」那顆開關關著就是在講這件事
@@ -4749,8 +4757,11 @@ async function commitName() {
  * ⛔ 跟著這一次打開走、每次打開都重設：放在共用的 pendingResolveQuery 的話，他按了取消、之後改別條也會被拿去銷案
  */
 let chunkEditResolveQuery = ''
-function openEditChunk(chunk: ChunkRow, resolveQuery = '') {
+/** 這一次打開時附的「你回給客人的是…」（`D-136`，只有從對話頁「資料寫錯」進來才有）；每次打開都重設 */
+const chunkEditReference = ref('')
+function openEditChunk(chunk: ChunkRow, resolveQuery = '', reference = '') {
   chunkEditResolveQuery = resolveQuery
+  chunkEditReference.value = reference
   chunkEditingId.value = chunk.id
   chunkForm.value = {
     title: chunk.title,
@@ -5107,9 +5118,11 @@ onMounted(async () => {
   }
 
   // 測試對話頁「編輯」帶 ?chunkId=:反查所屬資料,自動選取並開啟該卡的編輯視窗
+  // 對話頁「這題 AI 答錯了 → 資料寫錯」另帶 ?a=（同事已經回給客人的那句，`D-136`），附在編輯視窗最上面
   const chunkId = String(route.query.chunkId ?? '').trim()
   if (chunkId) {
-    await openChunkById(chunkId)
+    const reference = String(route.query.a ?? '').trim().slice(0, 500)
+    await openChunkById(chunkId, { reference })
     clearQuery()
     return
   }
@@ -5183,7 +5196,7 @@ onMounted(async () => {
   }
 })
 
-async function openChunkById(chunkId: string, opts: { resolveQuery?: string } = {}) {
+async function openChunkById(chunkId: string, opts: { resolveQuery?: string; reference?: string } = {}) {
   try {
     const info = await apiFetch<{ id: string; sourceId: string | null; deleted?: boolean }>(`/api/ai/knowledge/${chunkId}`)
     /**
@@ -5207,7 +5220,7 @@ async function openChunkById(chunkId: string, opts: { resolveQuery?: string } = 
     }
     await selectSource(src)
     const chunk = chunks.value.find(c => c.id === chunkId)
-    if (chunk) openEditChunk(chunk, opts.resolveQuery)
+    if (chunk) openEditChunk(chunk, opts.resolveQuery, opts.reference)
   }
   catch (err: any) {
     showToast(apiErrorText(err, '找不到這一條(可能已被刪除)'), 'error')

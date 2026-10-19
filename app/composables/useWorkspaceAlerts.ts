@@ -587,6 +587,16 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/users?suggested=1`,
   },
   {
+    // `D-136`：同事在對話上標「這題應該交給真人」。沒權限改設定的人標了，以前就這樣存著沒人看
+    id: 'handoffSuggested',
+    icon: Service,
+    impact: '同事在對話上標了這幾題「應該交給真人」。要讓這類問題以後都直接轉真人，在敏感詞加一個詞就好。',
+    cta: '去看是哪幾題',
+    requires: 'ai.settings.write',
+    route: wid => `/admin/${wid}/ai-settings#sensitive-topics`,
+    anchor: { selector: '#sensitive-topics', note: '敏感詞這張卡下面列著同事標的那幾題：加一個詞，或按「不用」。' },
+  },
+  {
     // 「可以更好」：沒有東西壞掉。建議收件匣的草稿是 AI 學習迴圈撿回來的知識缺口
     id: 'knowledgeSuggestions',
     icon: Opportunity,

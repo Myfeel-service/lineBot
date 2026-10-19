@@ -40,6 +40,11 @@ export type WorkspaceAlertId =
    * 這是唯一「有人親眼看到 AI 答錯客人」的訊號，比任何自動偵測都確定。
    */
   | 'knowledgeWrongAnswers'
+  /**
+   * 同事在對話上標「這題 AI 答錯了 → 這題應該交給真人」、管理員還沒處理（`D-136`，2026-10-19）。
+   * 以前沒權限改設定的同事標了，畫面只說「請管理員」，管理員根本不會知道。
+   */
+  | 'handoffSuggested'
   /** 來源內容變了但還沒重新學 */
   | 'knowledgeOutdated'
   /** 有「輸入任何內容」的自動回覆規則正在攔截全部訊息，AI 等於沒開 */
@@ -176,6 +181,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   aiDraftsWaiting: 'AI 擬好的回覆還沒送出',
   // `D-135`：只有同事選「資料寫錯」並指出是哪一條的才會到這裡（以前一按就把撈到的每一條都算進來）
   knowledgeWrongAnswers: '有內容被同事標記寫錯了',
+  handoffSuggested: '同事覺得有題目應該交給真人',
   // `D-116`（2026-10-08）：跟側欄同名「自動回應」——以前這兩句叫「客服流程」，側欄改名後兩邊又分開了
   scriptUnreachable: '有自動回應永遠不會被啟動',
   scriptDeadEnd: '有自動回應客人走不完',
@@ -212,6 +218,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   knowledgeDetectStalled: 'warning',
   knowledgeIndexFailed: 'critical',
   knowledgeWrongAnswers: 'critical',
+  // `D-136`：沒有東西壞掉（AI 照常在答），是「這類題目交給真人比較好」的建議 → 不進紅點
+  handoffSuggested: 'suggestion',
   quotaExceeded: 'critical',
   quotaRunningOut: 'warning',
   paymentPastDue: 'critical',

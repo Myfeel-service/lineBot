@@ -908,21 +908,37 @@ export function isKnowledgeGapContext(c: AiContextGapInput): boolean {
  * 為什麼要問：以前一按就當成「卡寫錯了」，把當時撈到的每一條（最多 5 條）都標紅、叫人去改；
  * 正式站 8/4～10/18 標過的 3 次**都不是卡寫錯**（道謝被當問題、日期讀錯、認錯商品），
  * 10/13 同事照著把 5 條都改了一遍，改不到原因，紅色卻全消失。四種錯，該去的地方不一樣：
- *   - wrong_product：講成別的商品了 → 系統要修，資料不用改（不列進知識庫待辦）
+ *   - ai_mistake：資料沒錯，是 AI 弄錯了（認錯商品、看錯日期、把道謝當問題）→ 系統要修，知識庫不用改；
+ *     列進超管頁「AI 自己弄錯的」清單（`D-136`）
  *   - wrong_data：資料寫錯或過期了 → 選出寫錯的那**一條**，只列那一條，內容改了才消失
  *   - missing：知識庫沒寫、AI 自己編的 → 補一條；也只有這一種進「AI 建議補的知識」的累積
- *   - should_handoff：這題應該交給真人 → 去 AI 設定加敏感詞
+ *   - should_handoff：這題應該交給真人 → 去 AI 設定加敏感詞；管理員在敏感詞那張卡看得到（`D-136`）
+ *
+ * `D-136`（2026-10-19）：第一種原本叫 wrong_product「講成別的商品了」——拿真實的 3 次標記逐筆套，
+ * 只套得進 1 次（日期看錯、把道謝當問題都沒有對的選項，最接近的「資料寫錯」會叫人去改沒錯的卡），
+ * 所以放寬成「資料沒錯，是 AI 弄錯了」。改名時這個代碼還沒進正式資料，不用搬。
  */
-export type WrongAnswerReason = 'wrong_product' | 'wrong_data' | 'missing' | 'should_handoff'
+export type WrongAnswerReason = 'ai_mistake' | 'wrong_data' | 'missing' | 'should_handoff'
 
 /** 畫面上的順序就是這個順序 */
-export const WRONG_ANSWER_REASONS: readonly WrongAnswerReason[] = ['wrong_product', 'wrong_data', 'missing', 'should_handoff']
+export const WRONG_ANSWER_REASONS: readonly WrongAnswerReason[] = ['ai_mistake', 'wrong_data', 'missing', 'should_handoff']
 
 export const WRONG_ANSWER_REASON_LABELS: Record<WrongAnswerReason, string> = {
-  wrong_product: '講成別的商品了',
+  ai_mistake: '資料沒錯，是 AI 弄錯了',
   wrong_data: '資料寫錯或過期了',
   missing: '知識庫沒寫，AI 自己編的',
   should_handoff: '這題應該交給真人',
+}
+
+/**
+ * 每個選項底下那一行例子（`D-136`）：範例本身就是定義——同事看「講成別的商品」「資料寫錯」這種字
+ * 分不出日期看錯該選哪個，看到例子就分得出來。例子都是正式站真的發生過的。
+ */
+export const WRONG_ANSWER_REASON_EXAMPLES: Record<WrongAnswerReason, string> = {
+  ai_mistake: '例：把小滑手的出貨日答給買電淨艙的客人、日期看錯',
+  wrong_data: '例：知識庫還寫 9 月底，廠商已經延到 10 月中下旬',
+  missing: '例：問到知識庫完全沒提過的事，AI 還是答了',
+  should_handoff: '例：客人問自己那筆退款處理了沒',
 }
 
 export function isWrongAnswerReason(v: unknown): v is WrongAnswerReason {

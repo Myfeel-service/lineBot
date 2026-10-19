@@ -70,8 +70,10 @@
       </div>
 
       <div v-else-if="step === 'ask'" class="conv-ai-mark__box">
-        <p class="conv-ai-mark__muted">這則已經送到客人手上了，要更正請直接在下面回覆客人。</p>
+        <!-- 從「你接著回了客人」那裡進來的（askFirst）：他已經回過客人了，不用再提醒 -->
+        <p v-if="!askFirst" class="conv-ai-mark__muted">這則已經送到客人手上了，要更正請直接在下面回覆客人。</p>
         <p class="conv-ai-mark__title">哪裡錯了？</p>
+        <!-- 每個選項底下一行真實例子（`D-136`）：只看字分不出「日期看錯」該選哪個，看例子就分得出來 -->
         <div class="conv-ai-mark__options">
           <el-button
             v-for="r in WRONG_ANSWER_REASONS"
@@ -80,7 +82,10 @@
             :loading="marking && pendingReason === r"
             :disabled="marking"
             @click="choose(r)"
-          >{{ WRONG_ANSWER_REASON_LABELS[r] }}</el-button>
+          >
+            <span class="conv-ai-mark__option-label">{{ WRONG_ANSWER_REASON_LABELS[r] }}</span>
+            <span class="conv-ai-mark__option-example">{{ WRONG_ANSWER_REASON_EXAMPLES[r] }}</span>
+          </el-button>
         </div>
         <div class="conv-ai-mark__foot">
           <el-button size="small" text :disabled="marking" @click="cancelAsk">取消</el-button>
@@ -93,8 +98,8 @@
           <el-button link type="primary" size="small" :disabled="marking" @click="step = 'ask'">改選</el-button>
         </div>
 
-        <template v-if="savedReason === 'wrong_product'">
-          <p class="conv-ai-mark__text">記下來了。AI 認錯了客人問的是哪個商品——這要系統這邊修，知識庫的資料不用改。</p>
+        <template v-if="savedReason === 'ai_mistake'">
+          <p class="conv-ai-mark__text">記下來了。資料沒錯、是 AI 自己弄錯的——這要系統這邊修，知識庫的資料不用改。</p>
           <div class="conv-ai-mark__foot">
             <el-button size="small" type="primary" @click="step = 'done'">完成</el-button>
           </div>
@@ -145,8 +150,12 @@
         </template>
 
         <template v-else>
-          <p class="conv-ai-mark__text">
-            記下來了。想讓這類問題以後都直接轉真人：{{ canEditAiSettings ? '' : '請管理員' }}在 AI 設定的「敏感詞」加一個詞（例如「退款」），客人一提到就會轉給你們。
+          <!-- `D-136`：沒權限的人標的，管理員在 AI 設定的「敏感詞」那張卡看得到（以前只說「請管理員」，管理員根本不會知道） -->
+          <p v-if="canEditAiSettings" class="conv-ai-mark__text">
+            記下來了。想讓這類問題以後都直接轉真人：在 AI 設定的「敏感詞」加一個詞（例如「退款」），客人一提到就會轉給你們。
+          </p>
+          <p v-else class="conv-ai-mark__text">
+            記下來了。管理員會在 AI 設定的「敏感詞」看到這一題，決定要不要讓這類問題以後都直接轉真人。
           </p>
           <div class="conv-ai-mark__foot">
             <el-button v-if="canEditAiSettings" size="small" type="primary" @click="goSettings">前往 AI 設定</el-button>
@@ -176,6 +185,7 @@
 import {
   HANDOFF_REASON_LABELS,
   WRONG_ANSWER_REASONS,
+  WRONG_ANSWER_REASON_EXAMPLES,
   WRONG_ANSWER_REASON_LABELS,
   isKnowledgeGapContext,
   type AiContextPayload,
@@ -188,19 +198,29 @@ const props = defineProps<{
   /** 對話文件 id（打回饋端點用） */
   userId: string | null
   apiFetch: <T = unknown>(url: string, opts?: Record<string, unknown>) => Promise<T>
+  /**
+   * 一打開就問「哪裡錯了？」（`D-136`）：從泡泡下面「你接著回了客人——AI 這題答錯了嗎？」按「答錯了」進來的，
+   * 他已經說了是答錯，不要再讓他按一次「這題 AI 答錯了」
+   */
+  askFirst?: boolean
 }>()
 
-/** 補一條時要不要帶「客服已經回給客人的那句」當答案（`D-135`）：帶上這一次是哪一回合，父層去找那句 */
-interface AddKnowledgeContext {
+/**
+ * 補一條／打開那一條來改時，要不要帶「客服已經回給客人的那句」（`D-135`／`D-136`）：
+ * 帶上這一次是哪一回合，父層去對話裡找那句
+ */
+interface ReplyContext {
   turnId: string
 }
 
 const emit = defineEmits<{
   (e: 'apply-draft', text: string): void
-  (e: 'add-knowledge', query: string, context?: AddKnowledgeContext): void
-  (e: 'edit-chunk', chunkId: string): void
+  (e: 'add-knowledge', query: string, context?: ReplyContext): void
+  (e: 'edit-chunk', chunkId: string, context?: ReplyContext): void
   /** 樂觀鎖擋下時要父層重抓脈絡（只有 aiMeta 那條舊路徑會發生） */
   (e: 'reload'): void
+  /** 這一次標成答錯了（`D-136`：泡泡下面那句「AI 這題答錯了嗎？」就可以收起來） */
+  (e: 'marked'): void
 }>()
 
 const { showToast } = useAdminToast()
@@ -273,7 +293,7 @@ const pendingReason = ref<WrongAnswerReason | null>(null)
 function syncFromCtx() {
   savedMarked.value = props.ctx.wrongMarked
   savedReason.value = props.ctx.wrongMarkedReason ?? null
-  step.value = props.ctx.wrongMarked ? 'done' : 'idle'
+  step.value = props.ctx.wrongMarked ? 'done' : props.askFirst ? 'ask' : 'idle'
   pickedChunkId.value = ''
 }
 syncFromCtx()
@@ -328,6 +348,7 @@ async function sendMark(reason: WrongAnswerReason, chunkId?: string): Promise<bo
     if (props.userId !== userId) return false
     savedMarked.value = true
     savedReason.value = reason
+    emit('marked')
     return true
   }
   catch (e: any) {
@@ -366,7 +387,8 @@ async function openPicked() {
   const id = pickedChunkId.value
   if (!id) return
   if (!(await sendMark('wrong_data', id))) return
-  emit('edit-chunk', id)
+  // 帶上這一回合：父層把同事回給客人的那句附在編輯視窗最上面（`D-136`，最常見的是出貨日過期、新日期就在那句裡）
+  emit('edit-chunk', id, { turnId: props.ctx.turnId })
   step.value = 'done'
 }
 

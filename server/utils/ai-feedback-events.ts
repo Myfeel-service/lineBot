@@ -11,6 +11,8 @@
  *
  * `D-135`（2026-10-18）起 wrong_answer 多記「錯在哪」（reason）：只有「資料寫錯」那一種、而且只有客服
  * 選出來的那一條（pickedChunks）會列進知識庫待辦；只有「知識庫沒寫」那一種進缺口聚類。舊標記沒有 reason，兩邊都不算。
+ * `D-136`（2026-10-19）：「資料沒錯，是 AI 弄錯了」列在超管「全站異常總覽」、「這題應該交給真人」列在 AI 設定的
+ * 敏感詞卡（見 pendingMarks）；處理好了蓋 handledAt。
  */
 import { createHash } from 'node:crypto'
 import { Timestamp, type Firestore } from 'firebase-admin/firestore'
@@ -186,6 +188,91 @@ export function aggregateWrongAnswerMarks(
 export function isChunkUnfixedSinceMark(currentContent: unknown, mark: WrongAnswerMark): boolean {
   if (!mark.contentHash) return true
   return chunkContentFingerprint(currentContent) === mark.contentHash
+}
+
+// ── 兩種「記下來了」的標記要有人看（`D-136`，2026-10-19）──────────────────────────────
+// 「資料沒錯，是 AI 弄錯了」要我們（平台）修系統 → 超管「全站異常總覽」；
+// 「這題應該交給真人」要管理員加敏感詞 → AI 設定的敏感詞卡＋小幫手。
+// 以前畫面說「記下來了」，卻沒有任何地方會再出現＝一句做不到的承諾。
+// 看過、處理好了就蓋 handledAt；同一次回答重新標記（改選原因）是整筆覆寫，handledAt 跟著消失＝又是一筆待處理。
+
+/** 列「待處理標記」要讀的事件欄位 */
+export interface PendingMarkEvent {
+  id: string
+  workspaceId?: string
+  userId?: string
+  type?: string
+  reason?: string
+  query?: string
+  createdAtMs: number
+  handled: boolean
+}
+
+export interface PendingMark {
+  id: string
+  workspaceId: string
+  /** 對話文件 id（開對話用） */
+  userId: string
+  query: string
+  createdAtMs: number
+}
+
+function createdAtMsOf(raw: unknown): number {
+  if (!raw) return 0
+  const v = raw as { toMillis?: () => number; seconds?: number; _seconds?: number }
+  if (typeof v.toMillis === 'function') return v.toMillis()
+  const sec = v.seconds ?? v._seconds
+  return typeof sec === 'number' ? sec * 1000 : 0
+}
+
+export function toPendingMarkEvent(doc: { id: string; data(): unknown }): PendingMarkEvent {
+  const d = (doc.data() ?? {}) as Record<string, unknown>
+  return {
+    id: doc.id,
+    workspaceId: typeof d.workspaceId === 'string' ? d.workspaceId : undefined,
+    userId: typeof d.userId === 'string' ? d.userId : undefined,
+    type: typeof d.type === 'string' ? d.type : undefined,
+    reason: typeof d.reason === 'string' ? d.reason : undefined,
+    query: typeof d.query === 'string' ? d.query : undefined,
+    createdAtMs: createdAtMsOf(d.createdAt),
+    handled: Boolean(d.handledAt),
+  }
+}
+
+/** 某一種原因、還沒處理的標記，新的在前 */
+export function pendingMarks(events: readonly PendingMarkEvent[], reason: WrongAnswerReason, sinceMs = 0): PendingMark[] {
+  return events
+    .filter(e => e.type === 'wrong_answer' && e.reason === reason && !e.handled && e.createdAtMs >= sinceMs)
+    .sort((a, b) => b.createdAtMs - a.createdAtMs)
+    .map(e => ({
+      id: e.id,
+      workspaceId: e.workspaceId ?? '',
+      userId: e.userId ?? '',
+      query: String(e.query ?? '').slice(0, 200),
+      createdAtMs: e.createdAtMs,
+    }))
+}
+
+/**
+ * 標成「處理好了」。⛔ 原因要對得上（不能借這支把別種標記收掉）；給了 workspaceId 就要同一個工作區
+ * （店家那支一定給；超管那支跨工作區、不給）。回傳是否真的蓋到。
+ */
+export async function markFeedbackHandled(
+  db: Firestore,
+  id: string,
+  opts: { reason: WrongAnswerReason; workspaceId?: string; uid: string },
+): Promise<boolean> {
+  const docId = String(id ?? '').trim()
+  if (!docId || docId.includes('/')) return false
+  const ref = db.collection(AI_FEEDBACK_EVENTS_COLLECTION).doc(docId)
+  const snap = await ref.get()
+  if (!snap.exists) return false
+  const d = snap.data() as { type?: string; reason?: string; workspaceId?: string; handledAt?: unknown }
+  if (d.type !== 'wrong_answer' || d.reason !== opts.reason) return false
+  if (opts.workspaceId && d.workspaceId !== opts.workspaceId) return false
+  if (d.handledAt) return true
+  await ref.update({ handledAt: Timestamp.now(), handledBy: opts.uid })
+  return true
 }
 
 export async function logAiFeedbackEvent(db: Firestore, evt: AiFeedbackEventInput): Promise<void> {

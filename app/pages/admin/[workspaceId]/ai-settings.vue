@@ -422,6 +422,31 @@
               />
               <el-button v-else-if="canEditSettings" size="small" plain @click="showSensitiveInput">＋ 新增</el-button>
             </div>
+            <!--
+              `D-136`：同事在對話上標「這題 AI 答錯了 → 這題應該交給真人」的那幾題。以前沒權限改設定的同事標了，
+              畫面只叫他「請管理員」，管理員根本不會知道。加一個詞（照樣要按「儲存設定」才算數）或按「不用」
+            -->
+            <div v-if="canEditSettings && handoffSuggestions.length" class="ai-handoff-suggest">
+              <p class="ai-handoff-suggest__title">同事覺得這幾題應該交給真人</p>
+              <div v-for="s in handoffSuggestions" :key="s.id" class="ai-handoff-suggest__item">
+                <p class="ai-handoff-suggest__query">
+                  客人問：「{{ s.query }}」<span class="ai-handoff-suggest__date">{{ mdText(s.createdAtMs) }}</span>
+                </p>
+                <div class="ai-handoff-suggest__actions">
+                  <el-input
+                    v-model="handoffWords[s.id]"
+                    size="small"
+                    placeholder="要加的詞，例如：退款"
+                    class="ai-handoff-suggest__input"
+                    :aria-label="`替「${s.query}」加的敏感詞`"
+                    @keydown.enter.prevent="adoptHandoffSuggestion(s)"
+                  />
+                  <el-button size="small" type="primary" plain :disabled="!handoffWords[s.id]?.trim()" @click="adoptHandoffSuggestion(s)">加入</el-button>
+                  <el-button size="small" text :loading="dismissingHandoffId === s.id" @click="dismissHandoffSuggestion(s)">不用</el-button>
+                </div>
+              </div>
+            </div>
+            <p v-if="adoptedHandoffIds.length" class="ai-handoff-suggest__note">加好的詞按右上角「儲存設定」才會生效。</p>
           </div>
         </div>
 
@@ -854,6 +879,66 @@ function removeSensitive(topic: string) {
   form.value.sensitiveTopics = form.value.sensitiveTopics.filter(t => t !== topic)
 }
 
+// ── 同事覺得應該交給真人的那幾題（`D-136`）──────────────────────────────
+interface HandoffSuggestion { id: string; query: string; createdAtMs: number }
+const handoffSuggestions = ref<HandoffSuggestion[]>([])
+/** 每一題各自輸入的詞 */
+const handoffWords = ref<Record<string, string>>({})
+/**
+ * 按了「加入」、等存檔的那幾題：詞已經放進上面的敏感詞，但這頁是整份表單一起存——
+ * ⛔ 存檔成功才標成處理好了；沒存就離開，下次來那幾題還在（不然詞沒存到、題目也不見了）
+ */
+const adoptedHandoffIds = ref<string[]>([])
+const dismissingHandoffId = ref('')
+
+async function loadHandoffSuggestions() {
+  if (!canEditSettings.value) return
+  try {
+    const res = await apiFetch<{ items: HandoffSuggestion[] }>('/api/ai/feedback-marks')
+    handoffSuggestions.value = res.items ?? []
+  }
+  catch { /* 讀不到就不列（小幫手那顆會講「這次查不到」）；不擋設定頁本身 */ }
+  adoptedHandoffIds.value = []
+}
+
+function mdText(ms: number): string {
+  if (!ms) return ''
+  const d = new Date(ms)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function adoptHandoffSuggestion(s: HandoffSuggestion) {
+  const word = String(handoffWords.value[s.id] ?? '').trim()
+  if (!word) return
+  if (!form.value.sensitiveTopics.includes(word)) form.value.sensitiveTopics = [...form.value.sensitiveTopics, word]
+  adoptedHandoffIds.value = [...adoptedHandoffIds.value, s.id]
+  handoffSuggestions.value = handoffSuggestions.value.filter(x => x.id !== s.id)
+}
+
+async function dismissHandoffSuggestion(s: HandoffSuggestion) {
+  dismissingHandoffId.value = s.id
+  try {
+    await apiFetch('/api/ai/feedback-marks', { method: 'POST', body: { reason: 'should_handoff', ids: [s.id] } })
+    handoffSuggestions.value = handoffSuggestions.value.filter(x => x.id !== s.id)
+  }
+  catch {
+    showToast('沒有存成功，請再試一次', 'error')
+  }
+  finally {
+    dismissingHandoffId.value = ''
+  }
+}
+
+/** 存檔成功之後：加了詞的那幾題才算處理好了 */
+async function settleAdoptedHandoffs() {
+  const ids = adoptedHandoffIds.value
+  if (!ids.length) return
+  adoptedHandoffIds.value = []
+  await apiFetch('/api/ai/feedback-marks', { method: 'POST', body: { reason: 'should_handoff', ids } }).catch(() => {
+    // 詞已經存進去了；標不成功頂多下次來還看得到那幾題，再按一次「不用」
+  })
+}
+
 // ── 目前狀態面板:讓「調整設定」跟「現在是什麼狀態」在同一頁 ──
 const usageTokens = ref<number | null>(null)
 /** 知識庫幾條：live＝AI 拿得到的、drafts＝還在「等你看過」的；null＝還沒載入或查不到（顯示「—」，⛔ 不當成 0） */
@@ -1001,6 +1086,8 @@ async function cancelEdits() {
   }
   if (lastLoadedDoc) applySettings(lastLoadedDoc)
   else await loadSettings()
+  // 放棄變更＝加進去的詞也沒了：那幾題放回清單
+  if (adoptedHandoffIds.value.length) void loadHandoffSuggestions()
 }
 
 async function save() {
@@ -1016,6 +1103,7 @@ async function save() {
     const updated = await apiFetch<AiSettingsResponse>('/api/ai/settings', { method: 'PUT', body: form.value })
     applySettings(updated)
     showToast('已儲存', 'success')
+    void settleAdoptedHandoffs()
   }
   catch (err: any) {
     showToast(err?.statusMessage || '儲存失敗', 'error')
@@ -1051,6 +1139,7 @@ onMounted(() => {
   const settingsLoaded = loadSettings()
   loadStatus()
   checkIsSuperAdmin().catch(() => {})
+  void loadHandoffSuggestions()
   // 對話頁「這題 AI 答錯了 → 這題應該交給真人 → 前往 AI 設定」帶 #sensitive-topics 進來（`D-135`）：
   // 卡片在設定載回來之後才排好位置，瀏覽器自己的錨點跳轉那時早就跑完了（實測停在頁面頂端）——載完再捲過去、亮一下。
   // 先自己捲到正中間：flashAgentTarget 只捲到「剛好看得到」，卡片會貼在畫面最下緣

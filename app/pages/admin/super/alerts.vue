@@ -118,6 +118,41 @@
             </p>
           </div>
         </div>
+
+        <!--
+          `D-136`：同事在對話上標「資料沒錯，是 AI 弄錯了」——知識庫改不了，要我們修系統。
+          以前畫面跟同事說「記下來了」，卻沒有任何地方會再出現
+        -->
+        <div class="message-card ar-section-card">
+          <div class="message-card-header">
+            <div class="card-header-main">
+              <span class="section-title">同事標「資料沒錯，是 AI 弄錯了」<template v-if="aiMistakes.length">（{{ aiMistakes.length }}）</template></span>
+            </div>
+          </div>
+          <div class="card-section-stack">
+            <p class="sa-alerts-foot">知識庫改不了這些，要我們改系統。改好一筆就按「處理好了」。</p>
+            <el-alert v-if="data && data.aiMistakes === null" type="warning" title="這次查不到這份清單（不等於沒有），按「重新檢查」再試一次" :closable="false" show-icon />
+            <el-table
+              v-else
+              v-loading="loading"
+              :data="aiMistakes"
+              size="small"
+              empty-text="沒有待處理的。"
+            >
+              <el-table-column label="日期" width="90">
+                <template #default="{ row }">{{ mdText(row.createdAtMs) }}</template>
+              </el-table-column>
+              <el-table-column label="帳號" prop="workspaceName" min-width="120" />
+              <el-table-column label="客人問" prop="query" min-width="260" />
+              <el-table-column label="" width="190" align="right">
+                <template #default="{ row }">
+                  <el-button size="small" plain @click="openMistakeConversation(row)">看對話</el-button>
+                  <el-button size="small" type="primary" plain :loading="handlingMistakeId === row.id" @click="markMistakeHandled(row)">處理好了</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
       </div>
     </template>
   </AdminSplitLayout>
@@ -127,12 +162,42 @@
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { USAGE_RATIO_FLAG_THRESHOLD, USAGE_RATIO_MIN_INVOCATIONS } from '~~/shared/billing/usage-ratio'
 import type { UsageRatioVerdict } from '~~/shared/billing/usage-ratio'
-import type { SuperAlertsWorkspace } from '~~/shared/types/super-alerts'
+import type { SuperAiMistake, SuperAlertsWorkspace } from '~~/shared/types/super-alerts'
 
 definePageMeta({ middleware: ['auth', 'super-admin'], layout: 'super-admin' })
 useHead({ title: '全站異常總覽' })
 
 const { data, loading, error, checkedAt, refresh } = useSuperAlerts()
+const { apiFetch } = useSuperAdmin()
+const { showToast } = useAdminToast()
+
+// ── 同事標「資料沒錯，是 AI 弄錯了」（`D-136`）──
+const aiMistakes = computed<SuperAiMistake[]>(() => data.value?.aiMistakes ?? [])
+const handlingMistakeId = ref('')
+
+function mdText(ms: number): string {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function openMistakeConversation(row: SuperAiMistake) {
+  navigateTo(`/admin/${row.workspaceId}/conversations?userId=${encodeURIComponent(row.userId)}`)
+}
+
+async function markMistakeHandled(row: SuperAiMistake) {
+  handlingMistakeId.value = row.id
+  try {
+    await apiFetch('/api/ai/feedback-marks', { method: 'POST', body: { reason: 'ai_mistake', ids: [row.id] } })
+    await refresh({ force: true })
+  }
+  catch {
+    showToast('沒有標成功，請再試一次', 'error')
+  }
+  finally {
+    handlingMistakeId.value = ''
+  }
+}
 
 onMounted(() => { refresh() })
 function reload() { refresh({ force: true }) }

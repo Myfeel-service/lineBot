@@ -2342,6 +2342,29 @@
     }
   }
 
+  // 「你接著回了客人——AI 這題答錯了嗎？」（`D-136`）：真人接著回了才出現，一段對話難得一次，
+  // 所以可以比「為什麼這樣答」那顆細字重一點；淡紅框跟「答錯了」那顆同一個語意
+  .conv-wrong-prompt {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    max-width: min(560px, 82%);
+    padding: 6px 8px 6px 12px;
+    border-radius: 8px;
+    background: var(--el-bg-color);
+    border: 1px solid var(--el-color-danger-light-8);
+
+    &__text {
+      font-size: 13px;
+      color: var(--el-text-color-primary);
+    }
+
+    .el-button + .el-button {
+      margin-left: 0;
+    }
+  }
+
   // 展開的那一則脈絡。寬度上限比照訊息區,不要拉成整個面板寬
   .conv-turn-panel {
     width: 100%;
@@ -2657,11 +2680,32 @@
       }
     }
 
+    // 每個選項兩行：選項本身＋一行真實例子（`D-136`）。el-button 裡面那層 span 預設是單行置中，要改成直排靠左
     &__option.el-button {
       justify-content: flex-start;
-      height: 36px;
-      padding: 0 12px;
+      height: auto;
+      min-height: 36px;
+      padding: 8px 12px;
       font-size: 13px;
+      white-space: normal;
+      text-align: left;
+
+      > span {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+      }
+    }
+
+    &__option-label {
+      color: var(--el-text-color-primary);
+    }
+
+    &__option-example {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-muted);
     }
 
     // 「是哪一條寫錯了？」：每一條附第一行內容才選得出來 → 標題＋一行灰字，兩行高的框

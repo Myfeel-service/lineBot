@@ -622,6 +622,30 @@
   color: var(--el-color-danger);
 }
 
+// 從對話頁「AI 答錯了 → 資料寫錯」打開時，同事回給客人的那句（`D-136`）
+.chunk-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--el-color-primary-light-9);
+  border: 1px solid var(--el-color-primary-light-7);
+
+  &__label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  &__text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+    white-space: pre-wrap;
+  }
+}
+
 .chunk-normalize-row {
   display: flex;
   align-items: center;

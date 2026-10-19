@@ -180,6 +180,65 @@
   width: 140px;
 }
 
+// 敏感詞卡下面：同事在對話上標「這題應該交給真人」的那幾題（`D-136`）
+.ai-handoff-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &__title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  &__item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--el-border-color);
+  }
+
+  &__query {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+  }
+
+  &__date {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    .el-button + .el-button {
+      margin-left: 0;
+    }
+
+    // ⛔ 只掛一個 class 會被 Element 自己的 .el-input { width: 100% } 蓋掉（實測撐滿整行、按鈕被擠到下一行）
+    .ai-handoff-suggest__input.el-input {
+      width: 200px;
+      flex: 0 0 200px;
+    }
+  }
+
+  &__note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+}
+
 // 每日摘要發送時間:選項只有「HH:00」,不需要整行寬（「設定 → LINE 通知」頁在用，`C-270`）
 .ai-hour-select {
   width: 120px;

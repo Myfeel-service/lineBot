@@ -82,8 +82,8 @@ describe.each([['ai-context（最近一次）', aiContext], ['ai-turn（那一�
   })
 
   it('標過答錯：帶回錯在哪（`D-135`）；舊標記沒有原因＝null；沒標＝false', async () => {
-    feedback = { type: 'wrong_answer', reason: 'wrong_product' }
-    expect(await call(handler)).toMatchObject({ wrongMarked: true, wrongMarkedReason: 'wrong_product' })
+    feedback = { type: 'wrong_answer', reason: 'ai_mistake' }
+    expect(await call(handler)).toMatchObject({ wrongMarked: true, wrongMarkedReason: 'ai_mistake' })
     feedback = { type: 'wrong_answer' }
     expect(await call(handler)).toMatchObject({ wrongMarked: true, wrongMarkedReason: null })
     feedback = null

@@ -33,4 +33,20 @@ export interface SuperAlertsOverviewPayload {
    * 超管要自己想到才會開那一頁。null＝這次查不到（⛔不等於 0，前端不畫點也不畫綠）。
    */
   newLeads: number | null
+  /**
+   * 同事在對話上標「資料沒錯，是 AI 弄錯了」、還沒處理的（`D-136`，2026-10-19）：知識庫改不了，要我們修系統。
+   * 以前畫面說「記下來了」，卻沒有任何地方會再出現。null＝這次查不到（⛔不等於沒有）
+   */
+  aiMistakes: SuperAiMistake[] | null
+}
+
+export interface SuperAiMistake {
+  /** 回饋事件 id（標「處理好了」用） */
+  id: string
+  workspaceId: string
+  workspaceName: string
+  /** 對話文件 id：`/admin/<工作區>/conversations?userId=` 直接開那段 */
+  userId: string
+  query: string
+  createdAtMs: number
 }

@@ -1059,6 +1059,15 @@
                   （比泡泡還高）、六個字也會把泡泡擠窄。同 conv-send-failed-row 的理由。
                 -->
                 <div v-if="canReply && msg.aiTurnId" class="conv-turn-row" :class="msg.direction">
+                  <!--
+                    `D-136`：AI 這則之後真人接著回了客人＝多半是在更正它。同事更正都在對話裡、沒人回頭按「答錯了」，
+                    所以在這裡直接問一句。規則見 shared/ai-wrong-prompt.ts，要不要問見 showWrongPrompt
+                  -->
+                  <div v-if="showWrongPrompt(msg)" class="conv-wrong-prompt">
+                    <span class="conv-wrong-prompt__text">你接著回了客人——AI 這題答錯了嗎？</span>
+                    <el-button size="small" type="danger" plain @click="answerWrongPrompt(msg.aiTurnId)">答錯了</el-button>
+                    <el-button size="small" text @click="dismissWrongPrompt(msg.aiTurnId)">沒有，只是補充</el-button>
+                  </div>
                   <button
                     type="button"
                     class="conv-bubble-why"
@@ -1074,10 +1083,12 @@
                       :ctx="turnCtx"
                       :user-id="selectedUserId"
                       :api-fetch="apiFetch"
+                      :ask-first="askFirstTurnKey === msg.aiTurnId"
                       @apply-draft="applyAiDraft"
                       @add-knowledge="goAddKnowledge"
                       @edit-chunk="goEditChunk"
                       @reload="loadTurn(msg.aiTurnId)"
+                      @marked="onTurnMarked(msg.aiTurnId)"
                     />
                   </div>
                 </div>
@@ -1561,6 +1572,7 @@ import { isCustomerActionMessage } from '~~/shared/customer-action'
 import { chatDayKey, formatChatDayLabel } from '~~/shared/chat-day'
 import type { AutoReplyActionType } from '~~/shared/auto-reply-rule'
 import type { TimelineItem, TimelineResponse, TimelineSessionMeta } from '~~/shared/types/conversation-timeline'
+import { humanFollowedAiTurns } from '~~/shared/ai-wrong-prompt'
 import type { AiContextPayload, AiContextSessionWindow } from '~~/shared/types/ai-knowledge'
 import type { AdminContextMenuItem } from '~/components/admin/ContextMenu.vue'
 
@@ -2429,11 +2441,15 @@ function goAddKnowledge(query: string, context?: { turnId: string }) {
 /**
  * 「去修這張卡」：AI 答錯時，要動的就是它照著答的那張知識卡。
  * 知識庫頁已經吃 ?chunkId=（反查所屬資料、選中、直接開編輯視窗），這裡沿用同一個入口。
+ * 從「資料寫錯 → 打開來改」來的帶上回合（`D-136`）：同事回給客人的那句一起帶過去（?a=），附在編輯視窗最上面
  */
-function goEditChunk(chunkId: string) {
+function goEditChunk(chunkId: string, context?: { turnId: string }) {
   const id = String(chunkId || '').trim()
   if (!id) return
-  window.open(`/admin/${workspaceId.value}/knowledge/sources?chunkId=${encodeURIComponent(id)}`, '_blank')
+  const params = new URLSearchParams({ chunkId: id })
+  const reply = context ? humanReplyAfterTurn(context.turnId).slice(0, 500) : ''
+  if (reply) params.set('a', reply)
+  window.open(`/admin/${workspaceId.value}/knowledge/sources?${params.toString()}`, '_blank')
 }
 
 /**
@@ -2450,6 +2466,7 @@ const turnError = ref('')
 function toggleTurn(turnId?: string) {
   const id = String(turnId || '').trim()
   if (!id) return
+  askFirstTurnKey.value = ''
   if (openTurnKey.value === id) {
     openTurnKey.value = ''
     turnCtx.value = null
@@ -2484,9 +2501,111 @@ async function loadTurn(turnId?: string) {
 // 換客人／換會話就收起來：面板講的是上一位客人的那一則
 watch([selectedUserId, selectedSessionId], () => {
   openTurnKey.value = ''
+  askFirstTurnKey.value = ''
   turnCtx.value = null
   turnError.value = ''
 })
+
+// ── 「你接著回了客人——AI 這題答錯了嗎？」（`D-136`，2026-10-19）────────────────
+/**
+ * 同事更正 AI 都是直接回客人，沒有人回頭按「為什麼這樣答 → 這題 AI 答錯了」
+ * （正式站最近 400 段對話約 5 次更正、0 次標記）——所以 AI 那則之後真人接著回了，就在那則下面直接問。
+ * 掛在哪幾則的規則在 shared/ai-wrong-prompt.ts（有測試）。
+ *
+ * 那一回合是不是「AI 用知識庫答的、還沒人標過」要查那一回合才知道：只查真人接著回的那幾則
+ * （正式站約每 20 次 AI 回答 1 次），一段對話只查最近 3 則，查過的記住不重查。
+ * 「沒有，只是補充」只記在這台電腦（同已讀的理由：是每個人自己的判斷）。
+ */
+const WRONG_PROMPT_LOOKUPS = 3
+const WRONG_PROMPT_DISMISS_KEEP = 300
+
+const wrongPromptTargets = computed(() => humanFollowedAiTurns(timelineItems.value.map(it => ({
+  id: it.id,
+  type: it.type,
+  direction: it.direction,
+  sender: it.sender,
+  aiTurnId: it.aiTurnId,
+  atMs: messageTimestampToMs(it.timestamp),
+}))))
+
+/** turnId → 要不要問：true＝AI 用知識庫答的、還沒人標過；false＝不用問；沒有＝還沒查 */
+const wrongPromptAsk = ref<Record<string, boolean>>({})
+const wrongPromptDismissed = ref<string[]>([])
+/** 從提示按「答錯了」打開的那一則：面板一開就問「哪裡錯了？」，不用再按一次「這題 AI 答錯了」 */
+const askFirstTurnKey = ref('')
+
+function wrongPromptStorageKey(): string {
+  const wid = workspaceId.value
+  return wid ? `admin-conv-wrongPromptDismissed:${wid}` : ''
+}
+
+function hydrateWrongPromptDismissed() {
+  wrongPromptDismissed.value = []
+  const key = wrongPromptStorageKey()
+  if (!key || typeof localStorage === 'undefined') return
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]')
+    wrongPromptDismissed.value = Array.isArray(parsed) ? parsed.map(String) : []
+  }
+  catch { /* 讀不到就當沒按過，頂多再問一次 */ }
+}
+
+function showWrongPrompt(msg: MsgItem): boolean {
+  const id = String(msg.aiTurnId || '')
+  return Boolean(id)
+    && wrongPromptTargets.value.get(id) === msg.id
+    && wrongPromptAsk.value[id] === true
+    && !wrongPromptDismissed.value.includes(id)
+    && openTurnKey.value !== id
+}
+
+function dismissWrongPrompt(turnId?: string) {
+  const id = String(turnId || '')
+  if (!id) return
+  const next = [...wrongPromptDismissed.value.filter(x => x !== id), id].slice(-WRONG_PROMPT_DISMISS_KEEP)
+  wrongPromptDismissed.value = next
+  const key = wrongPromptStorageKey()
+  if (!key || typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(key, JSON.stringify(next))
+  }
+  catch { /* 存不下就只在這次畫面上收起 */ }
+}
+
+function answerWrongPrompt(turnId?: string) {
+  const id = String(turnId || '')
+  if (!id) return
+  askFirstTurnKey.value = id
+  openTurnKey.value = id
+  loadTurn(id)
+}
+
+/** 面板裡標好了：這一則不用再問 */
+function onTurnMarked(turnId?: string) {
+  const id = String(turnId || '')
+  if (id) wrongPromptAsk.value = { ...wrongPromptAsk.value, [id]: false }
+}
+
+watch([wrongPromptTargets, selectedUserId], async () => {
+  const uid = selectedUserId.value
+  if (!uid || !canReply.value) return
+  // 最近的幾則（Map 照時間順序放，倒過來就是最近的在前）；已經查過、按過「沒有」的不查
+  const pending = [...wrongPromptTargets.value.keys()].reverse().slice(0, WRONG_PROMPT_LOOKUPS)
+    .filter(id => !(id in wrongPromptAsk.value) && !wrongPromptDismissed.value.includes(id))
+  for (const id of pending) {
+    let ask = false
+    try {
+      const res = await apiFetch<AiContextPayload>(
+        `/api/conversations/${encodeURIComponent(uid)}/ai-turn/${encodeURIComponent(id)}`,
+      )
+      ask = res.lastDecision === 'answered' && res.lastAnswerKind === 'kb' && !res.wrongMarked
+    }
+    catch { /* 查不到（超過保留期限）就不問 */ }
+    wrongPromptAsk.value = { ...wrongPromptAsk.value, [id]: ask }
+    // 查的途中換了客人：剩下的留給那位客人回來時再查
+    if (selectedUserId.value !== uid) return
+  }
+}, { immediate: true })
 
 /**
  * 看的是「某一場會話」時，把那場的時間範圍交給 AI 脈絡卡自行判斷要不要顯示。
@@ -2980,6 +3099,7 @@ watch(unreadCountText, () => {
 
 watch(workspaceId, () => {
   hydrateConvLastRead()
+  hydrateWrongPromptDismissed()
   applyUnreadDocumentTitle()
   // 換 workspace 就丟掉已簽好的媒體網址（換帳號後不該還留著上一家的檔案連結）
   remoteMedia.value = {}
@@ -6003,6 +6123,7 @@ onMounted(() => {
   if (typeof document !== 'undefined')
     savedDocumentTitle.value = document.title
   hydrateConvLastRead()
+  hydrateWrongPromptDismissed()
   // 上次沒送出的草稿先撈回來，selectUser 選到那位客人時就會自己填回輸入框
   loadPersistedDrafts()
   // 從統計頁下鑽帶進來的分頁（?tab=open/bot_handling/pending_human/closed…）

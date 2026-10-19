@@ -71,13 +71,16 @@ describe('POST /api/conversations/:userId/ai-feedback：答錯先問錯在哪', 
     await expect(call()).rejects.toMatchObject({ statusCode: 400 })
     body = { type: 'wrong_answer', turnId: 't1', reason: 'oops' }
     await expect(call()).rejects.toMatchObject({ statusCode: 400 })
+    // `D-136` 改名前的代碼：只活在沒推上線的那一版，現在不收
+    body = { type: 'wrong_answer', turnId: 't1', reason: 'wrong_product' }
+    await expect(call()).rejects.toMatchObject({ statusCode: 400 })
     expect(logAiFeedbackEvent).not.toHaveBeenCalled()
   })
 
   it('帶原因就記：原因、誰標的都存下來；沒選是哪一條就不存 pickedChunks', async () => {
-    body = { type: 'wrong_answer', turnId: 't1', reason: 'wrong_product' }
+    body = { type: 'wrong_answer', turnId: 't1', reason: 'ai_mistake' }
     await expect(call()).resolves.toEqual({ ok: true })
-    expect(logged()).toMatchObject({ type: 'wrong_answer', reason: 'wrong_product', markedBy: 'agent-1', turnId: 't1' })
+    expect(logged()).toMatchObject({ type: 'wrong_answer', reason: 'ai_mistake', markedBy: 'agent-1', turnId: 't1' })
     expect(logged()).not.toHaveProperty('pickedChunks')
   })
 

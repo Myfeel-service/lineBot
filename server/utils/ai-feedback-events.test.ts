@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   aggregateWrongAnswerMarks,
   aiFeedbackDocId,
   chunkContentFingerprint,
   chunkSnippet,
   isChunkUnfixedSinceMark,
+  markFeedbackHandled,
   NOT_MARKED,
+  pendingMarks,
+  toPendingMarkEvent,
   wrongMarkOf,
+  type PendingMarkEvent,
   type WrongAnswerMarkEvent,
 } from './ai-feedback-events'
 
@@ -93,8 +97,8 @@ describe('aggregateWrongAnswerMarks', () => {
     expect([...m.keys()]).toEqual(['chunk-a'])
   })
 
-  it('🔴 錯在別的地方（講成別的商品／知識庫沒寫／該交給真人）不列進知識庫待辦', () => {
-    for (const reason of ['wrong_product', 'missing', 'should_handoff']) {
+  it('🔴 錯在別的地方（資料沒錯是 AI 弄錯了／知識庫沒寫／該交給真人）不列進知識庫待辦', () => {
+    for (const reason of ['ai_mistake', 'missing', 'should_handoff']) {
       expect(aggregateWrongAnswerMarks([W({ reason })], 0).size).toBe(0)
     }
   })
@@ -137,6 +141,75 @@ describe('isChunkUnfixedSinceMark（看內容指紋，不看更新時間）', ()
 
   it('標記時沒拿到指紋（讀不到那條）→ 當成還沒改，寧可多掛著也不要假裝修好', () => {
     expect(isChunkUnfixedSinceMark('任何內容', { ...mark, contentHash: '' })).toBe(true)
+  })
+})
+
+/**
+ * 兩種「記下來了」的標記要有人看（`D-136`）：AI 弄錯了→超管清單、交給真人→敏感詞卡。
+ * 以前畫面說「記下來了」卻沒有任何地方會再出現。
+ */
+describe('pendingMarks：還沒處理的那幾筆', () => {
+  const E = (over: Partial<PendingMarkEvent>): PendingMarkEvent => ({
+    id: 'e1', workspaceId: 'ws1', userId: 'ws1_U1', type: 'wrong_answer', reason: 'should_handoff',
+    query: '請問有進行退款了嗎？', createdAtMs: 5_000, handled: false, ...over,
+  })
+
+  it('只列那一種原因、還沒處理的，新的在前', () => {
+    const out = pendingMarks([
+      E({ id: 'old', createdAtMs: 1_000 }),
+      E({ id: 'new', createdAtMs: 9_000 }),
+      E({ id: 'done', handled: true }),
+      E({ id: 'other', reason: 'ai_mistake' }),
+      E({ id: 'draft', type: 'draft_applied' }),
+      E({ id: 'legacy', reason: undefined }),
+    ], 'should_handoff')
+    expect(out.map(m => m.id)).toEqual(['new', 'old'])
+    expect(out[0]).toEqual({ id: 'new', workspaceId: 'ws1', userId: 'ws1_U1', query: '請問有進行退款了嗎？', createdAtMs: 9_000 })
+  })
+
+  it('窗口外的不列', () => {
+    expect(pendingMarks([E({ createdAtMs: 500 })], 'should_handoff', 1_000)).toEqual([])
+  })
+
+  it('從 Firestore 文件讀：handledAt 有值＝處理好了', () => {
+    const doc = (data: Record<string, unknown>) => ({ id: 'x', data: () => data })
+    expect(toPendingMarkEvent(doc({ type: 'wrong_answer', reason: 'ai_mistake', createdAt: { seconds: 3 } })))
+      .toMatchObject({ id: 'x', reason: 'ai_mistake', createdAtMs: 3_000, handled: false })
+    expect(toPendingMarkEvent(doc({ handledAt: { seconds: 9 } })).handled).toBe(true)
+  })
+})
+
+describe('markFeedbackHandled', () => {
+  function fakeDb(data: Record<string, unknown> | null) {
+    const update = vi.fn(async () => {})
+    const db = { collection: () => ({ doc: () => ({ get: async () => ({ exists: !!data, data: () => data }), update }) }) }
+    return { db: db as unknown as Parameters<typeof markFeedbackHandled>[0], update }
+  }
+
+  it('原因對、工作區對 → 蓋 handledAt＋誰處理的', async () => {
+    const { db, update } = fakeDb({ type: 'wrong_answer', reason: 'should_handoff', workspaceId: 'ws1' })
+    expect(await markFeedbackHandled(db, 'e1', { reason: 'should_handoff', workspaceId: 'ws1', uid: 'admin-1' })).toBe(true)
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ handledBy: 'admin-1', handledAt: expect.anything() }))
+  })
+
+  it('🔴 原因對不上 → 不蓋（不能借「交給真人」那支把「資料寫錯」的待辦收掉）', async () => {
+    const { db, update } = fakeDb({ type: 'wrong_answer', reason: 'wrong_data', workspaceId: 'ws1' })
+    expect(await markFeedbackHandled(db, 'e1', { reason: 'should_handoff', workspaceId: 'ws1', uid: 'a' })).toBe(false)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('🔴 別家的 → 不蓋；不存在、id 有斜線 → false', async () => {
+    const other = fakeDb({ type: 'wrong_answer', reason: 'should_handoff', workspaceId: 'ws2' })
+    expect(await markFeedbackHandled(other.db, 'e1', { reason: 'should_handoff', workspaceId: 'ws1', uid: 'a' })).toBe(false)
+    expect(other.update).not.toHaveBeenCalled()
+    expect(await markFeedbackHandled(fakeDb(null).db, 'e1', { reason: 'should_handoff', uid: 'a' })).toBe(false)
+    expect(await markFeedbackHandled(fakeDb({}).db, 'a/b', { reason: 'should_handoff', uid: 'a' })).toBe(false)
+  })
+
+  it('超管那支不給工作區（跨帳號）也蓋得到', async () => {
+    const { db, update } = fakeDb({ type: 'wrong_answer', reason: 'ai_mistake', workspaceId: 'ws9' })
+    expect(await markFeedbackHandled(db, 'e1', { reason: 'ai_mistake', uid: 'super' })).toBe(true)
+    expect(update).toHaveBeenCalled()
   })
 })
 

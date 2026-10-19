@@ -1,4 +1,4 @@
-import type { Firestore, Timestamp } from 'firebase-admin/firestore'
+import type { Firestore, QuerySnapshot, Timestamp } from 'firebase-admin/firestore'
 import { ALERT_SCOPE_LABELS } from '~~/shared/types/alerts'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope } from '~~/shared/types/alerts'
 import { getAiSettings } from './ai-settings'
@@ -6,7 +6,7 @@ import { cleanReason, humanizeHours } from './alert-format'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
-import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark } from './ai-feedback-events'
+import { AI_FEEDBACK_EVENTS_COLLECTION, aggregateWrongAnswerMarks, isChunkUnfixedSinceMark, pendingMarks, toPendingMarkEvent } from './ai-feedback-events'
 import { getQuotaAnswered } from './ai-usage'
 import { SCRIPTS_COLLECTION, loadActiveScripts } from './ai-scripts'
 import { scriptTriggerEvent } from '~~/shared/types/ai-script'
@@ -424,6 +424,14 @@ export async function collectWorkspaceAlerts(
   // 等真人／接手沒結束（`D-116`）：兩顆共用這一次查詢，用到才讀；讀失敗兩顆都是 unknown
   let humanQueuePromise: Promise<HumanQueue> | null = null
   const getHumanQueue = () => (humanQueuePromise ??= readHumanQueue(db, wid))
+  // 客服的回饋事件（`D-136`）：「被同事標記寫錯了」與「同事覺得該交給真人」兩顆共用這一次讀取，用到才讀。
+  // 查詢形狀沿用既有的 workspaceId+createdAt 索引（type／reason 在程式裡濾），不必開新索引
+  let feedbackEventsPromise: Promise<QuerySnapshot> | null = null
+  const getFeedbackEvents = () => (feedbackEventsPromise ??= db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
+    .where('workspaceId', '==', wid)
+    .orderBy('createdAt', 'desc')
+    .limit(WRONG_ANSWER_SCAN_LIMIT)
+    .get())
 
   const operateProbes: Array<Promise<WorkspaceAlertItem>> = canOperate
     ? [
@@ -502,14 +510,8 @@ export async function collectWorkspaceAlerts(
            *
            * 判定與知識庫工作台的 wrongAnswerChunks 同一套（aggregateWrongAnswerMarks＋內容指紋），
            * 兩邊講的必須是同一件事——小幫手說沒事、工作台卻紅著，正是最傷信任的那種矛盾。
-           *
-           * 查詢形狀沿用既有的 workspaceId+createdAt 索引（type 在程式裡濾），不必開新索引。
            */
-          const snap = await db.collection(AI_FEEDBACK_EVENTS_COLLECTION)
-            .where('workspaceId', '==', wid)
-            .orderBy('createdAt', 'desc')
-            .limit(WRONG_ANSWER_SCAN_LIMIT)
-            .get()
+          const snap = await getFeedbackEvents()
 
           const marksByChunk = aggregateWrongAnswerMarks(
             snap.docs.map((d) => {
@@ -933,6 +935,18 @@ export async function collectWorkspaceAlerts(
 
   const billingProbes: Array<Promise<WorkspaceAlertItem>> = canSettings
     ? [
+        probe('handoffSuggested', async () => {
+          // 同事在對話上標「這題應該交給真人」、管理員還沒處理（`D-136`）。跟 AI 設定敏感詞卡上那份清單同一套判定
+          const snap = await getFeedbackEvents()
+          const pending = pendingMarks(
+            snap.docs.map(toPendingMarkEvent),
+            'should_handoff',
+            Date.now() - WRONG_ANSWER_WINDOW_DAYS * 86_400_000,
+          )
+          if (!pending.length) return { active: false }
+          const first = pending[0]!.query
+          return { active: true, count: pending.length, detail: first ? `例如客人問「${first.slice(0, 30)}」` : '' }
+        }),
         probe('lineWebhookBroken', async () => {
           // 機器人的總開關：webhook 掛了＝所有訊息都進不來，其他異常都無從發生
           const c = await webhookCheckPromise!
