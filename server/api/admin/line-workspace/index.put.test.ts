@@ -130,7 +130,7 @@ describe('PUT /api/admin/line-workspace（clearWorkspace）', () => {
 
   it('🔴 只清 Token／Secret／頻道身分三格，⛔ 不刪整份文件（方案、組織、發票抬頭都要留著）', async () => {
     stubDb(FULL_DOC)
-    body = { clearWorkspace: true }
+    body = { clearWorkspace: true, confirmName: '我的官方帳號' }
     await expect(call()).resolves.toMatchObject({ ok: true, cleared: true })
 
     expect(deleteSpy).not.toHaveBeenCalled()
@@ -144,7 +144,7 @@ describe('PUT /api/admin/line-workspace（clearWorkspace）', () => {
 
   it('照樣寫稽核，而且只記「哪幾格被清」，不記值', async () => {
     stubDb(FULL_DOC)
-    body = { clearWorkspace: true }
+    body = { clearWorkspace: true, confirmName: '我的官方帳號' }
     await call()
     const audit = vi.mocked(writeAuditLog).mock.calls[0]![0]
     expect(audit).toMatchObject({ action: 'line-workspace.clear' })
@@ -154,14 +154,59 @@ describe('PUT /api/admin/line-workspace（clearWorkspace）', () => {
 
   it('本來就沒有存憑證 → 什麼都不寫（⛔ 不憑空生出一份只有 updatedAt 的文件），也不留空紀錄', async () => {
     stubDb({ name: '只有名字', organizationId: 'org-1' })
-    body = { clearWorkspace: true }
+    body = { clearWorkspace: true, confirmName: '只有名字' }
     await expect(call()).resolves.toMatchObject({ ok: true })
     expect(setSpy).not.toHaveBeenCalled()
     expect(deleteSpy).not.toHaveBeenCalled()
     expect(writeAuditLog).not.toHaveBeenCalled()
 
     stubDb(null)
+    body = { clearWorkspace: true, confirmName: 'wsB' } // 沒有文件＝沒取過名字，名字就是帳號 id
     await call()
     expect(setSpy).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `D-35`（2026-10-20）：清除鈕重新打開，清之前要打帳號名稱——清掉＝這個帳號收不到客人訊息。
+   * 畫面那一層擋過，端點⛔再驗一次（直接打 API 就繞過畫面）。
+   */
+  it('⛔ 沒打帳號名稱、或打錯：400、一個字都不清、不留紀錄', async () => {
+    for (const confirmName of [undefined, '', '我的官方帳', '別的帳號']) {
+      stubDb(FULL_DOC)
+      body = { clearWorkspace: true, confirmName }
+      await expect(call()).rejects.toMatchObject({ statusCode: 400 })
+    }
+    expect(setSpy).not.toHaveBeenCalled()
+    expect(deleteSpy).not.toHaveBeenCalled()
+    expect(writeAuditLog).not.toHaveBeenCalled()
+  })
+
+  it('前後多打的空白不算錯', async () => {
+    stubDb(FULL_DOC)
+    body = { clearWorkspace: true, confirmName: '  我的官方帳號 ' }
+    await expect(call()).resolves.toMatchObject({ cleared: true })
+    expect(setSpy).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('清除鈕重新打開（D-35）：畫面那一層', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { fileURLToPath } = await import('node:url')
+  const page = readFileSync(fileURLToPath(new URL('../../../../app/pages/admin/[workspaceId]/settings/organization.vue', import.meta.url)), 'utf8')
+  const guides = readFileSync(fileURLToPath(new URL('../../../../app/utils/agent-guides.ts', import.meta.url)), 'utf8')
+
+  it('按鈕不再藏著（存過憑證就看得到），按了要打帳號名稱、名稱一起送給端點', () => {
+    expect(page).not.toContain('showClearStoredCredentials')
+    expect(page).toContain('<template v-if="meta.channelAccessTokenConfigured || meta.channelSecretConfigured">')
+    expect(page).toContain('ElMessageBox.prompt(')
+    expect(page).toContain('inputValidator: (v: string) => clearCredentialsNameMatches(v, accountName)')
+    expect(page).toContain('body: { workspaceId: workspaceId.value, clearWorkspace: true, confirmName: typed }')
+  })
+
+  it('小幫手「接在兩邊」劇本不再說「畫面上沒有自助清除鈕」，改指那顆鈕', () => {
+    expect(guides).not.toContain('沒有自助清除鈕')
+    expect(guides).not.toContain('又沒有清除鈕')
+    expect(guides).toContain('orgFocusCard(c, \'clear\'')
+    expect(page).toContain('target !== \'clear\'')
   })
 })

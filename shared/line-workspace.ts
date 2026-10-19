@@ -23,6 +23,18 @@ export type LineWorkspaceDoc = {
 export const DEFAULT_LINE_WORKSPACE_ID = 'default'
 
 /**
+ * 「清除已儲存的憑證」之前要打一次帳號名稱（`D-35`，2026-10-20 老闆照建議重新打開那顆鈕）。
+ * 清掉之後這個帳號就收不到、也回不了客人的 LINE 訊息——打名字是確認「清的是這一個」，不是手滑。
+ * 前端（對話框的檢查）與後端（端點再驗一次）同一支，⛔ 別各寫一份。
+ * 比對：前後空白不算、其他一字不差（大小寫也算——名字是店家自己取的，照他看到的打）。
+ * 帳號沒取過名字時，名字就是帳號 id（跟帳號清單、頁首顯示的同一個值）。
+ */
+export function clearCredentialsNameMatches(typed: unknown, accountName: string): boolean {
+  const want = String(accountName ?? '').trim()
+  return !!want && String(typed ?? '').trim() === want
+}
+
+/**
  * Firestore `users/*`、`conversations/*` 主鍵（與 migrate-add-workspaceId、sync-from-line 一致）。
  * @param lineUserId LINE `source.userId`（或已是 `default_U…` 主鍵時原樣回傳）
  */

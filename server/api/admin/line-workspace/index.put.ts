@@ -14,6 +14,7 @@ import {
   checkChannelBindingConflict,
   rememberChannelBinding,
 } from '~~/server/utils/line-channel-binding'
+import { clearCredentialsNameMatches } from '~~/shared/line-workspace'
 
 type PutBody = {
   name?: string
@@ -25,6 +26,8 @@ type PutBody = {
    * ⚠️ 名字是歷史包袱：以前真的會刪掉整份 workspaces 文件（見下方 `G-97`），前端還用這個名字呼叫。
    */
   clearWorkspace?: boolean
+  /** 清除前打的帳號名稱（`D-35`）：要跟這個帳號的名字一樣才清（`clearCredentialsNameMatches`） */
+  confirmName?: string
   /** 為 true 時：儲存後自動呼叫 LINE 測試 Webhook；失敗僅回傳警告，不回滾憑證。 */
   verifyWebhookOnSave?: boolean
   /** 可選：期望與 LINE 後台登記的 Webhook URL 比對。 */
@@ -73,7 +76,8 @@ export default defineEventHandler(async (event) => {
    *    - 所屬組織 id（組織管理員從此進不去——他們的權限是靠這份文件上的組織 id 查出來的；
    *      組織停用也擋不到這個帳號了）
    *    - 發票抬頭
-   *    按鈕目前藏著（`organization.vue` 的 showClearStoredCredentials），但 API 一直開著。
+   *    當時按鈕藏著（`organization.vue` 的 showClearStoredCredentials），但 API 一直開著。
+   *    2026-10-20 `D-35` 按鈕重新打開（要打帳號名稱確認，下面再驗一次）。
    *
    * 清的三格跟「把 Token 存成空字串」那條路一致：Token、Secret，
    * 加上跟著 Token 的頻道身分（lineBotUserId，留著會用一個對不到憑證的舊身分去擋別人綁同一個頻道）。
@@ -84,6 +88,14 @@ export default defineEventHandler(async (event) => {
     const ref = db.collection('workspaces').doc(wid)
     const snap = await ref.get()
     const previous = snap.exists ? snap.data() as Record<string, unknown> : null
+    /**
+     * `D-35`（2026-10-20）：按鈕重新打開了，清之前要打一次帳號名稱。前端對話框已經擋過，
+     * 這裡再驗一次：清掉＝這個帳號收不到客人訊息，⛔ 不能只靠畫面那一層（直接打 API 就繞過）。
+     * 名字跟帳號清單同一個來源（文件的 name，沒有就是 id）。
+     */
+    const accountName = String(previous?.name ?? '').trim() || wid
+    if (!clearCredentialsNameMatches(body.confirmName, accountName))
+      throw createError({ statusCode: 400, statusMessage: '帳號名稱對不上，沒有清除。請照畫面上的帳號名稱再打一次。' })
     const CREDENTIAL_FIELDS = ['channelAccessToken', 'channelSecret', 'lineBotUserId'] as const
     const present = CREDENTIAL_FIELDS.filter(k => previous?.[k] !== undefined)
     if (present.length) {

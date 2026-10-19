@@ -260,12 +260,16 @@
               <p class="text-xs text-muted">沒關的話，客人每句話會收到兩套回覆（LINE 的罐頭訊息＋我們的回覆）。這個開關在 LINE 官方帳號後台，系統偵測不到，只能在這裡提醒。</p>
             </div>
 
-            <template v-if="showClearStoredCredentials">
+            <!-- `D-35`（2026-10-20 老闆照建議）重新打開：同一個官方帳號接在兩邊時，「把不用那邊清掉」終於能自己做
+                 （小幫手 line-channel 劇本照這顆鈕講）。只有存過憑證才出現——沒東西可清的鈕是死路。
+                 ⛔ 按下去要打帳號名稱才清（清掉＝收不到客人訊息），後端再驗一次；只清 Token／Secret（`G-97`）。 -->
+            <template v-if="meta.channelAccessTokenConfigured || meta.channelSecretConfigured">
               <hr class="divider">
               <p class="ar-section-hint">
-                清掉本頁存的 Token／Secret。LINE 後台不用改；其他請交給技術人員處理。
+                這個帳號不再接這個 LINE 官方帳號時用（例如同一個官方帳號接在兩邊，要清掉不用的這一邊）。
+                只清這頁存的 Token／Secret，方案、組織、發票抬頭都不受影響。
               </p>
-              <el-button type="danger" plain :loading="clearing" @click="clearWorkspace">
+              <el-button type="danger" plain :loading="clearing" data-tour="org-clear-credentials" @click="clearWorkspace">
                 清除已儲存的憑證
               </el-button>
             </template>
@@ -283,6 +287,7 @@ import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { leadEndpointUrl } from '~~/shared/liff-lead-path'
 import { diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
+import { clearCredentialsNameMatches } from '~~/shared/line-workspace'
 
 definePageMeta({ middleware: ['auth', 'workspace-settings'], layout: 'default' })
 
@@ -355,9 +360,6 @@ function roleTagType(role: WorkspaceMemberRole | null) {
 function roleTagEffect(role: WorkspaceMemberRole | null) {
   return role === 'owner' ? 'dark' : 'light'
 }
-
-/** 暫時隱藏「清除已儲存的憑證」區塊；改為 true 即可顯示 */
-const showClearStoredCredentials = false
 
 const loading = ref(false)
 const saving = ref(false)
@@ -725,14 +727,27 @@ async function save() {
   }
 }
 
+/**
+ * 清除前要打帳號名稱（`D-35`）。名字＝頁首／帳號清單上那個（`currentWorkspaceName`，跟後端驗的同一個來源）。
+ * 對話框講清楚後果（收不到客人訊息、要重新貼才會恢復），⛔ 不寫「無法復原」這種嚇人但沒講到重點的話。
+ */
 async function clearWorkspace() {
+  const accountName = (currentWorkspaceName.value || workspaceId.value || '').trim()
+  let typed = ''
   try {
-    await ElMessageBox.confirm('確定清除在此頁儲存的 LINE 憑證？此動作無法復原。', '清除憑證', {
-      confirmButtonText: '清除',
-      cancelButtonText: '取消',
-      confirmButtonClass: 'el-button--danger',
-      type: 'warning',
-    })
+    const res = await ElMessageBox.prompt(
+      `清掉之後，這個帳號就收不到、也回不了客人的 LINE 訊息，要重新貼上 Token／Secret 才會恢復。確定的話，請輸入帳號名稱「${accountName}」。`,
+      '清除已儲存的憑證',
+      {
+        confirmButtonText: '清除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+        type: 'warning',
+        inputPlaceholder: accountName,
+        inputValidator: (v: string) => clearCredentialsNameMatches(v, accountName) || '帳號名稱對不上，請照上面那個名字打',
+      },
+    )
+    typed = String((res as { value?: string }).value ?? '')
   }
   catch { return }
   clearing.value = true
@@ -741,7 +756,7 @@ async function clearWorkspace() {
     await $fetch('/api/admin/line-workspace', {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
-      body: { workspaceId: workspaceId.value, clearWorkspace: true },
+      body: { workspaceId: workspaceId.value, clearWorkspace: true, confirmName: typed },
     })
     showToast('已清除儲存的憑證', 'success')
     await load()
@@ -785,7 +800,7 @@ watch(() => route.query.verify, (v) => {
   if (v) void consumeAlertHandoff()
 })
 
-// ── 小幫手帶路：?focus=webhook / ?focus=token ──────────────────
+// ── 小幫手帶路：?focus=webhook / ?focus=token / ?focus=liff / ?focus=clear ──────
 // 「修好 LINE 收訊」劇本（agent-guides 的 line-webhook）的連結卡會帶這個參數；
 // 進頁用聚光燈指出要按哪裡，人不用在長頁面裡自己找位置。與 ?verify= 的分工：
 // verify＝替人跑一次檢查（會真的請 LINE 發測試訊息），focus＝只指位置、動手的是人。
@@ -793,10 +808,24 @@ const { startAdHocTour } = useTutorial()
 
 function maybeStartFocusTour() {
   const target = String(route.query.focus ?? '')
-  if (target !== 'webhook' && target !== 'token' && target !== 'liff')
+  if (target !== 'webhook' && target !== 'token' && target !== 'liff' && target !== 'clear')
     return
   // 參數用完即丟：重新整理或存檔後不要再跑一次導覽
   void router.replace({ query: { ...route.query, focus: undefined } })
+  if (target === 'clear') {
+    // `D-35`：小幫手「接在兩邊」劇本選了「這一邊暫時不接任何帳號」→ 指那顆清除鈕（在頁面最下面）。
+    // ⚠️ 先自己捲到底：手機寬時頁首吸頂佔掉大半個畫面，導覽自己捲（置中）會停在鈕的上面一段、框到別的列（2026-10-20 實測 390 寬）
+    document.querySelector('[data-tour="org-clear-credentials"]')?.scrollIntoView({ block: 'end' })
+    void startAdHocTour([
+      {
+        target: '[data-tour="org-clear-credentials"]',
+        title: '清除這一邊的憑證',
+        description: '按這顆，照提示打一次帳號名稱就會清掉。清完之後，客人的訊息只會進到另一邊。',
+        placement: 'top',
+      },
+    ])
+    return
+  }
   if (target === 'liff') {
     // 「活動連結點下去會打不開」那顆紅點（liffMissing）點過來的：LIFF 這一格
     // 在頁面中段，不指位置的話人得自己在一長串憑證欄位裡找

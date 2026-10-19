@@ -730,7 +730,7 @@ const LINE_CONSOLE_LINK = {
 } as const
 
 /** 設定頁連結卡：?focus= 讓設定頁進頁用聚光燈指位（webhook＝複製網址＋測試連線；token＝貼 Token＋儲存） */
-function orgFocusCard(c: AgentGuideCtx, focus: 'webhook' | 'token', label: string) {
+function orgFocusCard(c: AgentGuideCtx, focus: 'webhook' | 'token' | 'clear', label: string) {
   c.r.card({ kind: 'link', internal: true, label, href: `/admin/${c.workspaceId}/settings/organization?focus=${focus}` })
 }
 
@@ -1230,18 +1230,20 @@ const lineChannelGuide: AgentGuideDef = {
           await r.say(
             '好，帳號留這邊。要做的是把<b>另一邊工作區</b>存的 LINE 連線資訊處理掉，兩條路：<br>'
             + '・那個工作區<b>還要用</b>（只是接錯帳號）→ 切換過去，到它的「組織與 LINE 設定」把連線資訊換成<b>它自己該用的官方帳號</b>。<br>'
-            + '・那個工作區<b>已經不用了</b> → 聯絡我們幫你把那邊的連接清空（目前畫面上沒有自助清除鈕）。',
+            // `D-35`（2026-10-20）清除鈕重新打開了：以前這裡只能叫人聯絡我們代清
+            + '・那個工作區<b>已經不用了</b> → 切換過去，到它的「組織與 LINE 設定」最下面按「<b>清除已儲存的憑證</b>」（要打一次那個帳號的名稱確認）。',
           )
           await r.say('處理完回來按「幫我檢查」，我再跟 LINE 確認一次。')
           return
         }
-        // keep-there：這一邊要換成正確的鑰匙（或請我們清空）
+        // keep-there：這一邊要換成正確的連線資訊，或清掉（`D-35` 起自己就能清）
         await r.say(
           '好，帳號留另一邊。那<b>這一邊</b>存的連線資訊就要處理掉，兩條路：<br>'
-          + '・這個工作區要接<b>別的官方帳號</b> → 點下面的卡，我在設定頁指給你看把 Token 換掉的位置。<br>'
-          + '・這個工作區<b>暫時不接任何帳號</b> → 聯絡我們幫你清空（目前畫面上沒有自助清除鈕）。',
+          + '・這個工作區要接<b>別的官方帳號</b> → 點下面第一張卡，我在設定頁指給你看把 Token 換掉的位置。<br>'
+          + '・這個工作區<b>暫時不接任何帳號</b> → 點第二張卡，我指給你看「清除已儲存的憑證」（要打一次帳號名稱確認）。',
         )
         orgFocusCard(c, 'token', '去設定頁換這一邊的連線資訊（我會指位置）')
+        orgFocusCard(c, 'clear', '去設定頁清除這一邊的憑證（我會指位置）')
       },
     },
     {
@@ -1275,7 +1277,7 @@ const lineChannelGuide: AgentGuideDef = {
             continue
           }
           r.updateMsg(cardId, { kind: 'status', state: 'fail', text: '兩邊都還接著' })
-          await r.say(`還是接在兩邊${check.detail ? `（${escapeHtml(check.detail)}）` : ''}。最常見是另一邊<b>只改了畫面沒按儲存</b>；若那邊已經不用、又沒有清除鈕，聯絡我們處理。好了再按檢查。`)
+          await r.say(`還是接在兩邊${check.detail ? `（${escapeHtml(check.detail)}）` : ''}。最常見是另一邊<b>只改了畫面沒按儲存</b>；若那邊已經不用，到那邊的「組織與 LINE 設定」最下面按「清除已儲存的憑證」。好了再按檢查。`)
         }
       },
     },
