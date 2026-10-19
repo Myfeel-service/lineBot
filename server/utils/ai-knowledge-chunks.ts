@@ -980,12 +980,17 @@ export async function retryStuckChunks(
    * 試完 5 次的值是 'exhausted'，不會被撿到（不用 retryCount 的範圍條件也不會被永久失敗的塞滿名額）。
    * status='indexed'：重學沒成之後被停用的那一條不撿（停用是店家的意思；打開之後記號還在，那時才撿）。
    */
+  // ⛔ 這一句查不成（例如正式庫索引出狀況）不可以拖垮上面兩種：那兩種客人問到是找不到，這種只是還在用原本的
   const keptSnap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('relearnState', '==', 'retrying' satisfies KnowledgeRelearnState)
     .where('status', '==', 'indexed')
     .select(...FIELDS)
     .limit(maxBatch)
     .get()
+    .catch((e: unknown) => {
+      console.warn('[ai:retry-stuck-chunks] 撿「重學沒成、先用原本的」那一句查不成，這輪只重試學失敗／卡住的：', (e as Error)?.message)
+      return { docs: [] as typeof failedSnap.docs }
+    })
 
   const scanned = failedSnap.docs.length + pendingSnap.docs.length + keptSnap.docs.length
   const seen = new Set<string>()

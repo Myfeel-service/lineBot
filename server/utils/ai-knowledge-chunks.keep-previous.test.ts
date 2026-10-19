@@ -297,6 +297,29 @@ describe('② 排程撿得到記號、學好了換成新的', () => {
     expect(h.embedDocument).not.toHaveBeenCalled()
   })
 
+  it('撿「先用原本的」那一句查不成（例如正式庫索引出狀況）：⛔ 不拖垮學失敗那幾條的重試', async () => {
+    STORE.knowledgeChunks!.f1 = { workspaceId: 'ws1', title: '失敗的', content: '內容', status: 'failed', retryCount: 1, embedding: null }
+    const realCollection = db.collection
+    db.collection = (col: string) => {
+      const q = realCollection(col)
+      const where = q.where
+      q.where = (f: string, op: string, v: unknown) => {
+        const next = where(f, op, v)
+        if (f === 'relearnState') next.where = () => ({ select: () => ({ limit: () => ({ get: async () => { throw new Error('FAILED_PRECONDITION: The query requires an index') } }) }) })
+        return next
+      }
+      return q
+    }
+    try {
+      const r = await retryStuckChunks(db)
+      expect(r.indexed).toBe(1)
+      expect(STORE.knowledgeChunks!.f1!.status).toBe('indexed')
+    }
+    finally {
+      db.collection = realCollection
+    }
+  })
+
   it('名額先給學失敗的（客人問到找不到），先用原本的排在後面', async () => {
     seedLearned('k1', { relearnState: 'retrying', retryCount: 1 })
     STORE.knowledgeChunks!.f1 = { workspaceId: 'ws1', title: '失敗的', content: '內容', status: 'failed', retryCount: 1, embedding: null }
