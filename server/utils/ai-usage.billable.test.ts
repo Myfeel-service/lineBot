@@ -146,6 +146,21 @@ describe('月結桶的計費則數（超管成本頁 / 官方帳號管理讀它�
    * 之後的月份 billable 才是完整的，而且會 ≥ 分項和：「反問後客人點選項、AI 又反問一次」
    * 只記 billable、沒有對應的分項欄位。max 會自動選 billable，這條紅了代表還原式蓋掉了真帳。
    */
+  /**
+   * `D-132`②（2026-10-19）：跟本店無關、AI 婉拒的那句記 answered 但不扣則。
+   * 分項和不扣掉它的話會比 billable 多，max 就把不收錢的那幾句又算回成本頁的「計費 N 則」。
+   */
+  it('婉拒那幾句（unbilledAnswered）不算進還原出來的則數', () => {
+    expect(monthlyBillable({ period: '202610', answered: 100, unbilledAnswered: 7, disambiguations: 20, followupAnswered: 5, billable: 118 })).toBe(118)
+  })
+
+  it('婉拒那句：月結桶記一筆 unbilledAnswered，額度桶不動', async () => {
+    const writes = await record({ invocations: 1, answered: 1, unbilledAnswered: 1 })
+    expect(quotaCharged(writes)).toBeNull()
+    const monthly = writes.find(w => w.collection !== QUOTA_USAGE_COLLECTION)!
+    expect(monthly.data.unbilledAnswered.__inc).toBe(1)
+  })
+
   it('口徑統一後以 billable 為準（它比分項和多算 followup 再反問那種）', () => {
     expect(monthlyBillable({ period: '202610', answered: 100, disambiguations: 20, followupAnswered: 5, billable: 128 })).toBe(128)
   })

@@ -461,6 +461,11 @@ export interface AiUsageDoc {
    * `monthlyBillable()`，它會退回 `answered`——那是當時正確的歷史值（舊口徑下兩者相等）。
    */
   billable?: number
+  /**
+   * `answered` 之中**不扣則**的那幾次（`D-132`②，2026-10-19 起）：跟本店無關、AI 婉拒回答的那句。
+   * 它照樣算「AI 自己收尾、沒轉真人」（品質那邊仍是 answered），但不收錢——`monthlyBillable()` 要扣掉它。
+   */
+  unbilledAnswered?: number
   /** 因信心 / 敏感詞 / grounding 不過而 handoff 的次數 */
   handoffs: number
   /** 觸發反問澄清的次數 */

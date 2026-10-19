@@ -82,18 +82,39 @@ export interface UsageDelta {
    * **要扣客人幾則額度**（唯一驅動 quotaUsage 額度桶的欄位）。
    *
    * 2026-09-07 `D-69` 拍板的口徑：AI 出手回答一次算一則，**反問澄清也算**，
-   * 只有「這題我不確定，幫你請真人回覆」不算。所以它跟 {@link answered} 不同：
-   *   · 答出 → `answered: 1, billable: 1`
-   *   · 反問 → `disambiguations: 1, billable: 1`（沒有 answered——那不是「答完了」）
-   *   · 答不出轉真人 → `handoffs: 1`，**沒有 billable**（對外的賣點：答不出不扣額度）
-   *   · 反問後客人點選項、AI 答出 → `followupAnswered: 1, billable: 1`
-   *     （次數欄位刻意不計避免品質率灌水，但**錢照收**——客人確實拿到了答案）
-   *   · playground 測試 → 一律不帶（測試不該扣客人的錢）
+   * 只有「這題我不確定，幫你請真人回覆」不算。2026-10-19 `D-132` 補齊沒講到的幾種。
+   * 所以它跟 {@link answered} 不同——**每一種回覆扣不扣**（改的時候這張表要一起改）：
+   *
+   *   | 客人收到的                                   | 記帳                                              | 扣則 |
+   *   |----------------------------------------------|---------------------------------------------------|------|
+   *   | AI 答出                                      | `answered: 1, billable: 1`                        | 扣   |
+   *   | AI 反問（含出貨題「請問是哪一個商品」`C-344`） | `disambiguations: 1, billable: 1`（沒有 answered） | 扣   |
+   *   | 反問後客人點選項、AI 答出                     | `followupAnswered: 1, billable: 1`                | 扣   |
+   *   | 寒暄（謝謝→不客氣、你好、再見）              | `answered: 1, billable: 1`                        | 扣（`D-132`②） |
+   *   | 問的商品不在清單（「目前的商品資料裡沒有…」） | `answered: 1, billable: 1`                        | 扣（`D-132`②） |
+   *   | 出貨時程題直接答（`C-343`）                    | `answered: 1, billable: 1`                        | 扣   |
+   *   | 跟本店無關、AI 婉拒（「超出範圍」那句）       | `answered: 1, unbilledAnswered: 1`                | **不扣**（`D-132`②：其實就是答不出來） |
+   *   | 答不出轉真人／敏感詞／額度用完／AI 壞掉        | `handoffs: 1`                                     | 不扣（對外的賣點） |
+   *   | 查他那一筆訂單：先送一般規則、再轉真人        | `handoffs: 1`                                     | 不扣（`D-132`①：結局是轉真人） |
+   *   | 客人指名「找真人」                            | `handoffs: 1, directHandoffs: 1`                  | 不扣 |
+   *   | 客人只傳照片：AI 讀圖、問「想了解什麼」＋猜的按鈕 | `disambiguations: 1, billable: 1`（在 handler）  | 扣（`D-132`③，照反問算） |
+   *   | 只傳照片但 AI 猜不出、或額度用完（只問一句不附猜的按鈕） | 不記次數（讀圖只記 token）              | 不扣 |
+   *   | 客人只丟訂單資料，機器人問「想詢問什麼」（`D-133`） | 不記（不是 AI）                              | 不扣 |
+   *   | 讀圖寫給客服看的說明、轉真人摘要、意圖分類   | 只記 token                                        | 不扣 |
+   *   | playground 測試                               | 一律不帶（測試不該扣客人的錢）                    | 不扣 |
+   *
+   *   反問後的答出：次數欄位刻意不計避免品質率灌水，但**錢照收**——客人確實拿到了答案。
    *
    * ⛔ 別把它接回 `answered`：那顆是品質指標，動它會讓 AI 表現頁的「自己搞定率」失真。
    */
   billable?: number
   answered?: number
+  /**
+   * `answered` 之中**不扣則**的那幾次（`D-132`②）：跟本店無關、AI 婉拒回答的那句。
+   * 品質那邊它仍是「AI 自己收尾」（answered＋handoffs＋disambiguations＝invocations 的恆等式不動），
+   * 錢這邊不收。answerWithAi 看到它就不補 billable；`monthlyBillable()` 還原整月時要扣掉它。
+   */
+  unbilledAnswered?: number
   handoffs?: number
   disambiguations?: number
   /**
@@ -177,6 +198,7 @@ export async function recordAiUsage(
   // 但成本／超管報表要按月看「這個月收了幾則」。兩顆桶各記各的，不互相推算。
   if (delta.billable) updates.billable = FieldValue.increment(delta.billable)
   if (delta.answered) updates.answered = FieldValue.increment(delta.answered)
+  if (delta.unbilledAnswered) updates.unbilledAnswered = FieldValue.increment(delta.unbilledAnswered)
   if (delta.handoffs) updates.handoffs = FieldValue.increment(delta.handoffs)
   if (delta.disambiguations) updates.disambiguations = FieldValue.increment(delta.disambiguations)
   if (delta.importInputTokens) updates.importInputTokens = FieldValue.increment(delta.importInputTokens)
@@ -213,15 +235,19 @@ export const BILLABLE_FIELD_SINCE = '202609'
  *    依 {@link UsageDelta.billable} 的規則，`billable ≡ answered + disambiguations + followupAnswered`。
  * 3. **之後的月份** → 分項和 ≤ `billable`（「反問後客人點選項、AI 又反問一次」只記 billable，
  *    沒有對應的分項欄位），所以 `Math.max` 會自動選 `billable`，這裡不必再改一次。
+ *
+ * ⚠️ 分項和要扣掉 `unbilledAnswered`（`D-132`②，2026-10-19 起：跟本店無關、AI 婉拒的那句記 answered 但不扣則）。
+ *    不扣的話分項和會比 billable 多，`Math.max` 就把不收錢的那幾句又算回去。
  */
 export function monthlyBillable(
-  data: { billable?: number; answered?: number; disambiguations?: number; followupAnswered?: number; period?: string } | undefined | null,
+  data: { billable?: number; answered?: number; unbilledAnswered?: number; disambiguations?: number; followupAnswered?: number; period?: string } | undefined | null,
 ): number {
   if (!data) return 0
   const answered = Number(data.answered ?? 0)
   const period = String(data.period ?? '')
   if (period && period < BILLABLE_FIELD_SINCE) return answered
-  const derived = answered + Number(data.disambiguations ?? 0) + Number(data.followupAnswered ?? 0)
+  const derived = Math.max(0, answered - Number(data.unbilledAnswered ?? 0))
+    + Number(data.disambiguations ?? 0) + Number(data.followupAnswered ?? 0)
   return Math.max(Number(data.billable ?? 0), derived)
 }
 

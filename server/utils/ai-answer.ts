@@ -1774,7 +1774,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   const withBilling = (delta: UsageDelta): UsageDelta => {
     if (input.isTest) return delta
     if (delta.billable || !delta.answered) return delta
-    return { ...delta, billable: delta.answered }
+    // 跟本店無關、AI 婉拒的那句記 answered 但不扣則（`D-132`②），整張表見 UsageDelta.billable
+    const billable = delta.answered - (delta.unbilledAnswered ?? 0)
+    return billable > 0 ? { ...delta, billable } : delta
   }
 
   const record = (rawDelta: UsageDelta): Promise<void> => {
@@ -1793,7 +1795,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       // followup：真客人點按鈕的重跑，是真實成本 → 記進真客人 token，只是不再計次數。
       // 唯一例外：answered 訊號轉記 followupAnswered——反問後成功答出是「反問有效」的
       // 直接證據，完全不記的話反問的成果全隱形（AI 表現頁「先問清楚」會看起來像死路）。
-      if (delta.answered) tokensOnly.followupAnswered = delta.answered
+      // 婉拒那句（unbilledAnswered）不算「反問有效」，也不扣則
+      const followupAnswered = (delta.answered ?? 0) - (delta.unbilledAnswered ?? 0)
+      if (followupAnswered > 0) tokensOnly.followupAnswered = followupAnswered
       // ⚠️ 但**錢照收**：客人點完選項、AI 真的答出來了，那就是他要的答案。
       // 2026-09-07 之前這裡連 billable 都被吃掉＝反問後答出整串完全免費（`D-69` 抓到的洞）。
       if (delta.billable) tokensOnly.billable = delta.billable
@@ -1981,8 +1985,9 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   }
   // 明顯超出範圍（純閒聊 / 寫作代工 / 打探系統）→ 禮貌拒答收尾，**不轉真人**：
   // 這類訊息以前走 no_grounding 排進轉真人佇列，路人亂丟一句真人就得接一件（實測：天氣 / 寫詩 / prompt 注入全轉真人）。
+  // 不扣則（`D-132`②）：這句其實就是「答不出來」，只是不轉真人。
   if (intentRes?.intent === 'offtopic') {
-    await record({ invocations: 1, answered: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, answered: 1, unbilledAnswered: 1, inputTokens: routerIn, outputTokens: routerOut })
     return { decision: 'answered', answer: DEFAULT_OFFTOPIC_REPLY, confidence: 1, sources: [], handoffReason: null, answerKind: 'offtopic' }
   }
 
@@ -2774,6 +2779,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     await record({
       invocations: 1,
       answered: 1,
+      unbilledAnswered: 1, // 不扣則（`D-132`②），同 router 那一條
       embeddingTokens: embedTokenEstimate,
       inputTokens,
       outputTokens,
