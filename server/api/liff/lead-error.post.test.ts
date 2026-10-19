@@ -90,7 +90,8 @@ describe('POST /api/liff/lead-error', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const from = (ip: string, spoof: string) =>
       (handler as (e: unknown) => Promise<{ ok: boolean, recorded: boolean }>)({
-        node: { req: { headers: { 'x-forwarded-for': `${spoof}, ${ip}` }, socket: {} } },
+        // 正式站的形狀：[客人自己帶的, 訪客, CloudFront 節點]（2026-10-19 線上實測 `G-110`）
+        node: { req: { headers: { 'x-forwarded-for': `${spoof}, ${ip}, 130.176.1.1` }, socket: {} } },
       })
     body = { reason: 'load_timeout', liffId: '2007123456-AbCdEfGh' }
     for (let i = 0; i < 30; i++)

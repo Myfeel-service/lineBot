@@ -5,10 +5,10 @@
  * 1. 名額是**按 key 分開算**的——一個來源猛送不該擋到別人。
  * 2. 視窗過了就恢復：被擋一次不是被鎖住。
  * 3. 一次要好幾個名額（一批 30 個事件）時，只給得出剩下的那幾個，⛔ 不是整批放行或整批拒絕。
- * 4. 取 IP 取的是 `X-Forwarded-For` **最右邊**那格——最左邊是客人自己能填的。
+ * 4. 取 IP 取的是 `X-Forwarded-For` **倒數第二格**——最左邊是客人自己能填的，最右邊是 CloudFront 節點（很多人共用）。
  */
 import { describe, expect, it } from 'vitest'
-import { clientIpFromForwardedFor, createRateLimiter, forwardedForHops, rateLimitClientIp } from './rate-limit'
+import { clientIpFromForwardedFor, createRateLimiter, forwardedForHops, rateLimitClientIp, TRUSTED_TRAILING_HOPS } from './rate-limit'
 
 describe('createRateLimiter', () => {
   it('上限以內都給，超過才擋，並說出還要等多久', () => {
@@ -60,12 +60,21 @@ describe('createRateLimiter', () => {
 })
 
 describe('clientIpFromForwardedFor', () => {
-  it('⛔ 取最右邊：最左邊是客人自己帶的，換一個值就能繞過節流', () => {
-    expect(clientIpFromForwardedFor('6.6.6.6, 203.0.113.9')).toBe('203.0.113.9')
-    expect(clientIpFromForwardedFor('1.1.1.1,2.2.2.2 , 203.0.113.9 ')).toBe('203.0.113.9')
+  it('⛔ 取倒數第二格（CloudFront 看到的訪客）：最左邊是客人自己帶的，換一個值就能繞過節流', () => {
+    // 2026-10-19 線上實測（G-110）：沒帶標頭進來是 [訪客, CloudFront 節點]，自己帶一格是 [假的, 訪客, 節點]
+    expect(clientIpFromForwardedFor('203.0.113.9, 130.176.1.1')).toBe('203.0.113.9')
+    expect(clientIpFromForwardedFor('6.6.6.6, 203.0.113.9, 130.176.1.1')).toBe('203.0.113.9')
+    expect(clientIpFromForwardedFor('1.1.1.1,2.2.2.2 , 203.0.113.9 , 130.176.1.1 ')).toBe('203.0.113.9')
   })
 
-  it('只有一格就是那一格；沒有標頭回空字串', () => {
+  it('⛔ 最右邊那格是 CloudFront 節點、很多訪客共用：不同訪客經同一個節點不能拿到同一個 key', () => {
+    const a = clientIpFromForwardedFor('203.0.113.9, 130.176.1.1')
+    const b = clientIpFromForwardedFor('198.51.100.7, 130.176.1.1')
+    expect(a).not.toBe(b)
+    expect(TRUSTED_TRAILING_HOPS).toBe(1)
+  })
+
+  it('格數比預期少（本機自己帶一格）就是那一格；沒有標頭回空字串', () => {
     expect(clientIpFromForwardedFor('203.0.113.9')).toBe('203.0.113.9')
     expect(clientIpFromForwardedFor('')).toBe('')
     expect(clientIpFromForwardedFor(undefined)).toBe('')
@@ -84,8 +93,8 @@ describe('rateLimitClientIp', () => {
   const ev = (headers: Record<string, string>, remoteAddress?: string) =>
     ({ node: { req: { headers, socket: { remoteAddress } } } }) as never
 
-  it('有標頭用標頭最右邊；沒有就用連線位址；都沒有回 unknown（⛔ 不回空字串）', () => {
-    expect(rateLimitClientIp(ev({ 'x-forwarded-for': 'spoof, 203.0.113.9' }, '10.0.0.1'))).toBe('203.0.113.9')
+  it('有標頭用標頭倒數第二格；沒有就用連線位址；都沒有回 unknown（⛔ 不回空字串）', () => {
+    expect(rateLimitClientIp(ev({ 'x-forwarded-for': 'spoof, 203.0.113.9, 130.176.1.1' }, '10.0.0.1'))).toBe('203.0.113.9')
     expect(rateLimitClientIp(ev({}, '127.0.0.1'))).toBe('127.0.0.1')
     expect(rateLimitClientIp(ev({}))).toBe('unknown')
   })

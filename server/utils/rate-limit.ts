@@ -78,27 +78,34 @@ export function createRateLimiter(opts: { windowMs: number, max: number, maxKeys
  * （h3 1.15：`split(",").shift()`），而最左邊是客人自己帶上來的——每次換一個亂編的值，
  * 節流就等於沒有（`G-105`）。
  *
- * 取**最右邊**那一格：正式站是 AWS Amplify Hosting，前面是 CloudFront；CloudFront 會把
- * 「連到它的那個位址」**接在**這個標頭的最後面，客人自己帶的舊值原封不動留在前面。
- * 所以客人能控制的只有左邊，最右邊是 CloudFront 親眼看到的連線來源。
+ * 取**倒數第二格**：正式站是 AWS Amplify Hosting，前面是 CloudFront；CloudFront 會把
+ * 「連到它的那個位址」**接在**這個標頭的最後面，客人自己帶的舊值原封不動留在前面；
+ * Amplify 內部再往後接一格（CloudFront 節點自己的位址，很多訪客共用）。
+ * 所以客人能控制的只有左邊，倒數第二格是 CloudFront 親眼看到的連線來源。
  *
- * ⚠️ 前提是 CloudFront 之後沒有別的代理再往後接一格。若 Amplify 內部又多接一跳，最右邊會
- * 變成那一跳的位址（很多人共用）＝節流變成「同一個入口一起算」：擋得比較兇，但**不會被繞過**。
- * 所以各端點的上限都刻意留寬（見各自的說明）。
+ * ⛔ 2026-10-19 線上實測（`G-110`）：沒帶這個標頭的請求打到 Lambda 時是 **2 格**、自己帶一格假的是 3 格
+ * ——以前取最右邊，拿到的是 CloudFront 節點位址＝同一個節點後面的訪客共用一份額度（官網留名單會誤擋）。
+ * 後面接幾格寫在 `TRUSTED_TRAILING_HOPS`；`/api/warmup` 每次回報實際格數，對不上會留一行 log。
  *
- * 沒有這個標頭（本機 dev、直連）回空字串，呼叫端改用連線位址。
+ * 格數比預期少（本機 dev 自己帶一格之類）就取最左邊那格；沒有這個標頭回空字串，呼叫端改用連線位址。
  */
 export function clientIpFromForwardedFor(xff: string | null | undefined): string {
   const hops = forwardedForHops(xff)
-  return hops[hops.length - 1] ?? ''
+  return hops[Math.max(0, hops.length - 1 - TRUSTED_TRAILING_HOPS)] ?? ''
 }
+
+/**
+ * CloudFront 之後還會往 `X-Forwarded-For` 後面接幾格（Amplify 內部那一跳）。
+ * 沒帶這個標頭的請求走公開網址進來，Lambda 看到的格數＝這個值 + 1（CloudFront 自己那格）。
+ */
+export const TRUSTED_TRAILING_HOPS = 1
 
 /**
  * `X-Forwarded-For` 拆成一格一格（去空白、丟空格）。
  *
- * 另外給 `/api/warmup` 回報**格數**用（2026-09-30 code review）：上面那個「CloudFront 之後沒有
- * 別的代理」的前提線上還沒驗過。子保溫是從 Lambda 走公開網址打回來的、自己沒帶這個標頭——
- * 走到那裡看到 1 格＝前提成立；2 格以上＝Amplify 內部又接了一跳，節流 key 會變成大家共用。
+ * 另外給 `/api/warmup` 回報**格數**用（2026-09-30 code review）：子保溫是從 Lambda 走公開網址打回來的、
+ * 自己沒帶這個標頭——看到的格數＝`TRUSTED_TRAILING_HOPS + 1` 才對；不一樣＝前面的代理換了，
+ * 節流 key 會變成大家共用（格數變多）或客人自己帶的值（格數變少）。
  */
 export function forwardedForHops(xff: string | null | undefined): string[] {
   return String(xff || '')
@@ -107,7 +114,7 @@ export function forwardedForHops(xff: string | null | undefined): string[] {
     .filter(Boolean)
 }
 
-/** 節流用的來源位址：`X-Forwarded-For` 最右邊 → 連線位址 → `'unknown'`（⛔ 永遠不回空字串，免得所有人共用一個空 key 還看不出來） */
+/** 節流用的來源位址：`X-Forwarded-For` 倒數第二格 → 連線位址 → `'unknown'`（⛔ 永遠不回空字串，免得所有人共用一個空 key 還看不出來） */
 export function rateLimitClientIp(event: H3Event): string {
   const forwarded = event.node?.req?.headers?.['x-forwarded-for']
   const fromHeader = clientIpFromForwardedFor(Array.isArray(forwarded) ? forwarded.join(',') : forwarded)

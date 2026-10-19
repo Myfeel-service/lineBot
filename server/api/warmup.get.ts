@@ -1,7 +1,7 @@
 import { listWorkspaceLineCredentials } from '~~/server/utils/line-workspace-credentials'
 import { warmWorkspaceAutomationCaches } from '~~/server/utils/handler'
 import { assertCronAuthorized } from '~~/server/utils/cron-auth'
-import { forwardedForHops } from '~~/server/utils/rate-limit'
+import { forwardedForHops, TRUSTED_TRAILING_HOPS } from '~~/server/utils/rate-limit'
 import { getDb } from '~~/server/utils/firebase'
 import { LEAD_PATH } from '~~/shared/liff-lead-path'
 
@@ -92,13 +92,19 @@ export default defineEventHandler(async (event) => {
     warmPageRenderers(),
     Promise.all(childTasks),
   ])
+  // 走公開網址回來的子請求各看到幾格 X-Forwarded-For：要等於 TRUSTED_TRAILING_HOPS + 1，
+  // 節流挑的那格才是訪客本人（見 rate-limit.ts）；對不上＝前面的代理換了，留一行 log
+  const childXffHops = children.filter((h): h is number => h !== null)
+  const unexpectedHops = childXffHops.filter(h => h !== TRUSTED_TRAILING_HOPS + 1)
+  if (unexpectedHops.length) {
+    console.warn('[warmup] X-Forwarded-For hop count changed; rate-limit key may be wrong:', childXffHops, 'expected', TRUSTED_TRAILING_HOPS + 1)
+  }
   return {
     warmed: results,
     pagesWarmed,
-    childrenWarmed: children.filter(h => h !== null).length,
+    childrenWarmed: childXffHops.length,
     childrenTotal: childTasks.length,
-    // 走公開網址回來的子請求各看到幾格 X-Forwarded-For：全部是 1＝節流取最右邊那格是對的（見 rate-limit.ts）
-    childXffHops: children.filter((h): h is number => h !== null),
+    childXffHops,
     ms: Date.now() - startedAt,
   }
 })

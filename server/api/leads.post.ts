@@ -67,7 +67,7 @@ export default defineEventHandler(async (event) => {
 
   // ④ per-IP 節流（best-effort）
   // ⛔ 不用 `getRequestIP(event, { xForwardedFor: true })`：它取 X-Forwarded-For 最左邊那格，
-  //    那是客人自己能填的，每次換一個值就繞過了（`G-105`）。為什麼取最右邊見 `rateLimitClientIp`。
+  //    那是客人自己能填的，每次換一個值就繞過了（`G-105`）。為什麼取倒數第二格見 `clientIpFromForwardedFor`。
   const ip = rateLimitClientIp(event)
   if (ipLimiter.take(ip).limited) {
     throw createError({ statusCode: 429, statusMessage: '送出太頻繁了，請稍後再試' })
