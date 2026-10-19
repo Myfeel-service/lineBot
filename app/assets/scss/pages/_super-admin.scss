@@ -309,6 +309,14 @@ $cost-test: #8a939b;
   font-variant-numeric: tabular-nums;
 }
 
+/* 「這個月是用大模型價格估的」那一句（D-130②）：附註口氣，跟比例條下的小字同一級，不搶上面的金額 */
+.sa-cost-pricing-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #6b7280);
+}
+
 /* 估算用單價：整頁唯一一個「拿去乘」的數字，給它一條獨立的橫幅免得被當成又一個統計值 */
 .sa-cost-rate {
   display: flex;

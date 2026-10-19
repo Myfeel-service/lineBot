@@ -134,6 +134,8 @@
                   <span class="sa-cost-legend__val">{{ ntdSoft(totals.testCostUsd) }} ・ {{ pct(totals.testCostUsd) }}%</span>
                 </div>
               </div>
+              <!-- 照實際模型分價（`D-130`②）之前的紀錄只能用大模型價格估：哪個月有這種紀錄就講一句，沒有就不出現 -->
+              <p v-if="pricingNote" class="sa-cost-pricing-note">{{ pricingNote }}</p>
             </template>
             <div v-else class="sa-cost-empty">{{ emptyText }}</div>
 
@@ -172,6 +174,8 @@
                   <li><b>答不出來的判斷</b>：決定要轉真人、還是反問客人一句 <span class="sa-cost-guide__price">一樣算一次</span></li>
                   <li><b>判斷該不該走自動回應</b>：這句要不要交給自動回應接手 <span class="sa-cost-guide__price">幾乎免費</span></li>
                   <li><b>讀客人傳的照片</b>：看懂圖片內容才知道怎麼接 <span class="sa-cost-guide__price">併入同一則</span></li>
+                  <!-- 2026-10-19 起才記帳（`C-338`①）：轉真人、按「我接手」時的交接摘要 -->
+                  <li><b>轉真人時寫交接摘要</b>：讓接手的人一眼看懂前因後果 <span class="sa-cost-guide__price">很少</span></li>
                 </ul>
                 <!-- 與上方「估算抓這個數字」同一個來源，兩處不會各說各的 -->
                 <div class="sa-cost-guide__foot">
@@ -192,6 +196,8 @@
                   <li><b>每天掃知識缺口</b>：找出答不出來的問題、草擬補充建議 <span class="sa-cost-guide__price">很少</span></li>
                   <!-- 2026-10 知識庫改版新增的幾項，錢都記在這一格（2026-10-17 對過程式） -->
                   <li><b>重新學習、做總表、每份資料摘要</b>：資料改過後重新整理 <span class="sa-cost-guide__price">很少</span></li>
+                  <!-- 2026-10-19 起才記帳（`C-338`①）：開帳讀網站、從既有資料猜輪廓 -->
+                  <li><b>認識你的店</b>：開帳時讀你的網站、或從既有資料猜你的店 <span class="sa-cost-guide__price">很少</span></li>
                 </ul>
                 <div class="sa-cost-guide__foot sa-cost-guide__foot--warn">⚠ 重傳沒改過的檔會重算重收</div>
               </div>
@@ -208,6 +214,10 @@
                   <!-- ⛔ 不是「同回答客人」：問一句它可能查好幾輪資料、每輪都叫一次 AI，記帳卻只算一次 -->
                   <li><b>問小幫手</b>：右下角助理幫你查狀況、給建議 <span class="sa-cost-guide__price">一句可能跑好幾輪</span></li>
                   <li><b>一句話生成自動回應</b>：吐出一整份流程，比一則回覆貴 <span class="sa-cost-guide__price">約 8～10 倍</span></li>
+                  <!-- 2026-10-19 起才記帳（`C-338`①）；每日摘要的節慶建議是排程自己跑的，也是給你看的，算這裡 -->
+                  <li><b>擬推播文案、貼標報告、節慶建議</b>：AI 幫你寫好給你看 <span class="sa-cost-guide__price">很少</span></li>
+                  <!-- ⛔ 以前照文字的價格記成一張 NT$0.1（少 12 倍，`C-338`③） -->
+                  <li><b>畫圖文選單底圖</b>：AI 畫一張背景 <span class="sa-cost-guide__price">一張約 NT$1.2</span></li>
                 </ul>
                 <div class="sa-cost-guide__foot">
                   <template v-if="testPerCallText">這個月平均一次 <b>{{ testPerCallText }}</b>，不算到客人頭上</template>
@@ -596,6 +606,8 @@ interface CostsResponse {
   prevPeriod: string
   totals: Totals
   prevTotalCostUsd: number
+  /** 生成 token 裡有多少是照大模型價格估的（照實際模型分價之前的紀錄）；舊版後端沒有這格 */
+  modelPricing?: { unsplitTokens: number, genTokens: number }
   workspaces: CostRow[]
 }
 
@@ -715,6 +727,7 @@ const period = ref(currentPeriod())
 const workspaces = ref<CostRow[]>([])
 const totals = ref<Totals>({ conversationCostUsd: 0, buildCostUsd: 0, testCostUsd: 0, totalCostUsd: 0, invocations: 0, answered: 0, billable: 0, testInvocations: 0, activeWorkspaces: 0 })
 const prevTotalCostUsd = ref(0)
+const modelPricing = ref({ unsplitTokens: 0, genTokens: 0 })
 
 // ── 資料庫（Firebase）實際花費 ────────────────────────────────
 // 用量來自 Cloud Monitoring，不是估的；三態（載入中／讀不到／有資料）分開處理，
@@ -1015,6 +1028,20 @@ const deltaPct = computed(() => {
 })
 
 /**
+ * AI 花費是不是照實際用的模型算的（`D-130`②）。照模型分價上線之前，月結桶只有總數、不知道是哪顆模型，
+ * 只能全部用大模型（flash）的價格估——判斷意圖、反問那些其實是便宜 3～6 倍的小模型，所以估得偏高。
+ * ⛔ 不寫死日期：上線日由推上去那天決定，這句照資料講（這個月有沒有「不知道模型」的紀錄）才不會說錯。
+ * 上線後新記的都有模型明細，之後的月份這句就不會出現。
+ */
+const pricingNote = computed(() => {
+  const { unsplitTokens, genTokens } = modelPricing.value
+  if (unsplitTokens <= 0 || genTokens <= 0) return ''
+  return unsplitTokens >= genTokens * 0.99
+    ? '這個月是用大模型的價格估的，會比實際高一些。'
+    : '這個月前段是用大模型的價格估的，會比實際高一些；之後照實際用的模型算。'
+})
+
+/**
  * 後台自用平均一次多少錢。⛔ 不可以寫死成「跟回答客人一樣」：
  * 小幫手問一句可能跑好幾輪 AI、記帳只算一次（2026-10 實測一次 NT$0.13，回答客人 NT$0.04）。
  */
@@ -1080,6 +1107,7 @@ async function loadAi() {
     workspaces.value = res.workspaces
     totals.value = res.totals
     prevTotalCostUsd.value = res.prevTotalCostUsd
+    modelPricing.value = res.modelPricing ?? { unsplitTokens: 0, genTokens: 0 }
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '讀取失敗', 'error')
