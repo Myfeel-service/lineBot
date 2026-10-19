@@ -20,15 +20,17 @@
  *   8. 否則 → answered，回傳 answer + sources
  */
 import { pinyin } from 'pinyin-pro'
+import type { Firestore } from 'firebase-admin/firestore'
 import { getWorkspaceProductNames, searchChunksByIdentifierTag, searchSimilarChunks, searchSimilarChunksWithDrafts, type SimilarChunk } from './ai-knowledge-chunks'
 import { getCatalogSourceIds } from './ai-knowledge-sources'
 import { contentSimilarity } from './ai-knowledge-resync'
 import { canonicalProductName, dedupeProductNames, getProductAliases, normalizeProductName, productsByAliasIn, productVocabulary } from './ai-product-alias'
-import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText } from './gemini'
+import { describeGeminiError, embedQuery, estimateTokens, generateJson, generateText, type GeminiTextModel } from './gemini'
 import { getAiSettings, getGroundingThreshold } from './ai-settings'
 import { logHandoffEvent } from './ai-handoff-events'
 import { maybeWarnQuotaThreshold, maybeNotifyQuotaExhausted } from './ai-handoff-notify'
 import { getCurrentMonthTokens, getQuotaAnswered, recordAiUsage, type UsageDelta } from './ai-usage'
+import { mergeUsage, usageFromCalls, withAiCallMeter, type AiCallUsage } from './ai-usage-calls'
 import { resolveAnsweredQuota, resolveQuotaAction } from './billing'
 import { getDb } from './firebase'
 import {
@@ -361,6 +363,8 @@ export interface IntentResult {
   noNeedDemoted?: boolean
   inputTokens: number
   outputTokens: number
+  /** 判意圖那次實際用的模型（固定 flash-lite）；記帳照它的單價算。舊的假資料沒有這格 */
+  model?: GeminiTextModel
 }
 
 const VALID_INTENTS: MessageIntent[] = ['greeting', 'thanks', 'farewell', 'no_need', 'find_human', 'sensitive', 'compare', 'commercial', 'list', 'offtopic', 'order_status', 'question']
@@ -498,7 +502,7 @@ export async function classifyIntent(text: string, history?: AiChatTurn[]): Prom
   ].filter(Boolean).join('\n\n')
 
   try {
-    const { data, inputTokens, outputTokens } = await generateJson<{ intent?: unknown; isFollowup?: unknown; standaloneQuery?: unknown; compareItems?: unknown; subQuestions?: unknown }>(prompt, {
+    const { data, inputTokens, outputTokens, model } = await generateJson<{ intent?: unknown; isFollowup?: unknown; standaloneQuery?: unknown; compareItems?: unknown; subQuestions?: unknown }>(prompt, {
       systemInstruction: INTENT_SYSTEM_INSTRUCTION,
       temperature: 0,
       // 多吐改寫問題 + compareItems + subQuestions，maxOutputTokens 從 280 拉到 360 留餘裕
@@ -531,6 +535,7 @@ export async function classifyIntent(text: string, history?: AiChatTurn[]): Prom
       noNeedDemoted,
       inputTokens,
       outputTokens,
+      model,
     }
   }
   catch (err) {
@@ -600,7 +605,7 @@ subQuestions：客人一句話問了 2 件以上不同的事時，拆成各自�
   ].filter(Boolean).join('\n\n')
 
   try {
-    const { data, inputTokens, outputTokens } = await generateJson<{ scriptId?: unknown; intent?: unknown; isFollowup?: unknown; standaloneQuery?: unknown; compareItems?: unknown; subQuestions?: unknown }>(prompt, {
+    const { data, inputTokens, outputTokens, model } = await generateJson<{ scriptId?: unknown; intent?: unknown; isFollowup?: unknown; standaloneQuery?: unknown; compareItems?: unknown; subQuestions?: unknown }>(prompt, {
       systemInstruction,
       temperature: 0,
       maxOutputTokens: 400,
@@ -635,9 +640,11 @@ subQuestions：客人一句話問了 2 件以上不同的事時，拆成各自�
       noNeedDemoted,
       inputTokens,
       outputTokens,
+      model,
     }
   }
   catch (err) {
+    // ⚠️ JSON 壞掉那次也付了錢：呼叫端要在 withAiCallMeter 底下呼叫這支才記得到（見 handler／playground）
     console.warn('[ai-answer] routeMessage failed, caller will fall back:', err)
     return null
   }
@@ -668,12 +675,18 @@ const HANDOFF_SUMMARY_TIMEOUT_MS = 4000
  * 為 handoff 生成 2–3 句對話摘要，給真人客服快速掌握前因後果。
  * best-effort：失敗 / 逾時 / 無對話內容皆回空字串（呼叫端自行決定不顯示）。
  * reason === 'llm_error' 時直接跳過——Gemini 正暴掉，再打也是白打。
- * 用 flash-lite + thinkingBudget 0，handoff 屬罕見事件，token 量可忽略故不另計用量。
+ * 用 flash-lite + thinkingBudget 0。
+ *
+ * 記帳（`C-338`①）：以前寫「量可忽略故不另計」，結果這筆錢在成本頁上完全不存在。
+ * 帶了 `usage.workspaceId` 就記進「回答客人」那桶（轉真人、我接手都跟著客人量走），**不記次數**——
+ * 次數欄位是「客人來一則 AI 出手一次」，這裡加上去會讓答出＋反問＋轉真人湊不回總數。
+ * ⛔ 記帳掛在呼叫本身、不等它寫完：逾時放棄等摘要時錢一樣付了，回來照記；也不拖慢轉真人。
  */
 export async function summarizeHandoffContext(
   history: AiChatTurn[] | undefined,
   latestMessage: string,
   reason?: HandoffReason | null,
+  usage?: { workspaceId: string; db?: Firestore },
 ): Promise<string> {
   if (reason === 'llm_error') return ''
 
@@ -695,16 +708,17 @@ export async function summarizeHandoffContext(
     const timeout = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), HANDOFF_SUMMARY_TIMEOUT_MS)
     })
-    const res = await Promise.race([
-      generateText(transcript, {
-        systemInstruction: HANDOFF_SUMMARY_SYSTEM_INSTRUCTION,
-        temperature: 0.2,
-        maxOutputTokens: 200,
-        model: 'gemini-2.5-flash-lite',
-        thinkingBudget: 0,
-      }),
-      timeout,
-    ])
+    const generated = generateText(transcript, {
+      systemInstruction: HANDOFF_SUMMARY_SYSTEM_INSTRUCTION,
+      temperature: 0.2,
+      maxOutputTokens: 200,
+      model: 'gemini-2.5-flash-lite',
+      thinkingBudget: 0,
+    }).then((r) => {
+      if (usage?.workspaceId) void recordAiUsage(usage.workspaceId, usageFromCalls('conversation', [r]), usage.db)
+      return r
+    })
+    const res = await Promise.race([generated, timeout])
     if (!res) return ''
     return res.text.trim().slice(0, 300)
   }
@@ -1597,7 +1611,8 @@ async function generateDisambiguation(
   candidates: SimilarChunk[],
   query: string,
   settings: AiSettingsDoc,
-): Promise<{ payload: DisambiguationPayload | null; inputTokens: number; outputTokens: number }> {
+): Promise<{ payload: DisambiguationPayload | null }> {
+  // 不回傳 token：這次呼叫（成功、JSON 壞掉都一樣）由 answerWithAi 的計量器記帳
   const titlesList = candidates.map((c, i) => `${i + 1}. ${c.title}`).join('\n')
 
   const prompt = [
@@ -1664,10 +1679,7 @@ async function generateDisambiguation(
       if (matched.length >= settings.disambiguation.maxOptions) break
     }
 
-    // 反問不成立也要把 token 帶回去：LLM 已經呼叫過了，呼叫端才能入帳
-    if (!clarification || matched.length < 2) {
-      return { payload: null, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
-    }
+    if (!clarification || matched.length < 2) return { payload: null }
 
     const options = matched.map(m => ({
       chunkId: m.chunk.id,
@@ -1676,22 +1688,38 @@ async function generateDisambiguation(
       label: m.label || m.chunk.title.slice(0, 20),
     }))
 
-    return {
-      payload: { clarification, options },
-      inputTokens: res.inputTokens,
-      outputTokens: res.outputTokens,
-    }
+    return { payload: { clarification, options } }
   }
   catch (err) {
     console.error('[ai-answer] generateDisambiguation failed:', err)
-    return { payload: null, inputTokens: 0, outputTokens: 0 }
+    return { payload: null }
   }
 }
 
 /**
  * 主要答題函式。同步流程；不直接寫對話訊息（呼叫方自己決定要 reply 還是 push）。
+ *
+ * 記帳（`C-338`②／`D-130`②）：這一題裡每一次付了錢的生成呼叫——判意圖、反問、答題、再讀一次，
+ * **包括 JSON 壞掉、被丟掉的那幾次**——都由 gemini.ts 的出口記進 `meter`（帶著實際用的模型），
+ * 各終點的 record 把它倒出來入帳。以前是各終點自己把 token 一路加總，JSON 壞掉那次就整筆漏掉。
  */
 export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
+  const meter: AiCallUsage[] = []
+  try {
+    return await withAiCallMeter(meter, () => answerWithAiMetered(input, meter))
+  }
+  finally {
+    // 沒走到任何終點就結束（中途丟錯）時，計量器裡還有付過錢的呼叫：照樣入帳（recordAiUsage 不會丟錯）
+    if (meter.length && input.workspaceId) {
+      await recordAiUsage(input.workspaceId, usageFromCalls(input.isTest ? 'test' : 'conversation', meter.splice(0)))
+    }
+  }
+}
+
+/** answerWithAi 每個終點記帳時帶的東西：只有次數與向量 token——生成 token 由計量器負責，這裡帶了也會被重複算 */
+type AnswerRecordDelta = Omit<UsageDelta, 'inputTokens' | 'outputTokens' | 'testInputTokens' | 'testOutputTokens' | 'importInputTokens' | 'importOutputTokens' | 'modelTokens'>
+
+async function answerWithAiMetered(input: AnswerInput, meter: AiCallUsage[]): Promise<AnswerOutput> {
   const { workspaceId, query } = input
   const text = String(query || '').trim()
   if (!text) return handoff('manual')
@@ -1711,7 +1739,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
    * 規則（`D-69` 拍板）：答出＝計費；反問由該終點自己帶 `billable`（它沒有 answered）；
    * 轉真人不計費。⛔ 測試對話一律不計費——playground 試打不該扣客人的額度。
    */
-  const withBilling = (delta: UsageDelta): UsageDelta => {
+  const withBilling = (delta: AnswerRecordDelta): AnswerRecordDelta => {
     if (input.isTest) return delta
     if (delta.billable || !delta.answered) return delta
     // 跟本店無關、AI 婉拒的那句記 answered 但不扣則（`D-132`②），整張表見 UsageDelta.billable
@@ -1719,14 +1747,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     return billable > 0 ? { ...delta, billable } : delta
   }
 
-  const record = (rawDelta: UsageDelta): Promise<void> => {
+  const record = (rawDelta: AnswerRecordDelta): Promise<void> => {
+    // 生成 token 一律從計量器倒（到這一刻為止付過錢、還沒入帳的每一次呼叫，帶著各自的模型）。
+    // 測試導到 test*（真客人成本與每次單價都不含測試，但仍看得到測試花了多少）；followup 是真客人的重跑、照記客人那桶。
+    const generated = usageFromCalls(input.isTest ? 'test' : 'conversation', meter.splice(0))
     const delta = withBilling(rawDelta)
-    if (!recordTokensOnly) return recordAiUsage(workspaceId, delta, db)
+    if (!recordTokensOnly) return recordAiUsage(workspaceId, mergeUsage(delta, generated), db)
     const tokensOnly: UsageDelta = {}
     if (input.isTest) {
-      // 測試：token 導到獨立的 test* 欄位——真客人成本與每對話成本都不含測試，但仍看得到測試花了多少。
-      if (delta.inputTokens) tokensOnly.testInputTokens = delta.inputTokens
-      if (delta.outputTokens) tokensOnly.testOutputTokens = delta.outputTokens
       if (delta.embeddingTokens) tokensOnly.testEmbeddingTokens = delta.embeddingTokens
       // 真客人的 invocations 訊號改導向 testInvocations：每次測試答題剛好計一次（各終點互斥、只 record 一次 invocations）。
       if (delta.invocations) tokensOnly.testInvocations = delta.invocations
@@ -1741,14 +1769,11 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       // ⚠️ 但**錢照收**：客人點完選項、AI 真的答出來了，那就是他要的答案。
       // 2026-09-07 之前這裡連 billable 都被吃掉＝反問後答出整串完全免費（`D-69` 抓到的洞）。
       if (delta.billable) tokensOnly.billable = delta.billable
-      if (delta.inputTokens) tokensOnly.inputTokens = delta.inputTokens
-      if (delta.outputTokens) tokensOnly.outputTokens = delta.outputTokens
       if (delta.embeddingTokens) tokensOnly.embeddingTokens = delta.embeddingTokens
-      if (delta.importInputTokens) tokensOnly.importInputTokens = delta.importInputTokens
-      if (delta.importOutputTokens) tokensOnly.importOutputTokens = delta.importOutputTokens
     }
-    if (!Object.keys(tokensOnly).length) return Promise.resolve()
-    return recordAiUsage(workspaceId, tokensOnly, db)
+    const out = mergeUsage(tokensOnly, generated)
+    if (!Object.keys(out).length) return Promise.resolve()
+    return recordAiUsage(workspaceId, out, db)
   }
 
   // 轉真人事件流（知識缺口報表的資料地基）：aiMeta 只存每客人最後一筆，報表需要逐事件記錄。
@@ -1860,46 +1885,45 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 與 embedQuery 同時跑；classifyIntent 失敗回 null，fallback 回 regex/heuristic。
   let intentRes: IntentResult | null
   let queryVector: number[]
+  // classifyIntent 自己吞錯（失敗回 null），不會讓 Promise.all 失敗；單獨留著是為了下面那個 catch
+  const intentPromise = input.precomputedIntent
+    ? Promise.resolve(input.precomputedIntent)
+    : classifyIntent(text, input.history)
   try {
-    const [ir, qv] = await Promise.all([
-      input.precomputedIntent
-        ? Promise.resolve(input.precomputedIntent)
-        : classifyIntent(text, input.history),
-      embedQuery(text),
-    ])
+    const [ir, qv] = await Promise.all([intentPromise, embedQuery(text)])
     intentRes = ir
     queryVector = qv
   }
   catch (err) {
     console.error('[ai-answer] embedQuery failed:', err)
+    // 轉向量先失敗時判意圖可能還在跑：等它回來再記帳，那次的錢才會落在這一筆裡（不然會在入帳之後才回來、整筆漏掉）
+    await intentPromise.catch(() => null)
     await record({ invocations: 1, handoffs: 1 })
     logHandoff('llm_error')
     // 帶上失敗原因：這一步（轉向量／意圖分類）與下面生成那一步都會變成同一個 llm_error，
     // 不寫清楚是哪一步、對方回什麼，事後除了「失敗」兩個字什麼都查不到
     return handoff('llm_error', [], `檢索前置（轉向量／意圖分類）：${describeGeminiError(err)}`)
   }
-  // precomputed 的 router token 已由 handler 記帳，這裡歸零避免重複計
-  const routerIn = input.precomputedIntent ? 0 : (intentRes?.inputTokens ?? 0)
-  const routerOut = input.precomputedIntent ? 0 : (intentRes?.outputTokens ?? 0)
+  // 判意圖的 token 不在這裡加總：這一題自己叫的那次已經在計量器裡；precomputed 的是 handler 叫的、它自己記帳
   eventIntent = intentRes?.intent ?? null
 
   // ── 3.5 意圖分流（router 失敗則用 regex/heuristic fallback）──
   // 語意敏感（關鍵字漏抓的換句話說）→ 轉真人。關鍵字硬擋已在步驟 1 做過，這裡是補抓。
   if (intentRes?.intent === 'sensitive') {
-    await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, handoffs: 1 })
     logHandoff('sensitive_topic')
     return handoff('sensitive_topic')
   }
   // 明確要求真人
   if (intentRes?.intent === 'find_human') {
-    await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, handoffs: 1 })
     logHandoff('user_request')
     return handoff('user_request')
   }
   // 業務洽詢（議價 / 團購 / 客製包裝）：需業務人員談，知識庫答不了。直接轉真人，
   // 不走 RAG / 反問（否則只會亂反問選產品，且選了也沒對應卡）。
   if (intentRes?.intent === 'commercial') {
-    await record({ invocations: 1, handoffs: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, handoffs: 1 })
     logHandoff('commercial_inquiry')
     return handoff('commercial_inquiry')
   }
@@ -1919,7 +1943,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 社交（招呼 / 道謝 / 道別 / 婉拒）→ 罐頭，不走 RAG
   const social = intentRes ? socialReplyForIntent(intentRes.intent) : socialCannedReply(text, input.history)
   if (social) {
-    await record({ invocations: 1, answered: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, answered: 1 })
     // answerKind='social'：沒查知識庫。後台脈絡卡靠它避免把「謝謝」講成「知識庫沒有相關資訊」
     return { decision: 'answered', answer: social, confidence: 1, sources: [], handoffReason: null, answerKind: 'social' }
   }
@@ -1927,7 +1951,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   // 這類訊息以前走 no_grounding 排進轉真人佇列，路人亂丟一句真人就得接一件（實測：天氣 / 寫詩 / prompt 注入全轉真人）。
   // 不扣則（`D-132`②）：這句其實就是「答不出來」，只是不轉真人。
   if (intentRes?.intent === 'offtopic') {
-    await record({ invocations: 1, answered: 1, unbilledAnswered: 1, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ invocations: 1, answered: 1, unbilledAnswered: 1 })
     return { decision: 'answered', answer: DEFAULT_OFFTOPIC_REPLY, confidence: 1, sources: [], handoffReason: null, answerKind: 'offtopic' }
   }
 
@@ -1958,7 +1982,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
    */
   const skipQuietly = async (why: string): Promise<AnswerOutput> => {
     console.log(`[ai-answer] 不回這句（${why}）:`, text.slice(0, 40))
-    await record({ embeddingTokens: embedTokenEstimate, inputTokens: routerIn, outputTokens: routerOut })
+    await record({ embeddingTokens: embedTokenEstimate })
     return {
       decision: 'skipped',
       answer: '',
@@ -2306,8 +2330,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
             invocations: 1,
             handoffs: 1,
             embeddingTokens: embedTokenEstimate,
-            inputTokens: routerIn,
-            outputTokens: routerOut,
           })
           logHandoff(reasonFor('product_mismatch'), chunks)
           return handoff(reasonFor('product_mismatch'), chunks)
@@ -2352,8 +2374,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         disambiguations: 1,
         billable: 1, // 反問也算一則（`D-69`），同上
         embeddingTokens: embedTokenEstimate,
-        inputTokens: routerIn,
-        outputTokens: routerOut,
       })
       return {
         decision: 'disambiguate',
@@ -2370,8 +2390,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       invocations: 1,
       handoffs: 1,
       embeddingTokens: embedTokenEstimate,
-      inputTokens: routerIn,
-      outputTokens: routerOut,
     })
     logHandoff(reasonFor('no_grounding'), chunks)
     return handoff(reasonFor('no_grounding'), chunks)
@@ -2410,8 +2428,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         // 不收的話「故意設計成一直反問再轉真人」就能白吃服務。
         billable: 1,
         embeddingTokens: embedTokenEstimate,
-        inputTokens: dis.inputTokens + routerIn,
-        outputTokens: dis.outputTokens + routerOut,
       })
       return {
         decision: 'disambiguate',
@@ -2423,10 +2439,7 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       }
     }
     // generateDisambiguation 未成立（JSON 壞掉、白名單過濾後 < 2 個）→ 退回正常 grounding/answer。
-    // LLM token 已花，先入帳（router/embed token 由後續最終分支入帳，不重複）。
-    if (dis.inputTokens || dis.outputTokens) {
-      await record({ inputTokens: dis.inputTokens, outputTokens: dis.outputTokens })
-    }
+    // 那次的錢已經在計量器裡（JSON 壞掉那次也在），由後面的終點一起入帳。
   }
 
   // ── 5. grounding 檢查 ────────────────────────────────────
@@ -2450,8 +2463,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           disambiguations: 1,
           billable: 1, // 反問也算一則（`D-69`），同上
           embeddingTokens: embedTokenEstimate,
-          inputTokens: routerIn,
-          outputTokens: routerOut,
         })
         return {
           decision: 'disambiguate',
@@ -2481,8 +2492,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           invocations: 1,
           answered: 1,
           embeddingTokens: embedTokenEstimate,
-          inputTokens: routerIn,
-          outputTokens: routerOut,
         })
         return {
           decision: 'answered',
@@ -2497,8 +2506,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         invocations: 1,
         handoffs: 1,
         embeddingTokens: embedTokenEstimate,
-        inputTokens: routerIn,
-        outputTokens: routerOut,
       })
       logHandoff(reasonFor('no_grounding'), chunks)
       return handoff(reasonFor('no_grounding'), chunks)
@@ -2643,8 +2650,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
   let answerText = ''
   let hasInfo = true
   let offTopic = false
-  let inputTokens = 0
-  let outputTokens = 0
   try {
     // 結構化輸出：hasInfo 由 LLM 明確回報，取代舊版對「沒有這個資訊」的字串比對
     // （LLM 換個說法就漏網、把道歉文當正式回答發給客人）。
@@ -2696,18 +2701,14 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
         hasInfo = true
       }
     }
-    // 併入 intent router 的 token（與 embedding 並行的那次 flash-lite 分類）
-    inputTokens = res.inputTokens + routerIn
-    outputTokens = res.outputTokens + routerOut
   }
   catch (err) {
     console.error('[ai-answer] generateText failed:', err)
+    // JSON 壞掉時這次答題的錢已經付了：計量器裡有它，這筆照樣入帳（以前整筆漏掉，`C-338`②）
     await record({
       invocations: 1,
       handoffs: 1,
       embeddingTokens: embedTokenEstimate,
-      inputTokens: routerIn,
-      outputTokens: routerOut,
     })
     logHandoff('llm_error', chunks)
     return handoff('llm_error', chunks, `生成回答：${describeGeminiError(err)}`)
@@ -2721,8 +2722,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       answered: 1,
       unbilledAnswered: 1, // 不扣則（`D-132`②），同 router 那一條
       embeddingTokens: embedTokenEstimate,
-      inputTokens,
-      outputTokens,
     })
     return {
       decision: 'answered',
@@ -2749,8 +2748,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
           thinkingBudget: 0,
         },
       )
-      inputTokens += retry.inputTokens
-      outputTokens += retry.outputTokens
       const retryAnswer = String(retry.data?.answer ?? '').trim()
       // 同樣不接受「再讀一次之後還是說知識卡沒寫、但 hasInfo=true」的答案
       if (retry.data?.hasInfo !== false && retryAnswer && !FAKE_HANDOFF_RE.test(retryAnswer) && !looksLikeNoInfoAnswer(retryAnswer)) {
@@ -2786,8 +2783,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       invocations: 1,
       handoffs: 1,
       embeddingTokens: embedTokenEstimate,
-      inputTokens,
-      outputTokens,
     })
     const finalReason: HandoffReason = reasonFor(passesContent ? 'low_confidence' : 'no_grounding')
     logHandoff(finalReason, chunks)
@@ -2810,8 +2805,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
       invocations: 1,
       handoffs: 1,
       embeddingTokens: embedTokenEstimate,
-      inputTokens,
-      outputTokens,
     })
     logHandoff('order_status', chunks)
     return {
@@ -2828,8 +2821,6 @@ export async function answerWithAi(input: AnswerInput): Promise<AnswerOutput> {
     invocations: 1,
     answered: 1,
     embeddingTokens: embedTokenEstimate,
-    inputTokens,
-    outputTokens,
   })
 
   if (shipTimingAnswer) {

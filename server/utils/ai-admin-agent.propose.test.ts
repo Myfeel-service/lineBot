@@ -768,6 +768,27 @@ describe('畫面上的字（D-116）', () => {
     expect(generateJson.mock.calls[1]?.[0]).toContain('不是 JSON')
   })
 
+  it('⛔ 格式壞掉重來前那次也付了錢：回傳的用量要算進去，而且每次呼叫帶著模型（`C-338`②）', async () => {
+    generateJson
+      .mockRejectedValueOnce(Object.assign(parseError(), { aiUsage: { model: 'gemini-2.5-flash', inputTokens: 3000, outputTokens: 500 } }))
+      .mockResolvedValueOnce({ ...step({ action: 'answer', text: '昨天沒有推播紀錄。' }), model: 'gemini-2.5-flash' })
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '客人說沒收到推播' })
+    expect(res.inputTokens).toBe(3005)
+    expect(res.outputTokens).toBe(505)
+    expect(res.calls).toEqual([
+      { model: 'gemini-2.5-flash', inputTokens: 3000, outputTokens: 500 },
+      { model: 'gemini-2.5-flash', inputTokens: 5, outputTokens: 5 },
+    ])
+  })
+
+  it('兩次都壞、講人話收尾時，兩次的錢都帶回去給端點記', async () => {
+    const broken = () => Object.assign(parseError(), { aiUsage: { model: 'gemini-2.5-flash', inputTokens: 100, outputTokens: 50 } })
+    generateJson.mockRejectedValueOnce(broken()).mockRejectedValueOnce(broken())
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '客人說沒收到推播' })
+    expect(res.calls).toHaveLength(2)
+    expect(res.inputTokens).toBe(200)
+  })
+
   it('同一輪兩支工具都要異常總覽 → 只查一次（實測三支工具、查兩次，等了 44 秒）', async () => {
     let alertCalls = 0
     ;(globalThis as any).$fetch = async (url: string) => {

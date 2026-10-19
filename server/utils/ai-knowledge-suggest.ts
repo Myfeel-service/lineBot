@@ -18,6 +18,7 @@ import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { embedQuery, generateJson, estimateTokens } from './gemini'
 import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
+import { aiUsageOfError, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { isRawSuggestionTopic, topicFromDraftTitle } from '~~/shared/knowledge-suggestion-topic'
 import { isPersonalOrderGroup } from '~~/shared/knowledge-suggestion-personal-order'
@@ -297,7 +298,7 @@ interface DraftContextCard {
 async function draftGapCard(
   sampleQueries: string[],
   contextCards: DraftContextCard[],
-): Promise<{ topic: string; draft: KnowledgeSuggestionDraft; inputTokens: number; outputTokens: number }> {
+): Promise<{ topic: string; draft: KnowledgeSuggestionDraft; inputTokens: number; outputTokens: number; model: string }> {
   const prompt = [
     '客人問過但 AI 答不出的問題（同一主題的樣本）：',
     ...sampleQueries.slice(0, 6).map(q => `- ${q}`),
@@ -308,7 +309,7 @@ async function draftGapCard(
       : '（無——知識庫目前完全沒有相關內容，草稿內容請全部用佔位符留給商家填）',
   ].join('\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{
+  const { data, inputTokens, outputTokens, model } = await generateJson<{
     topic?: unknown
     title?: unknown
     content?: unknown
@@ -324,7 +325,8 @@ async function draftGapCard(
 
   const title = String(data?.title ?? '').trim().slice(0, 100)
   const content = String(data?.content ?? '').trim().slice(0, 3000)
-  if (!title || !content) throw new Error('draft: LLM 回傳的 title/content 為空')
+  // 回了空的那次也付了錢：用量帶在錯誤上給呼叫端記帳（`C-338`②）
+  if (!title || !content) throw Object.assign(new Error('draft: LLM 回傳的 title/content 為空'), { aiUsage: { model, inputTokens, outputTokens } })
 
   return {
     topic: String(data?.topic ?? '').trim().slice(0, 20) || title.slice(0, 12),
@@ -336,6 +338,7 @@ async function draftGapCard(
     },
     inputTokens,
     outputTokens,
+    model,
   }
 }
 
@@ -373,14 +376,13 @@ async function tryDraft(
 
   try {
     const r = await draftGapCard(sampleQueries, contextCards)
-    // import* 分項要同時計入 inputTokens/outputTokens（quota 以總量計）——ai-usage.ts 的契約
-    usage.importInputTokens = (usage.importInputTokens ?? 0) + r.inputTokens
-    usage.importOutputTokens = (usage.importOutputTokens ?? 0) + r.outputTokens
-    usage.inputTokens = (usage.inputTokens ?? 0) + r.inputTokens
-    usage.outputTokens = (usage.outputTokens ?? 0) + r.outputTokens
+    // 記進整理知識庫那桶（usageFromCalls 同時寫總數與 import*，照實際模型算）
+    Object.assign(usage, mergeUsage(usage, usageFromCalls('build', callsOf(r))))
     return { topic: r.topic, draft: r.draft, error: '' }
   }
   catch (e) {
+    // 草擬失敗（JSON 壞掉、回空的）那次也付了錢（`C-338`②）
+    Object.assign(usage, mergeUsage(usage, usageFromCalls('build', [aiUsageOfError(e)])))
     const error = String((e as Error)?.message ?? e).slice(0, 300)
     console.warn('[kb-suggest] draft failed:', error)
     return { topic: '', draft: null, error }

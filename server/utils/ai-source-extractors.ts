@@ -145,8 +145,8 @@ const OCR_PROMPT = `這是一份掃描或圖片格式的 PDF。請把文件中�
  * 掃描檔 fallback：把整份 PDF 丟給 Gemini 多模態辨識文字。
  * caller 負責頁數上限檢查(MAX_OCR_PAGES)與 token 入帳。
  */
-export async function ocrPdfWithGemini(buffer: Buffer): Promise<ExtractedSource & { inputTokens: number; outputTokens: number }> {
-  const { text, inputTokens, outputTokens } = await generateParts(
+export async function ocrPdfWithGemini(buffer: Buffer): Promise<ExtractedSource & { inputTokens: number; outputTokens: number; model?: string }> {
+  const { text, inputTokens, outputTokens, model } = await generateParts(
     [
       { inlineData: { mimeType: 'application/pdf', data: buffer.toString('base64') } },
       { text: OCR_PROMPT },
@@ -160,7 +160,7 @@ export async function ocrPdfWithGemini(buffer: Buffer): Promise<ExtractedSource 
     },
   )
   const { text: t, rawLength } = trimToLimit(text)
-  return { text: t, rawLength, meta: { ocr: 1 }, inputTokens, outputTokens }
+  return { text: t, rawLength, meta: { ocr: 1 }, inputTokens, outputTokens, model }
 }
 
 // ── 照片（`C-296`）───────────────────────────────────────────────────
@@ -185,8 +185,8 @@ const IMAGE_OCR_PROMPT = `這是一張照片或圖片（可能是價目表、菜
 export async function ocrImageWithGemini(
   buffer: Buffer,
   mimeType: string,
-): Promise<ExtractedSource & { inputTokens: number; outputTokens: number }> {
-  const { text, inputTokens, outputTokens } = await generateParts(
+): Promise<ExtractedSource & { inputTokens: number; outputTokens: number; model?: string }> {
+  const { text, inputTokens, outputTokens, model } = await generateParts(
     [
       { inlineData: { mimeType, data: buffer.toString('base64') } },
       { text: IMAGE_OCR_PROMPT },
@@ -194,7 +194,7 @@ export async function ocrImageWithGemini(
     { temperature: 0, maxOutputTokens: 8192, thinkingBudget: 0 },
   )
   const { text: t, rawLength } = trimToLimit(text)
-  return { text: t, rawLength, meta: { ocr: 1 }, inputTokens, outputTokens }
+  return { text: t, rawLength, meta: { ocr: 1 }, inputTokens, outputTokens, model }
 }
 
 // ── Word／PowerPoint／純文字檔（`C-296`）────────────────────────────

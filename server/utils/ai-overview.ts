@@ -21,6 +21,7 @@ import {
   updateKnowledgeChunk,
 } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
+import { callsOf, usageFromCalls } from './ai-usage-calls'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
 
 /**
@@ -112,12 +113,7 @@ export async function regenerateOverviewCard(
   )
   if (!ov) return 'skipped'
 
-  await recordAiUsage(workspaceId, {
-    inputTokens: ov.inputTokens,
-    outputTokens: ov.outputTokens,
-    importInputTokens: ov.inputTokens,
-    importOutputTokens: ov.outputTokens,
-  }).catch(() => {})
+  await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(ov)))
 
   if (existingOverview) {
     await updateKnowledgeChunk(db, {

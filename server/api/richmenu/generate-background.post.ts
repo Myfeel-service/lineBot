@@ -1,6 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateImage, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -46,14 +47,13 @@ export default defineEventHandler(async (event) => {
     'No text, no letters, no numbers, no buttons, no frames, no grid lines, no icons, no logo, no watermark.',
   ].join('\n')
 
-  const img = await runWithLlmBudget(workspaceId, () => generateImage(prompt, { aspectRatio }))
-
-  // 成本進「後台自用」那桶：這是我們自己在後台用的，混進客人那桶會讓每則成本虛高
-  recordAiUsage(workspaceId, {
-    testInputTokens: img.inputTokens,
-    testOutputTokens: img.outputTokens,
-    testInvocations: 1,
-  }, getDb()).catch(e => console.error('[richmenu/generate-background] recordAiUsage error:', e))
+  // 成本進「後台自用」那桶：這是我們自己在後台用的，混進客人那桶會讓每則成本虛高。
+  // ⛔ 一定要帶著生圖模型記（`C-338`③）：它的輸出一百萬 token 要 US$30，以前當成文字模型的 US$2.5 算，
+  //    一張 US$0.039 記成 US$0.003＝少 12 倍。模型只回字、沒給圖那次也付了錢，用計量器一起記。
+  const img = await runMeteredAi(
+    () => runWithLlmBudget(workspaceId, () => generateImage(prompt, { aspectRatio })),
+    calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, getDb()),
+  )
 
   return { imageBase64: img.data, contentType: img.mimeType }
 })

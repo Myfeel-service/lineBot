@@ -21,6 +21,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION, createKnowledgeChunk } from '~~/server/uti
 import { KNOWLEDGE_SOURCES_COLLECTION, listSourceUrlKeys, sourceUrlKey } from '~~/server/utils/ai-knowledge-sources'
 import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { aiUsageOfError, callsOf, runMeteredAi, usageFromCalls, type AiCallUsage } from '~~/server/utils/ai-usage-calls'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import {
   classifyFetchError,
@@ -199,7 +200,12 @@ export async function advanceStoreProfileJob(
   }
 
   try {
-    const { guesses } = await extractProfileFromPages(next.pages)
+    // 記帳（`C-338`①：以前只取 guesses、token 整筆沒記；一次最多 2.4 萬字）：讀網站認識你的店＝整理知識庫那桶。
+    // 用計量器記：模型回的 JSON 壞掉、這一步算失敗時，錢一樣付了
+    const { guesses } = await runMeteredAi(
+      () => extractProfileFromPages(next.pages),
+      calls => recordAiUsage(next.workspaceId, usageFromCalls('build', calls), db),
+    )
     // 併進輪廓：⛔ 商家改過的欄位一律跳過（那是 mergeAiGuesses 的責任，這裡不繞過它）
     const profile = await getStoreProfile(next.workspaceId, db)
     const merged = mergeAiGuesses(profile, guesses, at)
@@ -532,8 +538,8 @@ export async function advanceSiteCards(
     })
   }
 
-  let inputTokens = 0
-  let outputTokens = 0
+  /** 這一步付過錢的切卡呼叫（帶模型；JSON 被截斷、整理失敗那幾次也算，`C-338`②） */
+  const calls: AiCallUsage[] = []
   let embeddingTokens = 0
   const timeLeft = () => Date.now() - startedAt < budgetMs
   /**
@@ -571,6 +577,8 @@ export async function advanceSiteCards(
         }
         catch (e) {
           if (isMaintenanceBudgetError(e)) throw e
+          const lost = aiUsageOfError(e)
+          if (lost) calls.push(lost)
           state.tries = (state.tries ?? 0) + 1
           const reason = String((e as Error)?.message || '整理失敗').slice(0, 120)
           if (state.tries >= SITE_CARDS_PAGE_MAX_TRIES) {
@@ -583,8 +591,7 @@ export async function advanceSiteCards(
           console.warn(`[site-cards] ${jobId} 第 ${p + 1} 頁第 ${state.tries} 次沒整理成，下一步再試：`, reason)
           break
         }
-        inputTokens += r.inputTokens
-        outputTokens += r.outputTokens
+        calls.push(...callsOf(r))
         state.tries = 0
         const room = Math.max(0, SITE_CARDS_MAX_TOTAL - state.cards)
         const keep = r.chunks.slice(0, SITE_CARDS_MAX_PER_PAGE).slice(0, room)
@@ -685,10 +692,8 @@ export async function advanceSiteCards(
     }
   }
 
-  // ⚠️ 花掉的錢照實入帳（`D-89`：開帳讀網站原本那一次 LLM 沒入帳，這裡不重蹈覆轍）
-  if (inputTokens || outputTokens) {
-    await recordAiUsage(wid, { inputTokens, outputTokens, importInputTokens: inputTokens, importOutputTokens: outputTokens }, db).catch(() => {})
-  }
+  // ⚠️ 花掉的錢照實入帳（`D-89`：開帳讀網站原本那一次 LLM 沒入帳，這裡不重蹈覆轍）；照實際模型算（`D-130`②）
+  if (calls.length) await recordAiUsage(wid, usageFromCalls('build', calls), db)
   if (embeddingTokens) await recordAiUsage(wid, { buildEmbeddingTokens: embeddingTokens }, db).catch(() => {})
 
   const saved = await save(true)

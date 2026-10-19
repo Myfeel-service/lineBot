@@ -19,11 +19,15 @@ function prevYyyyMm(p: string): string {
 /** 三桶成本（口徑與 /api/ai/usage/summary 共用同一份 bucketAiCosts，不再各寫一次算式）。 */
 function bucketCosts(u: Partial<AiUsageDoc> | undefined) {
   const b = bucketAiCosts(u)
+  const genTokens = (x: typeof b.conversation) => x.inputTokens + x.outputTokens
   return {
     conversation: b.conversation.costUsd,
     build: b.build.costUsd,
     test: b.test.costUsd,
     total: b.totalCostUsd,
+    // 生成 token 裡有多少是「不知道哪顆模型、照大模型價格估」的（`D-130`②：照模型分價上線前的紀錄）
+    unsplitTokens: b.conversation.unsplitTokens + b.build.unsplitTokens + b.test.unsplitTokens,
+    genTokens: genTokens(b.conversation) + genTokens(b.build) + genTokens(b.test),
   }
 }
 
@@ -59,8 +63,12 @@ export default defineEventHandler(async (event) => {
   const enabledByWs = new Map<string, boolean>()
   settingsSnap.docs.forEach(d => enabledByWs.set(d.id, (d.data() as { enabled?: boolean }).enabled === true))
 
+  let unsplitTokens = 0
+  let genTokens = 0
   const workspaces = wsSnap.docs.map((d) => {
     const c = bucketCosts(usageByWs.get(d.id))
+    unsplitTokens += c.unsplitTokens
+    genTokens += c.genTokens
     const u = usageByWs.get(d.id)
     return {
       id: d.id,
@@ -117,6 +125,13 @@ export default defineEventHandler(async (event) => {
       activeWorkspaces: acc.activeWorkspaces,
     },
     prevTotalCostUsd: round4(prevTotal),
+    /**
+     * 這個月的 AI 花費有多少是照實際模型算的（`D-130`②）。畫面靠它講一句「這段是用大模型價格估的」：
+     *   - unsplitTokens＝不知道是哪顆模型、照大模型（flash）價格估的生成 token（照模型分價上線前的紀錄）
+     *   - genTokens＝全部生成 token（不含向量）
+     * ⛔ 舊資料不回填：月結桶是加總值，拆不出哪幾個 token 是哪顆模型的（同 `F-1`）。
+     */
+    modelPricing: { unsplitTokens, genTokens },
     workspaces,
   }
 })

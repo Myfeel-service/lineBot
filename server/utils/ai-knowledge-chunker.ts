@@ -11,6 +11,7 @@
  *   所以超過 SEGMENT_CHAR_LEN 就切段、逐段呼叫再合併
  */
 import { generateJson } from './gemini'
+import { aiUsageOfError, callsOf, type AiCallsCarrier } from './ai-usage-calls'
 import { normalizeForCompare } from './ai-knowledge-resync'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
 import type { ChunkInput } from './ai-knowledge-chunks'
@@ -74,10 +75,12 @@ interface ChunkerJsonResponse {
   chunks?: Array<{ title?: unknown; content?: unknown; tags?: unknown; questions?: unknown }>
 }
 
-export interface ChunkerResult {
+/**
+ * 切卡結果。記帳照模型分價（`D-130`②）：切一段＝一次呼叫，帶 `model`；
+ * 分段切（chunkTextWithLlm）＝好幾次呼叫，逐次放在 `calls`。記帳端一律用 `callsOf()` 攤開。
+ */
+export interface ChunkerResult extends AiCallsCarrier {
   chunks: ChunkInput[]
-  inputTokens: number
-  outputTokens: number
 }
 
 /**
@@ -204,7 +207,7 @@ export async function chunkSegment(text: string, hint: string | undefined): Prom
     '------',
   ].filter(Boolean).join('\n\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<ChunkerJsonResponse>(prompt, {
+  const { data, inputTokens, outputTokens, model } = await generateJson<ChunkerJsonResponse>(prompt, {
     systemInstruction: SYSTEM_INSTRUCTION,
     // temperature 0（不是 0.2）：切卡是抽取任務，不需要多樣性，而「同一份原文重切兩次要得到
     // 同一批卡」是重新同步能不能被信任的前提。0.2 會讓每次重切換句話說、甚至換一種切法，
@@ -235,7 +238,7 @@ export async function chunkSegment(text: string, hint: string | undefined): Prom
     chunks.push({ title, content, tags, questions, sourceId: null })
   }
 
-  return { chunks, inputTokens, outputTokens }
+  return { chunks, inputTokens, outputTokens, model }
 }
 
 /**
@@ -246,7 +249,7 @@ export async function chunkSegment(text: string, hint: string | undefined): Prom
  */
 export async function chunkTextWithLlm(rawText: string, opts?: { hint?: string }): Promise<ChunkerResult> {
   const text = String(rawText || '').trim()
-  if (!text) return { chunks: [], inputTokens: 0, outputTokens: 0 }
+  if (!text) return { chunks: [], inputTokens: 0, outputTokens: 0, calls: [] }
 
   const segments = segmentText(text)
 
@@ -272,11 +275,10 @@ export async function chunkTextWithLlm(rawText: string, opts?: { hint?: string }
   // 照段序合併 + 去重（同 title 留先出現的那張），維持與原循序版相同的取捨順序。
   const seenTitles = new Set<string>()
   const merged: ChunkInput[] = []
-  let inputTokens = 0
-  let outputTokens = 0
+  // token 用全部段算（⛔ 不放進下面會提早 break 的迴圈：撞卡數上限之後那幾段也已經付了錢）
+  const inputTokens = results.reduce((s, r) => s + r.inputTokens, 0)
+  const outputTokens = results.reduce((s, r) => s + r.outputTokens, 0)
   for (const res of results) {
-    inputTokens += res.inputTokens
-    outputTokens += res.outputTokens
     for (const c of res.chunks) {
       // 同 resync 的比對尺（normalizeForCompare）:只去空白吃不到全半形/大小寫變體 → 影子卡
       const key = normalizeForCompare(c.title)
@@ -288,7 +290,7 @@ export async function chunkTextWithLlm(rawText: string, opts?: { hint?: string }
     if (merged.length >= MAX_TOTAL_CHUNKS) break
   }
 
-  return { chunks: merged, inputTokens, outputTokens }
+  return { chunks: merged, inputTokens, outputTokens, calls: results.flatMap(callsOf) }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -325,10 +327,8 @@ function overviewSourceLine(c: ChunkInput): string {
   return firstLine ? `- ${c.title}：${firstLine}` : `- ${c.title}`
 }
 
-export interface OverviewResult {
+export interface OverviewResult extends AiCallsCarrier {
   card: ChunkInput
-  inputTokens: number
-  outputTokens: number
 }
 
 /**
@@ -350,7 +350,7 @@ export async function summarizeAsOverviewCard(
     '------',
   ].filter(Boolean).join('\n\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{
+  const { data, inputTokens, outputTokens, model } = await generateJson<{
     title?: unknown
     content?: unknown
     tags?: unknown
@@ -365,6 +365,7 @@ export async function summarizeAsOverviewCard(
 
   const title = String(data?.title ?? '').trim()
   const content = String(data?.content ?? '').trim()
+  // ⚠️ 模型回了空的標題／內容時那次也付了錢，但這裡回 null 呼叫端就記不到（極少見，刻意不改回傳形狀）
   if (!title || !content) return null
   const tags = Array.isArray(data?.tags)
     ? data.tags.map(t => String(t).trim()).filter(Boolean).slice(0, 6)
@@ -377,6 +378,7 @@ export async function summarizeAsOverviewCard(
     card: { title, content, tags, questions, sourceId: null, isOverview: true },
     inputTokens,
     outputTokens,
+    model,
   }
 }
 
@@ -413,11 +415,9 @@ export interface EnrichedCard {
   tags: string[]
 }
 
-export interface EnrichResult {
+export interface EnrichResult extends AiCallsCarrier {
   /** 與輸入同長度、同順序；LLM 漏答（或該批失敗）的位置為空陣列 */
   items: EnrichedCard[]
-  inputTokens: number
-  outputTokens: number
 }
 
 /**
@@ -437,7 +437,7 @@ export async function enrichCardBatch(
     '------',
   ].join('\n\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{
+  const { data, inputTokens, outputTokens, model } = await generateJson<{
     cards?: Array<{ index?: unknown; questions?: unknown; tags?: unknown }>
   }>(prompt, {
     systemInstruction: ENRICH_SYSTEM_INSTRUCTION,
@@ -468,7 +468,7 @@ export async function enrichCardBatch(
         : [],
     }
   }
-  return { items, inputTokens, outputTokens }
+  return { items, inputTokens, outputTokens, model }
 }
 
 /**
@@ -490,10 +490,13 @@ export async function enrichCardsWithLlm(
     }
     catch (e) {
       console.warn('[enrichCardsWithLlm] batch failed（該批卡片不補問法，照常繼續）:', e)
+      // JSON 壞掉那批也付了錢：用量照帶回去記帳（`C-338`②）
+      const lost = aiUsageOfError(e)
       return {
         items: batch.map(() => ({ questions: [], tags: [] })),
-        inputTokens: 0,
-        outputTokens: 0,
+        inputTokens: lost?.inputTokens ?? 0,
+        outputTokens: lost?.outputTokens ?? 0,
+        calls: lost ? [lost] : [],
       } satisfies EnrichResult
     }
   }))
@@ -502,6 +505,7 @@ export async function enrichCardsWithLlm(
     items: results.flatMap(r => r.items),
     inputTokens: results.reduce((s, r) => s + r.inputTokens, 0),
     outputTokens: results.reduce((s, r) => s + r.outputTokens, 0),
+    calls: results.flatMap(callsOf),
   }
 }
 
@@ -555,13 +559,11 @@ const NORMALIZE_SYSTEM_INSTRUCTION = `你是專業的客服知識整理助手。
 輸出格式（嚴格 JSON）：
 { "title": "string", "content": "string", "tags": ["string"], "questions": ["string"] }`
 
-export interface NormalizeResult {
+export interface NormalizeResult extends AiCallsCarrier {
   title: string
   content: string
   tags: string[]
   questions: string[]
-  inputTokens: number
-  outputTokens: number
 }
 
 /**
@@ -583,7 +585,7 @@ export async function normalizeChunkWithLlm(input: {
     '------',
   ].join('\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{
+  const { data, inputTokens, outputTokens, model } = await generateJson<{
     title?: unknown
     content?: unknown
     tags?: unknown
@@ -606,10 +608,14 @@ export async function normalizeChunkWithLlm(input: {
     : []
 
   if (!content) {
-    throw createError({ statusCode: 502, statusMessage: 'normalize: LLM 回傳的 content 為空' })
+    // 回了空內容那次也付了錢：用量帶在錯誤上，呼叫端照樣記帳（`C-338`②）
+    throw Object.assign(
+      createError({ statusCode: 502, statusMessage: 'normalize: LLM 回傳的 content 為空' }),
+      { aiUsage: { model, inputTokens, outputTokens } },
+    )
   }
 
-  return { title, content, tags, questions, inputTokens, outputTokens }
+  return { title, content, tags, questions, inputTokens, outputTokens, model }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -628,10 +634,8 @@ const DETECT_PRODUCT_SYSTEM_INSTRUCTION = `你在幫商家整理客服知識庫�
 
 輸出格式（嚴格 JSON）：{ "productName": "string" }`
 
-export interface DetectProductNameResult {
+export interface DetectProductNameResult extends AiCallsCarrier {
   productName: string
-  inputTokens: number
-  outputTokens: number
 }
 
 /** 首頁、全品項、品牌總覽這類「不是一台商品」的名字（`C-325`：MYFEEL 官網首頁被認成「MYFEEL全品項總覽」，店名從此被當成一台商品） */
@@ -676,7 +680,7 @@ export async function detectProductName(
     String(sampleText ?? '').slice(0, 2000),
   ].join('\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{ productName?: unknown }>(prompt, {
+  const { data, inputTokens, outputTokens, model } = await generateJson<{ productName?: unknown }>(prompt, {
     systemInstruction: DETECT_PRODUCT_SYSTEM_INSTRUCTION,
     temperature: 0.1,
     maxOutputTokens: 256,
@@ -688,5 +692,6 @@ export async function detectProductName(
     productName: String(data?.productName ?? '').trim().slice(0, 60),
     inputTokens,
     outputTokens,
+    model,
   }
 }

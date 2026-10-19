@@ -1,5 +1,6 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
@@ -39,19 +40,23 @@ export default defineEventHandler(async (event) => {
   const wsSnap = await db.collection('workspaces').doc(workspaceId).get()
   const shopName = String((wsSnap.data() as { name?: string } | undefined)?.name ?? '').trim()
 
-  const out = await rewordStoreDraft(workspaceId, key, {
-    shopName,
-    profile,
-    current: String(body?.current ?? '').slice(0, MAX_CURRENT),
-  })
-  // 維運那一側（⛔ 不寫 billable：這不是回客人的一則）
+  let out: Awaited<ReturnType<typeof rewordStoreDraft>>
+  try {
+    out = await rewordStoreDraft(workspaceId, key, {
+      shopName,
+      profile,
+      current: String(body?.current ?? '').slice(0, MAX_CURRENT),
+    })
+  }
+  catch (e) {
+    // 模型回的 JSON 壞掉那次也付了錢（`C-338`②）
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]), db)
+    throw e
+  }
+  // 維運那一側（⛔ 不寫 billable：這不是回客人的一則）；照實際模型算
   if (out.inputTokens || out.outputTokens) {
-    await recordAiUsage(workspaceId, {
-      inputTokens: out.inputTokens,
-      outputTokens: out.outputTokens,
-      importInputTokens: out.inputTokens,
-      importOutputTokens: out.outputTokens,
-    }, db).catch(e => console.warn('[store-profile/reword] 記用量失敗：', workspaceId, e))
+    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(out)), db)
   }
   if (!out.body) {
     // ⛔ 丟了什麼要說得出來；框裡的字沒動

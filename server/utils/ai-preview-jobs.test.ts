@@ -15,7 +15,7 @@ vi.mock('./ai-source-extractors', async (importActual) => {
   return { ...actual, ocrPdfWithGemini: vi.fn(), ocrImageWithGemini: vi.fn() }
 })
 
-import { advanceWork, CHUNK_PARALLEL, makeWork, progressFor, workToPreviewResult } from './ai-preview-jobs'
+import { advanceWork, CHUNK_PARALLEL, jobUsageDeltaCalls, makeWork, progressFor, workToPreviewResult } from './ai-preview-jobs'
 import { chunkSegment, ENRICH_BATCH_SIZE, enrichCardBatch, summarizeAsOverviewCard } from './ai-knowledge-chunker'
 import { ocrImageWithGemini, ocrPdfWithGemini } from './ai-source-extractors'
 import { splitPdfPageRange } from './pdf-split'
@@ -136,6 +136,42 @@ describe('advanceWork — chunk 階段', () => {
     await advanceWork(work) // 小段成功 → cursor 2 → finalize
     expect(work.phase).toBe('finalize')
     expect(work.chunks.length).toBe(2)
+  })
+
+  it('⛔ 截斷那次也付了錢：用量照算進這份工作（以前只算成功的段，`C-338`②），而且照模型分', async () => {
+    const truncErr = Object.assign(
+      new Error('Gemini JSON parse failed: Unterminated string in JSON'),
+      { statusMessage: 'Gemini JSON parse failed: Unterminated string in JSON', aiUsage: { model: 'gemini-2.5-flash', inputTokens: 6000, outputTokens: 12288 } },
+    )
+    mockChunk.mockImplementation(async (text: string) => {
+      if (text.length > 4000) throw truncErr
+      return { chunks: [card(`T${text.length}`)], inputTokens: 10, outputTokens: 20, model: 'gemini-2.5-flash-lite' }
+    })
+    const work = makeWork({ type: 'text', generateOverview: false })
+    work.sourceName = 'doc'
+    work.segments = ['x\n'.repeat(3000)]
+    work.phase = 'chunk'
+
+    await advanceWork(work) // 截斷：錢付了、段切成兩半
+    expect(work.usage).toEqual({ inputTokens: 6000, outputTokens: 12288, byModel: { flash: { input: 6000, output: 12288 } } })
+    await advanceWork(work) // 兩小段成功（這裡演成 flash 塞車改 lite 的那兩次）
+    expect(work.usage).toEqual({
+      inputTokens: 6020,
+      outputTokens: 12328,
+      byModel: { flash: { input: 6000, output: 12288 }, flashLite: { input: 20, output: 40 } },
+    })
+  })
+
+  it('入帳的差額照模型拆：上一次記過的不再記、沒帶模型的照 flash 估（舊工作）', () => {
+    const calls = jobUsageDeltaCalls(
+      { inputTokens: 1000, outputTokens: 300, byModel: { flash: { input: 700, output: 200 }, flashLite: { input: 100, output: 50 } } },
+      { inputTokens: 500, outputTokens: 100, byModel: { flash: { input: 400, output: 60 } } },
+    )
+    expect(calls).toEqual([
+      { model: 'gemini-2.5-flash', inputTokens: 300, outputTokens: 140 },
+      { model: 'gemini-2.5-flash-lite', inputTokens: 100, outputTokens: 50 },
+      { model: '', inputTokens: 100, outputTokens: 10 }, // 1000-500-300-100 ／ 300-100-140-50
+    ])
   })
 
   it('非截斷錯誤（如網路 502）不切，直接往外丟', async () => {

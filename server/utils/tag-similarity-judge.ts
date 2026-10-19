@@ -14,6 +14,8 @@
  * ⛔ 沒有候選就**不呼叫**（別為了零組配對去燒一次額度）。
  */
 import { generateJson, runWithLlmBudget } from './gemini'
+import { recordAiUsage } from './ai-usage'
+import { aiUsageOfError, usageFromCalls } from './ai-usage-calls'
 
 /** 一次最多送幾組給判官（防提案數暴增時把 prompt 撐爆） */
 export const MAX_JUDGE_PAIRS = 12
@@ -108,12 +110,12 @@ export function parseJudgeVerdicts(raw: unknown, count: number): JudgedPair[] {
 export async function judgeSimilarTagNames(
   workspaceId: string,
   pairs: JudgeNamePair[],
-): Promise<{ verdicts: JudgedPair[]; inputTokens: number; outputTokens: number } | null> {
+): Promise<{ verdicts: JudgedPair[]; inputTokens: number; outputTokens: number; model?: string } | null> {
   if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0 }
   const batch = pairs.slice(0, MAX_JUDGE_PAIRS)
 
   try {
-    const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
+    const { data, inputTokens, outputTokens, model } = await runWithLlmBudget(workspaceId, () =>
       generateJson<{ results?: RawVerdictRow[] }>(buildJudgePrompt(batch), {
         // 「兩個短名字是不是同一件事」是簡單任務（同挑選類），用便宜的那顆
         model: 'gemini-2.5-flash-lite',
@@ -124,10 +126,13 @@ export async function judgeSimilarTagNames(
     const verdicts = parseJudgeVerdicts(data, batch.length)
     // 撞到上限被切掉的那幾組補成 unsure＝不出聲（長度必須對得起來，見 parseJudgeVerdicts）
     while (verdicts.length < pairs.length) verdicts.push({ verdict: 'unsure', reason: '' })
-    return { verdicts, inputTokens, outputTokens }
+    return { verdicts, inputTokens, outputTokens, model }
   }
   catch (e) {
     console.warn('[tag-similarity] 判官失敗，這輪不出相似提醒：', workspaceId, e)
+    // JSON 壞掉那次也付了錢：回 null 呼叫端就記不到，所以在這裡記（整理知識庫那桶，`C-338`②）
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]))
     return null
   }
 }

@@ -17,6 +17,8 @@
  */
 
 import { generateText, runWithLlmBudget } from '~~/server/utils/gemini'
+import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { splitProducts } from '~~/shared/store-profile-drafts'
 import { storeProfileForPrompt, type StoreProfileDoc } from '~~/shared/types/store-profile'
 import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
@@ -137,13 +139,17 @@ export async function tailorFestivalAngle(
   if (!splitProfileProducts(profile).length) return null
 
   try {
-    const res = await runWithLlmBudget(workspaceId, () =>
-      generateText(buildTailorPrompt(profile, festival, daysUntil), {
-        // 這是文案不是抽事實，給一點溫度；但仍要短、要準
-        temperature: 0.4,
-        maxOutputTokens: 200,
-        thinkingBudget: 0,
-      }))
+    // 記帳（`C-338`①：以前完全沒記）：每日摘要給老闆看的那一句，跟客人多寡無關＝後台自用，次數一起記
+    const res = await runMeteredAi(
+      () => runWithLlmBudget(workspaceId, () =>
+        generateText(buildTailorPrompt(profile, festival, daysUntil), {
+          // 這是文案不是抽事實，給一點溫度；但仍要短、要準
+          temperature: 0.4,
+          maxOutputTokens: 200,
+          thinkingBudget: 0,
+        })),
+      calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
+    )
     const text = normalizeTailoredAngle(res.text ?? '', festival.name)
     const bad = rejectTailoredAngle(text, profile)
     if (bad) {

@@ -1,6 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { normalizeChunkWithLlm } from '~~/server/utils/ai-knowledge-chunker'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 
 /**
  * POST /api/ai/knowledge/normalize
@@ -26,14 +27,18 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '請提供 title 與 content' })
   }
 
-  const result = await normalizeChunkWithLlm({ title, content, tags })
+  let result: Awaited<ReturnType<typeof normalizeChunkWithLlm>>
+  try {
+    result = await normalizeChunkWithLlm({ title, content, tags })
+  }
+  catch (e) {
+    // JSON 壞掉／回空內容那次也付了錢（`C-338`②）
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]))
+    throw e
+  }
 
-  await recordAiUsage(workspaceId, {
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    importInputTokens: result.inputTokens,
-    importOutputTokens: result.outputTokens,
-  }).catch(() => {})
+  await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(result)))
 
   return {
     title: result.title,

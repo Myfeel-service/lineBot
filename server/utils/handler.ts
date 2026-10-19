@@ -68,6 +68,7 @@ import { getStoreProfile } from './store-profile'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
+import { usageFromCalls, withAiCallMeter, type AiCallUsage } from './ai-usage-calls'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
 import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
@@ -3109,15 +3110,14 @@ async function runScriptStart(
     }
     const hints = scripts.map(s => ({ id: s.id, name: s.name, hints: triggerHints(s) }))
     const history = getHistory ? await getHistory().catch(() => [] as AiChatTurn[]) : []
-    route = await routeMessage(textContent, hints, history).catch((e) => {
+    // 路由也是一次 LLM 呼叫，要記帳（否則月用量低估）。用計量器記：路由 JSON 壞掉、回 null 的那次也付了錢（`C-338`②），
+    // 而且帶著實際模型（flash-lite）算錢（`D-130`②）。⛔ 不等它寫完：這裡在客人等回覆的路上
+    const routeCalls: AiCallUsage[] = []
+    route = await withAiCallMeter(routeCalls, () => routeMessage(textContent, hints, history)).catch((e) => {
       console.error('[script] routeMessage error:', e)
       return null
     })
-    if (route) {
-      // 路由也是一次 LLM 呼叫，token 要記帳（否則月用量低估）
-      recordAiUsage(workspaceId, { inputTokens: route.inputTokens, outputTokens: route.outputTokens })
-        .catch(e => console.error('[script] recordAiUsage(route) error:', e))
-    }
+    if (routeCalls.length) void recordAiUsage(workspaceId, usageFromCalls('conversation', routeCalls))
     const routedScriptId = route?.scriptId ?? null
     if (routedScriptId) matched = scripts.find(s => s.id === routedScriptId) ?? null
   }
@@ -4499,7 +4499,8 @@ async function tryAiFallback(params: {
   // AI 對話摘要：給接手的真人客服快速掌握前因後果。best-effort、≤4s 逾時、失敗回空字串。
   // 不在這裡 await——先把客人的「已安排專員」回覆送出，摘要由下游在送出後才 await，
   // 避免摘要的 LLM 延遲卡住客人回覆（非草稿路徑）。
-  const summaryPromise = summarizeHandoffContext(history, textContent, result.handoffReason)
+  // 摘要的錢記進「回答客人」那桶（`C-338`①：以前完全沒記）
+  const summaryPromise = summarizeHandoffContext(history, textContent, result.handoffReason, { workspaceId })
 
   // 草稿模式不對客人發話、也不鎖 session（沒承諾過客人「安排專員」），但仍通知值班客服。
   if (draftMode) {

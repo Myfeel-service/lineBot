@@ -28,15 +28,10 @@ import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
  * 給 super admin，租戶端通篇只講「則」。
  */
 /**
- * Gemini 牌價（USD / 每百萬 token）。2026-07 查核之公開定價：
- *   gemini-2.5-flash：input $0.30 / output $2.50
- *   gemini-2.5-flash-lite：input $0.10 / output $0.40
- *   gemini-embedding-001：$0.15
- * 用量 doc 未分模型（router/反問走 flash-lite、答題走 flash 混計），
- * 一律以 flash 費率估 → **估算值偏保守（上限）**；實際費用以 Google 帳單為準。
- * 改價時只改這裡：pricing 會隨 API 回給前端顯示，前端不自帶一份。
+ * 單價表與三桶算式都在 server/utils/ai-cost-buckets.ts（超管成本頁也用同一份，改價只改那裡，有來源與查證日期）。
+ * 2026-10-19 起照**實際模型**分價（`D-130`②）；之前的紀錄沒有模型明細，照 flash 價估（偏高）。
+ * 這裡回給前端的 `pricing` 是「不分模型時用的那組價格」，畫面目前沒用到，保留形狀。
  */
-// 單價與三桶算式共用 server/utils/ai-cost-buckets.ts（超管成本頁也用同一份，改價只改那裡）
 const PRICING = GEMINI_PRICING
 
 /** super admin 專屬的 token / 成本細目（非 super admin 的回應中完全沒有這些 key） */

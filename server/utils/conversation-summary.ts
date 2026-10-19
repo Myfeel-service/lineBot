@@ -91,7 +91,8 @@ export async function ensureTakeoverSummary(
   if (!history.length) return { text: '', generatedAtMs: 0, cached: true }
 
   // 最後一則已經在 history 裡，latestMessage 給空字串避免重複追加（見 summarizeHandoffContext）
-  const text = await summarizeHandoffContext(history, '')
+  // 錢記進「回答客人」那桶：有人接手的對話跟著客人量走（`C-338`①：以前完全沒記）
+  const text = await summarizeHandoffContext(history, '', null, { workspaceId, db })
   if (!text) return { text: '', generatedAtMs: 0, cached: false }
 
   const generatedAtMs = Date.now()

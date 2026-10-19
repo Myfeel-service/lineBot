@@ -7,7 +7,9 @@ import { listFolders } from '~~/server/utils/ai-knowledge-folders'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
+import { aiUsageOfError } from '~~/server/utils/ai-usage-calls'
 import {
+  addJobUsage,
   advanceWork,
   appendImportQualityWarnings,
   findExistingSources,
@@ -22,6 +24,7 @@ import {
   saveWork,
   workToPreviewResult,
   type PreviewJobDoc,
+  type WorkState,
 } from '~~/server/utils/ai-preview-jobs'
 import { parseGoogleSheetUrl } from '~~/server/utils/google-sheets'
 
@@ -115,11 +118,14 @@ export async function advancePreviewJob(
   }
 
   // ── claimed：做「一步」 ────────────────────────────────────────────
+  /** 出錯時要結清這一步已經花掉的錢（見下面 catch），所以拉到 try 外面 */
+  let loadedWork: WorkState | null = null
   try {
     // 版本鎖（C-46）：釘住載入時的 generation，存檔時不符＝別的執行體已接手，
     // 放棄這一步的結果。沒有鎖的年代：兩個執行體交錯寫回會讓進度游標倒退、
     // 已付費切好的段消失重跑、token 重複入帳。
     const { work, generation } = await loadWorkWithGeneration(workspaceId, jobId)
+    loadedWork = work
     // undefined＝這輪拿不到版本號、不上鎖（⛔不可退回 0：那是「必須不存在」，會永久 412）
     let workGen: number | undefined = generation
 
@@ -160,8 +166,7 @@ export async function advancePreviewJob(
                 next: e.newChunk?.content ?? '',
               })),
             ))
-            work.usage.inputTokens += judged.inputTokens
-            work.usage.outputTokens += judged.outputTokens
+            addJobUsage(work.usage, judged) // 含 JSON 壞掉那幾批（judgeCosmeticRewrites 的 calls 有列）
             const { folded } = applyCosmeticVerdicts(cosmeticCandidates, judged.verdicts)
             if (folded) console.log(`[resync] ${work.input.resyncSourceId} 意思判官摺掉 ${folded}/${cosmeticCandidates.length} 條措辭差異`)
           }
@@ -223,11 +228,12 @@ export async function advancePreviewJob(
             })
             const det = await detectProductName(sample, work.sourceName, existing)
             work.suggestedProductName = settleDetectedProductName(det.productName, existing, n => canonicalProductName(n, aliasMap.aliases))
-            work.usage.inputTokens += det.inputTokens
-            work.usage.outputTokens += det.outputTokens
+            addJobUsage(work.usage, det)
           }
           catch (e) {
             console.warn('[preview-jobs] detectProductName failed（不預填，照常完成）:', e)
+            const lost = aiUsageOfError(e) // JSON 壞掉那次也付了錢（`C-338`②）
+            if (lost) addJobUsage(work.usage, [lost])
           }
         }
         // 匯入品質守門（P1-2）：時效字眼 / 重複卡 / 總覽矛盾 / 說明書無產品名。
@@ -300,6 +306,12 @@ export async function advancePreviewJob(
     return { status: 'processing', phase: work.phase, progress: progressFor(work) }
   }
   catch (err: any) {
+    /**
+     * 這一步出錯前已經付掉的錢先入帳（`C-338`②）：例如一批切卡有幾段成功、一段失敗整步丟錯——
+     * 成功那幾段的 token 已經加進 work.usage，以前這裡不結清，記憶體裡的 work 一丟就再也沒人記。
+     * 不會重複算：存回去的進度停在上一步，下一輪重做時只會記重做那次的差額。
+     */
+    if (loadedWork) await flushJobUsage(workspaceId, loadedWork).catch(() => {})
     const statusCode = Number(err?.statusCode ?? err?.code ?? 0)
     const message = String(err?.statusMessage || err?.message || '處理失敗')
 

@@ -1,11 +1,7 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { AI_USAGE_COLLECTION, currentYyyyMm, monthlyBillable } from '~~/server/utils/ai-usage'
+import { bucketAiCosts } from '~~/server/utils/ai-cost-buckets'
 import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
-
-// Gemini 牌價（USD / 每百萬 token），與 /api/ai/usage/summary 同一份估算基準。
-const IN_PER_M = 0.30
-const OUT_PER_M = 2.50
-const EMBED_PER_M = 0.15
 
 /**
  * GET /api/admin/super/workspaces
@@ -36,14 +32,9 @@ export default defineEventHandler(async (event) => {
 
   return wsSnap.docs.map((d) => {
     const u = usageByWs.get(d.id)
-    // 客人對話成本：扣掉匯入（建置）分項，embedding 現只剩客人查詢向量
-    const convIn = Math.max(0, Number(u?.inputTokens ?? 0) - Number(u?.importInputTokens ?? 0))
-    const convOut = Math.max(0, Number(u?.outputTokens ?? 0) - Number(u?.importOutputTokens ?? 0))
-    const convEmbed = Number(u?.embeddingTokens ?? 0)
-    const conversationCostUsd
-      = (convIn / 1_000_000) * IN_PER_M
-      + (convOut / 1_000_000) * OUT_PER_M
-      + (convEmbed / 1_000_000) * EMBED_PER_M
+    // 客人對話成本：與成本總覽同一份算式（ai-cost-buckets.ts，照實際模型分價）。
+    // ⛔ 以前這裡自己寫死一份 flash 單價——改價時這頁會跟成本總覽對不起來（`D-130`② 收斂成一份）
+    const conversationCostUsd = bucketAiCosts(u).conversation.costUsd
 
     return {
       id: d.id,

@@ -2,6 +2,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { KNOWLEDGE_CHUNKS_COLLECTION, updateKnowledgeChunk } from './ai-knowledge-chunks'
 import { enrichCardsWithLlm, needsQuestionEnrichment } from './ai-knowledge-chunker'
 import { recordAiUsage } from './ai-usage'
+import { callsOf, usageFromCalls } from './ai-usage-calls'
 
 /** 每批掃描幾張卡；也等於單批最多補幾張（≤ 90 → enrichCardsWithLlm 最多 6 個並行 LLM 呼叫）。 */
 export const REENRICH_SCAN_LIMIT = 90
@@ -62,13 +63,8 @@ export async function reenrichWorkspaceChunks(
     usage.inputTokens = res.inputTokens
     usage.outputTokens = res.outputTokens
     if (res.inputTokens || res.outputTokens) {
-      // 補問法 token 照實入帳（月度 quota + import 分項）；記帳失敗不擋回填
-      await recordAiUsage(workspaceId, {
-        inputTokens: res.inputTokens,
-        outputTokens: res.outputTokens,
-        importInputTokens: res.inputTokens,
-        importOutputTokens: res.outputTokens,
-      }, db).catch(() => {})
+      // 補問法 token 照實入帳（月度 quota + import 分項；照實際模型算）；記帳失敗不擋回填
+      await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(res)), db)
     }
 
     // 套用：只補不改 title / content；沒補到（LLM 沒回）的留給下次重跑

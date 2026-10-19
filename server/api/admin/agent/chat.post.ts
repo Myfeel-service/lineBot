@@ -1,6 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { runAdminAgentChat, type AdminAgentTurn } from '~~/server/utils/ai-admin-agent'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
@@ -60,9 +61,9 @@ export default defineEventHandler(async (event) => {
   // 小幫手是我們自己在後台用的,把它算進「回答客人」會讓每則客人成本虛高,
   // 拿那個數字去推單位經濟就會被誤導(2026-08-10 稽核發現)。
   // 次數也一起記:成本進了哪一桶,對應的次數就要進同一桶,否則「每次多少錢」又會算錯。
+  // token 照每一輪實際用的模型算（`D-130`②），格式壞掉重來前那次也算（`C-338`②）。
   recordAiUsage(workspaceId, {
-    testInputTokens: res.inputTokens,
-    testOutputTokens: res.outputTokens,
+    ...usageFromCalls('test', callsOf(res)),
     testInvocations: 1,
     // 提議了幾次(還沒做)。跟 confirm 端點記的「真的執行幾次」成對,
     // 兩者相減就看得出「它提了但沒人按確定」——那是它在亂提議的唯一訊號。

@@ -15,6 +15,8 @@
  */
 
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
+import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { splitProfileProducts } from '~~/server/utils/festival-tailor'
 import { storeProfileForPrompt, type StoreProfileDoc } from '~~/shared/types/store-profile'
 import { BROADCAST_DRAFT_VARIANTS } from '~~/shared/broadcast-draft-handoff'
@@ -123,12 +125,17 @@ export async function generateBroadcastCopy(
   festival: TaiwanFestival,
 ): Promise<CopyGenOutcome> {
   const tone = String(profile.fields?.tone?.value ?? '')
-  const { data } = await runWithLlmBudget(workspaceId, () =>
-    generateJson<{ variants?: unknown }>(buildCopyPrompt(profile, festival, tone), {
-      temperature: 0.7, // 要三版不一樣，溫度不能太低
-      maxOutputTokens: 900,
-      thinkingBudget: 0,
-    }))
+  // 記帳（`C-338`①：以前完全沒記）：後台有人按「幫我擬」才跑＝後台自用那桶，次數一起記（成本進哪桶次數就進哪桶）。
+  // 用計量器記：JSON 壞掉丟錯那次也付了錢
+  const { data } = await runMeteredAi(
+    () => runWithLlmBudget(workspaceId, () =>
+      generateJson<{ variants?: unknown }>(buildCopyPrompt(profile, festival, tone), {
+        temperature: 0.7, // 要三版不一樣，溫度不能太低
+        maxOutputTokens: 900,
+        thinkingBudget: 0,
+      })),
+    calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
+  )
 
   const raw = Array.isArray(data?.variants) ? data.variants : []
   const dropped: { text: string, reason: string }[] = []

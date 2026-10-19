@@ -1,6 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { answerWithAi, routeMessage, type AiChatTurn, type RouteResult } from '~~/server/utils/ai-answer'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { usageFromCalls, withAiCallMeter, type AiCallUsage } from '~~/server/utils/ai-usage-calls'
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
 import { matchesScriptKeywords, scriptTriggerEvent, type ScriptDoc, type ScriptTriggerNode } from '~~/shared/types/ai-script'
 
@@ -41,12 +42,11 @@ export default defineEventHandler(async (event) => {
   let route: RouteResult | null = null
   if (!triggered && scripts.length) {
     const hints = scripts.map(s => ({ id: s.id, name: s.name, hints: triggerHintsOf(s) }))
-    route = await routeMessage(query, hints, history).catch(() => null)
-    if (route) {
-      // 路由也是一次 LLM 呼叫、真的花了錢 → 記帳；但這是 playground 測試，導到 test* 欄位（不併真客人成本）
-      recordAiUsage(workspaceId, { testInputTokens: route.inputTokens, testOutputTokens: route.outputTokens })
-        .catch(() => {})
-    }
+    // 路由也是一次 LLM 呼叫、真的花了錢 → 記帳；但這是 playground 測試，導到後台自用（不併真客人成本）。
+    // 用計量器記：路由 JSON 壞掉、回 null 那次也付了錢，而且照實際模型（flash-lite）算錢
+    const routeCalls: AiCallUsage[] = []
+    route = await withAiCallMeter(routeCalls, () => routeMessage(query, hints, history)).catch(() => null)
+    if (routeCalls.length) void recordAiUsage(workspaceId, usageFromCalls('test', routeCalls))
     const routedScriptId = route?.scriptId ?? null
     if (routedScriptId) triggered = scripts.find(s => s.id === routedScriptId) ?? null
   }

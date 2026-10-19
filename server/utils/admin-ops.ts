@@ -36,6 +36,7 @@ import { planAllowsScripting } from '~~/shared/billing/plans'
 import { scriptTriggerEvent, type ScriptTriggerEvent } from '~~/shared/types/ai-script'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
+import { runMeteredAi, usageFromCalls } from './ai-usage-calls'
 import { generateScriptDraft } from './ai-script-generate'
 import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import {
@@ -728,13 +729,12 @@ const scriptCreateFromDescription: AdminOpDef = {
     if (plan && !planAllowsScripting(plan))
       throw new AdminOpUserError('這個帳號目前的方案不含自動回應流程（腳本）功能，要先升級方案才能建。')
     const settings = await getAiSettings(ctx.workspaceId, ctx.db).catch(() => null)
-    const draft = await generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] })
-    // 生成屬後台內部操作 → 記進後台自用桶（與 scripts/generate 端點同一個慣例）
-    recordAiUsage(ctx.workspaceId, {
-      testInputTokens: draft.inputTokens,
-      testOutputTokens: draft.outputTokens,
-      testInvocations: 1,
-    }, ctx.db).catch(e => console.error('[admin-ops] recordAiUsage error:', e))
+    // 生成屬後台內部操作 → 記進後台自用桶（與 scripts/generate 端點同一個慣例）。
+    // 用計量器記：沒生好丟錯的那幾次也付了錢，照實際模型算（`C-338`②／`D-130`②）
+    const draft = await runMeteredAi(
+      () => generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] }),
+      calls => recordAiUsage(ctx.workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, ctx.db),
+    )
 
     return {
       description: args.description,

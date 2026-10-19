@@ -12,6 +12,8 @@
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { generateText, runWithLlmBudget } from '~~/server/utils/gemini'
+import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { computeTagInsights } from '~~/server/utils/tag-insights-compute'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { storeProfileForPrompt } from '~~/shared/types/store-profile'
@@ -68,13 +70,17 @@ export async function generateTagReport(
       const profile = await getStoreProfile(workspaceId, db).catch(() => null)
       const storeLine = profile ? storeProfileForPrompt(profile).split('\n').join('；') : ''
 
-      const res = await runWithLlmBudget(workspaceId, () =>
-        generateText(buildTagSummaryPrompt(payload, storeLine), {
-          // 這是把數字翻成人話，不是創作：溫度壓低
-          temperature: 0.2,
-          maxOutputTokens: 900,
-          thinkingBudget: 0,
-        }))
+      // 記帳（`C-338`①：以前完全沒記）：後台按「產生報告」才跑＝後台自用，次數一起記
+      const res = await runMeteredAi(
+        () => runWithLlmBudget(workspaceId, () =>
+          generateText(buildTagSummaryPrompt(payload, storeLine), {
+            // 這是把數字翻成人話，不是創作：溫度壓低
+            temperature: 0.2,
+            maxOutputTokens: 900,
+            thinkingBudget: 0,
+          })),
+        calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, db),
+      )
       const text = String(res.text ?? '').trim().slice(0, TAG_SUMMARY_MAX * 2)
       const bad = rejectTagSummary(text, payload)
       if (bad) {

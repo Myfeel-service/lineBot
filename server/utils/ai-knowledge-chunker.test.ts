@@ -7,7 +7,7 @@ vi.mock('./gemini', () => ({
 }))
 
 import { generateJson } from './gemini'
-import { ENRICH_BATCH_SIZE, enrichCardBatch, enrichCardsWithLlm, needsQuestionEnrichment, stripBoilerplate } from './ai-knowledge-chunker'
+import { chunkTextWithLlm, ENRICH_BATCH_SIZE, enrichCardBatch, enrichCardsWithLlm, MAX_CHUNKS_PER_DOC, needsQuestionEnrichment, stripBoilerplate } from './ai-knowledge-chunker'
 
 const mockGen = vi.mocked(generateJson)
 
@@ -36,6 +36,7 @@ describe('enrichCardBatch', () => {
       },
       inputTokens: 10,
       outputTokens: 20,
+      model: 'gemini-2.5-flash',
     })
     const res = await enrichCardBatch([card(0), card(1), card(2)])
     expect(res.items).toEqual([
@@ -58,6 +59,7 @@ describe('enrichCardBatch', () => {
       },
       inputTokens: 1,
       outputTokens: 1,
+      model: 'gemini-2.5-flash',
     })
     const res = await enrichCardBatch([card(0), card(1)])
     expect(res.items[0]).toEqual({ questions: ['正解'], tags: ['t'] })
@@ -71,6 +73,7 @@ describe('enrichCardBatch', () => {
       },
       inputTokens: 1,
       outputTokens: 1,
+      model: 'gemini-2.5-flash',
     })
     const res = await enrichCardBatch([card(0)])
     expect(res.items[0]).toEqual({ questions: ['a', 'b', 'c'], tags: ['x', 'y'] })
@@ -92,6 +95,7 @@ describe('enrichCardsWithLlm', () => {
         },
         inputTokens: 5,
         outputTokens: 7,
+        model: 'gemini-2.5-flash' as const,
       }
     })
     const cards = Array.from({ length: ENRICH_BATCH_SIZE + 3 }, (_, i) => card(i))
@@ -112,6 +116,7 @@ describe('enrichCardsWithLlm', () => {
         data: { cards: [{ index: 0, questions: ['ok'], tags: [] }] },
         inputTokens: 3,
         outputTokens: 4,
+        model: 'gemini-2.5-flash' as const,
       }
     })
     const cards = Array.from({ length: ENRICH_BATCH_SIZE + 1 }, (_, i) => card(i))
@@ -123,6 +128,48 @@ describe('enrichCardsWithLlm', () => {
     expect(res.items[ENRICH_BATCH_SIZE]).toEqual({ questions: ['ok'], tags: [] })
     expect(res.inputTokens).toBe(3)
     expect(res.outputTokens).toBe(4)
+  })
+
+  it('⛔ JSON 壞掉的那批也付了錢：用量照帶回去，而且逐次帶著模型（`C-338`②）', async () => {
+    let call = 0
+    mockGen.mockImplementation(async () => {
+      call += 1
+      if (call === 1) {
+        throw Object.assign(new Error('Gemini JSON parse failed'), { aiUsage: { model: 'gemini-2.5-flash', inputTokens: 900, outputTokens: 4096 } })
+      }
+      return { data: { cards: [{ index: 0, questions: ['ok'], tags: [] }] }, inputTokens: 3, outputTokens: 4, model: 'gemini-2.5-flash-lite' as const }
+    })
+    const cards = Array.from({ length: ENRICH_BATCH_SIZE + 1 }, (_, i) => card(i))
+    const res = await enrichCardsWithLlm(cards)
+    expect(res.inputTokens).toBe(903)
+    expect(res.outputTokens).toBe(4100)
+    expect(res.calls).toEqual([
+      { model: 'gemini-2.5-flash', inputTokens: 900, outputTokens: 4096 },
+      { model: 'gemini-2.5-flash-lite', inputTokens: 3, outputTokens: 4 },
+    ])
+  })
+})
+
+describe('chunkTextWithLlm 記帳', () => {
+  it('⛔ 撞卡數上限提早收的那幾段也付了錢：token 用全部段算（以前 break 之後的段沒算進去）', async () => {
+    let call = 0
+    mockGen.mockImplementation(async () => {
+      call += 1
+      const n = call
+      return {
+        data: { chunks: Array.from({ length: MAX_CHUNKS_PER_DOC }, (_, i) => ({ title: `段${n}卡${i}`, content: '內容' })) },
+        inputTokens: 100,
+        outputTokens: 10,
+        model: 'gemini-2.5-flash' as const,
+      }
+    })
+    const text = `${'甲'.repeat(7000)}\n`.repeat(4) // 4 段；3 段就滿 150 條
+    const res = await chunkTextWithLlm(text)
+    expect(mockGen).toHaveBeenCalledTimes(4)
+    expect(res.chunks).toHaveLength(150)
+    expect(res.inputTokens).toBe(400)
+    expect(res.outputTokens).toBe(40)
+    expect(res.calls).toHaveLength(4)
   })
 })
 

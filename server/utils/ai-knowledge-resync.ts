@@ -15,6 +15,7 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { listChunksBySource } from './ai-knowledge-sources'
 import { extractUrlText } from './ai-source-extractors'
+import { aiUsageOfError, callsOf, type AiCallUsage } from './ai-usage-calls'
 
 export type DiffKind = 'new' | 'modified' | 'removed' | 'unchanged'
 export type DiffAction = 'add_new' | 'use_new' | 'keep_old' | 'delete_old' | 'skip'
@@ -561,14 +562,16 @@ export function applyCosmeticVerdicts(
  */
 export async function judgeCosmeticRewrites(
   pairs: Array<{ oldTitle: string; old: string; nextTitle: string; next: string }>,
-): Promise<{ verdicts: Array<'same_meaning' | 'changed' | 'unsure'>; inputTokens: number; outputTokens: number }> {
-  if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0 }
+): Promise<{ verdicts: Array<'same_meaning' | 'changed' | 'unsure'>; inputTokens: number; outputTokens: number; calls: AiCallUsage[] }> {
+  if (!pairs.length) return { verdicts: [], inputTokens: 0, outputTokens: 0, calls: [] }
   const { generateJson } = await import('./gemini')
 
   // 全部先預設 unsure：任何一批掛掉，那一批就是「沒判到」＝照常攤給人看
   const verdicts: Array<'same_meaning' | 'changed' | 'unsure'> = pairs.map(() => 'unsure')
   let inputTokens = 0
   let outputTokens = 0
+  /** 每一批付過錢的呼叫（帶模型）；JSON 壞掉那批也付了錢，一樣列進來給呼叫端記帳（`C-338`②） */
+  const calls: AiCallUsage[] = []
 
   for (let start = 0; start < pairs.length; start += COSMETIC_JUDGE_BATCH) {
     const batch = pairs.slice(start, start + COSMETIC_JUDGE_BATCH)
@@ -593,6 +596,7 @@ export async function judgeCosmeticRewrites(
       })
       inputTokens += res.inputTokens
       outputTokens += res.outputTokens
+      calls.push(...callsOf(res))
       for (const row of Array.isArray(res.data?.results) ? res.data.results : []) {
         const idx = typeof row?.index === 'number' ? row.index : Number.NaN
         if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length) continue
@@ -604,9 +608,15 @@ export async function judgeCosmeticRewrites(
       // ⛔ 一批失敗不放棄整輪：其餘批次照跑，這一批留在 unsure（攤給人看）。
       //    不分批的話，一次 100 組會把輸出撐爆 → JSON 解析失敗 → 整批 token 白花、零結論。
       console.warn(`[resync] 意思判官第 ${Math.floor(start / COSMETIC_JUDGE_BATCH) + 1} 批失敗（這批照常給人看）:`, (e as Error)?.message)
+      const lost = aiUsageOfError(e)
+      if (lost) {
+        calls.push(lost)
+        inputTokens += lost.inputTokens
+        outputTokens += lost.outputTokens
+      }
     }
   }
-  return { verdicts, inputTokens, outputTokens }
+  return { verdicts, inputTokens, outputTokens, calls }
 }
 
 

@@ -153,6 +153,8 @@ export interface RewordOutcome {
   dropped: { text: string, reason: string }[]
   inputTokens: number
   outputTokens: number
+  /** 那次實際用的模型（記帳照它的單價算） */
+  model?: string
 }
 
 /**
@@ -186,5 +188,5 @@ export async function rewordStoreDraft(workspaceId: string, key: RewordKey, ctx:
     break
   }
   if (!raw.length) dropped.push({ text: '', reason: '模型沒有回任何一版' })
-  return { body, dropped, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
+  return { body, dropped, inputTokens: res.inputTokens, outputTokens: res.outputTokens, model: res.model }
 }

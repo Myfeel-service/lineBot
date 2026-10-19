@@ -70,6 +70,13 @@ describe('接手摘要', () => {
     expect(vi.mocked(summarizeHandoffContext)).toHaveBeenCalledTimes(1) // 沒有再打一次
   })
 
+  it('產生摘要那一次要記帳：把工作區與 db 交給摘要（它記進回答客人那桶，`C-338`①：以前完全沒記）', async () => {
+    const msgs: MsgSeed[] = [{ direction: 'incoming', text: '保固多久', atMs: 1_000 }]
+    const { db } = makeDb({ workspaceId: WS }, msgs)
+    await ensureTakeoverSummary(db, DOC, WS)
+    expect(vi.mocked(summarizeHandoffContext).mock.calls[0]![3]).toEqual({ workspaceId: WS, db })
+  })
+
   it('有新訊息就重新產生（摘要要跟得上對話，不然接手的人看到的是舊劇情）', async () => {
     const conv = {
       workspaceId: WS,

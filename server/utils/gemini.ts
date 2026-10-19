@@ -6,6 +6,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { EMBEDDING_DIMENSION } from '~~/shared/types/ai-knowledge'
+import { reportAiCall, type AiCallUsage } from './ai-usage-calls'
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 
@@ -220,6 +221,10 @@ export function estimateTokens(text: string): number {
 //  Generate（給 LLM 切卡與 Phase 2 的答題用）
 // ═══════════════════════════════════════════════════════════════════
 
+/** 文字生成用得到的模型（生圖另見 generateImage） */
+export type GeminiTextModel = 'gemini-2.5-flash' | 'gemini-2.5-flash-lite'
+
+// 記帳用的型別（AiCallUsage）與計量器住在 ai-usage-calls.ts（純模組、測試不會整個假掉它）
 export interface GenerateOptions {
   systemInstruction?: string
   temperature?: number
@@ -227,7 +232,7 @@ export interface GenerateOptions {
   /** 若指定 'application/json'，Gemini 會強制輸出合法 JSON */
   responseMimeType?: 'text/plain' | 'application/json'
   /** 預設用 gemini-2.5-flash（aiSettings 的 answerModel；切卡不另外傳） */
-  model?: 'gemini-2.5-flash' | 'gemini-2.5-flash-lite'
+  model?: GeminiTextModel
   /**
    * Gemini 2.5 系列的 thinking token 會計入 maxOutputTokens。
    * 短回覆 + 緊的 output cap 時務必設 0，否則 thinking 吃掉配額會把輸出（尤其 JSON）截斷。
@@ -241,18 +246,37 @@ interface GenerateResponse {
     content?: { parts?: Array<{ text?: string }> }
     finishReason?: string
   }>
-  usageMetadata?: {
-    promptTokenCount?: number
-    candidatesTokenCount?: number
-    totalTokenCount?: number
-  }
+  usageMetadata?: GeminiUsageMetadata
   error?: { message?: string }
+}
+
+interface GeminiUsageMetadata {
+  promptTokenCount?: number
+  candidatesTokenCount?: number
+  /** 思考 token：照**輸出**單價收費，但不算在 candidatesTokenCount 裡 */
+  thoughtsTokenCount?: number
+  totalTokenCount?: number
+}
+
+/**
+ * 從回應讀出「這次要付幾個輸入／輸出 token」。
+ *
+ * ⛔ 輸出一定要加上思考 token（`C-338`⑤）：Google 照輸出價收它，但它不在 candidatesTokenCount 裡。
+ *    目前每支都設 `thinkingBudget: 0` 所以是 0；之後有人沒設，不加的話就會整段漏記。
+ */
+function usageTokensOf(meta: GeminiUsageMetadata | undefined): { inputTokens: number; outputTokens: number } {
+  return {
+    inputTokens: Number(meta?.promptTokenCount ?? 0) || 0,
+    outputTokens: (Number(meta?.candidatesTokenCount ?? 0) || 0) + (Number(meta?.thoughtsTokenCount ?? 0) || 0),
+  }
 }
 
 export interface GenerateResult {
   text: string
   inputTokens: number
   outputTokens: number
+  /** 這次**實際**用的模型（flash 塞車自動改 flash-lite 時是 lite）——記帳照它的單價算 */
+  model: GeminiTextModel
 }
 
 /** 一則 user message 的 part:純文字、或 inline 檔案(PDF / 圖片,base64) */
@@ -260,7 +284,7 @@ export type GeminiPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
 
-async function doGenerate(parts: GeminiPart[], opts: GenerateOptions, model: NonNullable<GenerateOptions['model']>): Promise<GenerateResult> {
+async function doGenerate(parts: GeminiPart[], opts: GenerateOptions, model: GeminiTextModel): Promise<GenerateResult> {
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts }],
     generationConfig: {
@@ -276,11 +300,9 @@ async function doGenerate(parts: GeminiPart[], opts: GenerateOptions, model: Non
 
   const data = await callGemini<GenerateResponse>(`models/${model}:generateContent`, body)
   const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text ?? '').join('') ?? ''
-  return {
-    text,
-    inputTokens: data?.usageMetadata?.promptTokenCount ?? 0,
-    outputTokens: data?.usageMetadata?.candidatesTokenCount ?? 0,
-  }
+  const usage = usageTokensOf(data?.usageMetadata)
+  reportAiCall({ model, ...usage })
+  return { text, ...usage, model }
 }
 
 /**
@@ -372,17 +394,22 @@ export function parseFirstJsonValue<T>(raw: string): T | null {
 
 /**
  * 呼叫 Gemini 並要求回傳 JSON。失敗時拋錯（避免拿不完整 JSON 去 parse）。
+ *
+ * ⚠️ JSON 壞掉時**錢已經付了**：丟出去的錯誤帶著那次的用量（`aiUsageOfError` 取得到），
+ * 抓錯的地方要記帳（`C-338`②）。
  */
-export async function generateJson<T>(prompt: string, opts: Omit<GenerateOptions, 'responseMimeType'> = {}): Promise<{ data: T; inputTokens: number; outputTokens: number }> {
+export async function generateJson<T>(prompt: string, opts: Omit<GenerateOptions, 'responseMimeType'> = {}): Promise<{ data: T; inputTokens: number; outputTokens: number; model: GeminiTextModel }> {
   const res = await generateText(prompt, { ...opts, responseMimeType: 'application/json' })
   const data = parseFirstJsonValue<T>(res.text)
   if (data === null) {
-    throw createError({
+    const err = createError({
       statusCode: 502,
       statusMessage: `Gemini JSON parse failed: 取不到完整 JSON。Raw: ${res.text.slice(0, 200)}`,
     })
+    const aiUsage: AiCallUsage = { model: res.model, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
+    throw Object.assign(err, { aiUsage })
   }
-  return { data, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
+  return { data, inputTokens: res.inputTokens, outputTokens: res.outputTokens, model: res.model }
 }
 
 // ── 生圖 ────────────────────────────────────────────────────────────
@@ -392,9 +419,12 @@ interface ImageResponse {
     content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> }
     finishReason?: string
   }>
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+  usageMetadata?: GeminiUsageMetadata
   error?: { message?: string }
 }
+
+/** 生圖的預設模型（單價見 `ai-cost-buckets.ts`：輸出一張約 1,290 token、每百萬 US$30＝一張約 US$0.039） */
+export const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image'
 
 export interface GeneratedImage {
   /** base64(不含 data: 前綴) */
@@ -402,6 +432,8 @@ export interface GeneratedImage {
   mimeType: string
   inputTokens: number
   outputTokens: number
+  /** 生圖的模型——它的輸出 token 是文字模型的 12 倍價，記帳一定要帶 */
+  model: string
 }
 
 /**
@@ -417,7 +449,9 @@ export async function generateImage(
   prompt: string,
   opts: { model?: string, aspectRatio?: string } = {},
 ): Promise<GeneratedImage> {
-  const model = opts.model ?? 'gemini-2.5-flash-image'
+  // ⛔ 以前這支沒有過額度守門：呼叫端包了 runWithLlmBudget 也等於沒包（`C-338`③）
+  await assertLlmBudget()
+  const model = opts.model ?? DEFAULT_IMAGE_MODEL
   const data = await callGemini<ImageResponse>(`models/${model}:generateContent`, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
@@ -430,6 +464,8 @@ export async function generateImage(
       ...(opts.aspectRatio ? { imageConfig: { aspectRatio: opts.aspectRatio } } : {}),
     },
   })
+  const usage = usageTokensOf(data?.usageMetadata)
+  reportAiCall({ model, ...usage })
   const part = data?.candidates?.[0]?.content?.parts?.find(p => p.inlineData?.data)
   if (!part?.inlineData?.data) {
     // ⛔ 不要回一張空圖讓呼叫端以為成功:底圖沒生出來,後面疊上去的格子會蓋在白底上,
@@ -440,12 +476,14 @@ export async function generateImage(
     const why = said
       ? `模型只回了文字沒有給圖（它說：「${said.slice(0, 60)}…」）`
       : (data?.error?.message ?? data?.candidates?.[0]?.finishReason ?? '沒有回傳圖片')
-    throw createError({ statusCode: 502, statusMessage: `產生底圖失敗：${why}` })
+    // 模型「用講的回你」那次也是付了錢的：用量帶在錯誤上，呼叫端照樣記帳
+    const aiUsage: AiCallUsage = { model, ...usage }
+    throw Object.assign(createError({ statusCode: 502, statusMessage: `產生底圖失敗：${why}` }), { aiUsage })
   }
   return {
     data: part.inlineData.data,
     mimeType: part.inlineData.mimeType ?? 'image/png',
-    inputTokens: data?.usageMetadata?.promptTokenCount ?? 0,
-    outputTokens: data?.usageMetadata?.candidatesTokenCount ?? 0,
+    ...usage,
+    model,
   }
 }

@@ -12,6 +12,7 @@
  */
 import type { Firestore } from 'firebase-admin/firestore'
 import { generateJson } from './gemini'
+import { aiUsageOfError, type AiCallUsage } from './ai-usage-calls'
 import { getAiSettings } from './ai-settings'
 import { redactAiSettingsForRole } from './ai-settings-redact'
 // ⛔ 只取唯讀的三支（讀訂閱／組方案視圖／讀本期已用則數）——本檔的鐵律是不 import 會寫入的東西。
@@ -74,6 +75,11 @@ export interface AdminAgentReply {
   cancelPrevious?: boolean
   inputTokens: number
   outputTokens: number
+  /**
+   * 這一句付過錢的每一次模型呼叫（含格式壞掉、重來前的那一次；`C-338`②），帶著實際模型給記帳照價算。
+   * inputTokens／outputTokens 是它的加總。
+   */
+  calls: AiCallUsage[]
 }
 
 /** 單輪最多查幾次工具(防迴圈失控;P1 的問題 1~2 次工具就該答得出來) */
@@ -1166,6 +1172,8 @@ export async function runAdminAgentChat(params: {
   const alertsMemo: { p?: Promise<WorkspaceAlertsResponse> } = {}
   let inputTokens = 0
   let outputTokens = 0
+  /** 付過錢的每一次呼叫（記帳照模型算；格式壞掉那次也在，見下面的 catch） */
+  const calls: AiCallUsage[] = []
   /**
    * 「沒查就講」的回答已經退回去過一次了嗎。
    * ⛔ 只退一次:模型有可能每次都寫同一句話,無限退回就是無限燒錢。
@@ -1185,7 +1193,7 @@ export async function runAdminAgentChat(params: {
     ].filter(Boolean).join('\n\n')
 
     type Step = { action?: unknown; tool?: unknown; args?: unknown; text?: unknown; answer?: unknown; goto?: unknown; teach?: unknown; op?: unknown; cancelPrevious?: unknown }
-    let generated: { data: Step | null, inputTokens: number, outputTokens: number }
+    let generated: { data: Step | null, inputTokens: number, outputTokens: number, model?: string }
     try {
       generated = await generateJson<Step>(prompt, {
         systemInstruction,
@@ -1200,6 +1208,13 @@ export async function runAdminAgentChat(params: {
       //    被下面那句「稍等一下再問一次」蓋掉的話,店家會一直重試到下個月,每次還被記成一次正常回答(2026-10-10 審查抓到)。
       //    Gemini 自己出錯是 502／500,不會撞到這條。
       if (e?.statusCode === 429) throw e
+      // 格式壞掉那次已經付了錢（`C-338`②：以前重來前那次整筆漏記）
+      const lost = aiUsageOfError(e)
+      if (lost) {
+        calls.push(lost)
+        inputTokens += lost.inputTokens
+        outputTokens += lost.outputTokens
+      }
       // ⛔ 2026-10-08 `D-116` 實測:模型偶爾吐出不是 JSON 的東西,以前整段錯誤原文
       //    「Gemini JSON parse failed: 取不到完整 JSON。Raw: …」直接出現在店家的泡泡裡。
       //    格式壞掉是偶發的 → 同一步重來一次;再壞、或是連不上服務,就講一句人話(⛔ 不吐原文)。
@@ -1221,11 +1236,13 @@ export async function runAdminAgentChat(params: {
         messages: [],
         inputTokens,
         outputTokens,
+        calls,
       }
     }
     const { data, inputTokens: i, outputTokens: o } = generated
     inputTokens += i
     outputTokens += o
+    calls.push({ model: String(generated.model ?? ''), inputTokens: i, outputTokens: o })
 
     if (data?.action === 'answer') {
       const text = String(data?.text ?? '').trim()
@@ -1271,6 +1288,7 @@ export async function runAdminAgentChat(params: {
         ...(lastProposal && data?.cancelPrevious === true ? { cancelPrevious: true } : {}),
         inputTokens,
         outputTokens,
+        calls,
       }
     }
 
@@ -1455,6 +1473,7 @@ export async function runAdminAgentChat(params: {
           },
           inputTokens,
           outputTokens,
+          calls,
         }
       }
       catch (e) {
@@ -1472,6 +1491,7 @@ export async function runAdminAgentChat(params: {
           messages: [],
           inputTokens,
           outputTokens,
+          calls,
         }
       }
     }
@@ -1491,6 +1511,7 @@ export async function runAdminAgentChat(params: {
         messages: [],
         inputTokens,
         outputTokens,
+        calls,
       }
     }
     // 步數已用盡卻還想查 → 直接收斂,不執行第 N+1 次
@@ -1522,5 +1543,5 @@ export async function runAdminAgentChat(params: {
     }
   }
 
-  return { reply: say('這題查的步驟太多了,換個更具體的問法試試?'), toolCalls, messages: [], inputTokens, outputTokens }
+  return { reply: say('這題查的步驟太多了,換個更具體的問法試試?'), toolCalls, messages: [], inputTokens, outputTokens, calls }
 }

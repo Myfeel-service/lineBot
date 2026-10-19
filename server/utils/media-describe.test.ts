@@ -50,6 +50,35 @@ describe('客人傳圖：AI 讀一句描述給客服看', () => {
     expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith(WS, { inputTokens: 900, outputTokens: 20 })
   })
 
+  it('帶著實際模型記進回答客人那桶（照 flash 價，不是猜的）', async () => {
+    mockStorage()
+    vi.mocked(generateParts).mockResolvedValue({ text: '一張發票', inputTokens: 1200, outputTokens: 15, model: 'gemini-2.5-flash' })
+
+    await readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith(WS, {
+      inputTokens: 1200,
+      outputTokens: 15,
+      modelTokens: { conversation: { flash: { input: 1200, output: 15 } } },
+    })
+  })
+
+  it('⛔ 等太久放棄（逾時）：圖還是讀完了、錢一樣付了，回來時照記（`C-338`②）', async () => {
+    vi.useFakeTimers()
+    try {
+      mockStorage()
+      vi.mocked(generateParts).mockImplementation(() => new Promise(r => setTimeout(() => r({ text: '晚到', inputTokens: 1000, outputTokens: 10, model: 'gemini-2.5-flash' }), 9000)))
+      const p = readInboundImage({ workspaceId: WS, storagePath: PATH, contentType: 'image/jpeg' })
+      await vi.advanceTimersByTimeAsync(8000)
+      await expect(p).resolves.toMatchObject({ description: '' })
+      expect(recordAiUsage).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(recordAiUsage).toHaveBeenCalledWith(WS, expect.objectContaining({ inputTokens: 1000, outputTokens: 10 }))
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('不能記 invocations：用量頁靠「介入次數 = 答題 + 轉真人 + 反問」畫三段長條', async () => {
     mockStorage()
     mockGemini('付款失敗的螢幕截圖')

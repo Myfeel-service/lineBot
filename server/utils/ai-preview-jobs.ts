@@ -29,10 +29,36 @@ import { splitPdfPageRange } from './pdf-split'
 import { countSourceQuotaChunks, KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { getWorkspaceProductNames, KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { recordAiUsage } from './ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls, type AiCallsCarrier, type AiCallUsage } from './ai-usage-calls'
+import { GEMINI_MODEL_PRICES, modelKeyOf, type GeminiModelKey } from './ai-cost-buckets'
 import type { ChunkInput } from './ai-knowledge-chunks'
 import { normalizeForCompare, type DiffResult } from './ai-knowledge-resync'
 
 export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
+
+/**
+ * 匯入工作累計花了多少（存在 work.json 裡、跨輪詢累積）。
+ * `byModel`＝照模型拆的明細（`D-130`②，總數的子集）；舊工作沒有這格，入帳時那部分照 flash 價估。
+ */
+export interface JobUsage {
+  inputTokens: number
+  outputTokens: number
+  byModel?: Partial<Record<GeminiModelKey, { input: number; output: number }>>
+}
+
+/** 把這一步付過錢的呼叫加進工作的累計用量（總數＋照模型的明細一起加，兩邊不會只加一邊） */
+export function addJobUsage(usage: JobUsage, from: AiCallsCarrier | AiCallUsage[] | null | undefined): void {
+  const calls = Array.isArray(from) ? from : callsOf(from)
+  for (const c of calls) {
+    usage.inputTokens += c.inputTokens
+    usage.outputTokens += c.outputTokens
+    const key = modelKeyOf(c.model)
+    if (!key) continue
+    const slot = ((usage.byModel ??= {})[key] ??= { input: 0, output: 0 })
+    slot.input += c.inputTokens
+    slot.output += c.outputTokens
+  }
+}
 
 /** 單批 OCR 的頁數：壓在閘道逾時內，同時控制 job 步數。5 頁 ≈ 15–25s。 */
 export const OCR_PAGE_BATCH = 5
@@ -135,9 +161,9 @@ export interface WorkState {
   chunks: ChunkInput[]
   overviewCard: ChunkInput | null
   existingMatches: ExistingMatch[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: JobUsage
   /** 已入帳的部分(累計值);usage 減掉它就是這次要記的差額。見 flushJobUsage */
-  usageFlushed?: { inputTokens: number; outputTokens: number }
+  usageFlushed?: JobUsage
   /** 匯入前健檢警告（表格來源：示範列沒換、重複問題、合併儲存格等）；提醒不擋匯入 */
   warnings: string[]
   /** 自動偵測的產品名（finalize 時 LLM 判定；多產品 / 平台頁為空）。預填給使用者確認可改。 */
@@ -267,8 +293,7 @@ async function advanceOcr(
       ? await ocrImageWithGemini(buffer, work.ocrMime!)
       : await ocrPdfWithGemini(await splitPdfPageRange(buffer, start, count))
     if (ocr.text.trim()) work.ocrText += (work.ocrText ? '\n' : '') + ocr.text
-    work.usage.inputTokens += ocr.inputTokens
-    work.usage.outputTokens += ocr.outputTokens
+    addJobUsage(work.usage, ocr)
   }
   work.ocrPageCursor = start + Math.max(1, count) // 保底前進，避免 count=0 時卡死
 
@@ -317,10 +342,12 @@ async function advanceChunk(work: WorkState): Promise<WorkState> {
 
   // 先把「所有已完成呼叫」的 token 記起來:Gemini 已經算錢了,不論這批結果後面會不會
   // 因為撞卡片上限、或前面某段要對半切而被丟棄,用量報表都必須看得到。
+  // 失敗的那幾段也算：JSON 被截斷（撞輸出上限）那次 Gemini 一樣收了錢，以前只記成功的（`C-338`②）
   for (const r of results) {
-    if (r.status === 'fulfilled') {
-      work.usage.inputTokens += r.value.inputTokens
-      work.usage.outputTokens += r.value.outputTokens
+    if (r.status === 'fulfilled') addJobUsage(work.usage, r.value)
+    else {
+      const lost = aiUsageOfError(r.reason)
+      if (lost) addJobUsage(work.usage, [lost])
     }
   }
 
@@ -386,8 +413,7 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
   if (batch.length) {
     try {
       const res = await enrichCardBatch(batch.map(c => ({ title: c.title, content: c.content })))
-      work.usage.inputTokens += res.inputTokens
-      work.usage.outputTokens += res.outputTokens
+      addJobUsage(work.usage, res)
       batch.forEach((chunk, i) => {
         const it = res.items[i]
         if (!it) return
@@ -398,6 +424,8 @@ async function advanceEnrich(work: WorkState): Promise<WorkState> {
     }
     catch (e) {
       console.warn('[preview-jobs] enrich batch failed（該批不補問法，照常繼續）:', e)
+      const lost = aiUsageOfError(e) // JSON 壞掉那批也付了錢
+      if (lost) addJobUsage(work.usage, [lost])
       // 「不擋」不等於「不說」（C-49B）：全滅時 150 張卡都沒問法、檢索明顯變弱，
       // 而畫面一路綠——記一筆失敗批數，收尾時警告一次。
       work.enrichFailedBatches = (work.enrichFailedBatches ?? 0) + 1
@@ -424,12 +452,13 @@ async function advanceOverview(work: WorkState): Promise<WorkState> {
     const ov = await summarizeAsOverviewCard(work.chunks, { hint: work.sourceName })
     if (ov) {
       work.overviewCard = ov.card
-      work.usage.inputTokens += ov.inputTokens
-      work.usage.outputTokens += ov.outputTokens
+      addJobUsage(work.usage, ov)
     }
   }
   catch (e) {
     console.warn('[preview-jobs] overview synthesis failed:', e)
+    const lost = aiUsageOfError(e) // JSON 壞掉那次也付了錢
+    if (lost) addJobUsage(work.usage, [lost])
   }
   work.phase = 'finalize'
   return work
@@ -451,19 +480,40 @@ export async function flushJobUsage(workspaceId: string, work: WorkState): Promi
   if (inputTokens <= 0 && outputTokens <= 0) return
   // 記帳成功才推進水位:先推進再寫入的話,這次寫入失敗(Firestore 短暫不可用)會讓這段用量
   // 永遠沒人記——下一次 flush 只算它之後的差額,正是這個機制要防的「花了錢卻看不到」。
-  const snapshot = { inputTokens: work.usage.inputTokens, outputTokens: work.usage.outputTokens }
+  const snapshot: JobUsage = {
+    inputTokens: work.usage.inputTokens,
+    outputTokens: work.usage.outputTokens,
+    ...(work.usage.byModel ? { byModel: structuredClone(work.usage.byModel) } : {}),
+  }
   try {
-    await recordAiUsage(workspaceId, {
-      inputTokens,
-      outputTokens,
-      importInputTokens: inputTokens,
-      importOutputTokens: outputTokens,
-    })
+    await recordAiUsage(workspaceId, usageFromCalls('build', jobUsageDeltaCalls(work.usage, flushed)))
     work.usageFlushed = snapshot
   }
   catch (e) {
     console.warn('[preview-jobs] flush usage failed（下一輪會連同這次的差額重試）:', e)
   }
+}
+
+/**
+ * 「這次要入帳的差額」攤回成幾筆呼叫（每顆模型一筆＋不知道模型的一筆），交給 usageFromCalls 照模型算錢。
+ * 不知道模型的那筆＝總數差額減掉各模型差額（舊工作、或沒帶模型的結果），照 flash 價估。
+ */
+export function jobUsageDeltaCalls(usage: JobUsage, flushed: JobUsage): AiCallUsage[] {
+  const calls: AiCallUsage[] = []
+  let splitIn = 0
+  let splitOut = 0
+  for (const key of Object.keys(GEMINI_MODEL_PRICES) as GeminiModelKey[]) {
+    const i = Math.max(0, (usage.byModel?.[key]?.input ?? 0) - (flushed.byModel?.[key]?.input ?? 0))
+    const o = Math.max(0, (usage.byModel?.[key]?.output ?? 0) - (flushed.byModel?.[key]?.output ?? 0))
+    if (!i && !o) continue
+    calls.push({ model: GEMINI_MODEL_PRICES[key].model, inputTokens: i, outputTokens: o })
+    splitIn += i
+    splitOut += o
+  }
+  const restIn = Math.max(0, usage.inputTokens - flushed.inputTokens - splitIn)
+  const restOut = Math.max(0, usage.outputTokens - flushed.outputTokens - splitOut)
+  if (restIn || restOut) calls.push({ model: '', inputTokens: restIn, outputTokens: restOut })
+  return calls
 }
 
 // ── 進度 / 結果對外形狀 ─────────────────────────────────────────────
@@ -521,7 +571,8 @@ export function workToPreviewResult(work: WorkState) {
         }
       : null,
     existingMatches: work.existingMatches,
-    usage: work.usage,
+    // 只給總數（形狀照舊）；照模型拆的明細是記帳用的，不往畫面送
+    usage: { inputTokens: work.usage.inputTokens, outputTokens: work.usage.outputTokens },
     warnings: work.warnings ?? [], // 舊 job 的 work.json 沒這欄位，保底空陣列
     suggestedProductName: work.suggestedProductName ?? '',
     // 網址來源的內容指紋：匯入時原樣回傳給 bulk-create 當「重新同步」的比對基準

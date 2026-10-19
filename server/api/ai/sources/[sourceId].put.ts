@@ -13,6 +13,7 @@ import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils
 import { RELEARN_PENDING_FIELD, syncSourceProductWithGroup } from '~~/server/utils/ai-knowledge-product-group'
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 
 /**
  * PUT /api/ai/sources/:sourceId
@@ -194,7 +195,7 @@ async function generateSourceSummary(
   let summary: string[] = []
   try {
     // 圈進維運額度（同匯入、AI 整理）：畫面打開一份資料就會自動打，萬一被連打也有上限擋著；超過＝429，下面當失敗
-    const { data: out, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () => generateJson<{ lines?: unknown }>(prompt, {
+    const res = await runWithLlmBudget(workspaceId, () => generateJson<{ lines?: unknown }>(prompt, {
       systemInstruction: SUMMARY_SYSTEM_INSTRUCTION,
       // 小任務用最便宜的那個（同反問澄清、轉真人摘要）；關掉 thinking，不然 thinking 會吃掉輸出額度把 JSON 截斷
       model: 'gemini-2.5-flash-lite',
@@ -202,16 +203,14 @@ async function generateSourceSummary(
       maxOutputTokens: 300,
       thinkingBudget: 0,
     }))
-    // 記帳記在「匯入／整理」那一格（同 AI 整理一下 normalize）：這是整理知識花的錢，不是回客人
-    await recordAiUsage(workspaceId, {
-      inputTokens,
-      outputTokens,
-      importInputTokens: inputTokens,
-      importOutputTokens: outputTokens,
-    }).catch(() => {})
-    summary = cleanSummaryLines(out?.lines)
+    // 記帳記在「匯入／整理」那一格（同 AI 整理一下 normalize）：這是整理知識花的錢，不是回客人；照 flash-lite 的單價算
+    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(res)))
+    summary = cleanSummaryLines(res.data?.lines)
   }
   catch (e) {
+    // JSON 壞掉那次也付了錢（`C-338`②）
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]))
     console.warn(`[sources] ${sourceId} summary failed:`, (e as Error)?.message)
     return { summary: [], summaryAt: 0, summaryFailed: true }
   }

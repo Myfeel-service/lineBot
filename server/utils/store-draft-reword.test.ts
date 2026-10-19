@@ -108,6 +108,7 @@ describe('換一版（模型那一段是假的）', () => {
       data: { variants: [`歡迎加入${SHOP}，24 小時內回你`, GOOD_WELCOME, `另一版${SHOP}`] },
       inputTokens: 100,
       outputTokens: 50,
+      model: 'gemini-2.5-flash',
     })
     const r = await rewordStoreDraft('ws1', 'welcome', ctxW)
     expect(r.body).toBe(GOOD_WELCOME)
@@ -126,6 +127,7 @@ describe('換一版（模型那一段是假的）', () => {
       ] },
       inputTokens: 80,
       outputTokens: 40,
+      model: 'gemini-2.5-flash',
     })
     const r = await rewordStoreDraft('ws1', 'tone', ctxT)
     expect(r.dropped[0]?.reason).toContain('改規則')
@@ -134,14 +136,14 @@ describe('換一版（模型那一段是假的）', () => {
   })
 
   it('全部驗不過＝body 是 null（呼叫端負責講這次換不出來）', async () => {
-    vi.mocked(generateJson).mockResolvedValueOnce({ data: { variants: ['www.x.com', welcomeNow] }, inputTokens: 1, outputTokens: 1 })
+    vi.mocked(generateJson).mockResolvedValueOnce({ data: { variants: ['www.x.com', welcomeNow] }, inputTokens: 1, outputTokens: 1, model: 'gemini-2.5-flash' })
     const r = await rewordStoreDraft('ws1', 'welcome', ctxW)
     expect(r.body).toBeNull()
     expect(r.dropped).toHaveLength(2)
   })
 
   it('模型什麼都沒回也要說得出來', async () => {
-    vi.mocked(generateJson).mockResolvedValueOnce({ data: {}, inputTokens: 1, outputTokens: 1 })
+    vi.mocked(generateJson).mockResolvedValueOnce({ data: {}, inputTokens: 1, outputTokens: 1, model: 'gemini-2.5-flash' })
     const r = await rewordStoreDraft('ws1', 'tone', ctxT)
     expect(r.body).toBeNull()
     expect(r.dropped[0]?.reason).toContain('沒有回任何一版')

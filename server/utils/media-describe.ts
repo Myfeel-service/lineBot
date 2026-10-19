@@ -1,6 +1,7 @@
 import { generateParts, parseFirstJsonValue } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
+import { callsOf, usageFromCalls } from './ai-usage-calls'
 import { getStorage } from './firebase'
 
 /**
@@ -185,41 +186,39 @@ export async function readInboundImage(opts: {
     const timeout = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), DESCRIBE_TIMEOUT_MS)
     })
-    const res = await Promise.race([
-      generateParts(
-        [
-          { inlineData: { mimeType, data: buffer.toString('base64') } },
-          { text: wantQuestion ? '請看這張圖並輸出 JSON。' : '請用一句話描述這張圖。' },
-        ],
-        {
-          systemInstruction: wantQuestion ? DESCRIBE_AND_ASK_INSTRUCTION : DESCRIBE_ONLY_INSTRUCTION,
-          temperature: 0.2,
-          // 問句從一句變兩句，輸出上限跟著放寬：被截斷的 JSON 會整份讀不出來（＝malformed）
-          maxOutputTokens: wantQuestion ? 256 : 120,
-          // 一句描述不需要思考預算，開著會把輸出配額吃掉導致回傳空字串
-          thinkingBudget: 0,
-          ...(wantQuestion ? { responseMimeType: 'application/json' as const } : {}),
-          // ⛔ 不用 flash-lite（`C-343`，2026-10-18 實測）：它要照抄截圖上的商品名，flash-lite 把 10-09 那張
-          // 付款完成頁的「奇美電淨艙」連 4 次讀成「電淨臉」，產品鎖就認不出是哪一台；flash 4 次全對。
-          // 一張圖多不到台幣 1 分錢（正式站約 250 張／兩個月）。用不到旗艦模型。
-          model: 'gemini-2.5-flash',
-        },
-      ),
-      timeout,
-    ])
-    if (!res) {
-      console.warn('[media-describe] timed out')
-      return EMPTY_READING
-    }
-
     // 成本要看得到：圖片會換算成 token（一張手機照片約 800–1,600），
     // 不記帳的話用量頁的成本會少一塊、對不上 Google 帳單。
     // 刻意不記 invocations——那個欄位是「AI 介入客人對話」的次數，
     // 用量頁靠 invocations = answered + handoffs + disambiguations 這個恆等式畫圖，
     // 這裡加上去會讓三段長條永遠湊不滿。
-    if (res.inputTokens || res.outputTokens) {
-      recordAiUsage(workspaceId, { inputTokens: res.inputTokens, outputTokens: res.outputTokens })
-        .catch(e => console.error('[media-describe] recordAiUsage error:', e))
+    // ⛔ 記帳掛在呼叫本身（不是等 race 結束）：逾時放棄等它時錢一樣付了，回來照記（`C-338`②）；
+    //    帶著實際模型算錢（`D-130`②）。不等寫完，不拖慢回客人。
+    const generated = generateParts(
+      [
+        { inlineData: { mimeType, data: buffer.toString('base64') } },
+        { text: wantQuestion ? '請看這張圖並輸出 JSON。' : '請用一句話描述這張圖。' },
+      ],
+      {
+        systemInstruction: wantQuestion ? DESCRIBE_AND_ASK_INSTRUCTION : DESCRIBE_ONLY_INSTRUCTION,
+        temperature: 0.2,
+        // 問句從一句變兩句，輸出上限跟著放寬：被截斷的 JSON 會整份讀不出來（＝malformed）
+        maxOutputTokens: wantQuestion ? 256 : 120,
+        // 一句描述不需要思考預算，開著會把輸出配額吃掉導致回傳空字串
+        thinkingBudget: 0,
+        ...(wantQuestion ? { responseMimeType: 'application/json' as const } : {}),
+        // ⛔ 不用 flash-lite（`C-343`，2026-10-18 實測）：它要照抄截圖上的商品名，flash-lite 把 10-09 那張
+        // 付款完成頁的「奇美電淨艙」連 4 次讀成「電淨臉」，產品鎖就認不出是哪一台；flash 4 次全對。
+        // 一張圖多不到台幣 1 分錢（正式站約 250 張／兩個月）。用不到旗艦模型。
+        model: 'gemini-2.5-flash',
+      },
+    ).then((r) => {
+      if (r.inputTokens || r.outputTokens) void recordAiUsage(workspaceId, usageFromCalls('conversation', callsOf(r)))
+      return r
+    })
+    const res = await Promise.race([generated, timeout])
+    if (!res) {
+      console.warn('[media-describe] timed out')
+      return EMPTY_READING
     }
 
     if (!wantQuestion) return { description: clampOneLine(res.text, MAX_DESCRIPTION_CHARS), questions: [], state: quotaExhausted ? 'quotaExhausted' : 'answerOff' }

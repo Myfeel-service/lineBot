@@ -25,6 +25,7 @@ import {
 import { normalizeChunkInput, updateKnowledgeChunk, validateChunkInput } from './ai-knowledge-chunks'
 import { listChunksBySource } from './ai-knowledge-sources'
 import { recordAiUsage } from './ai-usage'
+import { callsOf, usageFromCalls } from './ai-usage-calls'
 
 /** 變動比例上限:修改張數 / 舊卡總數 超過即退人工(整頁改版的訊號) */
 export const MAX_AUTO_MODIFIED_RATIO = 0.3
@@ -177,15 +178,11 @@ export async function tryAutoApplyMinorChange(
   if (source.generateOverview) return manual('這是型錄/列表來源,總覽卡需要一併重生')
 
   try {
-    const { chunks: newChunks, inputTokens, outputTokens } = await chunkTextWithLlm(newText, {
+    const rechunked = await chunkTextWithLlm(newText, {
       hint: source.name,
     })
-    await recordAiUsage(source.workspaceId, {
-      inputTokens,
-      outputTokens,
-      importInputTokens: inputTokens,
-      importOutputTokens: outputTokens,
-    }).catch(() => {})
+    const newChunks = rechunked.chunks
+    await recordAiUsage(source.workspaceId, usageFromCalls('build', callsOf(rechunked)))
     if (!newChunks.length) return manual('重切後沒有產出卡片')
 
     // 一次讀齊(含 status):總覽卡不參與 diff(由 resync-apply 依最終子卡重生),
@@ -220,6 +217,8 @@ export async function tryAutoApplyMinorChange(
           nextTitle: e.newChunk?.title ?? '',
           next: e.newChunk?.content ?? '',
         })))
+        // 「只改措辭」的判斷也是一次 AI 呼叫：以前沒記帳（`C-338`①），記進整理知識庫那桶
+        await recordAiUsage(source.workspaceId, usageFromCalls('build', callsOf(judged)))
         applyCosmeticVerdicts(cosmeticCandidates, judged.verdicts)
       }
       catch (e) {

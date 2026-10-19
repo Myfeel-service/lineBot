@@ -492,8 +492,20 @@ export interface AiUsageDoc {
   testInvocations?: number
   /** 知識庫建索引 embedding（reindex / bulk-create / 逐卡）；屬建置成本，與客人查詢 embedding 分開 */
   buildEmbeddingTokens?: number
+  /**
+   * 生成 token 照「哪顆模型」拆的明細（`D-130`②，2026-10-19 起才有）：`modelTokens.<桶>.<模型 key>.{input,output}`。
+   * 桶＝conversation／build／test（對應上面三組總數），模型 key 見 `server/utils/ai-cost-buckets.ts`。
+   * 是上面總數的**子集**——總數減明細剩下的，就是上線前的舊資料（照 flash 價估）。
+   */
+  modelTokens?: Partial<Record<AiCostBucketId, AiModelTokenCounts>>
   updatedAt: Timestamp | FieldValue
 }
+
+/** AI 花費的三桶：回答客人／整理知識庫／後台自用 */
+export type AiCostBucketId = 'conversation' | 'build' | 'test'
+
+/** 一桶裡每顆模型各用了多少生成 token（key 是 `ai-cost-buckets.ts` 的模型 key，如 `flashLite`） */
+export type AiModelTokenCounts = { [modelKey: string]: { input?: number; output?: number } | undefined }
 
 // ═══════════════════════════════════════════════════════════════════
 //  AI conversation meta (extension on ConversationDoc)

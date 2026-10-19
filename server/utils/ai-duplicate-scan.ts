@@ -25,6 +25,7 @@ import { generateJson, runWithLlmBudget } from './gemini'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { extractNumbers } from './ai-knowledge-resync'
 import { recordAiUsage } from './ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls } from './ai-usage-calls'
 
 export const KNOWLEDGE_DUP_SCANS_COLLECTION = 'knowledgeDupScans'
 
@@ -187,7 +188,7 @@ export async function judgeCandidates(
     ].join('\n')),
   ].join('\n\n')
 
-  const { data, inputTokens, outputTokens } = await generateJson<{ results?: JudgeVerdictRow[] }>(prompt, {
+  const { data, inputTokens, outputTokens, model } = await generateJson<{ results?: JudgeVerdictRow[] }>(prompt, {
     systemInstruction: JUDGE_SYSTEM_INSTRUCTION,
     temperature: 0,
     maxOutputTokens: 4096,
@@ -204,7 +205,7 @@ export async function judgeCandidates(
       out[idx] = { verdict: v, reason: String(row?.reason ?? '').slice(0, 200) }
     }
   }
-  return Object.assign(out, { __usage: { inputTokens, outputTokens } }) as typeof out
+  return Object.assign(out, { __usage: { inputTokens, outputTokens, model } }) as typeof out
 }
 
 function tsToMsSafe(v: any): number {
@@ -306,15 +307,19 @@ export async function runDuplicateScan(
   // 第 3 層：LLM 判官（只有候選 > 0 才花這一次呼叫）
   let suggestions: DupSuggestion[] = []
   if (candidates.length) {
-    const verdicts = await judgeCandidates(candidates)
+    let verdicts: Awaited<ReturnType<typeof judgeCandidates>>
+    try {
+      verdicts = await judgeCandidates(candidates)
+    }
+    catch (e) {
+      // 判官回的 JSON 壞掉時錢已經付了：照記再往外丟（`C-338`②）
+      const lost = aiUsageOfError(e)
+      if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]), db)
+      throw e
+    }
     const usage = (verdicts as any).__usage
     if (usage?.inputTokens || usage?.outputTokens) {
-      await recordAiUsage(workspaceId, {
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        importInputTokens: usage.inputTokens,
-        importOutputTokens: usage.outputTokens,
-      }, db).catch(() => {})
+      await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(usage)), db)
     }
     suggestions = candidates
       .map((p, i) => ({ p, v: verdicts[i]! }))

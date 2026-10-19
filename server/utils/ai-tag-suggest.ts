@@ -28,6 +28,7 @@ import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser } from './tagging'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
+import { aiUsageOfError, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
 import { recordTagSuggestionEvents } from './tag-suggestion-log'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -462,19 +463,25 @@ async function suggestForSession(
   if (customerLines.length < 2) return { ...none, skip: 'too_few_lines' as const }
 
   const prompt = buildSuggestPrompt(candidates, customerLines)
-  const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
-    generateJson<{ tags?: Array<{ id?: string; reason?: string }> }>(prompt, {
-      model: 'gemini-2.5-flash-lite', // 從候選清單挑選是簡單任務；建議式有人把關，先用便宜的
-      temperature: 0,
-      maxOutputTokens: 400,
-      thinkingBudget: 0, // 短 JSON 輸出：thinking 會吃掉 output 配額把 JSON 截斷（見 gemini.ts）
-    }))
+  let suggested: Awaited<ReturnType<typeof generateJson<{ tags?: Array<{ id?: string; reason?: string }> }>>>
+  try {
+    suggested = await runWithLlmBudget(workspaceId, () =>
+      generateJson<{ tags?: Array<{ id?: string; reason?: string }> }>(prompt, {
+        model: 'gemini-2.5-flash-lite', // 從候選清單挑選是簡單任務；建議式有人把關，先用便宜的
+        temperature: 0,
+        maxOutputTokens: 400,
+        thinkingBudget: 0, // 短 JSON 輸出：thinking 會吃掉 output 配額把 JSON 截斷（見 gemini.ts）
+      }))
+  }
+  catch (e) {
+    // JSON 壞掉那次也付了錢：先併進這一輪的帳再往外丟（`C-338`②）
+    Object.assign(usage, mergeUsage(usage, usageFromCalls('build', [aiUsageOfError(e)])))
+    throw e
+  }
+  const { data } = suggested
 
-  // 背景資料處理桶（import* ⊆ 總量的子集慣例，同知識缺口掃描）
-  usage.importInputTokens = (usage.importInputTokens ?? 0) + inputTokens
-  usage.importOutputTokens = (usage.importOutputTokens ?? 0) + outputTokens
-  usage.inputTokens = (usage.inputTokens ?? 0) + inputTokens
-  usage.outputTokens = (usage.outputTokens ?? 0) + outputTokens
+  // 背景資料處理桶（import* ⊆ 總量的子集慣例，同知識缺口掃描；照實際模型＝flash-lite 的單價算）
+  Object.assign(usage, mergeUsage(usage, usageFromCalls('build', callsOf(suggested))))
 
   const rawTags = Array.isArray(data?.tags) ? data.tags : []
   const reasonById = new Map(rawTags.map(t => [String(t?.id ?? '').trim(), String(t?.reason ?? '').trim().slice(0, 60)]))

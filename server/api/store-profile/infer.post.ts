@@ -1,5 +1,6 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
+import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
+import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile, saveStoreProfile } from '~~/server/utils/store-profile'
 import { describeInferSources, hasEnoughToInfer, inferProfileFromExisting } from '~~/server/utils/store-profile-infer'
@@ -23,7 +24,12 @@ export default defineEventHandler(async (event) => {
   const wsSnap = await db.collection('workspaces').doc(workspaceId).get()
   const workspaceName = String((wsSnap.data() as { name?: string } | undefined)?.name ?? '').trim()
 
-  const { guesses, sources } = await inferProfileFromExisting(workspaceId, workspaceName, db)
+  // 記帳（`C-338`①：以前完全沒記）：從既有資料猜輪廓＝整理知識庫那桶（同讀網站認識你的店）。
+  // 用計量器記：模型回的 JSON 壞掉丟錯時，錢一樣付了
+  const { guesses, sources } = await runMeteredAi(
+    () => inferProfileFromExisting(workspaceId, workspaceName, db),
+    calls => recordAiUsage(workspaceId, usageFromCalls('build', calls), db),
+  )
 
   // ⛔ 資料不夠就誠實回「猜不出來」，不要硬生一份憑空捏造的輪廓
   if (!hasEnoughToInfer(sources)) {

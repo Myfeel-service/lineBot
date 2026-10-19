@@ -21,6 +21,7 @@ import {
 } from './ai-knowledge-chunks'
 import { chunkCountsTowardQuota, getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
 import { recordAiUsage } from './ai-usage'
+import { callsOf, usageFromCalls } from './ai-usage-calls'
 import {
   countSourceChunks,
   KNOWLEDGE_SOURCES_COLLECTION,
@@ -317,13 +318,8 @@ export async function syncGoogleSheetSource(
     ? await enrichCardsWithLlm(enrichable.map(c => ({ title: c.title, content: c.content })))
     : { items: [], inputTokens: 0, outputTokens: 0 }
   if (enriched.inputTokens || enriched.outputTokens) {
-    // 補問法 token 照實入帳（月度 quota + import 分項）；記帳失敗不擋同步
-    await recordAiUsage(workspaceId, {
-      inputTokens: enriched.inputTokens,
-      outputTokens: enriched.outputTokens,
-      importInputTokens: enriched.inputTokens,
-      importOutputTokens: enriched.outputTokens,
-    }).catch(() => {})
+    // 補問法 token 照實入帳（月度 quota + import 分項；照實際模型算、JSON 壞掉那批也算）；記帳失敗不擋同步
+    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(enriched)))
   }
 
   // ── pass 2：套用。⛔ 先確認資料還在（`C-308`③）：上面補問法要十幾秒，這段時間他可能把這份刪了 ──

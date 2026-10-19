@@ -18,8 +18,9 @@
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { getWorkspaceSubscription } from './billing'
+import { GEMINI_MODEL_PRICES } from './ai-cost-buckets'
 import { taipeiYyyyMm } from '~~/shared/time'
-import type { AiUsageDoc } from '~~/shared/types/ai-knowledge'
+import type { AiCostBucketId, AiModelTokenCounts, AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
 export const AI_USAGE_COLLECTION = 'aiUsage'
 export const QUOTA_USAGE_COLLECTION = 'quotaUsage'
@@ -162,17 +163,59 @@ export interface UsageDelta {
    * （故仍計入 token 護欄 getCurrentMonthTokens）。切卡/整理的 LLM 花費另由 importInput/OutputTokens 記。
    */
   buildEmbeddingTokens?: number
+  /**
+   * 生成 token 照模型拆的明細（`D-130`②）：上面那幾個總數的**子集**，算錢時照各模型單價。
+   * ⛔ 不要手寫：一律用 `ai-usage-calls.ts` 的 `usageFromCalls` 產生，它保證總數與明細寫在同一桶、數字一致。
+   */
+  modelTokens?: Partial<Record<AiCostBucketId, AiModelTokenCounts>>
+}
+
+const COST_BUCKETS: readonly AiCostBucketId[] = ['conversation', 'build', 'test']
+
+/** 模型明細 → Firestore 的巢狀 increment（只收認得的桶與模型 key，其他丟掉） */
+function modelTokenIncrements(mt: UsageDelta['modelTokens']): Record<string, unknown> | null {
+  if (!mt) return null
+  const out: Record<string, Record<string, Record<string, FieldValue>>> = {}
+  for (const bucket of COST_BUCKETS) {
+    const byModel = mt[bucket]
+    if (!byModel) continue
+    for (const [key, t] of Object.entries(byModel)) {
+      if (!(key in GEMINI_MODEL_PRICES)) continue
+      const inc: Record<string, FieldValue> = {}
+      const i = Number(t?.input ?? 0) || 0
+      const o = Number(t?.output ?? 0) || 0
+      if (i > 0) inc.input = FieldValue.increment(i)
+      if (o > 0) inc.output = FieldValue.increment(o)
+      if (Object.keys(inc).length) (out[bucket] ??= {})[key] = inc
+    }
+  }
+  return Object.keys(out).length ? out : null
 }
 
 /**
  * 把這次 AI 介入的用量記帳：報表月結桶（全部欄位）+ 額度週期桶（只記 billable）。
- * 失敗只 log 不阻塞主流程。
+ *
+ * ⛔ **這支永遠不丟錯**（連 rejected promise 都不會）：記帳失敗只 log，不可以拖垮主流程。
+ *    以前 `db` 是預設參數 `getDb()`、算 doc id 也在 try 外面——任何一步出錯都會變成 rejected，
+ *    呼叫端沒接 `.catch` 的話就會把一則正常的回覆變成錯誤（2026-10-19 `C-338` 補記帳時一併收進 try）。
  */
 export async function recordAiUsage(
   workspaceId: string,
   delta: UsageDelta,
-  db: Firestore = getDb(),
+  db?: Firestore,
 ): Promise<void> {
+  // 什麼都沒花（例如這次一個 AI 呼叫都沒發生）就不寫：空寫一次也是一筆資料庫寫入費
+  const hasAny = Object.entries(delta ?? {}).some(([k, v]) => k !== 'modelTokens' && typeof v === 'number' && v !== 0)
+  if (!hasAny) return
+  try {
+    await writeAiUsage(workspaceId, delta, db ?? getDb())
+  }
+  catch (e) {
+    console.error('[ai-usage] recordAiUsage failed:', e)
+  }
+}
+
+async function writeAiUsage(workspaceId: string, delta: UsageDelta, db: Firestore): Promise<void> {
   // 額度桶只吃 billable（不是 answered）——攔截看的是它,不是月結桶。
   // 兩者的差別見 UsageDelta.billable 的說明；⛔ 改回 answered 會讓反問白做工、
   // 或讓「AI 自己答完的比率」被反問灌水,兩邊都錯。
@@ -211,13 +254,11 @@ export async function recordAiUsage(
   if (delta.testEmbeddingTokens) updates.testEmbeddingTokens = FieldValue.increment(delta.testEmbeddingTokens)
   if (delta.testInvocations) updates.testInvocations = FieldValue.increment(delta.testInvocations)
   if (delta.buildEmbeddingTokens) updates.buildEmbeddingTokens = FieldValue.increment(delta.buildEmbeddingTokens)
+  // 巢狀 map ＋ merge:true＝只動到有寫的那幾格（其他模型、其他桶的明細不會被蓋掉）
+  const modelTokens = modelTokenIncrements(delta.modelTokens)
+  if (modelTokens) updates.modelTokens = modelTokens
 
-  try {
-    await Promise.all([ref.set(updates, { merge: true }), quotaWrite])
-  }
-  catch (e) {
-    console.error('[ai-usage] recordAiUsage failed:', e)
-  }
+  await Promise.all([ref.set(updates, { merge: true }), quotaWrite])
 }
 
 /** `billable` 欄位開始被寫入的月份（`D-69` 上線於 2026-09-07，故 2026-09 是跨口徑的那個月）。 */

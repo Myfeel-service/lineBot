@@ -16,7 +16,8 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
-import { recordAiUsage, type UsageDelta } from './ai-usage'
+import { recordAiUsage } from './ai-usage'
+import { aiUsageOfError, callsOf, usageFromCalls } from './ai-usage-calls'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
 import { recordScannerFailure } from './scanner-health'
@@ -446,7 +447,7 @@ async function scanOneWorkspace(
     .map(t => ({ name: t.name, criteria: t.aiCriteria }))
 
   const prompt = buildDiscoveryPrompt(digests, takenNames, covered)
-  const { data, inputTokens, outputTokens } = await runWithLlmBudget(workspaceId, () =>
+  const discover = () => runWithLlmBudget(workspaceId, () =>
     generateJson<{ topics?: RawDiscoveryTopic[] }>(prompt, {
       // 跨兩百行摘要做歸納命名，比「從清單挑選」難一階 → 用 flash 不用 lite；一週一次，費用可忽略
       model: 'gemini-2.5-flash',
@@ -465,15 +466,20 @@ async function scanOneWorkspace(
        */
       thinkingBudget: 0,
     }))
-
-  // 背景資料處理桶（import* ⊆ 總量子集慣例，同知識缺口掃描）；⛔ 不記 invocations/answered
-  const usage: UsageDelta = {
-    importInputTokens: inputTokens,
-    importOutputTokens: outputTokens,
-    inputTokens,
-    outputTokens,
+  let discovered: Awaited<ReturnType<typeof discover>>
+  try {
+    discovered = await discover()
   }
-  await recordAiUsage(workspaceId, usage, db).catch(e => console.warn('[tag-discovery] usage record failed:', e))
+  catch (e) {
+    // JSON 壞掉（被截斷）時錢已經付了：照記再往外丟（`C-338`②）
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]), db)
+    throw e
+  }
+  const { data } = discovered
+
+  // 背景資料處理桶（import* ⊆ 總量子集慣例，同知識缺口掃描；照實際模型算）；⛔ 不記 invocations/answered
+  await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(discovered)), db)
 
   const room = MAX_PENDING_DISCOVERIES - pending.length
   const rawTopics = Array.isArray(data?.topics) ? data.topics : []
@@ -621,12 +627,8 @@ async function resolveSimilarTags(
    * 為了併帳把它整個往後搬，等於讓中間任何一步出錯都變成「這次掃描完全沒記帳」。
    */
   if (judged.inputTokens || judged.outputTokens) {
-    await recordAiUsage(workspaceId, {
-      importInputTokens: judged.inputTokens,
-      importOutputTokens: judged.outputTokens,
-      inputTokens: judged.inputTokens,
-      outputTokens: judged.outputTokens,
-    }, db).catch(e => console.warn('[tag-similarity] usage record failed:', e))
+    // 判官用的是 flash-lite：照它的單價記（`D-130`②）
+    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(judged)), db)
   }
 
   judged.verdicts.forEach((v, i) => {

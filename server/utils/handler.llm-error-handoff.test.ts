@@ -65,7 +65,10 @@ vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ desc
 import { handleMessageEvent } from './handler'
 import { getDb } from './firebase'
 import { replyMessage } from './line'
-import { answerWithAi } from './ai-answer'
+import { answerWithAi, routeMessage, summarizeHandoffContext } from './ai-answer'
+import { loadActiveScripts } from './ai-scripts'
+import { recordAiUsage } from './ai-usage'
+import { reportAiCall } from './ai-usage-calls'
 import { getAiSettings } from './ai-settings'
 import { enterModule, getSessionStatusCached, shouldSuppressInboundBotAutomationForSession } from './conversation-session'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
@@ -235,5 +238,50 @@ describe('AI 服務打不通 → 要真的轉真人（不是只寫一筆紀錄�
     expect(vi.mocked(notifyHandoffToStaff)).toHaveBeenCalledWith(
       expect.objectContaining({ reason: 'llm_error' }),
     )
+  })
+
+  it('轉真人的交接摘要要帶著工作區（摘要那次記進回答客人那桶，`C-338`①：以前完全沒記）', async () => {
+    // 業務洽詢＝不走二次確認、直接轉真人＝會生交接摘要的那條路（llm_error 自己一條路，不生摘要）
+    vi.mocked(answerWithAi).mockResolvedValue({ decision: 'handoff', answer: '', confidence: 0, sources: [], handoffReason: 'commercial_inquiry' } as any)
+    await handleMessageEvent(textEvent('想談團購批發', Date.now()), { workspaceId: WS })
+    expect(vi.mocked(summarizeHandoffContext)).toHaveBeenCalled()
+    expect(vi.mocked(summarizeHandoffContext).mock.calls.at(-1)?.[3]).toEqual({ workspaceId: WS })
+  })
+})
+
+describe('意圖路由的記帳（`C-338`②／`D-130`②）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
+    vi.mocked(getSessionStatusCached).mockResolvedValue('open' as any)
+    vi.mocked(getAiSettings).mockResolvedValue(AI_SETTINGS() as any)
+    vi.mocked(getDb).mockReturnValue(makeDb() as any)
+    aiServiceDown()
+    // 有一條（關鍵字不會中的）腳本＝這句話會先過一次意圖路由
+    vi.mocked(loadActiveScripts).mockResolvedValue([
+      { id: 's1', name: '退換貨', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', keywords: ['退貨'] }] },
+    ] as any)
+  })
+
+  it('路由那次照 flash-lite 的價記進回答客人那桶', async () => {
+    vi.mocked(routeMessage).mockImplementationOnce(async () => {
+      reportAiCall({ model: 'gemini-2.5-flash-lite', inputTokens: 300, outputTokens: 30 })
+      return { intent: 'question', isFollowup: false, standaloneQuery: 'q', compareItems: [], subQuestions: [], scriptId: null, inputTokens: 300, outputTokens: 30, model: 'gemini-2.5-flash-lite' }
+    })
+    await handleMessageEvent(textEvent('請問有開發票嗎', Date.now()), { workspaceId: WS })
+    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith(WS, {
+      inputTokens: 300,
+      outputTokens: 30,
+      modelTokens: { conversation: { flashLite: { input: 300, output: 30 } } },
+    })
+  })
+
+  it('⛔ 路由回的 JSON 壞掉（routeMessage 回 null 退回關鍵字）：那次的錢照記，以前整筆漏掉', async () => {
+    vi.mocked(routeMessage).mockImplementationOnce(async () => {
+      reportAiCall({ model: 'gemini-2.5-flash-lite', inputTokens: 300, outputTokens: 400 })
+      return null
+    })
+    await handleMessageEvent(textEvent('請問有開發票嗎', Date.now()), { workspaceId: WS })
+    expect(vi.mocked(recordAiUsage)).toHaveBeenCalledWith(WS, expect.objectContaining({ inputTokens: 300, outputTokens: 400 }))
   })
 })
