@@ -30,12 +30,31 @@ export type ConversationEventType =
 export type TrendGranularity = 'day' | 'week' | 'month'
 
 /**
- * 「加好友/活動入口」出生、客人還沒開口的 session → 不進首接統計。
- * 沒有東西被「接」:算未首接會灌水(活動流量越大失真越大),算機器人首接又反向灌功;
- * 客人真的傳第一句(hasInbound)後就正常計。舊資料沒有 origin 欄位 → 不受影響照舊計入。
+ * 這場是怎麼開的（`conversationSessions.origin`）：
+ * - `follow`：加好友／點活動連結，客人還沒開口
+ * - `sticker`：客人只傳了一張貼圖（`D-4`，2026-10-20 起才寫）
+ * - `message`：客人傳文字／圖片／影音檔，或按了按鈕
+ * 舊資料沒有這欄＝照舊計入（不猜）。
  */
-export function isPreInboundFollowSession(s: { origin?: unknown; hasInbound?: unknown } | undefined): boolean {
-  return s?.origin === 'follow' && s?.hasInbound !== true
+export type SessionOrigin = 'follow' | 'sticker' | 'message'
+
+/**
+ * 客人還沒「真的開口」的 session → 不進待處理佇列、不進首接統計（不算沒人回、也不算有人接）。
+ *
+ * 兩種：
+ * - 加好友／活動入口出生、客人還沒講話（`origin: 'follow'`）
+ * - **只傳貼圖**（`origin: 'sticker'`，`D-4` 老闆 2026-10-20 拍板）：近 30 天 MYFEEL 10 場
+ *   只傳貼圖的對話，9 場被記成「沒人回」、最久在待處理掛 41 小時。貼圖刻意不自動回
+ *   （回「我看不懂」很突兀），多半是「👍」「謝謝」——沒有一件事需要人處理。
+ * 客人之後打字／傳圖／按按鈕（hasInbound 補記成 true）就照常計，等於這場從那一刻起才算數。
+ *
+ * ⚠️ 紅點不受影響：紅點的口徑是「客人傳過東西就要看得到，直到有人看過」（`shared/conversation-unread.ts`），
+ *    貼圖也是客人傳的東西；這裡只管「需不需要人處理」與「有沒有人回」。
+ * 舊資料沒有 origin 欄位 → 不受影響照舊計入；只傳貼圖的舊場也維持原樣（⛔ 不回填）。
+ */
+export function isPreInboundSession(s: { origin?: unknown; hasInbound?: unknown } | undefined): boolean {
+  if (s?.hasInbound === true) return false
+  return s?.origin === 'follow' || s?.origin === 'sticker'
 }
 
 export interface ConversationSessionDoc {
@@ -95,7 +114,7 @@ export interface KpiResult {
   closeRateByHandled: number
   /**
    * 區間內**第一次**加好友的人數（users.createdAt）。
-   * 與對話數是兩件事：推播/加好友出生、客人沒開口的 session 不算對話（見 isPreInboundFollowSession），
+   * 與對話數是兩件事：推播/加好友出生、客人沒開口的 session 不算對話（見 isPreInboundSession），
    * 但「多少新朋友進來」本身是使用者要看的數字——放這裡讓摘要卡與統計頁同一來源。
    * 封鎖後解封不會重算（createdAt 不變）。
    */

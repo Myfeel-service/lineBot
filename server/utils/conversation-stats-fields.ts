@@ -19,7 +19,7 @@ const SESSION_STATS_BASE = [
   'initialHandler', // 第一句話誰回的
   'hasHandoff', // 有沒有轉真人
   'status', // 結案率
-  'origin', // ↓ isPreInboundFollowSession：活動／加好友出生、客人沒開口的場不進統計
+  'origin', // ↓ isPreInboundSession：客人還沒真的開口（加好友沒講話、只傳貼圖）的場不進統計
   'hasInbound',
 ] as const
 

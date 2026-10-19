@@ -228,6 +228,22 @@ describe('客人傳圖/影/音/檔 → 回引導語就要記機器人首接', ()
     expect(vi.mocked(enterModule)).not.toHaveBeenCalled()
   })
 
+  it('貼圖：開場時講明「這是貼圖」→ 不算開口，不進待處理、不算沒人回（`D-4`）', async () => {
+    await handleMessageEvent(mediaEvent('sticker'), { workspaceId: 'ws-sticker2' })
+
+    expect(vi.mocked(ensureConversationSession)).toHaveBeenCalledWith(
+      LINE_UID, 'ws-sticker2', expect.objectContaining({ sticker: true }),
+    )
+  })
+
+  it('圖片照常算開口（只有貼圖不算）', async () => {
+    await handleMessageEvent(mediaEvent('image'), { workspaceId: 'ws-img2' })
+
+    expect(vi.mocked(ensureConversationSession)).toHaveBeenCalledWith(
+      LINE_UID, 'ws-img2', expect.objectContaining({ sticker: false }),
+    )
+  })
+
   it('AI 未開啟：不發引導語,也不記首接', async () => {
     vi.mocked(getAiSettings).mockResolvedValue({ enabled: false, replyMode: 'auto' } as any)
     await handleMessageEvent(mediaEvent('image'), { workspaceId: 'ws-aioff' })

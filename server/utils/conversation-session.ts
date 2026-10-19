@@ -14,6 +14,7 @@ import type {
   InitialHandler,
   ModuleType,
   SessionCloseReason,
+  SessionOrigin,
 } from '~~/shared/types/conversation-stats'
 import { isHumanOwnedSessionStatus, SESSION_24H_MS } from '~~/shared/types/conversation-stats'
 import { DEFAULT_HUMAN_SESSION_MAX_IDLE_HOURS } from '~~/shared/types/ai-knowledge'
@@ -343,14 +344,24 @@ export async function ensureConversationSession(
    * openedAt**。為什麼不能用伺服器時間:客人訊息存的是 LINE 的時間,一定比我們處理到的時間早
    * 幾百毫秒(網路+冷啟動),而時間軸是用「openedAt 之後的訊息」取窗口——於是每一場新會話的
    * 客人第一句都會被切掉,客服點進去看不到客人最初說了什麼。
+   *
+   * sticker=true:這次來訊**只是一張貼圖**（`D-4`）。算客人有動靜（照常開場／續命、照常吃
+   * 「真人還沒放手」與「沉睡客回來」那兩條），但**不算開口**：不補記 hasInbound，所以只傳
+   * 貼圖的場不進待處理、不算沒人回（見 isPreInboundSession）。之後他打字／傳圖／按按鈕就照常。
    */
-  opts: { origin?: 'follow'; inboundAtMs?: number } = {},
+  opts: { origin?: 'follow'; inboundAtMs?: number; sticker?: boolean } = {},
 ): Promise<string> {
   const db = getDb()
   const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
   const convDocId = lineUserFirestoreDocId(lineUserId, workspaceId)
   const convRef = db.collection('conversations').doc(convDocId)
   const now = Date.now()
+  /**
+   * 這次算不算客人「開口」（＝要不要補記 hasInbound）。加好友不算（客人沒講話）、只傳貼圖也不算（`D-4`）。
+   * ⛔ 只管 hasInbound 這一件事：「真人還沒放手」（humanLeadAt）與「沉睡客回來摘標」看的仍是
+   *    `!opts.origin`——客人傳貼圖也是客人回來了，那句貼圖照樣不該被 AI 接走。
+   */
+  const speaks = !opts.origin && !opts.sticker
 
   // ── Fast path: active cached session ─────────────────────────────
   // For the common case (user messaging within 24h), skip the Firestore transaction entirely.
@@ -378,8 +389,8 @@ export async function ensureConversationSession(
     // 已結束的會話不能再收訊息（要開新的一場）→ 落到 slow path
     if (status && status !== 'closed') {
       const bgUpdate: Record<string, unknown> = { lastActivityAt: FieldValue.serverTimestamp() }
-      // 客人來訊 → 補記 hasInbound(布林、重寫冪等;快取記住後同 instance 只寫一次)
-      if (!opts.origin && !cached.hasInbound) bgUpdate.hasInbound = true
+      // 客人開口 → 補記 hasInbound(布林、重寫冪等;快取記住後同 instance 只寫一次)
+      if (speaks && !cached.hasInbound) bgUpdate.hasInbound = true
       db.collection('conversationSessions').doc(cached.sessionId)
         .update(bgUpdate)
         .catch(e => console.warn('[session] bg lastActivityAt update failed:', e))
@@ -390,7 +401,7 @@ export async function ensureConversationSession(
         cachedAt: now,
         // 刻意沿用原本的鮮度（不是 now）：sessionId 可以續命，status 不行
         statusCachedAt,
-        hasInbound: cached.hasInbound || !opts.origin,
+        hasInbound: cached.hasInbound || speaks,
       })
       // Sync sessionStatusById so shouldSuppressInboundBotAutomationForSession gets a cache hit
       sessionStatusById.set(cached.sessionId, { status, cachedAt: statusCachedAt })
@@ -427,6 +438,8 @@ export async function ensureConversationSession(
    * 一定是更新前的值；拿它判斷「這位是不是沉睡了 N 天才回來」零額外讀取。
    */
   let prevInboundMsForReturnCheck = 0
+  /** 這場現在有沒有 hasInbound（寫進快取用：只傳貼圖的那一則不可以把快取記成「開口過」） */
+  let resultHasInbound = false
 
   const resultId = await db.runTransaction(async (tx) => {
     // Firestore 競爭時會重跑整個 callback：上一輪留下的旗標一律歸零，
@@ -436,6 +449,7 @@ export async function ensureConversationSession(
     resultStatus = 'open'
     humanLeadRecorded = false
     prevInboundMsForReturnCheck = 0
+    resultHasInbound = false
 
     const convSnap = await tx.get(convRef)
     const convData = convSnap.data()
@@ -478,9 +492,10 @@ export async function ensureConversationSession(
       if (idleMs < maxIdleMs) {
         tx.update(existingRef, {
           lastActivityAt: FieldValue.serverTimestamp(),
-          ...(!opts.origin && !existingData.hasInbound ? { hasInbound: true } : {}),
+          ...(speaks && !existingData.hasInbound ? { hasInbound: true } : {}),
         })
         resultStatus = existingData.status as ConversationStatus
+        resultHasInbound = existingData.hasInbound === true || speaks
         return convData!.currentSessionId as string
       }
       // 沒動靜太久 — close inline (event recorded outside the tx)
@@ -535,13 +550,14 @@ export async function ensureConversationSession(
       // 自動交還機器人（handbackIdleMinutes）要有基準才收得掉這種場：沒有這一筆，
       // 它會 `continue` 跳過，開了自動交還的工作區反而永遠交不回來。
       ...(humanLeadAt ? { humanLastRepliedAt: humanLeadAt } : {}),
-      // 出生方式:follow=加好友/活動入口(客人還沒開口);message=客人來訊。
-      // origin='follow' 且尚無 hasInbound 的 session 不進首接統計(見 isPreInboundFollowSession)
-      origin: opts.origin ?? 'message',
-      hasInbound: !opts.origin,
+      // 出生方式:follow=加好友/活動入口(客人還沒開口);sticker=只傳了貼圖(`D-4`);message=客人來訊。
+      // 還沒有 hasInbound 的 follow／sticker 場不進待處理、不進首接統計(見 isPreInboundSession)
+      origin: (opts.origin ?? (opts.sticker ? 'sticker' : 'message')) satisfies SessionOrigin,
+      hasInbound: speaks,
     })
     // 快取要跟文件同一個值（否則這一則訊息自己還是會被 AI 接走），事件在交易外補記
     resultStatus = newStatus
+    resultHasInbound = speaks
     humanLeadRecorded = humanLeadAt != null
     tx.set(convRef, {
       workspaceId,
@@ -562,8 +578,8 @@ export async function ensureConversationSession(
     lastActivityAt: now,
     cachedAt: now,
     statusCachedAt: txAt,
-    // 這次呼叫是客人來訊就一定有 inbound;follow 呼叫先設 false,下次來訊會補記
-    hasInbound: !opts.origin,
+    // 跟交易裡寫的同一個值：follow／只傳貼圖的先設 false，下次開口會補記
+    hasInbound: resultHasInbound,
   })
   sessionStatusById.set(resultId, { status: resultStatus, cachedAt: txAt })
 

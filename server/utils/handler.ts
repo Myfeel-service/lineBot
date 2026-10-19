@@ -2062,7 +2062,12 @@ export async function handleMessageEvent(
       console.error('[conv] save error:', e)
       return ''
     })
-    const sessionId = await ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
+    // 只傳貼圖不算開口（`D-4`）：這場不進待處理、不算沒人回，客人之後講話就照常（見 isPreInboundSession）。
+    // 訊息照存、紅點照亮——客人確實傳了東西，只是沒有事情要人處理。
+    const sessionId = await ensureConversationSession(userId, workspaceId, {
+      inboundAtMs: lineEventTimestampMs,
+      sticker: event.message.type === 'sticker',
+    }).catch((e) => {
       console.error('[session] error:', e)
       return null
     })

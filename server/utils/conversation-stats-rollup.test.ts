@@ -72,6 +72,16 @@ describe('一天的算式', () => {
     expect(days.get('2026-08-20')!.total).toBe(1)
   })
 
+  it('只傳貼圖的場不算「沒人回」、也不進總數；之後講了話就照常算（`D-4`）', () => {
+    const days = buildDaysFromSessions([
+      session({ origin: 'sticker', hasInbound: false, initialHandler: 'unhandled' }),
+      session({ origin: 'sticker', hasInbound: true, initialHandler: 'unhandled' }), // 後來打字了 → 算
+    ] as any)
+    const day = days.get('2026-08-20')!
+    expect(day.total).toBe(1)
+    expect(day.unhandled).toBe(1)
+  })
+
   it('「沒人回」的樣本只留最早 3 筆（區間再大也不會長大）', () => {
     const day = emptyDayStats('2026-08-20')
     for (let i = 5; i >= 1; i--) {

@@ -15,6 +15,12 @@ describe('isOpenQueueSession(未首接佇列成員判定)', () => {
     expect(isOpenQueueSession({ origin: 'message', hasInbound: true })).toBe(true)
   })
 
+  it('只傳貼圖、還沒講話 → 不佔佇列；之後講話了 → 回歸（`D-4`）', () => {
+    // 計數端扣的是 hasInbound==false，跟這裡同一群：只傳貼圖的場建立時就寫 hasInbound:false
+    expect(isOpenQueueSession({ origin: 'sticker', hasInbound: false })).toBe(false)
+    expect(isOpenQueueSession({ origin: 'sticker', hasInbound: true })).toBe(true)
+  })
+
   it('舊資料(沒有 origin/hasInbound 欄位)→ 保留在佇列,不被計數端的 hasInbound==false 扣除弄消失', () => {
     // 這一條是列表端與計數端等價的關鍵：兩邊都保留缺欄位的舊資料
     expect(isOpenQueueSession({})).toBe(true)

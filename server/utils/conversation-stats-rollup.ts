@@ -1,5 +1,5 @@
 import type { Firestore, Query } from 'firebase-admin/firestore'
-import { isPreInboundFollowSession } from '~~/shared/types/conversation-stats'
+import { isPreInboundSession } from '~~/shared/types/conversation-stats'
 import { KPI_SESSION_FIELDS } from './conversation-stats-fields'
 import { taipeiDateKey, taipeiDayEnd, taipeiDayStart } from '~~/shared/taipei-day'
 
@@ -96,8 +96,8 @@ export function emptyDayStats(date: string): DayStats {
 /**
  * 把一場對話折進某一天的統計。**這是唯一的算式**（日結與現場算共用）。
  *
- * ⛔ 活動／加好友出生、客人還沒開口的場不進統計（不算未首接、也不算首接）——
- *    呼叫端要先過 `isPreInboundFollowSession`，這裡不重複判斷（保持單一職責）。
+ * ⛔ 客人還沒真的開口的場不進統計（不算未首接、也不算首接）：活動／加好友出生還沒講話、
+ *    或只傳了貼圖（`D-4`）——呼叫端要先過 `isPreInboundSession`，這裡不重複判斷（保持單一職責）。
  */
 export function foldSessionIntoDay(day: DayStats, s: Record<string, any>): void {
   day.total++
@@ -139,7 +139,7 @@ export function buildDaysFromSessions(sessions: Record<string, any>[]): Map<stri
   for (const s of sessions) {
     const openedAt = s.openedAt?.toDate?.()
     if (!openedAt) continue
-    if (isPreInboundFollowSession(s)) continue
+    if (isPreInboundSession(s)) continue
     const key = taipeiDateKey(openedAt)
     let day = days.get(key)
     if (!day) {

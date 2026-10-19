@@ -1,4 +1,4 @@
-import { isPreInboundFollowSession } from '~~/shared/types/conversation-stats'
+import { isPreInboundSession } from '~~/shared/types/conversation-stats'
 
 /**
  * 「未首接」待處理佇列的單一口徑（側欄數字與側欄列表共用，避免兩邊各算各的）。
@@ -7,14 +7,15 @@ import { isPreInboundFollowSession } from '~~/shared/types/conversation-stats'
  *    （`initialHandler === 'unhandled'`，「有沒有人回答過」）**刻意不同**。
  *    兩個數字不一樣不是 bug——完整說明見 docs/CONVERSATION-STATS-DEFINITIONS.md。
  *
- * 佇列 = status 'open' 扣掉「活動／加好友出生、客人還沒開口」的 session。
+ * 佇列 = status 'open' 扣掉「客人還沒真的開口」的 session（活動／加好友出生還沒講話、
+ * 或只傳了貼圖——見 isPreInboundSession）。
  * 這個條件沒辦法直接下到 Firestore：舊資料沒有 origin／hasInbound 欄位，
  * 用 `hasInbound == true` 查會把它們一起弄消失（等值查詢不匹配缺欄位的文件）。
  * 所以列表端用 {@link isOpenQueueSession} 逐筆判斷，計數端用 `hasInbound == false` 扣除——
- * 兩者等價：hasInbound=false 只會跟 origin='follow' 一起寫入，缺欄位的舊資料兩邊都保留。
+ * 兩者等價：hasInbound=false 只會跟 origin='follow'／'sticker' 一起寫入，缺欄位的舊資料兩邊都保留。
  */
 export function isOpenQueueSession(data: { origin?: unknown; hasInbound?: unknown } | undefined): boolean {
-  return !isPreInboundFollowSession(data)
+  return !isPreInboundSession(data)
 }
 
 /** 邊撈邊過濾時每輪抓幾筆（越大 round-trip 越少，但單輪讀取成本越高） */

@@ -38,9 +38,10 @@ initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKe
 
 const ms = (v: any) => v?.toMillis?.() ?? 0
 
-/** 與 shared/types/conversation-stats.ts 的 isPreInboundFollowSession 同一條規則 */
+/** 與 shared/types/conversation-stats.ts 的 isPreInboundSession 同一條規則（含只傳貼圖的場，`D-4`） */
 function isPreInboundFollowSession(s: any): boolean {
-  return s?.origin === 'follow' && s?.hasInbound !== true
+  if (s?.hasInbound === true) return false
+  return s?.origin === 'follow' || s?.origin === 'sticker'
 }
 
 /** 一批最多幾場會話：每場 2 筆寫入（session update + conversation_closed 事件），Firestore 上限 500 */
