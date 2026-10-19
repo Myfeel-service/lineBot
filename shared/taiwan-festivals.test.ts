@@ -291,3 +291,42 @@ describe('自己的檔期也提醒（D-122②）', () => {
     expect(hasFestivalInWindow('2026-11-20', [{ ...own, date: '2026-11-25' }])).toBe(true)
   })
 })
+
+/**
+ * `C-357`（2026-10-20 老闆照建議）：免費方案不能發推播，提醒⛔不叫他「到後台『推播』排進去」，只提醒檔期快到了。
+ * LINE 早上那則、小幫手節日卡、推播頁上方那行都吃這一支，所以三處一起改到。
+ */
+describe('不能發推播的方案（免費，C-357）', () => {
+  const ninth = (day: string, sent: Record<string, number> = {}) => pickFestivalReminder(day, sent)!
+  const free = { canBroadcast: false }
+
+  it('三個里程碑都不出現「推播」，講的是該確認的事', () => {
+    const t7 = festivalReminderText(ninth('2026-10-11'), '', null, free)
+    const t3 = festivalReminderText(ninth('2026-10-15', { 'doubleninth-2026': 7 }), '', null, free)
+    const t1 = festivalReminderText(ninth('2026-10-17', { 'doubleninth-2026': 3 }), '', null, free)
+    expect(t3).toBe('再過 3 天就是重陽節。記得確認庫存和出貨來不來得及。')
+    expect(t1).toBe('明天就是重陽節！最後確認兩件事：庫存和出貨來不來得及、當天有沒有人顧線上客服。')
+    // 7 天那一句本來就沒叫他排推播：跟付費一樣
+    expect(t7).toBe(festivalReminderText(ninth('2026-10-11')))
+    for (const t of [t7, t3, t1]) expect(t).not.toContain('推播')
+  })
+
+  it('有草稿也不講「還沒排」（他現在送不出去）；發送失敗也不叫他去推播頁看', () => {
+    const r = ninth('2026-10-15', { 'doubleninth-2026': 7 })
+    expect(festivalReminderText(r, '', { name: '重陽早鳥', status: 'draft', atMs: null }, free))
+      .toBe('再過 3 天就是重陽節。記得確認庫存和出貨來不來得及。')
+    expect(festivalReminderText(r, '', { name: '重陽早鳥', status: 'failed', atMs: null }, free)).not.toContain('推播')
+  })
+
+  it('降級前排好、已經發出去的照實講（那是事實，不是叫他去做）', () => {
+    const r = ninth('2026-10-15', { 'doubleninth-2026': 7 })
+    expect(festivalReminderText(r, '', { name: '重陽早鳥', status: 'completed', atMs: Date.UTC(2026, 9, 12, 12) }, free))
+      .toBe('再過 3 天就是重陽節。「重陽早鳥」10/12 發出去了，記得確認庫存和出貨來不來得及。')
+  })
+
+  it('不給或 true＝照舊（方案讀不到時 fail-open）', () => {
+    const r = ninth('2026-10-15', { 'doubleninth-2026': 7 })
+    expect(festivalReminderText(r, '', null, {})).toBe(festivalReminderText(r))
+    expect(festivalReminderText(r, '', null, { canBroadcast: true })).toContain('建議今天就到後台「推播」')
+  })
+})

@@ -414,11 +414,14 @@
             <!-- `D-112` 第 1 件：系統先發現該做的事，卡片一按就叫它開工（Shopify／Zendesk／Square 的主要做法）。
                  它會先問要發什麼、建的只是草稿；發送照舊要他自己到推播頁按（紅線）。
                  沒有建推播權限的人只看到原本那條路。 -->
-            <div v-if="can(ADMIN_OP_CAPABILITY[AGENT_FESTIVAL_ASK.op])" class="ta-alert__actions">
-              <button type="button" class="ta-alert__act ta-alert__act--primary" @click="askFestival">交給小幫手擬草稿</button>
-              <button type="button" class="ta-alert__act ta-alert__act--ghost" @click="goBroadcasts">去推播頁</button>
-            </div>
-            <button v-else type="button" class="ta-festival__cta" @click="goBroadcasts">去排推播 →</button>
+            <!-- `C-357`：免費方案不能發推播 → 這幾顆都收起來，卡片只提醒檔期快到了（字也不叫他去排） -->
+            <template v-if="canBroadcast">
+              <div v-if="can(ADMIN_OP_CAPABILITY[AGENT_FESTIVAL_ASK.op])" class="ta-alert__actions">
+                <button type="button" class="ta-alert__act ta-alert__act--primary" @click="askFestival">交給小幫手擬草稿</button>
+                <button type="button" class="ta-alert__act ta-alert__act--ghost" @click="goBroadcasts">去推播頁</button>
+              </div>
+              <button v-else type="button" class="ta-festival__cta" @click="goBroadcasts">去排推播 →</button>
+            </template>
           </div>
 
           <!-- 載入骨架 -->
@@ -828,7 +831,18 @@ const briefD = computed(() => brief.value?.dayBefore ?? null)
  * 日期用台北時區的「今天」：直接拿本機日期的話，凌晨（台北已換日、UTC 還沒）會慢一天。
  * 只在面板打開的當下算一次就夠——節日窗是以「天」為單位的東西，不需要反應式跟著時鐘走。
  */
-const festival = computed(() => festivalHint(taipeiDate()))
+/**
+ * `C-357`：免費方案（推播等級 none）不能發推播——卡片的字不叫他去排，「擬草稿／去推播頁」那幾顆也收起來。
+ * 等級讀不到（null）＝照舊（fail-open，同推播頁與送出端）。
+ * 只有節日在 7 天窗內才問（一年大多數日子這張卡根本不出現，不多打那一支）。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const canBroadcast = computed(() => broadcastTier.value !== 'none')
+const festival = computed(() => festivalHint(taipeiDate(), { canBroadcast: canBroadcast.value }))
+watch([panelOpen, workspaceId], ([open]) => {
+  if (open && workspaceId.value && festivalHint(taipeiDate()))
+    void loadBroadcastTier()
+}, { immediate: true })
 function goBroadcasts() {
   closePanel()
   void navigateTo(`/admin/${workspaceId.value}/broadcasts`)

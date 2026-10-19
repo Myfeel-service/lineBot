@@ -20,10 +20,14 @@ export interface FestivalHint {
   daysUntil: number
 }
 
-/** 今天（台北）有沒有節日在 7 天窗內。沒有回 null，元件整塊不渲染。 */
-export function festivalHint(todayTaipei: string): FestivalHint | null {
+/**
+ * 今天（台北）有沒有節日在 7 天窗內。沒有回 null，元件整塊不渲染。
+ * @param opts.canBroadcast 方案能不能發推播（`C-357`）：`false`＝免費方案，句子不叫他去排推播（跟 LINE 那則同一支）。
+ *   讀不到方案就不給＝照舊（fail-open）。
+ */
+export function festivalHint(todayTaipei: string, opts: { canBroadcast?: boolean } = {}): FestivalHint | null {
   // sent 傳空物件＝不管 LINE 那邊講過沒有：後台是常駐顯示，語氣照剩餘天數自動換檔
   const r = pickFestivalReminder(todayTaipei, {})
   if (!r) return null
-  return { name: r.festival.name, text: festivalReminderText(r), daysUntil: r.daysUntil }
+  return { name: r.festival.name, text: festivalReminderText(r, '', null, opts), daysUntil: r.daysUntil }
 }

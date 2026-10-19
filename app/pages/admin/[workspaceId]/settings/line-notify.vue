@@ -263,7 +263,7 @@
                        formatWeeklyInsightLines 全零就整段不出現 -->
                   <p class="ln-grp__sub">摘要裡順便附（不另外傳一則）</p>
                   <el-checkbox v-model="timing.festivalTips" @change="saveTiming">節日前的行銷提醒</el-checkbox>
-                  <p class="ln-when__hint">節日前 7／3／1 天各講一次：先備素材、再排推播、最後確認出貨與客服。</p>
+                  <p class="ln-when__hint">{{ festivalTipsHint }}</p>
                   <el-checkbox v-model="timing.weeklyInsights" @change="saveTiming">週一的「本週顧客觀察」</el-checkbox>
                   <p class="ln-when__hint">這週被貼最多的標籤、兩週沒再出現的客人有幾位；那週沒東西講就不附。</p>
                 </section>
@@ -884,7 +884,17 @@ useAgentOpRefresh('line-notify', async (evt, { mode }) => {
   return (await flashAgentTarget(evt.section, mode === 'arrived' ? 8000 : 3000)) ? 'shown' : 'missing'
 })
 
+/**
+ * 「節日前的行銷提醒」底下那行（`C-357`）：照送出端實際會講的寫——免費方案（推播等級 none）的提醒
+ * 不叫他排推播（`festivalReminderText` 的 canBroadcast），這行也不寫「再排推播」。讀不到等級＝照舊。
+ */
+const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+const festivalTipsHint = computed(() => broadcastTier.value === 'none'
+  ? '節日前 7／3／1 天各講一次：先備素材、再確認庫存和出貨、最後確認客服有沒有人顧。'
+  : '節日前 7／3／1 天各講一次：先備素材、再排推播、最後確認出貨與客服。')
+
 onMounted(async () => {
+  void loadBroadcastTier()
   // 一起等：先畫出來再改口，平台管理員會先閃一下「請擁有者邀請你」
   await Promise.all([load(), checkIsSuperAdmin().catch(() => false)])
   // 小幫手「現在沒有人會收到」帶路時帶 ?add=me：直接打開掃 QR 那一塊（參數用完即丟）

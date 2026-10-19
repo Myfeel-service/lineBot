@@ -45,6 +45,10 @@ vi.mock('./ai-settings', () => ({ getAiSettings }))
 const { loadDayStats } = vi.hoisted(() => ({ loadDayStats: vi.fn() }))
 vi.mock('./conversation-stats-rollup', () => ({ loadDayStats }))
 
+// `C-357`：方案能不能發推播（免費＝'none'）。預設付費方案，個別測試改
+const { workspaceBroadcastTier } = vi.hoisted(() => ({ workspaceBroadcastTier: vi.fn(async (): Promise<string | null> => 'advanced') }))
+vi.mock('./broadcast-plan-gate', async orig => ({ ...(await orig<object>()), workspaceBroadcastTier }))
+
 import { dailyBacklogDigest } from './cron-maintenance'
 
 const WS = 'WS'
@@ -403,6 +407,33 @@ describe('提醒跟卡片同步（D-122①）', () => {
     await dailyBacklogDigest(db)
 
     expect(sentText()).toContain('🎉 再過 3 天就是重陽節。建議今天就到後台「推播」把節慶訊息排進去')
+  })
+
+  it('⛔ 免費方案（不能發推播，`C-357`）：只提醒檔期快到了，不叫他去排推播', async () => {
+    workspaceBroadcastTier.mockResolvedValueOnce('none')
+    const { db, festState } = makeDb({ festivalState: ninthSent })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 3 天就是重陽節。記得確認庫存和出貨來不來得及。')
+    expect(sentText()).not.toContain('推播')
+    expect(festState[WS]).toEqual({ 'doubleninth-2026': 3 }) // 照樣記里程碑
+  })
+
+  it('免費方案有一則（降級前留下的）草稿：也不講「還沒排」——他現在送不出去', async () => {
+    workspaceBroadcastTier.mockResolvedValueOnce('none')
+    const { db } = makeDb({ festivalState: ninthSent, broadcasts: [bcDoc({ status: 'draft', scheduleAt: null })] })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('🎉 再過 3 天就是重陽節。記得確認庫存和出貨來不來得及。')
+    expect(sentText()).not.toContain('還沒排')
+  })
+
+  it('方案讀不到：照舊講（fail-open，同推播頁與送出端）', async () => {
+    workspaceBroadcastTier.mockRejectedValueOnce(new Error('firestore down'))
+    const { db } = makeDb({ festivalState: ninthSent })
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('建議今天就到後台「推播」把節慶訊息排進去')
   })
 
   it('⛔ 綁在別檔的推播不算這一檔（跟卡片同一條歸屬規則）', async () => {

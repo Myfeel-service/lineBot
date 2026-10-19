@@ -193,7 +193,7 @@ function monthDay(date: string): string {
  * 三個里程碑講**不同的事**，這是整個功能的重點——同一個節日連講三次一樣的話
  * 就只是三倍雜訊：
  *   7 天前：還來得及規劃，講「備素材、想優惠」
- *   3 天前：講「現在就去排推播」（順手帶到自家功能）
+ *   3 天前：講「現在就去排推播」（順手帶到自家功能）——⚠️ 不能發推播的方案改講「確認庫存和出貨」（`C-357`）
  *   1 天前：講「最後確認」清單
  */
 /**
@@ -235,8 +235,19 @@ function planStatusPhrase(p: ReminderPlan): string {
  *   草稿講「還沒排」，其餘照舊。不給＝照舊（還沒有推播、或查不到）。
  *
  * 自己的檔期（`festival.own`）沒有通用切角：7 天那一句直接接「建議…準備好」。
+ *
+ * @param opts.canBroadcast 這個帳號的方案能不能發推播（`C-357`，2026-10-20 老闆照建議）。
+ *   `false`＝確定不能（免費方案 `broadcast: 'none'`）：⛔ 不叫他「到後台『推播』排進去」、也不講草稿還沒排，
+ *   只提醒檔期快到了、該確認的事（庫存出貨、客服）。不給或 `true`＝照舊——**方案讀不到時照舊**
+ *   （同推播頁與送出端的 fail-open），寧可多講一句也不要把付費帳號的提醒砍掉。
  */
-export function festivalReminderText(r: FestivalReminder, angleOverride = '', plan: ReminderPlan | null = null): string {
+export function festivalReminderText(
+  r: FestivalReminder,
+  angleOverride = '',
+  plan: ReminderPlan | null = null,
+  opts: { canBroadcast?: boolean } = {},
+): string {
+  const canPush = opts.canBroadcast !== false
   const when = dayPhrase(r.daysUntil)
   const { name, longWeekend } = r.festival
   const angle = String(angleOverride ?? '').trim() || r.festival.angle
@@ -253,7 +264,21 @@ export function festivalReminderText(r: FestivalReminder, angleOverride = '', pl
       : `${head}${done}，記得確認庫存和出貨來不來得及。`
   }
   // ── 排了但沒發出去：叫他去看卡在哪（卡片上那一列是「發送失敗」）──
-  if (plan?.status === 'failed') return `${head}「${plan.name}」沒有發出去，到後台「推播」看看卡在哪。`
+  if (plan?.status === 'failed' && canPush) return `${head}「${plan.name}」沒有發出去，到後台「推播」看看卡在哪。`
+
+  // ── 方案不能發推播（免費，`C-357`）：⛔ 不叫他去排、不講草稿（他現在送不出去），只提醒該確認的事 ──
+  //    已經排好／發出去的（降級前排的）上面照實講過了——那是事實，不是叫他去做。
+  if (!canPush) {
+    switch (r.milestone) {
+      case 7:
+        return `${head}${angle ? `${angle}，建議` : '建議'}這幾天先把檔期優惠、贈品和圖文素材準備好。`
+      case 3:
+        return `${head}記得確認庫存和出貨來不來得及。`
+      case 1:
+      default:
+        return `${head}最後確認兩件事：庫存和出貨來不來得及、${service}。`
+    }
+  }
 
   // ── 還是草稿：照舊提醒去排，並講是哪一則還沒排 ──
   const draft = plan?.status === 'draft' ? `你有一則草稿「${plan.name}」還沒排` : ''

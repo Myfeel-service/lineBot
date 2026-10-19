@@ -50,6 +50,7 @@ import {
   type TaiwanFestival,
 } from '~~/shared/taiwan-festivals'
 import { pickDigestFestival } from './festival-digest-pick'
+import { workspaceBroadcastTier } from './broadcast-plan-gate'
 import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
@@ -1342,6 +1343,13 @@ export async function dailyBacklogDigest(db: Firestore) {
       festivalPlan = pick?.plan ?? null
       ownFestivals = pick?.ownFestivals ?? []
     }
+    /**
+     * 方案能不能發推播（`C-357`）：免費方案不能發，提醒⛔不叫他「到後台『推播』排進去」。
+     * 只有今天真的要講節日才查（一次讀訂閱）；讀不到＝照舊講（fail-open，同推播頁與送出端）。
+     */
+    const canBroadcast = festival
+      ? await workspaceBroadcastTier(ws, db).then(t => t !== 'none').catch(() => true)
+      : true
 
     /**
      * 節慶提醒客製化（`C-223`＝`D-21` Phase 2）。
@@ -1406,7 +1414,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       yesterday,
       waiting: digestWaiting,
       todo: digestTodo,
-      festivalText: festival ? festivalReminderText(festival, tailoredAngle, festivalPlan) : '',
+      festivalText: festival ? festivalReminderText(festival, tailoredAngle, festivalPlan, { canBroadcast }) : '',
       weeklyLines: insights ?? [],
       unknownNotes,
       link: digestLink,

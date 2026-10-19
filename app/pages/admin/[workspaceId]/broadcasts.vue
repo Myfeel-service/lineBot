@@ -777,9 +777,6 @@ import { festivalHint } from '~/utils/festival-hint'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
-/** 節慶行銷提醒（窗外回 null＝整條不渲染）。判定與文案見 utils/festival-hint.ts */
-const festival = festivalHint(taipeiDate())
-
 /** 排程：不可選今天以前的日期 */
 function disabledPastDate(d: Date) {
   const today = new Date()
@@ -885,6 +882,12 @@ const draftTotal = ref<number | null>(null)
  * null＝還沒問到或讀不到訂閱——**不鎖**（fail-open，同後端）；真的不該送的，驗證視窗與送出端還會擋。
  */
 const planBroadcastTier = ref<BroadcastTier | null>(null)
+/**
+ * 節慶行銷提醒（窗外回 null＝整條不渲染）。判定與文案見 utils/festival-hint.ts。
+ * `C-357`：免費方案（等級 none）那一句不叫他「到後台『推播』排進去」——這一頁對他是鎖著的；
+ * 等級還沒問到（null）＝照舊（fail-open）。
+ */
+const festival = computed(() => festivalHint(taipeiDate(), { canBroadcast: planBroadcastTier.value !== 'none' }))
 async function loadDraftTotal() {
   try {
     const res = await apiFetch<{ total?: number, broadcastTier?: BroadcastTier | null }>('/api/broadcast/list', {
