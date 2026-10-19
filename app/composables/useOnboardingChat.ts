@@ -113,6 +113,35 @@ export function onboardingBuiltLandingPath(workspaceId: string): string {
   return `/admin/${workspaceId}/ai-playground`
 }
 
+/** 接上 LINE 的帳號進來的預設頁（`/admin/{wid}` 一直以來的落點） */
+const WORKSPACE_HOME_CONNECTED = 'conversation-stats'
+
+/**
+ * 進一個官方帳號時落在哪一頁（`G-13`，2026-10-20 老闆照建議）。
+ * 帳號選擇頁、組織頁、`/admin/{wid}` 三個入口都走 `/admin/{wid}`，由那一頁照這支決定——⛔ 別在入口各寫一份。
+ *
+ * 沒接上 LINE＝對話統計一排 0、客服對話也是空的，唯一真的能用的是測試對話——
+ * 跟打造那一趟的出口落**同一頁**（`onboardingBuiltLandingPath`，⛔ 不另寫一份路徑）。
+ * 「沒接上」的判斷＝小幫手、頁頂紅帶、開通清單用的那一份（setup-status 的 `lineConnected`，會真的去問 LINE）。
+ * ⚠️ 只有**確定沒接**（`incomplete`）才改落：查不到（`unknown`）、還沒問到（`undefined`）照舊落對話統計——查不到≠沒接。
+ * ⚠️ 測試對話要 `playground.use`（客服以上）：觀察者照舊落對話統計，不然會被那一頁的門彈回對話頁還跳一則錯誤。
+ */
+export function workspaceHomePath(
+  workspaceId: string,
+  lineConnected: SetupItemStatus | undefined,
+  canUsePlayground: boolean,
+): string {
+  if (lineConnected === 'incomplete' && canUsePlayground)
+    return onboardingBuiltLandingPath(workspaceId)
+  return `/admin/${workspaceId}/${WORKSPACE_HOME_CONNECTED}`
+}
+
+/**
+ * 進帳號那一刻最多等體檢多久（`G-13`）。⚠️ 等的是同一支 setup-status——版型與小幫手本來就會打，
+ * 60 秒內同一個帳號只查一次（`useSetupStatus` 的 TTL），所以不會多打一次；超過就照舊落對話統計，別讓人對著白頁等。
+ */
+export const WORKSPACE_HOME_STATUS_WAIT_MS = 4000
+
 interface LineStatus {
   tokenConfigured: boolean
   secretConfigured: boolean

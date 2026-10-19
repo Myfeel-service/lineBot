@@ -562,8 +562,12 @@ function scrollToAlerts() {
   gridRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+/**
+ * 落點交給 `/admin/{wid}` 決定（`G-13`：沒接 LINE 的落測試對話，見 `workspaceHomePath`）。
+ * ⛔ 別拿這一頁列表上的 `r.lineConnected` 自己判：那一欄只看憑證有沒有貼（總覽不逐一問 LINE），跟入口用的口徑不同。
+ */
 function enter(workspaceId: string) {
-  router.push(`/admin/${workspaceId}/conversation-stats`)
+  router.push(`/admin/${workspaceId}`)
 }
 
 // ── 帳務 ──────────────────────────────────────────────────

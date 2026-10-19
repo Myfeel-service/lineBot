@@ -203,8 +203,13 @@ export function useSetupStatus() {
   /** 這次問不到（查詢失敗）。⛔ 與 loaded 分開：「還沒好」與「問不到」的下一步不一樣 */
   const failed = computed(() => rawFailed.value && !loaded.value)
 
-  async function refresh(options: { force?: boolean } = {}): Promise<void> {
-    const wid = workspaceId.value
+  /**
+   * @param options.workspaceId 指定要查哪個帳號（`G-13`：進帳號的 route middleware 還沒切到那一頁，
+   *   `useRoute()` 拿到的是**上一頁**，要自己帶）。不帶＝現在網址上的那個帳號。
+   *   查完一樣記在 `checkedFor`，切過去之後版型與小幫手的 `refresh()` 吃 TTL，不會再打一次。
+   */
+  async function refresh(options: { force?: boolean, workspaceId?: string } = {}): Promise<void> {
+    const wid = options.workspaceId || workspaceId.value
     if (!wid)
       return
     // 只有「同一個帳號」的查詢能共用飛行中的那一支
@@ -271,6 +276,16 @@ export function useSetupStatus() {
   const capabilities = computed<ResolvedCapability[]>(() =>
     CAPABILITIES.map(c => ({ ...c, status: statusMap.value[c.id] ?? 'unknown' })),
   )
+
+  /**
+   * 指定帳號的某一項（`G-13` 進帳號的 middleware 用：那時網址還在上一頁，上面那些 computed 對不上帳號）。
+   * 手上這份不是那個帳號的、或還沒查到＝`undefined`（⛔ 不猜）。
+   */
+  function statusOf(wid: string, id: SetupCapabilityId): SetupItemStatus | undefined {
+    if (!wid || checkedFor.value !== wid || !rawLoaded.value)
+      return undefined
+    return rawStatusMap.value[id]
+  }
 
   /** 只保留「這個帳號有權限去做」的能力——沒權限的不顯示、也不算進進度與紅點 */
   const visibleCapabilities = computed(() =>
@@ -424,5 +439,6 @@ export function useSetupStatus() {
     loading,
     refresh,
     reset,
+    statusOf,
   }
 }

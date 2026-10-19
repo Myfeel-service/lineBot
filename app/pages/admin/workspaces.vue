@@ -346,8 +346,9 @@ const groupedWorkspaces = computed<OrgGroup[]>(() => {
   })
 })
 
+/** 落點交給 `/admin/{wid}` 決定（`G-13`：沒接 LINE 的落測試對話，見 `workspaceHomePath`）——⛔ 別在這裡寫死某一頁 */
 async function enter(workspaceId: string) {
-  await navigateTo(`/admin/${workspaceId}/conversation-stats`)
+  await navigateTo(`/admin/${workspaceId}`)
 }
 
 // ── 新增官方帳號 ──────────────────────────────────────────────────
