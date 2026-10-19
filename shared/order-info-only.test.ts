@@ -105,10 +105,24 @@ describe('要不要問：已經知道他要做什麼的時候不問', () => {
     ])).toBe(false)
   })
 
-  it('要資料那句是一個多小時前的 → 算新的一件事，問', () => {
+  it('真人問「煩請提供您的訂單資訊」、客人隔天才貼上來 → 還是在回答，不問（正式站常見）', () => {
     expect(ask([
       { direction: 'incoming', messageType: 'text', text: BAI, timestampMs: NOW },
-      { direction: 'outgoing', messageType: 'text', text: '您好,請問您的訂單編號是？', timestampMs: NOW - 2 * 60 * 60 * S },
+      { direction: 'outgoing', messageType: 'text', text: '您好， 煩請提供您的訂單資訊以便我們協助查詢： 1. 訂單編號 2. 姓名', timestampMs: NOW - 20 * 60 * 60 * S },
+    ])).toBe(false)
+  })
+
+  it('流程說「訂單編號格式好像不太對,請再確認一次喔！」→ 這筆是重給的答案，不問', () => {
+    expect(ask([
+      { direction: 'incoming', messageType: 'text', text: 'M20261007002452KOYK', timestampMs: NOW },
+      { direction: 'outgoing', messageType: 'text', text: '訂單編號格式好像不太對,請再確認一次喔！', timestampMs: NOW - 30 * S },
+    ], null, 'M20261007002452KOYK')).toBe(false)
+  })
+
+  it('要資料那句是三天多以前的 → 算新的一件事，問', () => {
+    expect(ask([
+      { direction: 'incoming', messageType: 'text', text: BAI, timestampMs: NOW },
+      { direction: 'outgoing', messageType: 'text', text: '您好,請問您的訂單編號是？', timestampMs: NOW - 73 * 60 * 60 * S },
     ])).toBe(true)
   })
 
