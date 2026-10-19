@@ -85,6 +85,7 @@ import {
 } from '~~/shared/line-workspace'
 import { capMapSize } from './bounded-cache'
 import { systemModuleId } from './workspace-system-modules'
+import { isSelfServiceModule } from './self-service-module'
 import type { MessageSender } from '~~/shared/message-sender'
 import {
   CUSTOMER_ACTION_MESSAGE_TYPE,
@@ -3535,14 +3536,17 @@ function markWaitingAckSent(workspaceId: string, lineUserId: string): void {
  * 為什麼：轉真人那則訊息（或勿擾訊息）送出的同時就會蓋掉上面那個節流章，而客人**正是**
  * 在收到那則之後才開始按選單的。共用一個節流＝這個場景永遠靜音，等於沒修。
  * 2026-08-24 實測：客人按「真人客服」收到勿擾訊息後，41 秒內又按了 34 次選單
- * （查訂單 30 次、商品目錄 1 次），一則回覆都沒有，隔天早上才有人回（`H-19`）。
+ * （查訂單 30 次、真人客服 7 次、商品目錄 1 次），一則回覆都沒有，隔天早上才有人回（`H-19`）。
+ * 2026-10-20 起自助模組（查訂單、商品目錄）在等真人期間照樣回（`D-31`），會走到這句的
+ * 剩下「又按了一次真人客服」、要客人接著打字的模組、指不到東西的舊按鈕。
  *
- * 兩句話講的也不是同一件事，所以不算重複安撫：
+ * 兩句話回應的也不是同一件事，所以不算重複安撫：
  *   上面那句＝「你傳的訊息我們收到了」
- *   這句　　＝「你按的選單現在不會動，原因是這樣，你可以改用打字的」
+ *   這句　　＝回答「真人客服」那顆按鈕本身：「已經幫您安排了，不用再按，可以先把問題打下來」
  */
 const WAITING_BUTTON_ACK_THROTTLE_MS = 30 * 60 * 1000
 const waitingButtonAckSentAt = new Map<string, number>()
+const WAITING_BUTTON_ACK_TEXT = '已經幫您安排專員了，上線後會直接回覆您 🙏\n（您可以先把問題打在這裡，專員一上線就看得到）'
 
 // ── 轉真人的兩個收斂點 ─────────────────────────────────────────────
 // 「把客人轉給真人」有六個入口（AI 護欄、二次確認、「找真人」攔截、腳本逃生門、
@@ -3785,13 +3789,14 @@ async function maybeSendWaitingAck(
 }
 
 /**
- * 等真人期間**按了選單／按鈕**時的回饋。文字訊息有 maybeSendWaitingAck，按鈕先前完全沒接，
- * 客人按下去畫面上一點動靜都沒有——同一位客人打字有回應、按按鈕像壞掉（`H-19`）。
+ * 等真人期間**按了選單／按鈕**、而那顆按鈕不會照樣回（不是自助模組，見 isSelfServiceModule）時的回饋。
+ * 文字訊息有 maybeSendWaitingAck，按鈕先前完全沒接，客人按下去畫面上一點動靜都沒有——
+ * 同一位客人打字有回應、按按鈕像壞掉（`H-19`）。
  *
- * 三件事要在同一則裡講完，缺一則客人還是會繼續按：
- *   ①「已經在排隊了」——不然他以為剛才那次也沒送出
- *   ②「選單現在不會動」——這是他真正想知道的，沒講他會一直試
- *   ③「可以改用打字的」——給一條真的走得通的路，而不是只有道歉
+ * 兩件事要在同一則裡講完，缺一則客人還是會繼續按：
+ *   ①「已經在排隊了」——不然他以為剛才那次也沒送出（最常見的是又按了一次「真人客服」）
+ *   ②「可以先把問題打下來」——給一條真的走得通的路，而不是只有道歉
+ * ⛔ 2026-10-20 起不再說「等候期間選單暫時不會有回應」：自助模組照樣會回（`D-31`），那句變成假話。
  *
  * 只在 pending_human（等真人）出聲；human_handling（真人正在對話）維持靜音，
  * 沿用 maybeSendWaitingAck 的判斷——那時同事就在線上，客人按了什麼他在對話裡看得到
@@ -3817,7 +3822,7 @@ async function maybeSendWaitingButtonAck(
 
     const msg: messagingApi.TextMessage = {
       type: 'text',
-      text: '已經幫您安排專員了，上線後會直接回覆您 🙏\n（等候期間選單暫時不會有回應，您可以先把問題打在這裡，專員一上線就看得到）',
+      text: WAITING_BUTTON_ACK_TEXT,
     }
     try {
       await replyMessage(replyToken, [msg], workspaceId)
@@ -3834,8 +3839,8 @@ async function maybeSendWaitingButtonAck(
      * 那正是 markWaitingAckSent 當初被加出來要防的事（見它的註解，實測發生過），
      * 而這裡因為**是我們主動叫他打字**，不修的話是必然發生不是偶然。
      *
-     * 反過來不擋：先收過文字 ack 的人再按選單，仍然要收到這一句——
-     * 「選單現在不會動」是文字 ack 沒講過的新資訊。
+     * 反過來不擋：先收過文字 ack 的人再按「真人客服」，仍然要收到這一句——
+     * 他按的那顆按鈕是在問「有沒有人要來」，要正面回答「已經安排了」，不能像按了沒反應。
      */
     markWaitingAckSent(workspaceId, lineUserId)
     saveOutgoingConversationMessagesByWorkspace(lineUserId, [msg], workspaceId, {
@@ -4796,8 +4801,19 @@ export async function handlePostbackEvent(
     }
     return // Stop further processing
   }
+  /**
+   * 等真人期間（待真人／真人處理中）客人按的是**自助模組**——照樣回那個模組（`D-31`，老闆 2026-10-20）。
+   * 走的是下面同一條路（內容、貼標、記帳都跟平常按下去一樣），只是先決定放不放行。
+   * 按到「真人客服」、要客人接著打字的模組、打字，照舊閉嘴（判斷見 isSelfServiceModule）。
+   * 真人處理中也放行：「真人還沒放手」會一直延續到客服按「結束會話」，不放行的話
+   * 那位客人的選單在那之前每一顆都是死的，而且連一句回饋都沒有。
+   */
+  const selfServiceWhileWaiting = suppressBotAutomationPostback
+    && Boolean(trigger.moduleId)
+    && isSelfServiceModule(preloadedFlow)
+
   // Handle direct module trigger (flow + hydrated messages already fetched in parallel above)
-  if (trigger.moduleId && !suppressBotAutomationPostback) {
+  if (trigger.moduleId && (!suppressBotAutomationPostback || selfServiceWhileWaiting)) {
     const moduleId = trigger.moduleId
     // 圖文選單觸發模組：回覆組裝／送出期間先顯示「輸入中…」給即時回饋（fire-and-forget，
     // 送出訊息即自動消失）。冷啟動的等待發生在本 handler 執行之前，動畫無法遮蓋；
@@ -4841,7 +4857,10 @@ export async function handlePostbackEvent(
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
         saveOutgoingConversationMessagesByWorkspace(userId, outMessages, workspaceId, {
           sender: liveAgent?.sender ?? 'bot',
-          senderName: liveAgent?.senderName ?? String(flow.name || ''),
+          // 等真人期間放行的那幾則，tooltip 講清楚是客人自己按出來的——接手的同事看到機器人在
+          // 真人的對話裡講話，第一個念頭是「誰在搶答」（`D-31` 當初擔心的就是這個）
+          senderName: liveAgent?.senderName
+            ?? (selfServiceWhileWaiting ? `${String(flow.name || '')}（等真人時客人自己按的）` : String(flow.name || '')),
         }).catch(e => console.error('[conv] save error:', e))
         if (liveAgent) {
           await commitHandoff({
@@ -4866,8 +4885,9 @@ export async function handlePostbackEvent(
   }
 
   if (trigger.moduleId && suppressBotAutomationPostback) {
-    // 真人接手中：機器人刻意不回，但客人**確實按了**。這一行對接手的同事最有用
-    // （客人一邊等回覆一邊在點什麼），少了它就只是一段莫名的沉默。
+    // 真人接手中、按的又不是自助模組（多半是又按了一次「真人客服」）：機器人不回模組，
+    // 但客人**確實按了**。這一行對接手的同事最有用（客人一邊等回覆一邊在點什麼），
+    // 少了它就只是一段莫名的沉默。
     recordCustomerAction({
       workspaceId,
       userIdOrDocId: userId,
@@ -4877,7 +4897,7 @@ export async function handlePostbackEvent(
       lineEventTimestampMs: postbackTs,
     })
     // 記一行給同事看還不夠——客人那邊仍是一片空白。等真人時給他一句節流過的回饋，
-    // 說清楚「排隊中／選單不會動／可以改用打字」，否則他只會一直按（`H-19`）。
+    // 說清楚「已經在排隊／可以先把問題打下來」，否則他只會一直按（`H-19`）。
     if (event.replyToken) {
       await maybeSendWaitingButtonAck(sessionId, userId, event.replyToken, workspaceId)
     }

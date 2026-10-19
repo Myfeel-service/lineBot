@@ -8,6 +8,10 @@
  *
  * ⛔ 這支測試真正要釘住的是第三個 case：安撫語的節流**不能跟轉真人那則共用**。
  *    共用的話，客人正好是在收到轉真人訊息之後才開始按的，34 次照樣全部靜音＝修了等於沒修。
+ *
+ * 2026-10-20 起（`D-31`）查訂單、商品目錄這種**自助模組**在等真人期間照樣回（另見
+ * handler.handoff-self-service.test.ts），所以這裡的按鈕改用「又按了一次真人客服」——
+ * 那才是現在還會走到這句安撫語的情境（8/24 那 34 次裡有 7 次就是它）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -65,9 +69,12 @@ const WS = 'ws-btn-ack'
 const LIVE_MODULE = 'mod-live-agent'
 const ORDER_MODULE = 'mod-order'
 
-/** 這句話的關鍵字：客人真正需要知道的是「選單不會動」和「可以改用打字的」 */
-const BTN_ACK_MENU = '選單暫時不會有回應'
+/** 這句話的關鍵字：「已經在排隊了」和「可以先把問題打下來」 */
+const BTN_ACK = '已經幫您安排專員'
 const BTN_ACK_TYPE = '先把問題打在這裡'
+/** ⛔ 自助模組照樣會回之後（`D-31`），這句變成假話，不可以再出現 */
+const STALE_MENU_CLAIM = '選單暫時不會有回應'
+const LIVE_TEXT = '謝謝您！我們的客服人員會很快聯絡您'
 
 function makeDb(lineUserId: string) {
   const conversations = new Map<string, Record<string, unknown>>()
@@ -150,22 +157,22 @@ beforeEach(() => {
 })
 
 describe('等真人期間按選單，客人不能一片空白', () => {
-  it('按下去要收到一句話：排隊中＋選單不會動＋可以改用打字的', async () => {
+  it('又按了一次「真人客服」：收到一句話＝已經在排隊＋可以先打下來（不重送模組、不講選單不會動）', async () => {
     // ⛔ 每個 case 換一位客人：節流是 module 級的 Map（key = workspaceId:lineUserId），
     //    共用同一位會被前一個 case 蓋掉章，測出假的綠燈。
     const uid = 'U0000000000000000000000000000201'
     vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
     nowWaitingForHuman()
 
-    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
 
     const texts = sentTexts()
     expect(texts).toHaveLength(1)
-    expect(texts[0]).toContain('已經幫您安排專員')
-    expect(texts[0]).toContain(BTN_ACK_MENU)
+    expect(texts[0]).toContain(BTN_ACK)
     expect(texts[0]).toContain(BTN_ACK_TYPE)
-    // 模組本身的內容仍然不送（機器人閉嘴這條原則沒被這次改動放寬，見 `D-30`）
-    expect(texts.join('')).not.toContain('請提供您的訂單編號')
+    expect(texts[0]).not.toContain(STALE_MENU_CLAIM)
+    // 真人客服模組本身的內容不重送（已經在等了，再說一次「會很快聯絡您」像前一次沒生效）
+    expect(texts.join('')).not.toContain(LIVE_TEXT)
   })
 
   it('連按 34 次只發一則（實測就是 41 秒內 34 次，每次都回等於洗版）', async () => {
@@ -174,7 +181,7 @@ describe('等真人期間按選單，客人不能一片空白', () => {
     nowWaitingForHuman()
 
     for (let i = 0; i < 34; i++) {
-      await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+      await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
     }
 
     expect(sentTexts()).toHaveLength(1)
@@ -188,22 +195,22 @@ describe('等真人期間按選單，客人不能一片空白', () => {
 
     // ① 機器人服務中，按「真人客服」→ 送出轉真人那則（內部會蓋上「已安撫過」的章）
     await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
-    expect(sentTexts()).toContain('謝謝您！我們的客服人員會很快聯絡您')
+    expect(sentTexts()).toContain(LIVE_TEXT)
 
-    // ② 現在開始等真人，客人改按「訂單問題」
+    // ② 現在開始等真人，客人 5 秒後又按一次「真人客服」
     nowWaitingForHuman()
-    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
 
-    expect(sentTexts().some(t => t.includes(BTN_ACK_MENU))).toBe(true)
+    expect(sentTexts().some(t => t.includes(BTN_ACK))).toBe(true)
   })
 
-  it('真人正在對話中就不出聲：同事看得到「客人點了什麼」那一行，機器人插話像搶答', async () => {
+  it('真人正在對話中再按「真人客服」就不出聲：同事看得到「客人點了什麼」那一行，機器人插話像搶答', async () => {
     const uid = 'U0000000000000000000000000000204'
     vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
     vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(true)
     vi.mocked(getSessionStatusCached).mockResolvedValue('human_handling' as any)
 
-    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
 
     expect(sentTexts()).toHaveLength(0)
   })
@@ -216,7 +223,7 @@ describe('等真人期間按選單，客人不能一片空白', () => {
 
     const texts = sentTexts()
     expect(texts).toContain('請提供您的訂單編號')
-    expect(texts.some(t => t.includes(BTN_ACK_MENU))).toBe(false)
+    expect(texts.some(t => t.includes(BTN_ACK))).toBe(false)
   })
 })
 
@@ -276,7 +283,7 @@ describe('按鈕回饋與文字安撫語不可以連放兩則', () => {
     vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
     nowWaitingForHuman()
 
-    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
     expect(sentTexts().some(t => t.includes(BTN_ACK_TYPE))).toBe(true)
 
     await handleMessageEvent(textEvent(uid, '我想問訂單', Date.now()), { workspaceId: WS })
@@ -284,7 +291,7 @@ describe('按鈕回饋與文字安撫語不可以連放兩則', () => {
     expect(sentTexts().filter(t => t.includes('已收到您的訊息'))).toHaveLength(0)
   })
 
-  it('反過來不擋：先打過字的人再按選單，仍要收到「選單不會動」（那是新資訊）', async () => {
+  it('反過來不擋：先打過字的人再按「真人客服」，仍要正面回答「已經安排了」（不能像按了沒反應）', async () => {
     const uid = 'U0000000000000000000000000000209'
     vi.mocked(getDb).mockReturnValue(makeDb(uid) as any)
     nowWaitingForHuman()
@@ -292,8 +299,8 @@ describe('按鈕回饋與文字安撫語不可以連放兩則', () => {
     await handleMessageEvent(textEvent(uid, '請問好了嗎', Date.now()), { workspaceId: WS })
     expect(sentTexts().filter(t => t.includes('已收到您的訊息'))).toHaveLength(1)
 
-    await handlePostbackEvent(postbackEvent(uid, ORDER_MODULE), { workspaceId: WS })
+    await handlePostbackEvent(postbackEvent(uid, LIVE_MODULE), { workspaceId: WS })
 
-    expect(sentTexts().some(t => t.includes(BTN_ACK_MENU))).toBe(true)
+    expect(sentTexts().some(t => t.includes(BTN_ACK))).toBe(true)
   })
 })
