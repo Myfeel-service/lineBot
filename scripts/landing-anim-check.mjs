@@ -305,8 +305,8 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   menuReopened === 0 && iconReopened === 'kbd'
     ? ok('切換鈕 再按一下＝選單展開、圖示回鍵盤')
     : bad(`切換鈕 按不回來：translateY ${menuReopened}px、圖示 ${iconReopened}`)
-  // ⛔ 按完一定要把滑鼠挪開：click 會把游標留在那個位置，之後捲到證言牆時游標可能正好
-  //    落在跑馬燈上＝那一列 hover 暫停，下面「證言牆有在飄」會誤報壞掉（2026-09-09 踩過）。
+  // 按完把滑鼠挪開：click 會把游標留在那個位置，後面捲動時會停在別的元素上觸發 hover
+  // （2026-09-09 曾讓證言牆跑馬燈暫停而誤報；證言牆 10-20 拿掉了，習慣留著）。
   await page.mouse.move(0, 0)
 
   // 2.5) 「能做什麼」的捲動呈現（2026-09-09）：同一時間只有一塊是主角、而且主角＝佔畫面
@@ -464,34 +464,11 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       : bad(`demo 沒演，泡泡停在 ${beatsAfter}`)
   }
 
-  // 5) 成長曲線
-  await go('.lp-chartwrap', -830)
-  const chartBefore = await val('.lp-chart__me', 'stroke-dashoffset')
-  await go('.lp-chartwrap', -300)
-  await wait(2000)
-  const chartAfter = await val('.lp-chart__me', 'stroke-dashoffset')
-  const lblAfter = await val('.lp-chart__lbls', 'opacity')
-  num(chartBefore) > 0.9 ? ok(`成長曲線 起點＝沒畫 (${chartBefore})`) : bad(`成長曲線 起點不對：${chartBefore}`)
-  num(chartAfter) < 0.01 ? ok(`成長曲線 終點＝畫完 (${chartAfter})`) : bad(`成長曲線 沒畫完：${chartAfter}`)
-  num(lblAfter) > 0.99 ? ok(`曲線標籤 浮出來了 (${lblAfter})`) : bad(`曲線標籤 沒浮出：${lblAfter}`)
-
-  // 6) 證言牆跑馬燈（環境動態，無關 .is-cued）：真的在飄、滑鼠移上去那一列會停
-  const trackX = () => page.evaluate(() => {
-    const m = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-voices__track')).transform)
-    return Math.round(m.m41)
-  })
-  await go('.lp-voices', -300)
-  const vx1 = await trackX()
-  await wait(1000)
-  const vx2 = await trackX()
-  Math.abs(vx2 - vx1) > 5 ? ok(`證言牆有在飄 (1 秒位移 ${Math.abs(vx2 - vx1)}px)`) : bad(`證言牆沒在飄：${vx1} → ${vx2}`)
-  await page.hover('.lp-voices__row')
-  await wait(250)
-  const vx3 = await trackX()
-  await wait(800)
-  const vx4 = await trackX()
-  Math.abs(vx4 - vx3) <= 1 ? ok('滑鼠移上去那一列停下來了') : bad(`hover 沒停：0.8 秒還位移 ${Math.abs(vx4 - vx3)}px`)
-  await page.mouse.move(0, 0) // 把滑鼠挪開，別讓暫停影響後面的檢查
+  // 5)、6) 成長曲線與證言牆跑馬燈：2026-10-20 `D-104`②③ 兩區都拿掉了，對應的檢查一起刪
+  //    （要復活時到 git log 撈回來）。留一條「真的不在了」——拿掉的區塊被誰貼回來就會紅。
+  const removedBack = await page.evaluate(() => ['#grow', '.lp-chart', '.lp-voices']
+    .filter(s => document.querySelector(s)))
+  removedBack.length ? bad(`拿掉的區塊又出現了：${removedBack.join('、')}`) : ok('成長區與證言牆不在頁面上（D-104）')
 
   // 7) 整頁捲完不能留下還藏著的東西
   await page.evaluate(async () => {
@@ -749,8 +726,6 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
       const o = Number(getComputedStyle(el).opacity)
       if (o < 0.99) out.push(el.className.toString().slice(0, 60) + ' opacity=' + o)
     }
-    if (Number.parseFloat(getComputedStyle(document.querySelector('.lp-chart__me')).strokeDashoffset) > 0.01) out.push('成長曲線沒畫')
-    if (Number(getComputedStyle(document.querySelector('.lp-chart__lbls')).opacity) < 0.99) out.push('曲線標籤沒出現')
     const mt = new DOMMatrixReadOnly(getComputedStyle(document.querySelector('.lp-pmenu')).transform)
     if (Math.abs(mt.m42) > 1) out.push('圖文選單還滑在槽外面 translateY=' + Math.round(mt.m42))
     return out
@@ -780,16 +755,7 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
   if (!keepReduced) console.log('  ⏭️  留客橋段整區不在 → 跳過 1 條：減少動態下名單與印章是否完整')
   else if (keepReduced.rows === 4 && keepReduced.stamp > 0.99) ok('留客橋段完整（名單 4 列、印章蓋好）')
   else bad(`留客橋段不完整：列 ${keepReduced.rows}、印章 opacity ${keepReduced.stamp}`)
-  // 證言牆要從跑馬燈攤成靜態網格：動畫關掉、重複的兩份卡組收掉、10 張卡全部攤在版面裡
-  const voices = await page.evaluate(() => ({
-    animName: getComputedStyle(document.querySelector('.lp-voices__track')).animationName,
-    dupHidden: [...document.querySelectorAll('.lp-voices__set[aria-hidden]')]
-      .every(el => getComputedStyle(el).display === 'none'),
-    visible: [...document.querySelectorAll('.lp-voice')].filter(el => el.getClientRects().length).length,
-  }))
-  voices.animName === 'none' ? ok('證言牆跑馬燈已停') : bad(`證言牆還在飄：animation-name=${voices.animName}`)
-  voices.dupHidden ? ok('重複的卡組已收掉') : bad('aria-hidden 的重複卡組還看得到')
-  voices.visible === 10 ? ok('10 張證言卡全部攤開') : bad(`攤開的證言卡只有 ${voices.visible} 張（該是 10）`)
+  // （證言牆「減少動態時攤成靜態網格」那三條：2026-10-20 證言牆拿掉，一起刪）
   await page.close()
 }
 

@@ -10,9 +10,9 @@
          「這個 html 只是架構跟文案的參考」，草稿自帶的深松綠段／奶油黃段／綠泡泡不搬
          （那套已經試過兩次、兩次都被打槍，詳見 _landing.scss 檔頭）。
          ⚠️ 區塊底色是**交錯**的：白 → 灰 → 白 → 灰⋯（灰的掛 .lp-section--tint）。
-            目前順序：Hero(白) why(灰) value(白) 證言牆(灰) fast(白) pricing(灰) grow(白)
-            faq(灰) 收尾CTA(綠)。新增或搬動區塊要跟著調。
-            （2026-09-06 老闆回饋證言牆上移到 60 秒區之前，後半四區的灰白因此整組翻面。）
+            目前順序：Hero(白) why(灰) value(白) fast(灰) pricing(白) faq(灰) 收尾CTA(綠)。
+            新增或搬動區塊要跟著調。#fast 藏著的時候 pricing／faq 整組翻面（見 script 的 tintWhenFast*）。
+            （2026-10-20 `D-104` 拿掉證言牆與「每年都翻倍」成長區，兩區原本在 value 後面與 pricing 後面。）
          ⚠️ 2026-08-26 三處版面重排（老闆「排版只是參考，用資深 UIUX 重新想」）：
             ①「四關」與「解法」併成一區——原本兩個整屏區塊講同一件事，解法列還把
               四個問題重抄一遍；現在每張牆卡自帶解法（問題上、✓解法下），省一屏、對仗更強。
@@ -68,7 +68,7 @@
           <a href="#why" @click="closeMenu">你遇到的難題</a>
           <a href="#value" @click="closeMenu">能做什麼</a>
           <a href="#pricing" @click="closeMenu">價格</a>
-          <a href="#grow" @click="closeMenu">成長</a>
+          <!-- 2026-10-20 `D-104`③：「成長」（#grow）隨那一區拿掉；⛔ 別留死錨點 -->
         </div>
         <div class="lp-nav__right">
           <!-- ⛔ 「登入」維持裸 `/login`（回訪的客戶與被邀請的成員走這條，登入頁給中性文案）；
@@ -1011,70 +1011,10 @@
       </div>
     </section>
 
-    <!-- ── 店家的話（證言牆）─────────────────────────────────
-         版位＝「能做什麼」與 60 秒區之間（2026-09-06 老闆要求上移：先看它能做什麼 →
-         聽別人怎麼說 → 再看開始有多簡單）。掛灰底接上白灰交錯（value 白 → 這裡灰 →
-         fast 白）；⚠️ 它上移後，fast/pricing/grow/faq 四區的灰白整組翻面（見檔頭順序表）。
-         呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停。
-         全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態——無限循環、
-         早開演也不會錯過，所以不掛 .lp-cue、沒有 JS 也照飄（純 CSS）。
-         機關與房規見 _landing.scss 的證言牆那段。
-         ⚠️ 每列的卡組用 v-for 渲染 **3 份**＝無縫循環的機關（位移一份的寬度後畫面
-            跟起點一模一樣），第 2、3 份掛 aria-hidden——讀屏只該聽到一遍。
-         ⛔ 內容紅線（STATUS D-13 前科，08-14 老闆拍板「補社會證明→不做」因為沒有真素材）：
-            這面牆目前全部是**虛構店家的情境示意**，圖說那句「皆為情境示意」拿掉的瞬間
-            就從示意變假見證（造假）。細則見 script 的 LP_VOICES 註解。 -->
-    <section class="lp-section lp-section--tint">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <!-- ⚠️ 2026-09-10 老闆改的原文：「開店的人」→「其他老闆」（螢光筆跟著換詞，
-                 ⛔ 別把 .mark 留在舊字上——這頁全部的螢光筆都只畫在「換誰來說」那個詞上）。 -->
-            <h2>別只聽我說，<br>聽聽<span class="mark">其他老闆</span>怎麼說。</h2>
-          </div>
-        </div>
-      </div>
-
-      <!-- 牆刻意在 .lp-wrap 外面＝滿版寬，兩側用遮罩淡出（見 SCSS）。
-           進場淡入掛在**每一列**（兩列各自是一個視覺單位），第二列錯開 70ms。 -->
-      <div class="lp-voices">
-        <div
-          v-for="(row, ri) in LP_VOICES"
-          :key="ri"
-          class="lp-voices__row lp-reveal"
-        >
-          <div class="lp-voices__track" :class="{ 'lp-voices__track--rev': ri === 1 }">
-            <ul
-              v-for="n in 3"
-              :key="n"
-              class="lp-voices__set"
-              :aria-hidden="n > 1 ? 'true' : undefined"
-            >
-              <!-- 卡片＝**白色對話泡泡＋店家籤**（09-03 二輪「UI 美感再優化」）：
-                   泡泡尾巴指向下方的磚——全頁的語彙就是對話（MiniMe 淡綠泡泡開場、
-                   後台對話窗客人是白泡泡），店家的話長成白泡泡剛好接上，
-                   也取代了一輪那顆飄在角落的裝飾引號。⛔泡泡不上綠底（綠泡泡被打槍過兩次）。 -->
-              <li v-for="v in row" :key="v.who" class="lp-voice">
-                <blockquote class="lp-voice__bubble">
-                  <p>{{ v.text }}</p>
-                </blockquote>
-                <div class="lp-voice__who">
-                  <span class="lp-voice__tile" aria-hidden="true">{{ v.tile }}</span>
-                  <span class="lp-voice__name">{{ v.who }}<small>{{ v.title }}</small></span>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <div class="lp-wrap">
-        <!-- ⛔ 這句圖說是這面牆能存在的前提（同 Hero「以咖啡店為例」的地位），不可拿掉；
-             拿到可具名的真素材後整包換掉、圖說改成具名授權的寫法。 -->
-        <p class="lp-figcap lp-figcap--center lp-reveal">以上店家與內容皆為情境示意，非真實客戶見證。</p>
-      </div>
-    </section>
+    <!-- ── 店家的話（證言牆）：2026-10-20 `D-104`②／`D-56` 老闆照建議拿掉 ──
+         十位店家全是虛構的情境示意；`D-13`（08-14）拍過「沒有真素材就不補社會證明」。
+         ⛔ 放回的前提＝前 10 家試用店家寫的**具名**心得（要拿到同意、成效數字要對方背書），
+            圖說改成具名授權的寫法。跑馬燈版面在 git log（搜 `LP_VOICES`）。 -->
 
     <!-- ── 60 秒上線＝一條路（09-03 十二輪打破雙卡框架；二十三輪「置中直式」收成**左軸清單**）─
          十二輪拆掉左右兩張等高白卡、十五輪拍板置中直式之後，使用者看實截再問「是否有
@@ -1100,7 +1040,8 @@
             改任一處先 grep。 -->
     <!-- ⚠️ 2026-09-08 使用者「這塊先隱藏好了」＝整區暫時不出現（旗標與完整理由見 script 的
          `SHOW_FAST_SECTION`）。⛔ 程式刻意留著不刪，旗標改 true 就整區回來。 -->
-    <section v-if="SHOW_FAST_SECTION" id="fast" class="lp-section">
+    <!-- ⚠️ 灰底：證言牆（灰）2026-10-20 拿掉後，這區直接接在 value（白）後面，復活時要是灰的才接得上交錯 -->
+    <section v-if="SHOW_FAST_SECTION" id="fast" class="lp-section lp-section--tint">
       <div class="lp-wrap">
         <div class="lp-turn lp-reveal">
           <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
@@ -1262,9 +1203,9 @@
          （清單本體＝FEATURED_PLAN_IDS，升級對話框與 /product-info 吃同一份）；
          金流風控的五項揭露住在獨立頁 /product-info（見該頁檔頭），
          ⛔ 底下那條「完整商品資訊」連結是首頁通往揭露頁的路，不能拿掉。 -->
-    <!-- 底色跟著 #fast 的開關翻面（見 script 的 tintWhenFastShown）：藏起來時這區要變白，
-         否則上面的證言牆＋這區＝連兩塊灰。 -->
-    <section id="pricing" class="lp-section" :class="tintWhenFastShown">
+    <!-- 底色跟著 #fast 的開關翻面（見 script 的 tintWhenFastHidden）：#fast（灰）藏起來時這區要補灰，
+         否則上面的 value（白）＋這區＝連兩塊白。 -->
+    <section id="pricing" class="lp-section" :class="tintWhenFastHidden">
       <div class="lp-wrap">
         <!-- 價格鎖排（lockup）：貨幣、數字、單位同一條基線一行讀完——
              「NT$ 懸在數字左上、／月掉到下一行」被老闆抓過（單位跟數字分家，要拼兩行才懂）。
@@ -1358,141 +1299,16 @@
       </div>
     </section>
 
-    <!-- ── 生意成長 ────────────────────────────────────────────
-         兩條線：綠＝也經營舊客、灰＝只靠新客。示意模型，Y 軸刻意沒有刻度、
-         也刻意不畫格線（沒有刻度可對照，格線只是雜訊）。
-         顏色是量過對比度與色盲可辨識度才定的（見 _landing.scss 的 .lp-chart）。 -->
-    <!-- 同上：#fast 藏起來時這區要補灰（底色翻面，見 tintWhenFastHidden） -->
-    <section id="grow" class="lp-section" :class="tintWhenFastHidden">
-      <div class="lp-wrap">
-        <div class="lp-turn lp-reveal">
-          <span class="lp-turn__ava"><BrandLogo mark on-color alt="" /></span>
-          <div class="lp-bubble">
-            <h2>有了 <span class="lp-nb"><BrandLogo class="lp-bubble__logo" :alt="brandName" />，</span><br>讓你的生意<span class="mark">每年都翻倍</span>。</h2>
-            <p>因為舊客會回來，而且會帶人回來。</p>
-          </div>
-        </div>
-
-        <div class="lp-stack lp-reveal">
-          <!-- 刻意沒有標頭列：「營業額成長 · 示意模型」與圖說重複 -->
-          <div class="lp-panel lp-panel--plain">
-            <div class="lp-panel__bd">
-              <!-- lp-cue：畫線／浮標籤要在圖本身看得見時才跑（跟著外層卡的淡入跑的話，
-                   圖還在畫面下方 300px 就畫完了） -->
-              <div class="lp-chartwrap lp-cue">
-                <!-- ⚠️ 2026-09-10 老闆「左右間距可以統一嗎」＝圖裡的內容離左右兩邊不一樣寬
-                     （實測桌機 55.8 vs 82.3px、手機 8.7 vs 23.9px，而且**兩級的差還不一樣**，
-                     因為左右兩端的年份字級在手機是桌機的兩倍、往外撐的量不同）。
-                     三件一起改才對稱，⛔ 缺一件就會在某個寬度歪回去：
-                       ① viewBox 寬 760 → **727**（右邊多出來的空白裁掉；727＝60 左留白
-                          ＋ 內容到 x 667（末端圓點 cx 660 ＋ r 7）＋ 60 右留白）
-                       ② 軸線收到最後一個資料點 x=660（原本伸到 700，右邊憑空多 40 單位）
-                       ③ **頭尾兩個年份改「往內對齊」**（第 1 年 text-anchor=start、第 5 年 end）
-                          ——這條才是關鍵：中間三個維持 middle，頭尾若也 middle 就會各往外
-                          撐半個字寬，**而那個寬度隨字級變**，永遠對不齊。
-                     結果＝內容固定落在 x 60~667、兩邊各留 60 單位，**跟字級無關**（實測：
-                     桌機 86.4／86.4px、手機 25.5／25.5px；改前是 55.8／82.3 與 8.7／23.9）。 -->
-                <svg class="lp-chart" viewBox="0 0 727 330" preserveAspectRatio="xMidYMid meet" role="img" aria-label="示意模型：同時經營舊客的成長曲線逐年拉開，只靠新客則維持平緩的直線成長">
-                  <defs>
-                    <linearGradient id="lpGrowArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#06c755" stop-opacity=".22" />
-                      <stop offset="100%" stop-color="#06c755" stop-opacity="0" />
-                    </linearGradient>
-                    <!-- 灰線的面積漸層（09-03 反映「只靠新客也參考綠色的色塊」＋「深一點」）：
-                         同款做法、吃灰線的線色 #848e88。⚠️ 透明度 .26 比綠色的 .22 高一階
-                         是刻意的：漸層吃的是各自路徑的 bounding box，灰色那塊只有 54px 高、
-                         淡出跑得快，數字同階時看起來會比綠色淺很多（第一版 .16 被反映太淺） -->
-                    <linearGradient id="lpGrowAreaBase" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#848e88" stop-opacity=".26" />
-                      <stop offset="100%" stop-color="#848e88" stop-opacity="0" />
-                    </linearGradient>
-                  </defs>
-                  <!-- 軸線收在最後一個資料點（x=660）：原本伸到 700 是憑空多出來的一截，
-                       它就是右邊留白比左邊寬的一半原因（見上面 svg 的註解）。 -->
-                  <line class="lp-chart__axis" x1="60" y1="284" x2="660" y2="284" />
-                  <path
-                    class="lp-chart__area"
-                    d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40 L660 280 L60 280 Z"
-                    fill="url(#lpGrowArea)"
-                  />
-                  <!-- ⚠️ 掛同一個 lp-chart__area class＝跟綠色面積同一組浮出動畫；
-                       疊在綠色面積上面（灰的那一帶綠色漸層已淡到近零，不會混濁）。
-                       路徑＝灰線原路徑收到軸線，改灰線座標時這裡要一起改 -->
-                  <path
-                    class="lp-chart__area"
-                    d="M60 265 C160 259,260 252,360 246 C460 240,560 233,660 226 L660 280 L60 280 Z"
-                    fill="url(#lpGrowAreaBase)"
-                  />
-                  <!-- ⚠️ 兩條線都給 pathLength="1"：畫線動畫用 stroke-dasharray／dashoffset，
-                       這個屬性讓瀏覽器把「線有多長」一律當成 1，動畫就能寫成 1 → 0。
-                       ⛔ 別改回寫一個「比兩條都長」的固定值（原本是 1200，而兩條實際只有
-                          658 與 600）：那樣線在動畫走到 21% 時就已經畫完，後面 0.86 秒
-                          畫面是靜止的，然後標籤才突然浮出來——量過的，不是感覺。
-                       附帶好處：兩條長度不同的線會同時畫完，不會一條先到。 -->
-                  <!-- 灰線＝直線式的緩升（09-03 反映「太平緩」：原本 600px 只升 9px、近乎水平，
-                       讀起來像「只靠新客＝原地踏步」，說過頭了）。現在升 39px＝有在成長、
-                       但沒有複利的弧度——跟綠線的差距講的是「加速度」，不是「動 vs 不動」。 -->
-                  <path
-                    class="lp-chart__base"
-                    pathLength="1"
-                    d="M60 265 C160 259,260 252,360 246 C460 240,560 233,660 226"
-                  />
-                  <path
-                    class="lp-chart__me"
-                    pathLength="1"
-                    d="M60 265 C110 262,160 256,210 250 C260 243,310 234,360 220 C410 205,460 186,510 160 C560 130,610 92,660 40"
-                  />
-                  <g class="lp-chart__dots">
-                    <circle class="lp-chart__dot--me" cx="660" cy="40" r="7" />
-                    <circle class="lp-chart__dot--base" cx="660" cy="226" r="6" />
-                  </g>
-                  <!-- ⛔ 頭尾兩個**不可以**用 text-anchor="middle"：那會讓它們各往圖外撐半個
-                       字寬，而那個寬度**隨字級變**（手機的年份字級是桌機的兩倍），左右留白
-                       因此永遠對不齊（2026-09-10 老闆「左右間距可以統一嗎」的真因）。
-                       改成頭 start／尾 end＝兩端的字緣剛好落在軸的兩端，跟字級無關。
-                       中間三個維持 middle（它們不碰邊界）。 -->
-                  <g class="lp-chart__x">
-                    <text x="60" y="308" text-anchor="start">第 1 年</text>
-                    <text x="210" y="308" text-anchor="middle">第 2 年</text>
-                    <text x="360" y="308" text-anchor="middle">第 3 年</text>
-                    <text x="510" y="308" text-anchor="middle">第 4 年</text>
-                    <text x="660" y="308" text-anchor="end">第 5 年</text>
-                  </g>
-                  <!-- 標籤吃墨色、不吃線色：顏色由線端圓點與下方圖例的色塊帶 -->
-                  <g class="lp-chart__lbls">
-                    <text class="lp-chart__lbl--me" x="644" y="24" text-anchor="end">也經營舊客</text>
-                    <text class="lp-chart__lbl--base" x="644" y="212" text-anchor="end">只靠新客</text>
-                    <!-- MiniMe 圖標＝這條綠線的署名（2026-09-10 老闆：「是否在也經營舊客附近
-                         加上 MiniMe 的 logo」；同日第二輪指定**放到標籤左邊**）。
-                         ⚠️ 這裡的 x/y 是 viewBox 座標，**桌機字級（17px）算的**：標籤靠右對齊、
-                            實測佔 x 559→644，所以圖標右緣收在 549＝留 10px 的字距。
-                         ⛔ 手機不能沿用這個 x：那邊字級放大到 34px，標籤往左長到 x 474
-                            （靠右對齊＝往左長），圖標會被字追上去疊住。所以手機那一級用
-                            `transform: translate()` 把它整顆往左移，數字與量法寫在
-                            _landing.scss 的 `.lp-chart__brand`。
-                         ⚠️ alt 交給整張圖的 aria-label，這顆是裝飾（讀屏不必再唸一次品牌名）。 -->
-                    <image class="lp-chart__brand" href="/logomark.svg" x="519" y="9" width="30" height="18" aria-hidden="true" />
-                  </g>
-                </svg>
-              </div>
-              <div class="lp-chartlegend">
-                <span class="lp-cl"><i class="is-me" />也經營舊客：他們回購，也帶朋友來</span>
-                <span class="lp-cl"><i class="is-base" />只靠新客：每一單都要重新買廣告</span>
-              </div>
-              <p class="lp-figcap">
-                示意模型，非實際績效或收益保證：假設每年回購與轉介紹持續累積。
-                實際成長依產業、商品、價格與經營方式而異。
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
+    <!-- ── 生意成長（#grow）：2026-10-20 `D-104`③／`D-22` 老闆照建議整區拿掉 ──
+         「讓你的生意每年都翻倍」是績效保證式的說法，「大標承諾＋小字免責」正是最容易被認定
+         不實廣告的組合，金流風控也逐項看門面。曲線圖在 git log（搜 `lpGrowArea`）。
+         ⛔ 要復活先換掉大標（`D-22` 選項②「讓每一次成交都累積成下一次成長」），導覽列的「成長」與
+            `_landing.scss` 的 scroll-margin 要一起加回來。 -->
 
     <!-- ── 常見問題 ────────────────────────────────────────────
          08-26 草稿沒有這一區，但保留：頁尾與法務頁的 /#faq 指這裡，
          而且退費、額度、資料刪除這幾題的答案都是照政策措辭寫的，拿掉等於少一處對消費者的揭露。 -->
-    <!-- 同上：#fast 藏起來時這區要變白（見 tintWhenFastShown） -->
+    <!-- 同上：#fast（灰）藏起來時 pricing 補灰、這區變白（見 tintWhenFastShown） -->
     <section id="faq" class="lp-section lp-faqsec" :class="tintWhenFastShown">
       <div class="lp-wrap">
         <!-- ⚠️ 這一區原本是 eyebrow＋h2，08-27 收成跟其他區塊一樣的泡泡：
@@ -1684,9 +1500,11 @@ const SHOW_FAST_SECTION = false
 
 /**
  * 白灰交錯的底色（`lp-section--tint` ＝灰）。
- * ⚠️ #fast 是**白**的，藏掉之後它前後會變成**連兩塊灰**（證言牆＋定價），整頁的節奏斷在那裡，
- *    所以它後面每一區的底色都要跟著翻面。綁在同一個旗標上＝這區復活時自動翻回去，
- *    不用去記「還要手動改三個 class」（09-08 隱藏時差點漏掉這件事）。
+ * ⚠️ #fast 是**灰**的（2026-10-20 證言牆與成長區拿掉後：value 白 → fast 灰 → pricing 白 → faq 灰），
+ *    藏掉之後 value 與 pricing 會變成**連兩塊白**，整頁的節奏斷在那裡，所以它後面每一區的底色
+ *    都要跟著翻面。綁在同一個旗標上＝這區復活時自動翻回去，
+ *    不用去記「還要手動改幾個 class」（09-08 隱藏時差點漏掉這件事）。
+ *    （09-08～10-20 之間 #fast 是白的、中間夾著灰的證言牆，所以當時翻的方向跟現在相反。）
  * ⚠️ 收尾 CTA 那區不吃這個（它有自己的深底），別加進來。
  */
 const tintWhenFastShown = SHOW_FAST_SECTION ? 'lp-section--tint' : ''
@@ -1772,36 +1590,6 @@ const landingDemoFriends = [
   { name: '阿翔', tags: [LP_DEMO_TAGS.expo] },
   { name: 'Ariel 🌿', tags: [LP_DEMO_TAGS.brew, LP_DEMO_TAGS.expo] },
   { name: '曉彤', tags: [LP_DEMO_TAGS.gift] },
-]
-
-// ── 店家的話（證言牆，「能做什麼」與 60 秒區之間；09-06 上移）────
-// ⛔ 內容紅線（STATUS.md D-13 前科：2026-08-14 老闆拍板「補社會證明→不做」，理由＝
-//    「沒有可具名的試用店家素材；⛔日後要補請給真材料，全示意數字的頁面加假見證會從
-//    『示意』變『造假』」）。這面牆目前全部是**虛構店家的情境示意**，所以：
-//    ① 牆下「皆為情境示意」的圖說⛔不可拿掉——拿掉的瞬間就是假見證；
-//    ② 每一句只准講**現有功能真的做得到**的事（AI 答問、答不了轉真人、節慶提醒、
-//       建議式貼標、標籤分眾推播、看得出誰回的、聊天引導開通、免綁卡），
-//       ⛔不准出現任何數字成效（「回購率 +30%」這種）——店家已是虛構，數字宣稱最先變造假；
-//    ③ 老闆給了可具名的真素材後整包換掉、圖說改成具名授權的寫法，這段註解一併改。
-// 結構＝兩列（上列講客服、下列講行銷與上手），tile＝磚裡的單一業種字
-// （標記系統房規：磚裡只放數字或單一字符，⛔不引進圖示家族）。
-// who／title 刻意只寫「業種＋角色」不取店名：掛了店名（哪怕虛構）就是 Hero 註解裡
-// 「山丘咖啡會被讀成他們的客戶」同一顆雷。
-const LP_VOICES: { tile: string, who: string, title: string, text: string }[][] = [
-  [
-    { tile: '咖', who: '咖啡烘焙坊', title: '老闆', text: '晚上十一點客人問手沖水溫，它馬上就答了。我早上起來只要看它答了什麼。' },
-    { tile: '甜', who: '甜點工作室', title: '主理人', text: '以前訊息都積到打烊才回，現在常見的問題它先接住，我只處理要我決定的事。' },
-    { tile: '選', who: '選物店', title: '店長', text: '規格、運費這些每天都有人問，把官網跟型錄餵給它，它就會答了。' },
-    { tile: '寵', who: '寵物用品店', title: '老闆娘', text: '它答不了的會直接轉給我，不會硬答——這點我才敢放心讓它顧。' },
-    { tile: '書', who: '獨立書店', title: '店主', text: '我完全不懂技術，照著聊天引導一步一步做，真的就設定完了。' },
-  ],
-  [
-    { tile: '花', who: '花藝工作室', title: '主理人', text: '母親節前它先提醒我準備檔期，要發給誰，選個標籤名單就在那裡。' },
-    { tile: '飾', who: '手作飾品品牌', title: '負責人', text: '誰在問送禮、誰是回頭客，它會建議貼標籤，名單越用越乾淨。' },
-    { tile: '茶', who: '茶行', title: '第二代', text: '後台看得到每句話是 AI 回的還是我回的，要接手的時候心裡有底。' },
-    { tile: '課', who: '烘焙教室', title: '老師', text: '開課要通知，用標籤挑出上過課的人發就好，不用整包名單亂槍打鳥。' },
-    { tile: '健', who: '健身工作室', title: '教練', text: '免費就能開始、不用綁卡，接自己本來的官方帳號，試了才知道多省事。' },
-  ],
 ]
 
 // ── 開通引導 live 卡的動態展示（09-03 九輪「show 出更多步驟」）──────

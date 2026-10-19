@@ -21,7 +21,7 @@
    ⚠️ #value / #pricing / #faq 這三個 id 是**外部連結的目標**——頁尾與三個法務頁的
    「產品介紹／定價／常見問題」都指它們（見 components/site/SiteFooter.vue），改名會變死連結。
    #diff（比較表）已隨 2026-08-26 改版整區移除，頁尾連結同步拿掉了。 */
-.lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #grow, .lp #faq { scroll-margin-top: 80px; }
+.lp #top, .lp #why, .lp #fast, .lp #value, .lp #pricing, .lp #faq { scroll-margin-top: 80px; }
 
 
 .lp {
@@ -570,14 +570,11 @@
   .lp-panel__title { font-size: 0.86rem; font-weight: 800; color: var(--ink); }
   .lp-panel__meta { margin-left: auto; font-size: 0.76rem; color: var(--ink-soft); }
   .lp-panel__bd { padding: 24px var(--panel-pad-x); }
-  /* 沒有標頭列的卡：上緣要補回標頭那 54px 少掉的呼吸，否則第一列會貼著卡的上緣。
-     為什麼有這種卡：標頭只是重複區塊標題／圖說時就不要它（見成長曲線卡）。 */
-  .lp-panel--plain > .lp-panel__bd { padding-top: 30px; padding-bottom: 28px; }
   .lp-panel__bd h3 { font-size: 1.12rem; font-weight: 800; margin: 18px 0 0; letter-spacing: -0.01em; }
   .lp-panel__bd > p { font-size: 0.94rem; color: var(--ink-soft); margin: 8px 0 0; line-height: 1.7; }
-  /* ⚠️ 圖說不吃上面那條段落字級（2026-09-07 統一）：成長曲線的示意聲明是 .lp-panel__bd 的
-     直接子段落，被 `> p`（0-1-1）拉成 0.94rem——全站四張示意圖說要同一款 0.82rem。 */
-  .lp-panel__bd > p.lp-figcap { font-size: 0.82rem; margin: 14px 0 0; }
+  /* ⚠️ 2026-10-20 `D-104`③ 隨成長曲線區（#grow）一起拿掉了 `.lp-panel--plain`（沒有標頭列的卡）與
+     `.lp-panel__bd > p.lp-figcap`（卡內圖說回到 0.82rem）兩條——只有那張卡在用。
+     之後再做「沒有標頭列的卡」或「卡內直接放圖說」時，到 git log 找這兩條抄回來。 */
 
   /* ── 留客橋段（#keep＝第二卡，2026-09-09 老闆拍板 D-73④ 方案 B）──────────
    * 泡泡（標題）＋名單卡並排。泡泡沿用全站區塊標題語彙（.lp-turn＋.lp-bubble、
@@ -1598,37 +1595,9 @@
      這裡要補回連結的樣子，不然政策條款看起來像純文字、沒人會點。 */
   .lp-price__fine a, .lp-q .a a { color: var(--g-text); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 
-  /* ── 成長曲線（#grow）─────────────────────────────────────
-   * 線色 #067a3a／#848e88：量過在白卡上對比 ≥3:1、且紅綠色盲下仍分得開。
-   * ⛔ 刻意只留一條基準線，不畫格線：Y 軸沒有刻度（示意模型沒有真實數字），
-   *    格線沒有東西可以對照，畫上去只是雜訊（08-26 草稿畫了格線，這條刻意沒跟）。
-   */
-  .lp-chartwrap { background: var(--surf-2); border-radius: var(--r-sm); padding: 18px 10px 8px; }
-  .lp-chart { width: 100%; height: auto; display: block; overflow: visible; }
-  .lp-chart__axis { stroke: #dfe6dd; stroke-width: 1.5; }
-  .lp-chart__base { stroke: #848e88; stroke-width: 3; fill: none; stroke-linecap: round; }
-  .lp-chart__me { stroke: #067a3a; stroke-width: 4; fill: none; stroke-linecap: round; }
-  .lp-chart__dot--me { fill: #067a3a; }
-  .lp-chart__dot--base { fill: #848e88; }
-  /* ⚠️ 這三條的 px 是 **viewBox 的使用者單位**，不是螢幕上的 px：圖是 760 寬的 viewBox
-   *    等比縮到欄寬，所以螢幕上的實際字級＝這個值 ×（畫出來的寬 ÷ 760）。
-   *    桌機畫 656px（×0.86）→ 13px 看起來 11px，剛好；**手機畫 272px（×0.36）→ 4.7px**，
-   *    等於沒有字（2026-09-10 老闆：「這張圖在手機上太小了很難讀」）。放大的規則在 ≤720px
-   *    那一段，⛔ 別在這裡把值調大——桌機會變成大字報。 */
-  .lp-chart__x text { fill: var(--ink-soft); font-size: 13px; }
-  .lp-chart__lbl--me { fill: var(--ink); font-size: 17px; font-weight: 800; }
-  .lp-chart__lbl--base { fill: var(--ink-soft); font-size: 15px; font-weight: 600; }
-  /* 「也經營舊客」標籤左邊的 MiniMe 圖標（2026-09-10 老闆：先問「是否加 logo」，
-     再指定「放也經營舊客左邊」）。它是「這條線是誰做到的」署名，不是圖例
-     （圖例在下面 .lp-chartlegend）。
-     ⚠️ 座標在 index.vue 上，是**桌機字級**算的；手機那一級的位移在 ≤720px 那段。 */
-  .lp-chart__brand { opacity: 0.92; }
-  .lp-chartlegend { display: flex; gap: 12px 26px; flex-wrap: wrap; margin-top: 20px; }
-  .lp-cl { display: flex; align-items: center; gap: 9px; font-size: 0.88rem; color: var(--ink-2); }
-  .lp-cl i { width: 22px; height: 4px; border-radius: var(--radius-pill); flex: none; }
-  .lp-cl i.is-me { background: #067a3a; }
-  .lp-cl i.is-base { background: #848e88; }
-  /* 白卡在深色段裡，圖例與圖說仍在卡內（墨字），不用翻白 */
+  /* ── 成長曲線（#grow）：2026-10-20 `D-104`③／`D-22` 整區拿掉 ──
+   * 「讓你的生意每年都翻倍」是績效保證式的說法（大標承諾＋小字免責＝最容易被認定不實的組合），
+   * 老闆照建議整區撤。曲線、圖例、手機放大、畫線動畫的樣式全部在 git log 裡（搜 `lp-chart`）。 */
 
   /* ── FAQ（獨立區塊）──────────────────────────────────────── */
   .lp-faq { margin-top: var(--section-head-gap); }
@@ -1640,89 +1609,10 @@
   .lp-q[open] .plus { transform: rotate(45deg); }
   .lp-q .a { padding: 0 2px 20px; color: var(--ink-soft); font-size: 0.95rem; line-height: 1.6; }
 
-  /* ── 店家的話（證言牆，「能做什麼」與 60 秒區之間；09-06 老闆要求上移）──────
-   * 呈現＝**雙列反向慢速跑馬燈**：上列往左、下列往右飄，滑鼠移上去那一列就停
-   * （讓人把那張卡讀完）。全頁其他動畫都是「演一次的表演」，這面牆是唯一的環境動態
-   * ——無限循環、早開演不會錯過，所以⛔不掛 .lp-cue、
-   * 也不等 .is-anim：純 CSS，沒有 JS 也照飄；「減少動態效果」時整面攤成靜態網格
-   * （見最下面的 reduced-motion 區）。
-   * ⚠️ 內容紅線（虛構示意、圖說不可拿掉——STATUS D-13）在 index.vue 的 LP_VOICES 註解。
-   *
-   * 無縫循環的機關：
-   *   track 裡放 **3 份**一樣的卡組（.lp-voices__set），動畫位移一份的寬度
-   *   （translateX(-100%/3)）後畫面跟起點一模一樣。
-   *   ⛔ 別減成 2 份：可視寬 > 總寬 − 一份寬 就會露出空檔——一份約 1,850px，
-   *      2 份在 2,560px 的螢幕就破了；3 份撐到 ~3,700px。
-   *   ⛔ 組與組的接縫＝每組自帶 padding-inline: gap/2，別改成 track 的 gap：
-   *      位移量是「一份的寬度」，gap 記在 track 上位移就對不上、每圈跳一下。
-   * ⚠️ 兩列速度刻意差一截（56s／70s）：同速反向讀起來是一條機械的「輸送帶」，
-   *    差速才像各自在飄。手機再放慢（見 720px 斷點）——卡片相對螢幕更大，同速會太快。 */
-  .lp-voices { margin-top: var(--section-head-gap); display: grid; }
-  .lp-voices__row {
-    overflow: hidden;
-    /* 兩側淡出用遮罩不用蓋色塊：這面牆在灰底段上，蓋 linear-gradient 色塊要寫死底色，
-       遮罩挖的是自己、跟底色無關 */
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
-  }
-  .lp-voices__track { display: flex; width: max-content; animation: lpVoicesDrift 56s linear infinite; }
-  .lp-voices__track--rev { animation-direction: reverse; animation-duration: 70s; }
-  .lp-voices__row:hover .lp-voices__track { animation-play-state: paused; }
-  @keyframes lpVoicesDrift { to { transform: translateX(calc(-100% / 3)); } }
-
-  /* padding-block 10px＝泡泡陰影與 hover 浮起的呼吸位（row 是 overflow:hidden，貼邊會切平） */
-  .lp-voices__set { display: flex; align-items: stretch; gap: var(--card-gap); margin: 0; padding: 10px calc(var(--card-gap) / 2); list-style: none; }
-
-  /* ── 卡片＝白色對話泡泡＋店家籤（09-03 二輪「UI 美感再優化」）──
-     語彙沿全頁的「對話」：MiniMe 用淡綠泡泡開場、店家用**白泡泡**回話（跟後台
-     對話窗客人那側同色系）；尾巴指向下方的磚＝這句話是他說的。
-     ⛔ 泡泡不上綠底（綠泡泡被打槍過兩次，檔頭有記）。
-     ⚠️ 同一列等高＝li 被 set 拉伸、泡泡 flex:1 吃掉高度差——句子短的卡
-        店家籤才不會浮在半空。 */
-  .lp-voice { width: 340px; flex: none; display: flex; flex-direction: column; }
-  .lp-voice__bubble {
-    flex: 1; margin: 0;
-    position: relative;
-    padding: 20px 22px;
-    background: var(--paper);
-    border: 1px solid var(--hair);
-    border-radius: var(--r-card);
-    box-shadow: var(--sh-soft);
-    transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
-  }
-  /* 尾巴＝旋轉 45° 的小方塊，只畫朝外的兩邊框；底色蓋掉泡泡自己的那一小段底框。
-     ⚠️ left 26px 是對著店家籤的磚（縮排 14px＋磚寬 32px＝磚心 30px）算的，
-        動磚的縮排或尺寸時要一起校。 */
-  .lp-voice__bubble::after {
-    content: '';
-    position: absolute; left: 26px; bottom: -6.5px;
-    width: 12px; height: 12px;
-    background: var(--paper);
-    border-right: 1px solid var(--hair);
-    border-bottom: 1px solid var(--hair);
-    transform: rotate(45deg);
-  }
-  .lp-voice__bubble p { margin: 0; font-size: 0.94rem; line-height: 1.8; color: var(--ink-2); }
-  /* hover 微浮起＝跟牆卡同一種「這是一張卡」的回饋；那一列本來就會因 hover 停下，
-     浮起不會跟位移打架。reduced-motion 的歸零在最下面那區。 */
-  .lp-voice:hover .lp-voice__bubble { transform: translateY(-2px); border-color: var(--g-line); box-shadow: var(--sh-card); }
-
-  .lp-voice__who { display: flex; align-items: center; gap: 10px; margin: 13px 0 0 14px; }
-  /* 磚改白底髮絲框＋綠字：店家籤現在站在灰底段上，綠淡底磚跟背景太接近；
-     白磚跟泡泡同材質，綠色只留那一個業種字（單一綠強調）。 */
-  .lp-voice__tile {
-    width: var(--mk-md); height: var(--mk-md); flex: none;
-    display: grid; place-items: center;
-    border-radius: calc(var(--mk-md) / 3);
-    background: var(--paper);
-    border: 1px solid var(--hair);
-    color: var(--g-text);
-    font-size: 0.95rem; font-weight: 800;
-    box-shadow: 0 1px 3px rgba(20, 24, 22, 0.05);
-  }
-  /* 店家籤兩層字階：業種深一階粗一階、職稱小一階淡一階——一眼先看到「誰」 */
-  .lp-voice__name { display: flex; flex-direction: column; line-height: 1.4; font-size: 0.9rem; font-weight: 700; color: var(--ink); }
-  .lp-voice__name small { font-size: 0.78rem; font-weight: 500; color: var(--ink-soft); }
+  /* ── 店家的話（證言牆）：2026-10-20 `D-104`②／`D-56` 拿掉 ──
+   * 十位店家全是虛構的情境示意（`D-13` 08-14 拍過「沒有真素材就不補社會證明」）。
+   * 等前 10 家試用店家寫了具名心得再放回：跑馬燈的版面與「3 份卡組無縫循環」的機關都在 git log
+   * （搜 `lp-voices`），放回時圖說要改成具名授權的寫法。 */
 
   /* ── CTA band (green) ──────────────────────────────────── */
   .lp-cta { background: linear-gradient(135deg, #06c755 0%, #04a446 100%); color: #fff; position: relative; overflow: hidden; }
@@ -2211,9 +2101,6 @@
   &.is-anim .lp-faq .lp-reveal.in:nth-child(3) { transition-delay: .12s; }
   &.is-anim .lp-faq .lp-reveal.in:nth-child(4) { transition-delay: .18s; }
 
-  /* 證言牆兩列同時進畫面，第二列錯開 70ms（同四道牆的理由：看得出上下有先後就好） */
-  &.is-anim .lp-voices .lp-reveal.in:nth-child(2) { transition-delay: .07s; }
-
   /* ⛔ #value 這一區的三塊**都不加「誰先誰後」的進場延遲**，兩個理由都踩過：
        ①能力區（.lp-pane）十七輪改成上下堆疊之後，標頭／視窗／成效帶本來就依序
          到達觸發線，捲動自己給了順序。
@@ -2232,25 +2119,6 @@
         再加延遲只會變成「捲到了還要再等一秒」。 */
   &.is-anim .lp-path__rail::after { transform: scaleY(0); transform-origin: center top; }
   &.is-anim .lp-path__rail.is-cued::after { transform: none; transition: transform 0.5s cubic-bezier(.3, .8, .35, 1) 0.15s; }
-
-  /* 成長曲線：捲到才畫出來，線畫完才浮出面積、端點與標籤（先看到走勢，再看到誰是誰）。
-     ⚠️ dasharray／dashoffset 都是 1，因為兩條 path 都掛了 pathLength="1"（見 index.vue），
-        「1」＝整條線。⛔ 別改回寫死一個「比兩條都長」的數字：原本寫 1200、線實際只有
-        658 與 600，於是線在 0.39 秒就畫完，接著**靜止 0.86 秒**才輪到標籤浮出來
-        （量出來的，不是感覺）。
-     ⚠️ 09-03 反映「動畫可以快一點」：畫線 1.2s→0.75s。⛔ 兩組時間是**成對的**——
-        標籤要在畫線走到八成左右開始浮（0.15+0.75×0.8≒0.75），改畫線秒數時延遲要跟著算，
-        否則又回到「線畫完畫面靜止乾等」的老毛病。 */
-  /* ⚠️ 觸發點是 .lp-chartwrap 自己（.lp-cue → .is-cued），不是外層卡的 .lp-reveal.in：
-     那張卡桌機 616px 高、圖在卡的中段，掛卡上的話線會在圖還在畫面下方時就畫完。 */
-  &.is-anim {
-    .lp-chart__me, .lp-chart__base { stroke-dasharray: 1; stroke-dashoffset: 1; }
-    .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 0; }
-    .lp-chartwrap.is-cued {
-      .lp-chart__me, .lp-chart__base { stroke-dashoffset: 0; transition: stroke-dashoffset 0.75s cubic-bezier(.3, .8, .35, 1) 0.15s; }
-      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: opacity 0.4s ease 0.72s; }
-    }
-  }
 
   /* 開通引導 live 卡的動態（八輪「做動態的」、九輪「show 出更多步驟」）：
      拍點與節奏由 JS 時間軸（index.vue 的 OB_BEATS／playObDemo）驅動——泡泡是演到那一拍
@@ -2600,50 +2468,6 @@
     /* 單欄時手機回到原尺寸（不再需要為了 1:2 縮小） */
     .lp-band__phone { grid-column: auto; grid-row: auto; justify-self: center; width: 268px; --phone-zoom: 1; }
 
-    /* ── 成長曲線在手機上要讀得到（2026-09-10 老闆：「這張圖在手機上太小了很難讀」）──
-     * 病灶是**兩件事乘在一起**：①圖被兩層內距夾到只剩 272px 寬（版心 24＋卡 24＋圖框 10）
-     * ②viewBox 是 760 寬，所以整張圖等比縮到 ×0.36，13px 的年份字在螢幕上只有 **4.7px**。
-     * ⚠️ 不能靠「把圖拉高」解決：viewBox 固定 760×330＝2.3:1，寬度一定，高度就定了
-     *    （`preserveAspectRatio` 只會留白，不會變比例）。所以兩件都要治：
-     *    ①內距收一級（卡 24→12、圖框 10→4）→ 圖 272→322px、×0.42
-     *    ②字級在 viewBox 裡放大到 ×2（13→26、17→34、15→30）→ 螢幕上 11／14.3／12.6px
-     * ⚠️ 線也加粗（4→6、3→5 使用者單位）：×0.42 之後 4px 的線只有 1.7px，看起來會斷。
-     * ⚠️ 圖標跟著放大（CSS 的 width/height 對 SVG `<image>` 是幾何屬性，改得動；
-     *    不支援的瀏覽器維持 attribute 的 36×21＝仍然看得見，fail-open）。
-     * ⛔ 改這幾個數字要回頭量「螢幕上的實際字級」＝值 ×（畫出來的寬 ÷ 760），
-     *    別只看 SCSS 裡的數字覺得夠大了。 */
-    .lp-panel--plain > .lp-panel__bd { padding-left: 12px; padding-right: 12px; }
-    /* ⚠️ 上內距 14→22px 是為了放下面那顆**疊在標籤上方的圖標**：它會畫到 viewBox 上緣
-       外面 14.4px（見 .lp-chart__brand），而灰底盒的內距**也是灰底的一部分**，所以圖標
-       仍然在盒子裡面。⛔ 要改小這個內距就要先把圖標的位移一起算，不然圖標會爬到灰底外面。 */
-    .lp-chartwrap { padding: 22px 4px 6px; }
-    .lp-chart__x text { font-size: 26px; }
-    .lp-chart__lbl--me { font-size: 34px; }
-    .lp-chart__lbl--base { font-size: 30px; }
-    .lp-chart__me { stroke-width: 6; }
-    .lp-chart__base { stroke-width: 5; }
-    /* ── 手機的圖標：**疊在「也經營舊客」上方**（2026-09-10 老闆第三輪指定；桌機維持在
-     *    標籤左邊）。要成立得兩件一起做，因為圖裡**沒有現成的垂直空間**：
-     *    ① 標籤先往下 10 單位（`translateY`）——它原本的字框上緣在 y −8（字級 34 撐出來的），
-     *       上面根本擠不出位置；往下 10 之後字框是 2~41，而它那段 x（474~644）的綠線在
-     *       y ≥ 47，所以**不會壓到線**（量過才敢動）。
-     *    ② 圖標放在 y −34~−4、水平置中對齊標籤（標籤 474~644，中心 559）。
-     *       ⚠️ 它會超出 viewBox 上緣 34 單位＝**14.4 螢幕 px**，畫在灰底盒的上內距裡
-     *          （上面那條 22px 就是為它留的）——灰底盒的內距也是灰底，所以看起來仍在盒內。
-     *       ⛔ 依賴 `.lp-chart { overflow: visible }`（本檔上面那條），別改成 hidden。
-     * ⛔ 改字級或改上內距都要重算這兩組數字。⚠️ 量法＝**螢幕座標 ÷ 縮放比換回 viewBox**：
-     *    `getBBox()` **不含 transform**，拿它量會以為位移沒生效（實際踩過一次）。
-     * ⚠️ 用 transform 不用 CSS 的 x/y：x/y 當 CSS 屬性的支援度沒 transform 穩。 */
-    .lp-chart__lbl--me { transform: translateY(10px); }
-    .lp-chart__brand { width: 52px; height: 30px; transform: translate(14px, -43px); }
-
-    /* 證言牆：卡片收一級；飄速放慢——卡片相對螢幕更大，桌機的速度在手機上會太快
-       （px/s 不變、可視寬變小＝掃過眼前的比例變快） */
-    .lp-voice { width: 300px; }
-    .lp-voice__bubble { padding: 17px 19px; }
-    .lp-voices__track { animation-duration: 80s; }
-    .lp-voices__track--rev { animation-duration: 96s; }
-
     .lp-foot__in { grid-template-columns: 1fr; gap: 30px; }
     .lp-foot__bar-in { flex-direction: column; align-items: flex-start; gap: 6px; }
   }
@@ -2711,16 +2535,8 @@
     &.is-anim .lp-wrap:not(:has(.lp-vs__side--x.is-cued)) .lp-bubble__relief { opacity: 1; transition: none; }
     /* 各種錯開延遲一起歸零（走到這裡代表整組動畫都關了，延遲只會剩下「白等」） */
     &.is-anim .lp-plans .lp-reveal.in,
-    &.is-anim .lp-faq .lp-reveal.in,
-    &.is-anim .lp-voices .lp-reveal.in { transition-delay: 0s; }
+    &.is-anim .lp-faq .lp-reveal.in { transition-delay: 0s; }
 
-    /* 證言牆：跑馬燈停下，攤成置中、可換行的靜態網格——
-       ⛔只停動畫不攤開的話，每列只看得到前三張、其他卡永遠在畫面外。
-       重複的兩份卡組（aria-hidden 那兩份）收掉，遮罩也拿掉（靜態網格不需要邊緣淡出）。 */
-    .lp-voices__track { animation: none; width: auto; }
-    .lp-voices__set { flex-wrap: wrap; justify-content: center; max-width: var(--wrap); margin: 0 auto; }
-    .lp-voices__set[aria-hidden='true'] { display: none; }
-    .lp-voices__row { overflow: visible; -webkit-mask-image: none; mask-image: none; }
     &.is-anim .lp-path__rail::after { transform: none; transition: none; }
     /* 開通引導 live 卡：關動態（demo 播放本身由 JS 的 reduced-motion 早退擋住，
        這裡管的是萬一 .is-anim 在場時的 CSS 動畫） */
@@ -2746,13 +2562,8 @@
     }
     /* 收起狀態要能反映出來（按了鈕），只是不做過場 */
     &.is-anim .lp-band__phone .lp-phone:not(.is-menu-up) .lp-pmenu { transform: translateY(100%); }
-    &.is-anim {
-      .lp-chart__me, .lp-chart__base { stroke-dasharray: none; stroke-dashoffset: 0; transition: none; }
-      .lp-chart__area, .lp-chart__dots, .lp-chart__lbls { opacity: 1; transition: none; }
-    }
     .lp-stickybar { transition: none; }
     .lp-btn:hover, .lp-panel:hover { transform: none; }
-    .lp-voice:hover .lp-voice__bubble { transform: none; }
 
     /* 打字：整句直接出現（選擇器要跟上面那三條同權重，才壓得回去） */
     &.is-anim .lp-turn.is-typing .lp-tw__u { opacity: 1; transition: none; }
