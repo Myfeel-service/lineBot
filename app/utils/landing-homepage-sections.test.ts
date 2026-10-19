@@ -38,7 +38,7 @@ describe('首頁拿掉的兩區（D-104②③）', () => {
 describe('白灰交錯（拿掉區塊後不能連兩塊同色）', () => {
   /** 從模板讀出每一區的底色規則：靜態 class、或綁 #fast 開關的 tintWhenFast* */
   const sections = [...template.matchAll(/<section\b([^>]*)>/g)].map((m) => {
-    const attrs = m[1]
+    const attrs = m[1] ?? ''
     const cls = attrs.match(/\bclass="([^"]*)"/)?.[1] ?? ''
     const bind = attrs.match(/:class="(tintWhenFast(?:Shown|Hidden))"/)?.[1]
     const vIf = attrs.match(/v-if="(\w+)"/)?.[1]
