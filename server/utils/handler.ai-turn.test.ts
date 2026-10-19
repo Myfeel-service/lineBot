@@ -47,7 +47,9 @@ vi.mock('./media-describe', () => ({ readInboundImage: vi.fn() }))
 import { handleMessageEvent } from './handler'
 import { getDb } from './firebase'
 import { getAiSettings } from './ai-settings'
-import { answerWithAi } from './ai-answer'
+import { answerWithAi, routeMessage } from './ai-answer'
+import { replyMessage, showLoadingAnimation } from './line'
+import { loadActiveScripts } from './ai-scripts'
 
 const WS = 'ws-turn'
 let LINE_UID = ''
@@ -253,5 +255,59 @@ describe('每一則 AI 回覆都留下自己的脈絡', () => {
     expect(ctx.turns[0]!.id).toBe(outgoing[0]!.data.aiTurnId)
     expect(ctx.turns[0]!.data.decision).toBe('handoff')
     expect(ctx.turns[0]!.data.handoffReason).toBe('sensitive_topic')
+  })
+})
+
+/**
+ * `C-350` 之後：AI 決定這句不回（「好的／收到」、打錯的注音）。以前 handler 碰到就直接結束，
+ * 「這句 AI 怎麼沒理」查不到；而且先亮了「輸入中…」，客人看到點點出現又消失。
+ */
+describe('AI 決定不回的那一句', () => {
+  const skipped = () => vi.mocked(answerWithAi).mockResolvedValue({
+    decision: 'skipped', answer: '', confidence: 0, sources: [], handoffReason: 'manual',
+  } as any)
+
+  it('「好的」→ 不亮「輸入中…」、不回客人；留一筆回合紀錄（原因＝只是回應），不動「現在卡在哪」', async () => {
+    skipped()
+
+    await handleMessageEvent(textEvent('好的'), { workspaceId: WS })
+
+    expect(vi.mocked(showLoadingAnimation)).not.toHaveBeenCalled()
+    expect(vi.mocked(replyMessage)).not.toHaveBeenCalled()
+    expect(ctx.turns).toHaveLength(1)
+    expect(ctx.turns[0]!.data).toMatchObject({ decision: 'skipped', skipReason: 'acknowledgement', query: '好的', handoffReason: null })
+    expect(ctx.conversations.get(DOC_ID)?.aiMeta).toBeUndefined()
+  })
+
+  it('打錯的注音「g. 2l4」→ 一樣不亮點點，原因記成看不懂', async () => {
+    skipped()
+
+    await handleMessageEvent(textEvent('g. 2l4'), { workspaceId: WS })
+
+    expect(vi.mocked(showLoadingAnimation)).not.toHaveBeenCalled()
+    expect(ctx.turns[0]!.data).toMatchObject({ decision: 'skipped', skipReason: 'garbled' })
+  })
+
+  it('對照組：一般問題照常先亮「輸入中…」', async () => {
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'answered', answer: '保固是兩年。', confidence: 0.9, sources: [], handoffReason: null, answerKind: 'kb',
+    } as any)
+
+    await handleMessageEvent(textEvent('保固多久'), { workspaceId: WS })
+
+    expect(vi.mocked(showLoadingAnimation)).toHaveBeenCalledTimes(1)
+  })
+
+  it('有流程時（意圖路由那一步也會亮點點）：「好的」也不亮', async () => {
+    skipped()
+    vi.mocked(loadActiveScripts).mockResolvedValueOnce([{
+      id: 's1', workspaceId: WS, name: '查詢訂單', enabled: true, priority: 50, rootNodeId: 't',
+      nodes: [{ id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['訂單'], examples: [], priority: 50, next: '' }],
+    }] as any)
+
+    await handleMessageEvent(textEvent('好的'), { workspaceId: WS })
+
+    expect(vi.mocked(routeMessage)).toHaveBeenCalledTimes(1) // 真的走到意圖路由那一步
+    expect(vi.mocked(showLoadingAnimation)).not.toHaveBeenCalled()
   })
 })

@@ -62,8 +62,10 @@ vi.mock('./ai-product-alias', async (importOriginal) => ({
 
 const {
   answerWithAi, activeProductsInContext, productsInConversation, pickMentionedProducts, mentionsOwnOrder, routeMessage,
-  isAcknowledgementOnly, looksLikeZhuyinTypo, SHIP_WHICH_PRODUCT_TEXT,
+  SHIP_WHICH_PRODUCT_TEXT,
 } = await import('./ai-answer')
+// 這兩支 2026-10-19 搬到 shared（handler 叫 AI 之前也要用）
+const { isAcknowledgementOnly, looksLikeZhuyinTypo } = await import('~~/shared/quiet-reply')
 const { getAiSettings, normalizeAiSettings } = await import('./ai-settings')
 const { searchSimilarChunks, searchChunksByIdentifierTag, getWorkspaceProductNames } = await import('./ai-knowledge-chunks')
 const { generateJson } = await import('./gemini')

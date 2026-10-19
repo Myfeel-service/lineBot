@@ -63,6 +63,7 @@ import {
   type OrderInfoRecentMessage,
 } from '~~/shared/order-info-only'
 import { storeBizTypeOf } from '~~/shared/store-profile-biz'
+import { quietReplyReasonOf } from '~~/shared/quiet-reply'
 import { getStoreProfile } from './store-profile'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
@@ -3101,8 +3102,9 @@ async function runScriptStart(
   if (!matched) {
     // 意圖路由是一次 LLM 呼叫（1~3 秒起跳），先給「輸入中…」即時回饋。
     // 草稿模式下路由可能落到 AI（不回客人），顯示動畫反而誤導，故略過。
+    // 「好的／收到」、打錯的注音也略過：AI 多半決定不回（`C-350`），點點出現又消失，客人會以為有人要回他。
     const settings = await getAiSettings(workspaceId).catch(() => null)
-    if (settings && settings.replyMode !== 'draft') {
+    if (settings && settings.replyMode !== 'draft' && !quietReplyReasonOf(textContent)) {
       showLoadingAnimation(lineUserId, workspaceId, 20).catch(() => {})
     }
     const hints = scripts.map(s => ({ id: s.id, name: s.name, hints: triggerHints(s) }))
@@ -4159,7 +4161,10 @@ async function tryAiFallback(params: {
 
   // AI 思考最壞 ~10 秒；先顯示「輸入中…」動畫給客人即時回饋（fire-and-forget，失敗不影響主流程）
   // 草稿模式不會回覆客人，顯示「輸入中…」反而誤導。
-  if (!draftMode) {
+  // 「好的／收到」、打錯的注音也不亮：AI 多半決定不回（`C-350`），亮了點點又消失（最久 20 秒），
+  // 客人會以為有人要回他。猜錯（其實 AI 會答，例如他在回答客服剛問的問題）只是那一則前面沒有點點。
+  const quietReason = quietReplyReasonOf(textContent)
+  if (!draftMode && !quietReason) {
     showLoadingAnimation(lineUserId, workspaceId, 20).catch(() => {})
   }
 
@@ -4318,12 +4323,29 @@ async function tryAiFallback(params: {
   }
 
   // 跳過不回客人的情況（維持原本「無人接」行為）：
-  //   - skipped：AI 設定上跳過此題
+  //   - skipped：AI 決定這句不回（「好的／收到」、打錯的注音，`C-350`）
   //   - manual：真的是設定 / 空 query 等流程問題
   if (
     result.decision === 'skipped'
     || (result.decision === 'handoff' && result.handoffReason === 'manual')
   ) {
+    if (result.decision === 'skipped') {
+      // 留一筆回合紀錄（為什麼不回），後台查得到：以前碰到不回就直接結束，「這句 AI 怎麼沒理」只能翻主機日誌。
+      // ⛔ 只寫回合紀錄、不動 aiMeta：aiMeta 是「這位客人現在卡在哪」（反問中、等確認轉接…），
+      //    一句「好的」不該把那個狀態洗掉。不記用量次數（answerWithAi 已只記 token）。
+      await writeAiTurn(getDb(), fsUserDocId, turnId, {
+        workspaceId,
+        decision: 'skipped',
+        confidence: 0,
+        handoffReason: null,
+        query: textContent,
+        sourceChunkIds: [],
+        answerKind: 'kb',
+        suggestedReply: '',
+        handoffSummary: '',
+        ...(quietReason ? { skipReason: quietReason } : {}),
+      })
+    }
     return
   }
 

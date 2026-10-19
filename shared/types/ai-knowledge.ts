@@ -617,6 +617,11 @@ export interface AiTurnDoc {
   handoffSummary: string
   /** `llm_error` 時外部服務回了什麼（已去識別、截短）；同 {@link AiConversationMeta.lastErrorDetail} */
   errorDetail?: string
+  /**
+   * decision＝skipped（AI 決定這句不回、LINE 上沒回任何訊息）時的原因（`C-350`，2026-10-19 起）：
+   * acknowledgement＝客人只回「好的／收到／OK」；garbled＝打錯的注音（「g. 2l4」）。見 shared/quiet-reply.ts。
+   */
+  skipReason?: 'acknowledgement' | 'garbled'
   createdAt: Timestamp | FieldValue
   /** 保留期同其他事件流（240 天）；TTL policy 兩專案各手動設一次 */
   expireAt: Timestamp
