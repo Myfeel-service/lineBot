@@ -2,6 +2,7 @@
   <!-- 手機（≤ 720）一次只看一邊（`D-105`，跟知識庫同一套 `mobileStack`）：沒點人看清單、點了看對話＋回覆框，
        上面一顆「← 客服對話」回清單。從通知連結帶 ?userId= 進來時，還在找那一位的這一兩秒也停在對話那一邊（見 deepLinkUserId） -->
   <AdminSplitLayout
+    ref="splitLayoutRef"
     class="conversations-page"
     :is-empty="!selectedUserId && !(isPhone && deepLinkUserId)"
     mobile-stack
@@ -500,9 +501,9 @@
             </div>
           </div>
           <!-- 收起來之後要有路回來（LINE 的收合箭頭同款；只在有選中客人時才有意義）。
-               手機上右邊沒有位置放那一欄，這顆一直在、按了從旁邊滑出來（見下面的 conv-customer-drawer） -->
+               手機、或對話區不夠寬（`D-76`，見 customerAsDrawer）右邊沒有位置放那一欄，這顆一直在、按了從旁邊滑出來（見下面的 conv-customer-drawer） -->
           <el-button
-            v-if="selectedUserId && (isPhone || !customerPanelOpen)"
+            v-if="selectedUserId && (customerAsDrawer || !customerPanelOpen)"
             size="small"
             text
             type="primary"
@@ -641,7 +642,8 @@
            版面照 LINE 官方帳號後台：左清單／中對話／右客人資訊。
            ⛔ 只加外層容器、**內容不重新縮排**——那會產生 600 行的假 diff，
               把真正的改動埋掉（縮排對 CSS 沒有影響）。 -->
-      <div class="conv-body-split">
+      <!-- has-customer-column：右邊那一欄在不在。不在的時候回覆列要讓出右下角小幫手那顆的位置（`D-76`，見 _conversations.scss） -->
+      <div class="conv-body-split" :class="{ 'has-customer-column': customerColumnShown }">
       <div class="conv-body-main">
       <!--
         G-27①：收起來的軌跡換成這一行。
@@ -1386,9 +1388,10 @@
       <!-- 右側客人卡：**與好友頁同一個元件**（改一次兩邊都變）。
            ⛔ 按需載入——它自己在 userId 變動時撈一次，**沒有掛進 30 秒清單輪詢**
               （那是 2026-08-11 讀取費暴衝的形狀）。
-           手機上不掛這一欄（放不下），改成按「客人檔案」才滑出來的抽屜（下面 conv-customer-drawer）——
+           手機、或對話區不夠寬（`D-76`：1100 寬時這一欄吃掉 320、對話只剩 300px，一行剩 9～11 個字）不掛這一欄，
+           改成按「客人檔案」才滑出來的抽屜（下面 conv-customer-drawer）——
            ⛔ 不要用 CSS 藏起來：藏起來的那一份照樣在背景讀一次，按開抽屜又讀一次。 -->
-      <aside v-if="selectedUserId && customerPanelOpen && !isPhone" class="conv-customer">
+      <aside v-if="selectedUserId && customerColumnShown" class="conv-customer">
         <div class="conv-customer__hd">
           <span class="conv-customer__title">客人檔案</span>
           <button type="button" class="conv-customer__collapse" title="收起客人檔案" @click="customerPanelOpen = false">✕</button>
@@ -1410,13 +1413,14 @@
   </AdminSplitLayout>
 
   <!-- 手機上的客人檔案（`D-105`）：電腦版右邊那一欄的同一張卡，按「客人檔案」才從右邊滑出來蓋住對話，✕ 收回。
+       `D-76`：電腦版對話區不夠寬時也走這個抽屜（360px，對話照樣露在左邊）。
        destroy-on-close＝收起來就卸掉：留著的話換下一位客人它會在背景再讀一次（同上面那一欄「按需載入」的理由） -->
   <el-drawer
-    v-if="isPhone"
+    v-if="customerAsDrawer"
     v-model="phoneCustomerOpen"
     title="客人檔案"
     direction="rtl"
-    size="100%"
+    :size="isPhone ? '100%' : '360px'"
     append-to-body
     destroy-on-close
     class="conv-customer-drawer"
@@ -1630,6 +1634,7 @@ import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL, followUpMenuItems } from '~~/shared/co
 import { broadcastSentWithBlankVariables } from '~~/shared/broadcast-content'
 import { HUMAN_HANDLING_BOT_NOTE } from '~~/shared/human-handling-copy'
 import { sessionHeaderStatus } from '~~/shared/conversation-header-status'
+import { editorTooNarrowForCustomerColumn } from '~/utils/conversation-layout'
 import {
   CONVERSATION_BATCH_LIMIT,
   CONVERSATION_BATCH_SKIP_LABELS,
@@ -2297,10 +2302,38 @@ const selectedUser = ref<ConvItem | null>(null)
  * 正是這個面板存在的理由（老闆 08-24 拍板照 LINE 的版面做）。
  */
 const customerPanelOpen = useState('conv-customer-panel-open', () => true)
-/** 手機上的客人檔案抽屜開著沒（`D-105`）。⛔ 跟上面那個分開：電腦版「預設開」，手機上一進來就蓋住對話不行 */
+/**
+ * 對話區（右半邊）夠不夠寬放右邊那一欄客人檔案（`D-76`，門檻與理由見 ~/utils/conversation-layout）。
+ *
+ * 原本 `.conv-customer` 寫了一條「窄螢幕整個藏起來」的 `@container`，但這頁沒有任何容器宣告，
+ * 那條規則從來沒生效過（而且就算生效，藏起來之後也沒有按鈕叫得出來）。
+ * 量的是 `.split-editor`（沒選人時也在），所以選人之前就知道，⛔ 不會先掛一欄再拿掉（那樣會白讀一次客人資料）。
+ */
+const splitLayoutRef = ref<{ $el?: Element } | null>(null)
+const editorNarrow = ref(false)
+/** 客人檔案用抽屜（手機、或對話區不夠寬）還是右邊那一欄 */
+const customerAsDrawer = computed(() => isPhone.value || editorNarrow.value)
+/** 右邊那一欄現在有沒有掛著（有選人、沒收起來、放得下） */
+const customerColumnShown = computed(() => !!selectedUserId.value && customerPanelOpen.value && !customerAsDrawer.value)
+let editorResizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  const root = splitLayoutRef.value?.$el as HTMLElement | undefined
+  const editor = root?.querySelector?.('.split-editor') as HTMLElement | null | undefined
+  if (!editor) return
+  // 0＝這一刻藏著（手機上清單那一邊）：維持原值，手機本來就走抽屜
+  const apply = (w: number) => { editorNarrow.value = editorTooNarrowForCustomerColumn(w, editorNarrow.value) }
+  apply(editor.getBoundingClientRect().width)
+  if (typeof ResizeObserver === 'function') {
+    editorResizeObserver = new ResizeObserver(entries => apply(entries[0]?.contentRect.width ?? 0))
+    editorResizeObserver.observe(editor)
+  }
+})
+onBeforeUnmount(() => editorResizeObserver?.disconnect())
+
+/** 客人檔案抽屜開著沒（`D-105` 手機；`D-76` 起對話區不夠寬的電腦版也用）。⛔ 跟上面那個分開：電腦版「預設開」，抽屜一進來就蓋住對話不行 */
 const phoneCustomerOpen = ref(false)
-// 轉成橫的、跨過 720 變電腦版：抽屜不在了，開著的狀態也收掉（不然轉回來它自己又跳出來）
-watch(isPhone, (phone) => { if (!phone) phoneCustomerOpen.value = false })
+// 轉成橫的、跨過 720 變電腦版、或視窗拉寬到放得下那一欄：抽屜不在了，開著的狀態也收掉（不然轉回來它自己又跳出來）
+watch(customerAsDrawer, (drawer) => { if (!drawer) phoneCustomerOpen.value = false })
 /**
  * 從網址帶 ?userId= 進來、還在找那一位（`D-105`）。找到或找不到都會清掉（見 onMounted）。
  * 手機上靠它在第一個畫面就停在對話那一邊——LINE 通知的「打開這段對話」點進來，不先閃一下清單。
@@ -4594,9 +4627,9 @@ async function openSessionById(sessionId: string) {
 
 // ── 手機：一次只看一邊（`D-105`）──────────────────────────────────────
 
-/** 「客人檔案 →」：電腦版是把右邊那一欄打開，手機上是從右邊滑出來的抽屜 */
+/** 「客人檔案 →」：電腦版是把右邊那一欄打開，手機（或對話區不夠寬，`D-76`）是從右邊滑出來的抽屜 */
 function openCustomerPanel() {
-  if (isPhone.value) phoneCustomerOpen.value = true
+  if (customerAsDrawer.value) phoneCustomerOpen.value = true
   else customerPanelOpen.value = true
 }
 
