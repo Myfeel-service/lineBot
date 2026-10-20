@@ -2,14 +2,14 @@ import { FieldValue } from 'firebase-admin/firestore'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
+import { NO_ASSIGNEE, type ConversationAssignResponse } from '~~/shared/conversation-assignee'
 import { notifyAssignee } from '~~/server/utils/assign-notify'
 
 /**
  * POST /api/conversations/:userId/assignee — 指派／取消「負責人員」（G-27 功能缺口②）
  *
  * Body: { uid: string }  — 空字串／null ＝ 取消指派
- * Response: ConversationAssignee
+ * Response: ConversationAssignResponse（負責人員＋`lineNotified`＝這次有沒有真的用 LINE 告訴他）
  *
  * ⛔ 只准指派給**這個工作區、而且回得了訊息**的成員（同 assignees.get.ts 的名單）：
  *    不驗的話任何一組 uid 都寫得進去，清單上就會出現查無此人的名字。
@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
       assigneeName: FieldValue.delete(),
       assignedAt: FieldValue.delete(),
     })
-    return NO_ASSIGNEE
+    return { ...NO_ASSIGNEE, lineNotified: false } satisfies ConversationAssignResponse
   }
 
   const memberSnap = await db.collection('workspaceMembers')
@@ -63,7 +63,9 @@ export default defineEventHandler(async (event) => {
   /**
    * 交給別人了 → LINE 告訴他（`H-16`）。沒換人（又選了同一位）不傳；指給自己由 notifyAssignee 擋。
    * ⚠️ 要 await（Lambda 回應後容器凍結，沒 await 的推播會被砍掉）；它自己吞錯，⛔ 不會讓指派失敗。
+   * 這一次有沒有真的送到，回給畫面（`lineNotified`）：提示才講得出「也用 LINE 通知他了」，⛔ 沒送到就不講。
    */
+  let lineNotified = false
   if (uid !== previousUid) {
     const result = await notifyAssignee({
       workspaceId,
@@ -75,9 +77,10 @@ export default defineEventHandler(async (event) => {
       db,
     })
     if (result === 'failed') console.warn('[assignee] 指派通知沒送出去（指派本身已完成）:', workspaceId, uid)
+    lineNotified = result === 'sent'
   }
 
-  return { uid, name, assignedAtMs: now.getTime() } satisfies ConversationAssignee
+  return { uid, name, assignedAtMs: now.getTime(), lineNotified } satisfies ConversationAssignResponse
 })
 
 /** 名字只有 Auth 有；查不到就退回 email，⛔ 不要寫入空名字（清單會出現一顆沒有字的圓章） */

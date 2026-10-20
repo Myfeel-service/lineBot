@@ -540,7 +540,7 @@
               :type="sessionStateTone.type"
               :class="{ 'conv-session-state--muted': sessionStateTone.muted }"
               :title="sessionStateTone.hint"
-            >{{ sessionToolbarMeta.statusLabel }}</el-tag>
+            >{{ sessionStateTone.label }}</el-tag>
           </template>
           <!--
             負責人員（G-27 功能缺口②）：接手前先看得到「是誰在跟」，才不會兩個人同時回。
@@ -595,7 +595,8 @@
             </template>
           </el-dropdown>
           <div v-if="sessionToolbarMeta" class="conv-session-actions" data-tour="conv-actions">
-            <el-tooltip v-if="canTakeOverSession" content="接手後，機器人與 AI 不會再自動回覆這位客人，直到你按「交還機器人」或會話結束" placement="top">
+            <!-- `D-31`：接手後只是不回客人「打的字」，客人自己按的查詢按鈕照樣會回（說法全站同一句，見 HUMAN_HANDLING_BOT_NOTE） -->
+            <el-tooltip v-if="canTakeOverSession" :content="`接手後，${HUMAN_HANDLING_BOT_NOTE}；直到你按「交還機器人」或會話結束`" placement="top">
               <el-button
                 size="small"
                 type="primary"
@@ -1627,13 +1628,15 @@ import {
 } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL, followUpMenuItems } from '~~/shared/conversation-flags'
 import { broadcastSentWithBlankVariables } from '~~/shared/broadcast-content'
+import { HUMAN_HANDLING_BOT_NOTE } from '~~/shared/human-handling-copy'
+import { sessionHeaderStatus } from '~~/shared/conversation-header-status'
 import {
   CONVERSATION_BATCH_LIMIT,
   CONVERSATION_BATCH_SKIP_LABELS,
   describeConversationBatchResult,
   type ConversationBatchResult,
 } from '~~/shared/conversation-batch'
-import { assigneeInitial, NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
+import { assigneeInitial, assignToastText, NO_ASSIGNEE, type ConversationAssignee, type ConversationAssignResponse } from '~~/shared/conversation-assignee'
 import { customerLastMessageMs, isConversationUnread, keepUnreadRows, unreadCountLabel } from '~~/shared/conversation-unread'
 import { MESSAGE_SENDER_LABELS, MESSAGE_SENDER_HINTS, type MessageSender } from '~~/shared/message-sender'
 import { isCustomerActionMessage } from '~~/shared/customer-action'
@@ -2069,7 +2072,7 @@ const SESSION_NO_PREVIEW = '（舊會話沒有訊息預覽）'
 const STATUS_TABS: { value: TabValue; label: string; hint: string }[] = [
   { value: 'all', label: '全部', hint: `所有對話，最新訊息排前面（${FOLLOW_UP_LABEL}的排在最上面）` },
   { value: 'pending_human', label: '待真人', hint: '系統判定：客人要求真人，還沒有人接手' },
-  { value: 'human_handling', label: '真人處理', hint: '系統判定：已經有同事接手，機器人與 AI 暫停自動回覆' },
+  { value: 'human_handling', label: '真人處理', hint: `系統判定：已經有同事接手，${HUMAN_HANDLING_BOT_NOTE}` },
   // 「待處理」＝還需不需要人處理（佇列語意）。不要改成「未首接」——那是統計看板
   // 的指標名稱（有沒有人回答過），兩者是不同的一群對話，同名會被誤讀成同一個數字。
   // 也不要和右鍵的人工標記混用同一個詞，那個叫「待跟進」（見 shared/conversation-flags.ts）。
@@ -2794,7 +2797,7 @@ const canFillQuickReply = computed(() => pendingQuickReplyItem.value?.actionType
  */
 const quickReplyNote = computed(() => {
   const item = pendingQuickReplyItem.value
-  const handoff = '送出後這場會話轉為真人處理，機器人與 AI 不會再自動回覆，直到你按「交還機器人」。'
+  const handoff = `送出後這場會話轉為真人處理：${HUMAN_HANDLING_BOT_NOTE}，直到你按「交還機器人」。`
   if (!item) return handoff
   const lines: string[] = []
   if (item.actionType === 'module') lines.push('這則是觸發機器人模組，沒有可以改的文字，只能直接送出。')
@@ -3185,33 +3188,18 @@ const sessionToolbarMeta = computed<SessionPanelMeta | null>(() => {
 })
 
 /**
- * 標頭那顆狀態徽章的顏色。先前五種狀態**全部寫死 `type="info"`**，
+ * 標頭那顆狀態徽章：字、顏色、說明。先前五種狀態**全部寫死 `type="info"`**，
  * 於是「客人在等人接手」和「機器人正在自動回覆」長得一模一樣——
- * 而這是整個標頭最重要的一格（決定客服現在該不該開口）。
+ * 而這是整個標頭最重要的一格（決定客服現在該不該開口）。配色規則與為什麼不用綠見
+ * shared/conversation-header-status.ts。
  *
- * 配色照**急迫度**排，不是照狀態名稱：紅（客人正在被晾著）＞橘（沒人碰過）＞
- * 藍（有人在跟，資訊性）＞灰（不需要人）。
- *
- * ⛔ 刻意不用綠：這個專案的 `primary` 就是品牌綠（`element-variables.scss`），
- *    旁邊的「我接手」正是綠色主按鈕。再給狀態一顆綠，同一列兩種綠語意不同
- *    ——那正是 `C-72` 已經記在案、還沒拍板的老問題，不要在這裡再製造一個。
- * ⛔ 這個調色盤裡 `info` 是**藍色**（#2563eb）不是灰，所以「中性灰」EP 給不了，
- *    只能靠 muted 這個 class 把三個 --el-tag-* 變數改掉。
+ * `D-4` 交過來的：只傳貼圖／加好友還沒開口的那一場欄位是 open、卻不在「待處理」分頁——
+ * 以前頂部照欄位寫「待處理」，現在跟分頁吃同一條規則（時間軸帶回來的 preInbound）。
  */
-const sessionStateTone = computed<{ type: 'danger' | 'warning' | 'info'; muted: boolean; hint: string }>(() => {
-  switch (sessionToolbarMeta.value?.status) {
-    case 'pending_human':
-      return { type: 'danger', muted: false, hint: '客人要求真人、還沒有人接手——這場最需要你' }
-    case 'open':
-      return { type: 'warning', muted: false, hint: '這場對話還沒有人處理過' }
-    case 'human_handling':
-      return { type: 'info', muted: false, hint: '已經有同事接手，機器人與 AI 暫停自動回覆' }
-    case 'bot_handling':
-      return { type: 'info', muted: true, hint: '目前由機器人／AI 自動回覆中，不需要人介入' }
-    default:
-      return { type: 'info', muted: true, hint: '' }
-  }
-})
+const sessionStateTone = computed(() =>
+  sessionToolbarMeta.value
+    ? sessionHeaderStatus(sessionToolbarMeta.value)
+    : { label: '', type: 'info' as const, muted: true, hint: '' })
 
 /**
  * 「我接手」＝這場還是機器人／AI 在自動回覆（open / bot_handling）時才有意義。
@@ -3630,12 +3618,15 @@ async function setAssignee(uid: string) {
   const previous = currentAssignee.value
   assigneeSaving.value = true
   try {
-    const saved = await apiFetch<ConversationAssignee>(
+    const res = await apiFetch<ConversationAssignResponse>(
       `/api/conversations/${encodeURIComponent(userId)}/assignee`,
       { method: 'POST', body: { uid } },
     )
+    // lineNotified 不是負責人員的一部分，⛔ 不要跟著寫進清單列
+    const { lineNotified: _lineNotified, ...saved } = res
     applyLocalAssignee(userId, saved)
-    showToast(saved.uid ? `已指派給 ${saved.name}` : '已取消指派', 'success')
+    // `H-16`：真的用 LINE 送到被指派的那位才補一句（判斷不出來就不講，見 assignToastText）
+    showToast(assignToastText(res), 'success')
   }
   catch (e: any) {
     // ⛔ 失敗要轉回去：留著假的指派比沒有指派更糟（同事會以為有人在跟）
@@ -5032,7 +5023,7 @@ async function takeOverSelectedSession() {
     await apiFetch(`/api/conversations/sessions/${sid}/takeover`, {
       method: 'POST',
     })
-    showToast('已接手，機器人與 AI 不會再自動回覆這位客人（按「交還機器人」可恢復）', 'success')
+    showToast(`已接手：${HUMAN_HANDLING_BOT_NOTE}（按「交還機器人」可恢復）`, 'success')
     // 接手的人最需要的就是「這場到現在發生什麼事」。刻意不 await：摘要要跑一次 LLM，
     // 讓它擋住接手的畫面更新沒有道理——接手本身已經成立，摘要晚兩秒出現即可。
     aiContextBanner.value?.refreshSummary()

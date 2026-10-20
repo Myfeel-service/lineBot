@@ -43,6 +43,9 @@ interface FakeSession {
   status?: string
   openedMs: number
   closedMs?: number
+  /** `D-4`：這場怎麼開的／客人開口了沒（沒給＝舊資料，兩個欄位都不寫） */
+  origin?: string
+  hasInbound?: boolean
 }
 interface FakeEvent {
   id: string
@@ -139,6 +142,8 @@ function makeDb(data: {
       status: s.status ?? (s.closedMs ? 'closed' : 'bot_handling'),
       openedAt: new Date(s.openedMs),
       closedAt: s.closedMs ? new Date(s.closedMs) : null,
+      ...(s.origin !== undefined ? { origin: s.origin } : {}),
+      ...(s.hasInbound !== undefined ? { hasInbound: s.hasInbound } : {}),
     }),
   })
 
@@ -386,6 +391,52 @@ describe('對話時間軸：分段讀', () => {
     const res = await call({ limit: 40 })
     expect(res.activeSession).toMatchObject({ sessionId: 's1', status: 'bot_handling' })
     expect(res.session).toBeNull()
+  })
+
+  /**
+   * `D-4` 交過來的：只傳貼圖／加好友還沒開口的那一場欄位是 open，但不在「待處理」分頁。
+   * 頂部狀態要講實話，所以進行中那一場要帶出「是哪一種」——判斷跟待處理佇列同一支（isPreInboundSession）。
+   */
+  it('只傳貼圖的 open 場：activeSession 帶 preInbound=sticker（頂部不再寫「待處理」）', async () => {
+    useDb({
+      messages: seriesOf(1),
+      sessions: [{ id: 's1', openedMs: T0, status: 'open', origin: 'sticker', hasInbound: false }],
+      currentSessionId: 's1',
+    })
+    const res = await call({ limit: 40 })
+    expect(res.activeSession).toMatchObject({ sessionId: 's1', status: 'open', preInbound: 'sticker' })
+  })
+
+  it('加好友還沒開口：preInbound=follow；客人開口過（hasInbound）或舊資料（沒 origin）就沒有這一格', async () => {
+    useDb({
+      messages: seriesOf(1),
+      sessions: [{ id: 's1', openedMs: T0, status: 'open', origin: 'follow' }],
+      currentSessionId: 's1',
+    })
+    expect((await call({ limit: 40 })).activeSession).toMatchObject({ preInbound: 'follow' })
+
+    useDb({
+      messages: seriesOf(1),
+      sessions: [{ id: 's1', openedMs: T0, status: 'open', origin: 'sticker', hasInbound: true }],
+      currentSessionId: 's1',
+    })
+    expect((await call({ limit: 40 })).activeSession).not.toHaveProperty('preInbound')
+
+    useDb({
+      messages: seriesOf(1),
+      sessions: [{ id: 's1', openedMs: T0, status: 'open' }],
+      currentSessionId: 's1',
+    })
+    expect((await call({ limit: 40 })).activeSession).not.toHaveProperty('preInbound')
+  })
+
+  it('不是 open 的場不帶 preInbound（機器人處理中那一分頁本來就收它，頂部照狀態講）', async () => {
+    useDb({
+      messages: seriesOf(1),
+      sessions: [{ id: 's1', openedMs: T0, status: 'bot_handling', origin: 'follow', hasInbound: false }],
+      currentSessionId: 's1',
+    })
+    expect((await call({ limit: 40 })).activeSession).not.toHaveProperty('preInbound')
   })
 
   /**

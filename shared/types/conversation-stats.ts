@@ -57,6 +57,18 @@ export function isPreInboundSession(s: { origin?: unknown; hasInbound?: unknown 
   return s?.origin === 'follow' || s?.origin === 'sticker'
 }
 
+/**
+ * 同 {@link isPreInboundSession}，多回「是哪一種」給畫面講人話（對話頁頂部狀態，`D-4` 交過來的那一條）：
+ * 'follow'＝加好友還沒講話、'sticker'＝只傳了貼圖、''＝客人開口過（或舊資料）。
+ * ⛔ 判斷一定要經過 isPreInboundSession：頂部狀態跟「待處理」分頁要是同一條規則。
+ */
+export type PreInboundKind = '' | 'follow' | 'sticker'
+
+export function preInboundKind(s: { origin?: unknown; hasInbound?: unknown } | undefined): PreInboundKind {
+  if (!isPreInboundSession(s)) return ''
+  return s?.origin === 'sticker' ? 'sticker' : 'follow'
+}
+
 export interface ConversationSessionDoc {
   workspaceId: string
   userId: string

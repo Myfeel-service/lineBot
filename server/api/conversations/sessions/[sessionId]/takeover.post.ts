@@ -35,7 +35,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '此會話已結束，無法接手' })
   }
   if (status === 'pending_human' || status === 'human_handling') {
-    throw createError({ statusCode: 400, statusMessage: '此會話已經是真人處理，機器人已停止自動回覆' })
+    // `D-31`：不再寫「機器人已停止自動回覆」——客人自己按的查詢按鈕照樣會回（說法見 HUMAN_HANDLING_BOT_NOTE）
+    throw createError({ statusCode: 400, statusMessage: '此會話已經是真人處理中，不用再接手' })
   }
 
   await enterModule(sessionId, session.userId as string, 'live_agent', undefined, workspaceId)

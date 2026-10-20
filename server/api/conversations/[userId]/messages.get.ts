@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import type { ConversationEventType, ConversationStatus, ModuleType } from '~~/shared/types/conversation-stats'
-import { MODULE_TYPE_LABELS, STATUS_LABELS } from '~~/shared/types/conversation-stats'
+import { MODULE_TYPE_LABELS, STATUS_LABELS, preInboundKind } from '~~/shared/types/conversation-stats'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import { resolveMessageSender } from '~~/shared/message-sender'
@@ -119,12 +119,19 @@ function eventLabel(
 /** 會話文件 → 工具列要的那幾個欄位。清單與單筆兩條路都走這裡，欄位才不會各長各的 */
 function sessionMetaOf(sessionId: string, data: FirebaseFirestore.DocumentData): SessionMeta {
   const status = data.status as ConversationStatus
+  /**
+   * `D-4` 交過來的：open 但客人還沒真的開口（只傳貼圖／加好友沒講話）的場不在「待處理」分頁，
+   * 頂部狀態要照實講（判斷跟待處理佇列同一支 isPreInboundSession，見 preInboundKind）。
+   * 只有 open 才需要：其他狀態的分頁本來就收它（機器人處理中那一分頁不扣這種場）。
+   */
+  const preInbound = status === 'open' ? preInboundKind(data) : ''
   return {
     sessionId,
     status,
     statusLabel: STATUS_LABELS[status] ?? String(status),
     openedAtMs: toMillis(data.openedAt),
     closedAtMs: toMillis(data.closedAt),
+    ...(preInbound ? { preInbound } : {}),
   }
 }
 

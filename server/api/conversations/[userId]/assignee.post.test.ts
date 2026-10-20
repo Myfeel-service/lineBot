@@ -102,4 +102,28 @@ describe('POST /api/conversations/:userId/assignee — 指派通知', () => {
     await expect(call()).resolves.toMatchObject({ uid: 'uid-amei' })
     expect(updates[0]).toMatchObject({ assigneeUid: 'uid-amei' })
   })
+
+  /**
+   * 回給畫面「這次有沒有真的用 LINE 告訴他」：提示才講得出「也用 LINE 通知他了」。
+   * ⛔ 只有真的送到（sent）才是 true——沒綁、收通知關著、指給自己、節流、送失敗都不能講成有通知。
+   */
+  it('LINE 真的送到 → lineNotified: true', async () => {
+    body = { uid: 'uid-amei' }
+    await expect(call()).resolves.toMatchObject({ uid: 'uid-amei', name: '阿美', lineNotified: true })
+  })
+
+  it.each(['not-bound', 'not-receiving', 'self', 'throttled', 'failed'] as const)('通知結果是 %s → lineNotified: false', async (result) => {
+    vi.mocked(notifyAssignee).mockResolvedValueOnce(result)
+    body = { uid: 'uid-amei' }
+    await expect(call()).resolves.toMatchObject({ uid: 'uid-amei', lineNotified: false })
+  })
+
+  it('沒換人（沒去通知）、取消指派 → lineNotified: false', async () => {
+    conv = { workspaceId: WS, assigneeUid: 'uid-amei' }
+    body = { uid: 'uid-amei' }
+    await expect(call()).resolves.toMatchObject({ lineNotified: false })
+
+    body = { uid: '' }
+    await expect(call()).resolves.toMatchObject({ uid: '', lineNotified: false })
+  })
 })

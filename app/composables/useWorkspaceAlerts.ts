@@ -476,22 +476,24 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'humanBacklog',
     icon: Service,
-    impact: '這些客人要求找真人之後，到現在還沒有人接手。等待中 AI 不會插手，客人只能等你們回。',
+    // `D-31`（2026-10-20）：等真人期間客人自己按的查詢按鈕照樣會回，所以不能再說「客人只能等你們回」——等的是他打的字
+    impact: '這些客人要求找真人之後，到現在還沒有人接手。等待中 AI 不會插手，客人打的字只能等你們回。',
     cta: '去看對話',
     requires: 'conversations.reply',
     // 直接落在「待真人」分頁——不帶 tab 會落在「全部」,等真人的對話要自己再切一次
     route: wid => `/admin/${wid}/conversations?tab=pending_human`,
-    anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人：點開接手回覆，處理完按「交回機器人」或「結束對話」。' },
+    // 按鈕名照對話頁上的字（「交還機器人」「結束會話」），以前寫成「交回」「結束對話」＝畫面上找不到那兩顆
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '「待真人」是在等的客人：點開接手回覆，處理完按「交還機器人」或「結束會話」。' },
   },
   {
     // `D-116`（2026-10-08）從上一顆拆出來：多半是同事回完忘了收尾，客人不一定在等——⛔ 不講成「客人在等」
     id: 'humanStale',
     icon: Service,
-    impact: '同事接手後很久沒動，也沒按「交回機器人」或「結束對話」。這段時間 AI 不會插手，客人再傳訊息只會等真人回。久到沒動靜的會由系統自動收尾。',
+    impact: '同事接手後很久沒動，也沒按「交還機器人」或「結束會話」。這段時間 AI 不會插手，客人再傳訊息只會等真人回。久到沒動靜的會由系統自動收尾。',
     cta: '去看對話',
     requires: 'conversations.reply',
     route: wid => `/admin/${wid}/conversations?tab=human_handling`,
-    anchor: { selector: '[data-tour="conv-tabs"]', note: '「真人處理」是接了還沒收尾的：處理完按「交回機器人」或「結束對話」。' },
+    anchor: { selector: '[data-tour="conv-tabs"]', note: '「真人處理」是接了還沒收尾的：處理完按「交還機器人」或「結束會話」。' },
   },
   {
     // 與 knowledgeIndexFailed（明確失敗）不同：這批是「一直沒學完」——重試放生或排程沒跑

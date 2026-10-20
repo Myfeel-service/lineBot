@@ -13,6 +13,7 @@
 
 import type { Component } from 'vue'
 import type { Capability } from '~~/shared/permissions'
+import { HUMAN_HANDLING_BOT_NOTE } from '~~/shared/human-handling-copy'
 import {
   Bell, Box, ChatDotRound, ChatLineSquare, Connection, DataLine, Document, EditPen, Files,
   FolderOpened, Grid, Lightning, MagicStick, Monitor, OfficeBuilding, Operation, PieChart,
@@ -926,7 +927,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         requiresPresent: '.conv-list-row .split-list-item',
         title: '接手、交還、結束',
         description:
-          '<strong>我接手</strong>＝這位客人先由你回，機器人與 AI 會暫停自動回覆，不會跟你搶話；'
+          // `D-31`：接手後只是不回客人「打的字」，他自己按的查詢按鈕照樣會回（說法跟對話頁同一句）
+          `<strong>我接手</strong>＝這位客人先由你回：${HUMAN_HANDLING_BOT_NOTE}，不會跟你搶話；`
           + '談完按<strong>交還機器人</strong>讓它繼續顧，或按<strong>結束會話</strong>把這一場結掉。',
         placement: 'bottom',
         // 這排裡的每一顆都掛在 `canReply`（`canTakeOverSession` 等）底下

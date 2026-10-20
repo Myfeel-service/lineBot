@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { assigneeInitial, NO_ASSIGNEE, readConversationAssignee } from './conversation-assignee'
+import { assigneeInitial, assignToastText, NO_ASSIGNEE, readConversationAssignee } from './conversation-assignee'
+
+// `H-16` 交過來的：指派完那句提示，只有 LINE 真的送到才講「也用 LINE 通知他了」
+describe('assignToastText(指派完那句提示)', () => {
+  it('LINE 真的送到被指派的那位 → 補一句', () => {
+    expect(assignToastText({ uid: 'u2', name: '小美', lineNotified: true })).toBe('已指派給 小美，也用 LINE 通知他了')
+  })
+
+  it('⛔ 沒送到（沒綁、收通知關著、指給自己、10 分鐘內傳過、送失敗）或判斷不出來 → 不講', () => {
+    expect(assignToastText({ uid: 'u2', name: '小美', lineNotified: false })).toBe('已指派給 小美')
+    expect(assignToastText({ uid: 'u2', name: '小美' })).toBe('已指派給 小美')
+  })
+
+  it('取消指派', () => {
+    expect(assignToastText({ uid: '', name: '', lineNotified: false })).toBe('已取消指派')
+  })
+})
 
 describe('負責人員：從對話文件讀出來（G-27 功能缺口②）', () => {
   it('沒有 assigneeUid 欄位 → 沒有人負責', () => {

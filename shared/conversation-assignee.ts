@@ -31,6 +31,22 @@ export interface ConversationAssignee {
 
 export const NO_ASSIGNEE: ConversationAssignee = { uid: '', name: '', assignedAtMs: 0 }
 
+/**
+ * 指派端點（`POST /api/conversations/:userId/assignee`）的回應：負責人員本身＋這一次有沒有真的用 LINE 告訴他（`H-16`）。
+ * ⛔ `lineNotified` 只在 LINE 真的送到（`notifyAssignee` 回 `sent`）時為 true；沒綁、收通知關著、指給自己、
+ *    10 分鐘內傳過、送失敗一律 false——畫面上**判斷不出來就不講**，不可以猜「應該有通知到」。
+ * ⛔ 它不是負責人員的一部分，不要存進清單列（呼叫端先拆掉再寫回畫面）。
+ */
+export interface ConversationAssignResponse extends ConversationAssignee {
+  lineNotified?: boolean
+}
+
+/** 指派完那句提示（`H-16`）：真的用 LINE 送到被指派的那位才補一句「也用 LINE 通知他了」 */
+export function assignToastText(res: { uid: string; name: string; lineNotified?: boolean }): string {
+  if (!res.uid) return '已取消指派'
+  return `已指派給 ${res.name}${res.lineNotified === true ? '，也用 LINE 通知他了' : ''}`
+}
+
 function toMillis(raw: unknown): number {
   if (!raw) return 0
   const v = raw as { toMillis?: () => number; seconds?: number; _seconds?: number }

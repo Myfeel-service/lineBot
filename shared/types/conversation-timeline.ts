@@ -1,4 +1,4 @@
-import type { ConversationEventType, ConversationStatus, ModuleType } from './conversation-stats'
+import type { ConversationEventType, ConversationStatus, ModuleType, PreInboundKind } from './conversation-stats'
 import type { MessageSender } from '../message-sender'
 
 /**
@@ -56,6 +56,11 @@ export interface TimelineSessionMeta {
    */
   openedAtMs?: number
   closedAtMs?: number
+  /**
+   * 這一場 open 但客人還沒真的開口（只傳貼圖／加好友沒講話，`D-4`）＝不在「待處理」分頁。
+   * 頂部狀態要跟分頁講同一件事（見 shared/conversation-header-status.ts）。空字串／沒有＝不是這種。
+   */
+  preInbound?: PreInboundKind
 }
 
 export interface TimelineResponse {
