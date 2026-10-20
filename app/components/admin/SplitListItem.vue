@@ -144,7 +144,7 @@ const props = withDefaults(defineProps<{
    * 對話列表請維持 false（右側為時間純文字）。
    */
   titleRowChip?: boolean
-  /** 名稱前的小圖示（emoji 即可），例如釘選的 📌 */
+  /** 名稱前的小圖示（emoji 即可），例如待跟進的 🚩 */
   titleIcon?: string
   /**
    * 搭配 timeInTitleRow：標題右側的一字圓章，例如對話列表的「負責人員」。

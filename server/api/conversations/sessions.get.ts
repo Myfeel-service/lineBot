@@ -32,7 +32,7 @@ interface ConvSideData {
 /**
  * 這一頁會用到的對話層級資料。
  *
- * 標記（釘選 / 待跟進）存在 `conversations` 文件上，會話列表也要顯示同一份，
+ * 待跟進（`pinned`）存在 `conversations` 文件上，會話列表也要顯示同一份，
  * 不然同一位客人在「全部」有標記、切到「待真人」就不見了。
  * 順手把最後一則訊息帶出來——列表五個分頁的第二行都要它，而這份文件本來就要讀。
  * conversations 與 users 共用同一組 doc id，所以直接沿用已算好的 fsUserIds。
@@ -91,7 +91,6 @@ function mapSessionToRow(
     displayName,
     pictureUrl: String(user.pictureUrl || '').trim(),
     pinned: conv?.flags.pinned === true,
-    followUp: conv?.flags.followUp === true,
     assignee: conv?.assignee ?? NO_ASSIGNEE,
     lastMessage,
     lastDirection,

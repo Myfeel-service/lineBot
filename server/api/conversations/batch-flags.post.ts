@@ -1,8 +1,9 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
+import { countPinnedConversations } from '~~/server/utils/conversation-follow-up'
 import { lineUserFirestoreDocId, lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
-import { readConversationFlags } from '~~/shared/conversation-flags'
+import { MAX_PINNED_CONVERSATIONS, readConversationFlags } from '~~/shared/conversation-flags'
 import {
   CONVERSATION_BATCH_LIMIT,
   type ConversationBatchResult,
@@ -11,14 +12,16 @@ import {
 
 /**
  * POST /api/conversations/batch-flags
- * Body: { userIds: string[], followUp: boolean }
+ * Body: { userIds: string[], pinned: boolean }
  *
  * 對話列表勾選之後「一次標記／取消待跟進」。單筆版是 `[userId]/flags.post.ts`。
  *
- * ⛔ 刻意**只有待跟進**：
- *  · 釘選有 50 筆上限（`MAX_PINNED_CONVERSATIONS`），批次一次灌進來就等於把第一頁蓋滿
- *    ——釘選的意思是「這幾筆最重要」，能批次釘就不重要了。
- *  · 會話狀態（待處理／結束…）不走這支，那是系統判定的欄位，改它要走 batch-close。
+ * `H-17`（2026-10-20）：待跟進＝原本的釘選（欄位 `pinnedAt`），所以這支改寫 `pinnedAt`，
+ * 並且吃同一個上限（`MAX_PINNED_CONVERSATIONS`）：已經標了 48 筆、再勾 5 筆，前 2 筆標上、
+ * 後 3 筆照實回「待跟進已經標滿」——⛔ 不可以整批擋掉，也不可以超過上限硬寫（第一頁只撈得到 50 筆置頂，
+ * 寫第 51 筆＝標了卻看不到）。
+ *
+ * ⛔ 會話狀態（待處理／結束…）不走這支，那是系統判定的欄位，改它要走 batch-close。
  *    為什麼兩件事不能混見 shared/conversation-flags.ts 與 docs/CONVERSATION-STATS-DEFINITIONS.md。
  */
 
@@ -30,10 +33,10 @@ export default defineEventHandler(async (event): Promise<ConversationBatchResult
 
   const body = await readBody(event)
   const raw: unknown[] = Array.isArray(body?.userIds) ? body.userIds : []
-  if (typeof body?.followUp !== 'boolean') {
-    throw createError({ statusCode: 400, statusMessage: 'followUp 必須是 true 或 false' })
+  if (typeof body?.pinned !== 'boolean') {
+    throw createError({ statusCode: 400, statusMessage: 'pinned 必須是 true 或 false' })
   }
-  const nextFollowUp = body.followUp as boolean
+  const nextPinned = body.pinned as boolean
 
   // 去重是照「正規化之後的主鍵」做的：同一位客人用 LINE userId 與對話主鍵各送一次也只算一筆
   const docIds = [...new Set(
@@ -55,22 +58,34 @@ export default defineEventHandler(async (event): Promise<ConversationBatchResult
 
   const db = getDb()
   // 一趟讀回來：要驗歸屬，也要分得出「本來就是這個標記」（那不是失敗，是不用做）
-  const snaps = await db.getAll(...docIds.map(id => db.collection('conversations').doc(id)))
+  const [snaps, pinnedNow] = await Promise.all([
+    db.getAll(...docIds.map(id => db.collection('conversations').doc(id))),
+    // 取消不用數；數不到（缺索引）＝這次不擋，同單筆
+    nextPinned ? countPinnedConversations(db, workspaceId) : Promise.resolve(null),
+  ])
+  let room = pinnedNow === null ? Number.POSITIVE_INFINITY : Math.max(0, MAX_PINNED_CONVERSATIONS - pinnedNow)
 
   const skipped: ConversationBatchSkip[] = []
   const doneIds: string[] = []
   const updates: string[] = []
 
   for (const snap of snaps) {
-    const data = snap.data() as { workspaceId?: string, followUpAt?: unknown } | undefined
+    const data = snap.data() as { workspaceId?: string, pinnedAt?: unknown } | undefined
     // ⛔ 逐筆驗歸屬：userIds 是前端送來的，不驗就等於「知道 id 就能標到別家的對話」
     if (!snap.exists || data?.workspaceId !== workspaceId) {
       skipped.push({ id: snap.id, reason: 'not_found' })
       continue
     }
-    if (readConversationFlags(data).followUp === nextFollowUp) {
+    if (readConversationFlags(data).pinned === nextPinned) {
       skipped.push({ id: snap.id, reason: 'already_set' })
       continue
+    }
+    if (nextPinned) {
+      if (room <= 0) {
+        skipped.push({ id: snap.id, reason: 'limit_reached' })
+        continue
+      }
+      room--
     }
     updates.push(snap.id)
   }
@@ -81,8 +96,8 @@ export default defineEventHandler(async (event): Promise<ConversationBatchResult
     const batch = db.batch()
     for (const id of chunk) {
       batch.update(db.collection('conversations').doc(id), {
-        followUpAt: nextFollowUp ? FieldValue.serverTimestamp() : FieldValue.delete(),
-        followUpBy: nextFollowUp ? uid : FieldValue.delete(),
+        pinnedAt: nextPinned ? FieldValue.serverTimestamp() : FieldValue.delete(),
+        pinnedBy: nextPinned ? uid : FieldValue.delete(),
       })
     }
     await batch.commit()

@@ -357,7 +357,7 @@ body.is-resizing-split {
   flex-shrink: 0;
 }
 
-/* 名稱前的小圖示（例如釘選 📌）：跟著名稱那一行，不佔第二行 */
+/* 名稱前的小圖示（例如待跟進 🚩）：跟著名稱那一行，不佔第二行 */
 .split-list-item__title-icon {
   flex-shrink: 0;
   font-size: 0.72rem;

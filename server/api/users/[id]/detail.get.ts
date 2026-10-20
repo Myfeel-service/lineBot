@@ -100,7 +100,7 @@ export default defineEventHandler(async (event) => {
     /** 來過幾次（null＝查不到，畫面就不顯示這列——不要拿 0 充數） */
     sessionCount,
     /**
-     * 誰在跟這條線、有沒有被標「待跟進」（D-29①②）。
+     * 誰在跟這條線、有沒有被標「待跟進」（D-29①②；`H-17` 起待跟進＝原本的釘選，`flags.pinned`）。
      * 兩者都存在 conversations 文件上，這支端點本來就撈了那份，零額外讀取。
      */
     assignee: readConversationAssignee(conv ?? undefined),

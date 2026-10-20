@@ -16,7 +16,7 @@
         <!-- 換電腦／清過快取／新同事第一次登入時整排全紅，沒這顆就只能一位一位點開才消得掉 -->
         <el-tooltip
           v-if="unreadRowCount > 0"
-          content="把括號裡那幾顆紅點一次清掉＝目前已經載進來的全部（含釘選區收起來的那幾位）。只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響"
+          content="把括號裡那幾顆紅點一次清掉＝目前已經載進來的全部（含待跟進收起來的那幾位）。只影響你這台電腦，不會動到同事看到的；還沒捲到的下面幾頁不受影響"
           placement="bottom"
         >
           <!-- ⛔ 這個數字刻意**不**加「＋」（隔壁那顆篩選有）：它回答的是「按下去會清掉幾顆」，
@@ -92,8 +92,9 @@
           clearable
           size="small"
         />
-        <!-- 兩顆篩選放同一列（側欄夠寬時並排、窄了自己換行）：它們是同一種東西
-             ——「把清單縮到某一群」，和上面那排「換一個清單」的分頁不同 -->
+        <!-- 篩選放這一列（和上面那排「換一個清單」的分頁不同，這裡是「把清單縮到某一群」）。
+             `H-17`：原本旁邊還有一顆「只看待跟進」——待跟進改成原本的釘選之後，那幾位本來就排在清單
+             最上面一區（有標題、有數字、可收起），再一顆篩選只是同一份名單印兩次，所以下架 -->
         <div class="conv-filter-row">
           <!-- 紅點看得到卻沒辦法只看那幾列：整排掃下來很容易漏掉中間那一顆（H-29）。
                五個分頁都給，因為紅點本來就五個分頁都會亮 -->
@@ -112,24 +113,6 @@
               <!-- 「18＋」的＋不能省：這個數字只掃得到已載入的那幾頁，往下捲會變大、
                    按重整又會縮回去，寫成裸數字就是個會自己亂跳的「總數」（見 unreadCountLabel） -->
               只看未讀{{ unreadRowCount > 0 ? `（${unreadCountText}）` : '' }}
-            </button>
-          </el-tooltip>
-          <!-- 右鍵標記完要找得回來：沒有這個出口，標記就是個看不到的動作。
-               和上面那排刻意分行分色 ——「待跟進」是人標的，不是系統狀態 -->
-          <el-tooltip
-            v-if="activeTab === 'all'"
-            :content="`待跟進＝你和同事手動標記、要回頭處理的對話（和上面系統判定的「待處理」不是同一件事）${followUpCount === null ? '。⚠️數量這次讀不到，篩選仍可用' : ''}`"
-            placement="bottom"
-          >
-            <button
-              type="button"
-              class="conv-flag-filter"
-              :class="{ active: followUpFilterOn }"
-              :aria-pressed="followUpFilterOn"
-              @click="toggleFollowUpFilter"
-            >
-              <span class="conv-flag-filter__icon" aria-hidden="true">🚩</span>
-              只看待跟進{{ typeof followUpCount === 'number' && followUpCount > 0 ? `（${followUpCount}）` : '' }}
             </button>
           </el-tooltip>
         </div>
@@ -250,7 +233,7 @@
       </div>
       <div v-else-if="!sidebarItems.length && !searchActive" class="split-sidebar-empty">
         <span>{{ sidebarEmpty.title }}</span>
-        <!-- 空清單不要變死路：這裡順便講怎麼標，這也是唯一會說明「待跟進怎麼來」的地方 -->
+        <!-- 空清單不要變死路：這裡順便講下一步 -->
         <span v-if="sidebarEmpty.hint" class="conv-empty-hint">{{ sidebarEmpty.hint }}</span>
       </div>
       <div
@@ -259,9 +242,6 @@
         class="split-list"
         @scroll.passive="onSidebarListScroll"
       >
-        <div v-if="followUpListTruncated" class="conv-list-notice">
-          待跟進超過 {{ FOLLOW_UP_LIST_LIMIT }} 筆，這裡只顯示最新的 {{ FOLLOW_UP_LIST_LIMIT }} 筆
-        </div>
         <!-- 搜尋中的清單不會自己更新（見 listAutoRefreshPaused）：不講的話，
              客服會以為「都沒有新訊息」，其實是畫面停在搜尋當下那一刻 -->
         <div v-if="listAutoRefreshPaused" class="conv-list-notice">
@@ -269,8 +249,8 @@
         </div>
         <!--
           搜尋分兩區，各自要說得出自己的狀態（名字這一區在這裡講）。
-          空的原因沿用 sidebarEmpty：還套著「只看未讀」「只看待跟進」時，
-          真正的原因是那些篩選，不是名字沒中。
+          空的原因沿用 sidebarEmpty：還套著「只看未讀」時，
+          真正的原因是那個篩選，不是名字沒中。
         -->
         <template v-if="searchActive">
           <div v-if="listLoading" class="conv-list-notice">正在找名字…</div>
@@ -279,9 +259,9 @@
           </div>
         </template>
         <!--
-          G-27③：釘選區的標題。
-          釘選一律置頂，釘到 12 筆時第一screen 就整片都是 📌，中間沒有任何字說明
-          「這一段是釘選」——讀起來就變成「每列都有圖釘」。標一下、並且可以收起來，
+          G-27③：待跟進區的標題（`H-17` 之前叫「釘選中」，資料欄位還是 pinned）。
+          待跟進一律置頂，標到 12 筆時第一screen 就整片都是旗子，中間沒有任何字說明
+          「這一段是待跟進」——讀起來就變成「每列都有旗子」。標一下、並且可以收起來，
           收起來才拿得回照時間排序的收件匣。
         -->
         <button
@@ -290,12 +270,12 @@
           class="conv-list-group"
           :aria-expanded="pinnedGroupOpen"
           :title="pinnedGroupOpen
-            ? '收起釘選區，只看照時間排序的對話'
-            : '展開釘選區（釘選的對話一律排在最上面）'"
+            ? `收起${FOLLOW_UP_LABEL}，只看照時間排序的對話`
+            : `展開${FOLLOW_UP_LABEL}（標了${FOLLOW_UP_LABEL}的對話一律排在最上面）`"
           @click="pinnedGroupOpen = !pinnedGroupOpen"
         >
           <span class="conv-list-group__caret" aria-hidden="true">{{ pinnedGroupOpen ? '▾' : '▸' }}</span>
-          <span>📌 釘選中（{{ pinnedRowCount }}）</span>
+          <span>{{ FOLLOW_UP_ICON }} {{ FOLLOW_UP_LABEL }}（{{ pinnedRowCount }}）</span>
         </button>
         <!-- Session-based view (status tabs) -->
         <template v-if="activeTab !== 'all'">
@@ -324,10 +304,9 @@
               time-in-title-row
               :show-unread-dot="isRowUnread(s.userId, sessionRowCustomerMs(s))"
               :active="selectedSessionId === s.sessionId"
-              :title-icon="s.pinned ? '📌' : ''"
+              :title-icon="s.pinned ? FOLLOW_UP_ICON : ''"
               :owner-initial="assigneeInitial(s.assignee?.name ?? '')"
               :owner-title="s.assignee?.name ? `負責人員：${s.assignee.name}` : ''"
-              :meta-tag="s.followUp ? '待跟進' : ''"
               :meta-prefix="directionPrefix(s)"
               :meta-text="s.lastMessage || SESSION_NO_PREVIEW"
               :meta-strong="s.lastDirection === 'incoming' && !!s.lastMessage"
@@ -341,7 +320,7 @@
               v-if="canReply"
               type="button"
               class="conv-list-row__more"
-              title="釘選 / 待跟進"
+              :title="`標記／取消${FOLLOW_UP_LABEL}`"
               aria-label="更多動作"
               @click.stop="openContextMenuFromButton($event, s)"
             >⋯</button>
@@ -370,10 +349,9 @@
               time-in-title-row
               :show-unread-dot="isRowUnread(c.userId, convRowCustomerMs(c))"
               :active="selectedUserId === c.userId && !selectedSessionId"
-              :title-icon="c.pinned ? '📌' : ''"
+              :title-icon="c.pinned ? FOLLOW_UP_ICON : ''"
               :owner-initial="assigneeInitial(c.assignee?.name ?? '')"
               :owner-title="c.assignee?.name ? `負責人員：${c.assignee.name}` : ''"
-              :meta-tag="c.followUp ? '待跟進' : ''"
               :meta-prefix="directionPrefix(c)"
               :meta-text="c.lastMessage"
               :meta-strong="c.lastDirection === 'incoming' && !!c.lastMessage"
@@ -389,7 +367,7 @@
               v-if="canReply"
               type="button"
               class="conv-list-row__more"
-              title="釘選 / 待跟進"
+              :title="`標記／取消${FOLLOW_UP_LABEL}`"
               aria-label="更多動作"
               @click.stop="openContextMenuFromButton($event, c)"
             >⋯</button>
@@ -443,7 +421,7 @@
           </div>
           <div v-if="contentSearchLoading" class="conv-list-notice">正在翻對話內容…</div>
           <template v-else>
-            <!-- conv-hit-row：和上面那份清單分得出來（右鍵選單、釘選線都不套在這一區） -->
+            <!-- conv-hit-row：和上面那份清單分得出來（右鍵選單、待跟進分隔線都不套在這一區） -->
             <div
               v-for="m in contentMatches"
               :key="`${m.userId}-${m.messageId}`"
@@ -1569,7 +1547,7 @@
     </template>
   </el-dialog>
 
-  <!-- 對話列表右鍵／⋯ 選單（釘選 / 待跟進）；觀察者不會開啟，保留瀏覽器原生選單 -->
+  <!-- 對話列表右鍵／⋯ 選單（待跟進）；觀察者不會開啟，保留瀏覽器原生選單 -->
   <AdminContextMenu
     v-model:visible="contextMenuVisible"
     :x="contextMenuPos.x"
@@ -1599,7 +1577,7 @@ import {
   type ConversationStatus,
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
-import { FOLLOW_UP_LIST_LIMIT } from '~~/shared/conversation-flags'
+import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL, followUpMenuItems } from '~~/shared/conversation-flags'
 import {
   CONVERSATION_BATCH_LIMIT,
   CONVERSATION_BATCH_SKIP_LABELS,
@@ -2026,9 +2004,8 @@ interface SessionItem {
    */
   lastMessage: string
   lastDirection: 'incoming' | 'outgoing'
-  /** 對話層級的人工標記（見 ConvItem） */
+  /** 對話層級的人工標記＝待跟進（見 ConvItem） */
   pinned?: boolean
-  followUp?: boolean
   /** 負責人員也是對話層級的（見 ConvItem） */
   assignee?: ConversationAssignee
 }
@@ -2041,7 +2018,7 @@ const SESSION_NO_PREVIEW = '（舊會話沒有訊息預覽）'
  * hint 會變成 title tooltip：兩個「待」開頭的分頁光看名字分不出差別，滑上去要講得出來。
  */
 const STATUS_TABS: { value: TabValue; label: string; hint: string }[] = [
-  { value: 'all', label: '全部', hint: '所有對話，最新訊息排前面（釘選的會置頂）' },
+  { value: 'all', label: '全部', hint: `所有對話，最新訊息排前面（${FOLLOW_UP_LABEL}的排在最上面）` },
   { value: 'pending_human', label: '待真人', hint: '系統判定：客人要求真人，還沒有人接手' },
   { value: 'human_handling', label: '真人處理', hint: '系統判定：已經有同事接手，機器人與 AI 暫停自動回覆' },
   // 「待處理」＝還需不需要人處理（佇列語意）。不要改成「未首接」——那是統計看板
@@ -2092,11 +2069,10 @@ interface ConvItem {
   /** 客人已封鎖官方帳號：推播會被 LINE 退件，回覆區要先擋一句話 */
   isBlocked?: boolean
   /**
-   * 右鍵下的兩個人工標記（全 workspace 共用）。與會話狀態、統計完全無關——
-   * 為什麼是「待跟進」不是「待處理」見 ~~/shared/conversation-flags.ts。
+   * 右鍵下的人工標記「待跟進」（全 workspace 共用；`H-17` 之前叫釘選，欄位沿用 pinned）。
+   * 與會話狀態、統計完全無關——為什麼是「待跟進」不是「待處理」見 ~~/shared/conversation-flags.ts。
    */
   pinned?: boolean
-  followUp?: boolean
   /** 負責人員：哪一位同事在跟這條線（G-27 功能缺口②）。uid 空字串＝還沒有人負責 */
   assignee?: ConversationAssignee
 }
@@ -2299,10 +2275,8 @@ function statusTabText(tab: { value: TabValue; label: string }): string {
 
 const inputText = ref('')
 const searchText = ref('')
-/** 「只看待跟進」：只在「全部」分頁有意義（其他分頁看的是會話狀態，不是人工標記） */
-const followUpFilterOn = ref(false)
 /**
- * 「只看未讀」（H-29）。和上面那個不一樣的地方有兩處，都是刻意的：
+ * 「只看未讀」（H-29）。兩件事是刻意的：
  *
  * 1. **五個分頁都有**——紅點本來就五個分頁都會亮（已讀記在客人身上，見 convLastReadMs），
  *    只在「全部」給篩選的話，在「待真人」看到三顆紅點卻沒有辦法只看那三列。
@@ -2316,10 +2290,6 @@ const unreadFilterOn = ref(false)
  * 空字串＝這一輪還沒按過，畫面上就不出現這一句。
  */
 const unreadScanReport = ref('')
-/** 待跟進數超過顯示上限時要在列表上明講，不要讓人以為看到的就是全部 */
-const followUpListTruncated = ref(false)
-// null＝這次讀不到（缺索引之類）：不顯示數字、tooltip 講明，⛔不可以拿 0 冒充（D-43④）
-const followUpCount = ref<number | null>(0)
 
 /**
  * 搜尋對話**內容**（H-30）：「那個問過退貨的客人是誰」。
@@ -2370,7 +2340,7 @@ const aiContextBanner = ref<{ refreshSummary: () => Promise<void> } | null>(null
  * 尤其「答錯了」是唯一能讓人告訴系統「AI 這題答錯」的地方，沒有它就只收得到
  * 「AI 自己說答不出來」那一半訊號。
  *
- * `G-109`：這一頁的寫入（回覆、客服預存、貼圖／媒體、接手／交還／結束、釘選／待跟進、勾選批次、
+ * `G-109`：這一頁的寫入（回覆、客服預存、貼圖／媒體、接手／交還／結束、待跟進、勾選批次、
  * 指派、AI 脈絡卡與「為什麼這樣答」、答錯標記）打的端點全是 conversations.reply，所以共用一顆。
  * 補知識／去修這張卡只是開新分頁到知識庫頁，那邊的儲存（knowledge.write）由那一頁自己擋。
  * 右側客人卡的貼標／備註是 customers.write，卡片自己讀。
@@ -2895,12 +2865,12 @@ const pickerModes: Array<{
 ]
 
 /**
- * 釘選置頂。
+ * 待跟進置頂（`H-17` 之前叫釘選，欄位沿用 pinned）。
  *
  * 「全部」分頁後端第一頁已經排好，這裡再排一次是為了「按下右鍵到下次載入之間」畫面就先動——
- * 不然按了釘選什麼都沒發生，會以為沒生效。filter 保序，所以兩邊順序一致。
- * 會話分頁後端沒有排（釘選是對話層級、查詢是會話層級），全靠這裡排；
- * 不排的話同一個 📌 在「全部」置頂、切過去卻沉在中間，看起來像壞掉。
+ * 不然按了標記什麼都沒發生，會以為沒生效。filter 保序，所以兩邊順序一致。
+ * 會話分頁後端沒有排（待跟進是對話層級、查詢是會話層級），全靠這裡排；
+ * 不排的話同一面旗子在「全部」置頂、切過去卻沉在中間，看起來像壞掉。
  */
 function pinnedFirst<T extends { pinned?: boolean }>(rows: T[]): T[] {
   if (!rows.some(r => r.pinned)) return rows
@@ -2908,28 +2878,28 @@ function pinnedFirst<T extends { pinned?: boolean }>(rows: T[]): T[] {
 }
 
 /**
- * 釘選區要不要展開（G-27③）。
+ * 待跟進區要不要展開（G-27③，當時叫釘選區）。
  *
  * 2026-08-24 老闆回報「每一列都有圖釘」。查了正式資料**不是 bug**：MYFEEL 真的有
  * 12 筆被釘（08-17～08-24 陸續釘的），而釘選一律置頂 → 第一screen 12 列剛好全是釘選，
  * 中間沒有任何標題說「這一段是釘選」，讀起來就變成「每列都有圖釘＝圖釘沒有意義」。
  *
  * 所以修法不是動渲染條件，是**把那一段標示成一個區塊**，並且可以收起來——
- * 收起來之後才拿得回照時間排序的收件匣。
+ * 收起來之後才拿得回照時間排序的收件匣。（useState 的鍵沿用舊名：改名會讓已收起來的人又被展開一次）
  */
 const pinnedGroupOpen = useState('conv-pinned-group-open', () => true)
 
-/** 收起釘選區時要真的從清單裡拿掉（只影響顯示，不動任何資料） */
+/** 收起待跟進區時要真的從清單裡拿掉（只影響顯示，不動任何資料） */
 function applyPinnedGroup<T extends { pinned?: boolean }>(rows: T[]): T[] {
   const sorted = pinnedFirst(rows)
   return pinnedGroupOpen.value ? sorted : sorted.filter(r => !r.pinned)
 }
 
 /**
- * 「只看未讀」篩完的對話列（還沒套釘選區）。規則與那條「正在看的那一列要留著」的
+ * 「只看未讀」篩完的對話列（還沒套待跟進區）。規則與那條「正在看的那一列要留著」的
  * 例外寫在 shared/conversation-unread.ts，這裡只負責把兩種列各自的欄位餵進去。
  *
- * ⛔ 篩選要在**套釘選區之前**做：釘選區的標題「📌 釘選中（12）」數的是同一份列表，
+ * ⛔ 篩選要在**套待跟進區之前**做：待跟進區的標題「🚩 待跟進（12）」數的是同一份列表，
  *    在後面篩的話會變成標題寫 12、底下一列都沒有。
  */
 const convRowsInView = computed<ConvItem[]>(() => {
@@ -2961,8 +2931,8 @@ const convSidebarItems = computed<ConvItem[]>(() => applyPinnedGroup(convRowsInV
 
 /**
  * 「只看未讀」現在留下幾列（含正在看的那一列）。
- * 刻意數**套釘選區之前**那份：釘選區收起來時 sidebarItems 會少掉釘選那幾列，
- * 拿它判斷「要不要再往下掃」就會在收起釘選區時白掃好幾頁。
+ * 刻意數**套待跟進區之前**那份：待跟進區收起來時 sidebarItems 會少掉那幾列，
+ * 拿它判斷「要不要再往下掃」就會在收起待跟進區時白掃好幾頁。
  */
 const unreadRowsInViewCount = computed(() =>
   activeTab.value === 'all' ? convRowsInView.value.length : sessionRowsInView.value.length,
@@ -2974,12 +2944,12 @@ const unreadScannedCount = computed(() =>
 )
 
 /**
- * 這個分頁上有幾筆被釘選（給區塊標題用）＝數**套釘選區之前、篩選之後**那一份。
+ * 這個分頁上有幾筆待跟進（給區塊標題用）＝數**套待跟進區之前、篩選之後**那一份。
  *
- * ⛔ 不能數 sidebarItems（套過釘選區的）——收起來之後那份是 0，標題就會變成
- *    「釘選中（0）」而且再也點不開。
- * ⛔ 也不能數原始清單——「只看未讀」開著時原始清單裡的釘選多半已經被篩掉，
- *    標題會寫「釘選中（12）」，底下一列都沒有。
+ * ⛔ 不能數 sidebarItems（套過待跟進區的）——收起來之後那份是 0，標題就會變成
+ *    「待跟進（0）」而且再也點不開。
+ * ⛔ 也不能數原始清單——「只看未讀」開著時原始清單裡的待跟進多半已經被篩掉，
+ *    標題會寫「待跟進（12）」，底下一列都沒有。
  */
 const pinnedRowCount = computed(() => {
   const rows: { pinned?: boolean }[] = activeTab.value === 'all'
@@ -2988,11 +2958,11 @@ const pinnedRowCount = computed(() => {
   return rows.filter(r => r.pinned).length
 })
 
-/** 釘選區的最後一筆：底下畫一條線，讀者才知道「時間序從這裡開始」 */
+/** 待跟進區的最後一筆：底下畫一條線，讀者才知道「時間序從這裡開始」 */
 function lastPinnedEdge(rows: { pinned?: boolean }[]): number {
   let last = -1
   for (let i = 0; i < rows.length; i++) if (rows[i]?.pinned) last = i
-  // 整份清單都是釘選時不用畫線（下面沒有東西了）
+  // 整份清單都是待跟進時不用畫線（下面沒有東西了）
   return last >= 0 && last < rows.length - 1 ? last : -1
 }
 
@@ -3067,12 +3037,8 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
    * 等於把分頁的空狀態說成篩選的結果——人會以為「我已經讀完了」，其實是那個分頁本來就沒人。
    */
   if (unreadFilterOn.value && unreadScannedCount.value > 0) {
-    // 同時還套著別的條件時要一起講：不講的話「沒有未讀」會被讀成整個 workspace 的結論
-    const also = [
-      followUpFilterOn.value ? '待跟進' : '',
-      searchText.value.trim() ? `搜尋「${searchText.value.trim()}」` : '',
-    ].filter(Boolean).join('＋')
-    const alsoText = also ? `（還套著${also}）` : ''
+    // 同時還套著搜尋時要一起講：不講的話「沒有未讀」會被讀成整個 workspace 的結論
+    const alsoText = searchText.value.trim() ? `（還套著搜尋「${searchText.value.trim()}」）` : ''
     if (listHasMore.value) {
       return {
         title: `已載入的 ${unreadScannedCount.value} 筆對話裡沒有未讀${alsoText}`,
@@ -3083,12 +3049,6 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
       title: `沒有未讀的對話${alsoText}`,
       hint: '未讀＝客人講過話、還沒有人看過那段對話（和列表上的紅點同一個口徑）。已讀記在你這台電腦，同事看過不影響你這邊',
     }
-  }
-  if (followUpFilterOn.value) {
-    return searchText.value
-      ? { title: '待跟進裡沒有符合的對話', hint: '' }
-      // 空清單不能只說「沒有」就結束：順便講怎麼標，不然這個篩選看起來像壞掉
-      : { title: '目前沒有待跟進的對話', hint: '在左側對話上按右鍵（或滑過按 ⋯）→「標記待跟進」，之後就能從這裡找回來' }
   }
   // 搜尋中：這一句只回答「名字」那一區（對話內容那一區有自己的說明，見 contentSearchNotes）
   if (searchText.value)
@@ -3106,10 +3066,10 @@ const sidebarEmpty = computed<{ title: string, hint: string }>(() => {
  * 先前只數 conversations，結果停在「待處理」時標題那個數字永遠是 0。
  * 只數已載入的那幾頁——沒載到的列本來就還沒算進畫面上任何一個數字。
  *
- * ⛔ 數的是套釘選區**之前**那一份（`convRowsInView`，不是 `convSidebarItems`）。
- *    「標記全部已讀」蓋的是所有已載入的列（見 markAllConversationsRead），數套過釘選區
- *    的那份會在**釘選區收起來時少算**：按鈕寫「標記全部已讀（3）」、按下去其實清掉 5 顆，
- *    收在裡面那 2 顆正好是特地釘起來的人，而且清掉的過程完全看不到。
+ * ⛔ 數的是套待跟進區**之前**那一份（`convRowsInView`，不是 `convSidebarItems`）。
+ *    「標記全部已讀」蓋的是所有已載入的列（見 markAllConversationsRead），數套過待跟進區
+ *    的那份會在**待跟進區收起來時少算**：按鈕寫「標記全部已讀（3）」、按下去其實清掉 5 顆，
+ *    收在裡面那 2 顆正好是特地標起來的人，而且清掉的過程完全看不到。
  *    這和 1740 行那段罵過的「按鈕上的數字和實際清掉的範圍對不起來」是同一種病。
  *    2026-09-22 老闆回報時一起修掉。
  */
@@ -3119,14 +3079,8 @@ const unreadRowCount = computed(() =>
     : sessionRowsInView.value.filter(s => isRowUnread(s.userId, sessionRowCustomerMs(s))).length,
 )
 
-/**
- * 括號裡的數字可不可以當總數看＝清單真的載到底了沒有。
- *
- * ⛔ 兩個旗標都要看：「只看待跟進」撞到顯示上限時是走 `followUpListTruncated`，
- *    那時 `listHasMore` 是 false，但那份清單一樣少了東西——只看 hasMore 的話，
- *    一份被截掉的清單會端出一個看起來很篤定的總數。
- */
-const unreadCountComplete = computed(() => !listHasMore.value && !followUpListTruncated.value)
+/** 括號裡的數字可不可以當總數看＝清單真的載到底了沒有 */
+const unreadCountComplete = computed(() => !listHasMore.value)
 
 /**
  * 「只看未讀」按鈕與瀏覽器分頁標題上的數字：沒載完時是「18＋」。
@@ -3463,17 +3417,14 @@ const chatDayGroups = computed<ChatDayGroup[]>(() => {
   return groups
 })
 
-// ── 右鍵／⋯：釘選、待跟進 ────────────────────────────────────────
-// 兩個都是「對話層級」的人工標記，所以會話列表按右鍵也是標到同一位客人身上。
+// ── 右鍵／⋯：待跟進 ────────────────────────────────────────────────
+// 「對話層級」的人工標記，所以會話列表按右鍵也是標到同一位客人身上。
+// `H-17`（2026-10-20）：原本有「釘選」「待跟進」兩項，大家都拿釘選當待跟進用 → 釘選改名待跟進、舊的待跟進下架。
 // 「待跟進」刻意不叫「待處理」——那個詞是上面分頁（系統判定）的，見 shared/conversation-flags.ts。
 
 const contextMenuItems = computed<AdminContextMenuItem[]>(() => {
   const t = contextMenuTarget.value
-  if (!t) return []
-  return [
-    { key: 'pin', icon: '📌', label: t.pinned ? '取消釘選' : '釘選（排到最上面）' },
-    { key: 'followUp', icon: '🚩', label: t.followUp ? '取消待跟進' : '標記待跟進' },
-  ]
+  return t ? followUpMenuItems(t) : []
 })
 
 function openContextMenuAt(x: number, y: number, target: ConvItem | SessionItem) {
@@ -3577,7 +3528,7 @@ async function setAssignee(uid: string) {
   }
 }
 
-function applyLocalFlags(userId: string, flags: Partial<{ pinned: boolean, followUp: boolean }>) {
+function applyLocalFlags(userId: string, flags: { pinned: boolean }) {
   for (const row of conversations.value) {
     if (row.userId === userId) Object.assign(row, flags)
   }
@@ -3589,43 +3540,28 @@ function applyLocalFlags(userId: string, flags: Partial<{ pinned: boolean, follo
 
 async function onContextMenuSelect(key: string) {
   const target = contextMenuTarget.value
-  if (!target || !assertCan('conversations.reply')) return
+  if (key !== 'pin' || !target || !assertCan('conversations.reply')) return
 
-  const isPin = key === 'pin'
-  const next = isPin ? !target.pinned : !target.followUp
+  const next = !target.pinned
   const userId = target.userId
 
-  // 先上畫面再送出：釘選要重排、標記要冒出膠囊，等 200~500ms 才動會像沒按到。
-  // 失敗就整個轉回去（含數字），不要留下一個假的已標記狀態。
-  applyLocalFlags(userId, isPin ? { pinned: next } : { followUp: next })
-  if (!isPin && followUpCount.value !== null) followUpCount.value = Math.max(0, followUpCount.value + (next ? 1 : -1))
+  // 先上畫面再送出：待跟進要重排到最上面，等 200~500ms 才動會像沒按到。
+  // 失敗就整個轉回去，不要留下一個假的已標記狀態。
+  applyLocalFlags(userId, { pinned: next })
 
   try {
-    const res = await apiFetch<{ pinned: boolean, followUp: boolean }>(
+    const res = await apiFetch<{ pinned: boolean }>(
       `/api/conversations/${userId}/flags`,
-      { method: 'POST', body: isPin ? { pinned: next } : { followUp: next } },
+      { method: 'POST', body: { pinned: next } },
     )
     // 以伺服器回的狀態為準（例如同事剛好也動過同一筆）
-    applyLocalFlags(userId, { pinned: res.pinned, followUp: res.followUp })
-    if (isPin) {
-      showToast(next ? '已釘選，排在列表最上面' : '已取消釘選', 'success')
-    }
-    else {
-      showToast(next ? '已標記待跟進' : '已取消待跟進', 'success')
-      // 正在「只看待跟進」時取消標記，那一筆要當場消失，不然畫面在說謊
-      if (!next && followUpFilterOn.value) await loadList('reset')
-    }
+    applyLocalFlags(userId, { pinned: res.pinned })
+    showToast(next ? `已標記${FOLLOW_UP_LABEL}，排在列表最上面` : `已取消${FOLLOW_UP_LABEL}`, 'success')
   }
   catch (e: any) {
-    applyLocalFlags(userId, isPin ? { pinned: !next } : { followUp: !next })
-    if (!isPin && followUpCount.value !== null) followUpCount.value = Math.max(0, followUpCount.value + (next ? -1 : 1))
+    applyLocalFlags(userId, { pinned: !next })
     showToast(e?.data?.statusMessage || '標記失敗，請稍後再試', 'error')
   }
-}
-
-async function toggleFollowUpFilter() {
-  followUpFilterOn.value = !followUpFilterOn.value
-  await loadList('reset')
 }
 
 // ── 勾選批次處理 ──────────────────────────────────────────────────
@@ -3817,30 +3753,24 @@ async function batchSetFollowUp(next: boolean) {
   batchRunning.value = next ? 'followUpOn' : 'followUpOff'
   batchReport.value = null
   try {
+    // `H-17`：待跟進＝原本的釘選，送的是 pinned（後端照 50 筆上限擋，超過的逐筆回「已經標滿」）
     const res = await apiFetch<ConversationBatchResult>(
       '/api/conversations/batch-flags',
-      { method: 'POST', body: { userIds: rows.map(r => r.userId), followUp: next } },
+      { method: 'POST', body: { userIds: rows.map(r => r.userId), pinned: next } },
     )
     batchReport.value = buildBatchReport(
       res,
       rows,
       activeTab.value === 'all' ? '位' : '場',
-      next ? '已標記待跟進' : '已取消待跟進',
+      next ? `已標記${FOLLOW_UP_LABEL}` : `已取消${FOLLOW_UP_LABEL}`,
     )
     showToast(batchReport.value.summary, 'success')
 
-    // 畫面上那幾列的旗子要跟著動（不重載整份清單）
-    for (const id of res.doneIds) applyLocalFlags(id, { followUp: next })
-    // 側欄「只看待跟進（N）」的數字：null＝後端這次查不到，⛔不要從 null 開始加減
-    if (followUpCount.value !== null) {
-      followUpCount.value = Math.max(0, followUpCount.value + (next ? res.done : -res.done))
-    }
+    // 畫面上那幾列的旗子要跟著動、跟著排到最上面（不重載整份清單）
+    for (const id of res.doneIds) applyLocalFlags(id, { pinned: next })
 
     const handled = new Set([...res.doneIds, ...res.skipped.map(s => s.id)])
     selectedRows.value = selectedRows.value.filter(r => !handled.has(r.userId))
-
-    // 正在「只看待跟進」時取消標記，那幾筆要當場消失，不然畫面在說謊（同單筆）
-    if (!next && followUpFilterOn.value && res.done > 0) await loadList('reset')
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '批次標記失敗，請稍後再試', 'error')
@@ -3913,8 +3843,6 @@ async function toggleUnreadFilter() {
 
 async function switchTab(tab: TabValue) {
   activeTab.value = tab
-  // 「只看待跟進」是「全部」分頁專用的視角，切走就關掉，免得切回來還套著看不見的篩選
-  if (tab !== 'all') followUpFilterOn.value = false
   /**
    * ⛔ 勾選一定要跟著分頁清掉：兩種分頁的列不是同一種東西（會話分頁一列是一場、
    *    「全部」一列是一位客人），勾著切過去再按「結束會話」就是在關另一批東西。
@@ -3958,7 +3886,6 @@ async function selectSession(s: SessionItem) {
     // 紅點與已讀章比的是這個（見 isRowUnread），切到「全部」分頁時要接得上
     customerLastAt: s.customerLastAt ?? null,
     pinned: s.pinned === true,
-    followUp: s.followUp === true,
     // 負責人員是對話層級的，切到會話分頁要接得上（否則頂部那顆會顯示「指派負責人」）
     assignee: s.assignee ?? NO_ASSIGNEE,
   }
@@ -4035,7 +3962,7 @@ async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
   const seq = ++listLoadSeq
 
   /**
-   * 分頁上的數字（未首接 12、待跟進 3…）跟清單**同時**出發。
+   * 分頁上的數字（待處理 12…）跟清單**同時**出發。
    *
    * ⛔ 不要再接在清單後面 `await`：兩者沒有先後依賴，排成一條線的代價是清單回來了才開始
    * 問數字——2026-08-27 正式站實測，清單第 3.8 秒回來、數字再花 2.3 秒＝整頁 6.1 秒，
@@ -4063,10 +3990,9 @@ async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
           page,
           limit: CONV_LIST_PAGE_SIZE,
           search: searchText.value.trim() || undefined,
-          flag: followUpFilterOn.value ? 'followup' : undefined,
           // 「載入更多」帶游標接在已載入的最後一筆之後：後端用 offset 翻頁會對跳過的
-          // 每一筆收讀取費，游標只要 1 次。搜尋／待跟進模式的分頁邏輯不同，不帶
-          after: mode === 'more' && !searchText.value.trim() && !followUpFilterOn.value
+          // 每一筆收讀取費，游標只要 1 次。搜尋模式的分頁邏輯不同，不帶
+          after: mode === 'more' && !searchText.value.trim()
             ? conversations.value[conversations.value.length - 1]?.userId || undefined
             : undefined,
         },
@@ -4078,8 +4004,6 @@ async function loadList(mode: LoadListMode = 'reset'): Promise<boolean> {
         : mode === 'reset' ? chunk : [...conversations.value, ...chunk]
       // 背景刷新只看第一頁時後面幾頁還在清單裡，不能拿第一頁的 hasMore 覆蓋掉
       if (mode !== 'merge' || !res.hasMore) listHasMore.value = Boolean(res.hasMore)
-      followUpListTruncated.value = followUpFilterOn.value && res.truncated === true
-      // 待跟進總數不在這裡算：這裡的 total 會被顯示上限截掉，真正的數字由 loadSessionCounts() 帶回來
     }
     else {
       const res = await apiFetch<{
@@ -4362,15 +4286,13 @@ async function loadSessionCounts(options: { force?: boolean } = {}) {
   const ticket = ++countsSeq
   const task = (async () => {
     try {
-      const res = await apiFetch<{ counts: Record<ConvSessionStatus, number>, followUp?: number | null }>(
+      const res = await apiFetch<{ counts: Record<ConvSessionStatus, number> }>(
         '/api/conversations/sessions-counts',
       )
       if (ticket !== countsSeq) return
       for (const k of Object.keys(sessionStatusCounts.value) as ConvSessionStatus[]) {
         sessionStatusCounts.value[k] = Number(res.counts?.[k] ?? 0)
       }
-      // null＝後端查不到（⛔不轉成 0——那會把「不知道」印成「沒有」）
-      followUpCount.value = typeof res.followUp === 'number' ? res.followUp : null
     }
     catch {
       // 分頁仍可用；數字維持上次成功值

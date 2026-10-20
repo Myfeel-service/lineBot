@@ -108,7 +108,6 @@ const snapshot = () => page.evaluate(() => {
     active: document.querySelectorAll('.conv-list-row .split-list-item.is-active, .conv-list-row .split-list-item.active').length,
     unreadBtn: pill.find(b => b.innerText.includes('只看未讀'))?.innerText.trim() ?? null,
     unreadOn: pill.find(b => b.innerText.includes('只看未讀'))?.classList.contains('active') ?? null,
-    followUpBtn: pill.find(b => b.innerText.includes('待跟進'))?.innerText.trim() ?? null,
     markAllBtn: document.querySelector('.conv-mark-all-read')?.innerText.trim() ?? null,
     notice: document.querySelector('.conv-unread-scan span')?.innerText.trim() ?? null,
     /**
@@ -345,26 +344,26 @@ console.log(`\n⑤ 篩選關掉：清單 ${off.rows} 列、紅點 ${off.dots} �
 if (off.unreadOn !== false) fail('再按一次沒有關掉')
 if (off.rows < before.rows) fail(`關掉之後只剩 ${off.rows} 列（原本 ${before.rows}）＝篩選把資料弄丟了，不只是遮起來`)
 
-// ── ⑤-b 收起釘選區：「標記全部已讀」的數字不可以跟著少（2026-09-22）──
+// ── ⑤-b 收起待跟進區（`H-17` 之前叫釘選區）：「標記全部已讀」的數字不可以跟著少（2026-09-22）──
 /**
- * 「標記全部已讀」蓋的是**所有已載入的列**（見 markAllConversationsRead），不管釘選區
- * 是開是收。所以按鈕上那個數字也必須數同一份——先前數的是套過釘選區的那份，
- * 釘選區一收起來就變成「按鈕寫（3）、按下去清掉 5 顆」，而多清掉的那 2 顆
- * 正好是特地釘起來的人，清掉的過程完全看不到。
+ * 「標記全部已讀」蓋的是**所有已載入的列**（見 markAllConversationsRead），不管待跟進區
+ * 是開是收。所以按鈕上那個數字也必須數同一份——先前數的是套過待跟進區的那份，
+ * 一收起來就變成「按鈕寫（3）、按下去清掉 5 顆」，而多清掉的那 2 顆
+ * 正好是特地標起來的人，清掉的過程完全看不到。
  */
 if (await page.$('.conv-list-group')) {
   const openPinned = await snapshot()
   await page.click('.conv-list-group')
   await sleep(800)
   const collapsed = await snapshot()
-  console.log(`\n⑤-b 收起釘選區：清單 ${openPinned.rows}→${collapsed.rows} 列｜「${openPinned.markAllBtn}」→「${collapsed.markAllBtn}」`)
+  console.log(`\n⑤-b 收起待跟進區：清單 ${openPinned.rows}→${collapsed.rows} 列｜「${openPinned.markAllBtn}」→「${collapsed.markAllBtn}」`)
   if (openPinned.markAllBtn !== collapsed.markAllBtn)
-    fail(`收起釘選區之後「標記全部已讀」的數字變了（${openPinned.markAllBtn} → ${collapsed.markAllBtn}）＝按鈕寫的和它實際會清掉的對不起來，收在裡面那幾位會被靜靜清掉`)
+    fail(`收起待跟進區之後「標記全部已讀」的數字變了（${openPinned.markAllBtn} → ${collapsed.markAllBtn}）＝按鈕寫的和它實際會清掉的對不起來，收在裡面那幾位會被靜靜清掉`)
   await page.click('.conv-list-group') // 還原，後面幾段要看到完整清單
   await sleep(600)
 }
 else {
-  console.log('\n⑤-b 這個帳號沒有釘選中的對話，「收起釘選區數字會不會少」這條驗不到')
+  console.log('\n⑤-b 這個帳號沒有標待跟進的對話，「收起待跟進區數字會不會少」這條驗不到')
 }
 
 // ── ⑥ 換到會話分頁：篩選要跟著過去（紅點五個分頁都會亮）─────────────

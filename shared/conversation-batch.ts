@@ -12,6 +12,7 @@
  * 3. **略過原因的措辭放這裡**：兩支批次端點（結束會話、待跟進）共用同一套說法，
  *    前端不要自己編字串（編出來的說法會和另一支不一致）。
  */
+import { MAX_PINNED_CONVERSATIONS } from './conversation-flags'
 
 /**
  * 一次批次最多幾筆。
@@ -31,12 +32,15 @@ export type ConversationBatchSkipReason =
   | 'already_closed'
   /** 標記本來就是要設成的那個值（重複按，不算失敗） */
   | 'already_set'
+  /** 待跟進已經標滿上限（`H-17`：原本的釘選有 50 筆上限，批次標也要擋） */
+  | 'limit_reached'
 
 /** 略過原因對使用者的說法（前端直接印，不要自己造句） */
 export const CONVERSATION_BATCH_SKIP_LABELS: Record<ConversationBatchSkipReason, string> = {
   not_found: '查不到（資料可能已被清掉，請按重整）',
   already_closed: '已經是結束狀態（可能同事先關掉了）',
   already_set: '標記本來就是這樣',
+  limit_reached: `待跟進已經標滿 ${MAX_PINNED_CONVERSATIONS} 筆，請先取消一些再標`,
 }
 
 export interface ConversationBatchSkip {

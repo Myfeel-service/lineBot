@@ -19,8 +19,9 @@
         <div class="cust-card__name-row">
           <span class="cust-card__name">{{ displayName || userId }}</span>
           <!-- 客服右鍵標的「待跟進」在清單上看得到、點進客人卻看不到 → 交接的人不知道
-               前一手把這位列為待跟進（D-29②）。有標才出現。 -->
-          <span v-if="detail?.flags?.followUp" class="cust-card__flag">🚩 待跟進</span>
+               前一手把這位列為待跟進（D-29②）。有標才出現。
+               `H-17`：待跟進＝原本的釘選（欄位 pinned），舊的 followUp 不再讀 -->
+          <span v-if="detail?.flags?.pinned" class="cust-card__flag">{{ FOLLOW_UP_ICON }} {{ FOLLOW_UP_LABEL }}</span>
         </div>
         <span v-if="detail?.isBlocked" class="cust-card__blocked">已封鎖／退追蹤</span>
         <div class="cust-card__subrow">
@@ -269,6 +270,7 @@ import { User } from '@element-plus/icons-vue'
 import { INBOUND_TIME_TRACKING_SINCE } from '~~/shared/types/ai-knowledge'
 import { CUSTOMER_NOTE_MAX_CHARS, type CustomerNote } from '~~/shared/customer-note'
 import { NO_ASSIGNEE, type ConversationAssignee } from '~~/shared/conversation-assignee'
+import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL } from '~~/shared/conversation-flags'
 
 interface CustomerDetail {
   id: string
@@ -292,7 +294,8 @@ interface CustomerDetail {
   /** 來過幾次；null＝查不到（畫面不顯示那一列，不拿 0 充數） */
   sessionCount: number | null
   assignee: ConversationAssignee
-  flags: { pinned: boolean; followUp: boolean }
+  /** pinned＝待跟進（`H-17`） */
+  flags: { pinned: boolean }
 }
 
 const props = withDefaults(defineProps<{

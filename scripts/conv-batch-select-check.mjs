@@ -343,16 +343,19 @@ if (allTab.checked > 0) {
   sent.length = 0
   if (!await clickAction('標記待跟進')) fail('按不到「標記待跟進」')
   await sleep(2000)
+  // `H-17`（2026-10-20）：待跟進＝原本的釘選，送 pinned；標完列上出現 🚩、排進最上面那一區
   const flagged = await page.evaluate(() => ({
     report: document.querySelector('.conv-batch-report')?.innerText.replace(/\n+/g, ' ｜ ').trim() ?? null,
-    tags: [...document.querySelectorAll('.conv-list-row .split-list-chip--inline')].map(t => t.innerText.trim()),
+    flags: [...document.querySelectorAll('.conv-list-row .split-list-item__title-icon')].map(t => t.innerText.trim()),
+    group: document.querySelector('.conv-list-group:not(.conv-list-group--static)')?.innerText.trim() ?? '',
   }))
   console.log(`\n⑦ 批次標記待跟進：${sent.map(s => `${s.url} ${s.body}`).join(' ／ ') || '（沒送出）'}`)
-  console.log(`   回報：${flagged.report}｜清單上的「待跟進」膠囊 ${flagged.tags.filter(t => t.includes('待跟進')).length} 顆`)
+  console.log(`   回報：${flagged.report}｜清單上的 🚩 ${flagged.flags.filter(t => t.includes('🚩')).length} 面｜區塊標題「${flagged.group}」`)
   if (!sent.length) fail('按了「標記待跟進」沒有請求送出')
   if (sent.length && !/userIds/.test(sent[0].body)) fail(`body 沒帶 userIds：${sent[0].body}`)
-  if (sent.length && !/"followUp":true/.test(sent[0].body)) fail(`body 沒帶 followUp:true：${sent[0].body}`)
-  if (!flagged.tags.some(t => t.includes('待跟進'))) fail('標記完清單上沒有出現「待跟進」膠囊＝畫面沒回寫（applyLocalFlags 沒吃到 id）')
+  if (sent.length && !/"pinned":true/.test(sent[0].body)) fail(`body 沒帶 pinned:true：${sent[0].body}`)
+  if (!flagged.flags.some(t => t.includes('🚩'))) fail('標記完清單上沒有出現 🚩＝畫面沒回寫（applyLocalFlags 沒吃到 id）')
+  if (!/待跟進/.test(flagged.group)) fail(`標記完最上面沒有「待跟進」那一區：「${flagged.group}」`)
 }
 
 // ── ⑧ 結束勾選：框要收掉、名字寬度要還回來 ─────────────────────────

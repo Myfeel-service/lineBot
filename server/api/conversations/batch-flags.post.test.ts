@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * 批次標記／取消待跟進。
+ * 批次標記／取消待跟進（`H-17`：待跟進＝原本的釘選，欄位 `pinnedAt`）。
  *
- * 測的是批次特有的三件事：
+ * 測的是批次特有的四件事：
  * 1. 歸屬逐筆驗（別家官方帳號的對話標不到）。
  * 2. 「本來就是這個標記」要回報成略過，不是默默算成功——回報 8 筆成功、實際只動了 6 筆，
  *    客服下次就不會相信這個數字。
- * 3. 取消標記要真的把欄位刪掉（`orderBy('followUpAt')` 是靠欄位存不存在在篩的，
- *    寫 false 進去會讓「只看待跟進」永遠撈得到它）。
+ * 3. 取消標記要真的把欄位刪掉（`orderBy('pinnedAt')` 是靠欄位存不存在在篩的，
+ *    寫 false 進去會讓它永遠排在最上面）。
+ * 4. 吃單筆同一個 50 筆上限：超過的那幾筆逐筆回「已經標滿」，⛔ 不可以硬寫（第一頁只撈 50 筆置頂）。
  */
 
 const WS = 'ws1'
@@ -37,11 +38,24 @@ const { getDb } = await import('~~/server/utils/firebase')
 
 interface Written { id: string, data: Record<string, unknown> }
 
-function fakeDb(convs: Record<string, Record<string, unknown> | null>) {
+/** pinnedCount＝目前這個 workspace 已經標了幾筆待跟進（count 查詢回的數字；null＝查詢丟錯＝缺索引） */
+function fakeDb(convs: Record<string, Record<string, unknown> | null>, pinnedCount: number | null = 0) {
   const written: Written[] = []
   const commits: number[] = []
+  const countQueries: string[] = []
+  const query = (field = '') => ({
+    where: () => query(field),
+    orderBy: (f: string) => query(f),
+    count: () => ({
+      get: async () => {
+        countQueries.push(field)
+        if (pinnedCount === null) throw new Error('FAILED_PRECONDITION: index')
+        return { data: () => ({ count: pinnedCount }) }
+      },
+    }),
+  })
   const db = {
-    collection: () => ({ doc: (id: string) => ({ id }) }),
+    collection: () => ({ doc: (id: string) => ({ id }), ...query() }),
     getAll: async (...refs: { id: string }[]) =>
       refs.map(ref => ({
         id: ref.id,
@@ -59,7 +73,7 @@ function fakeDb(convs: Record<string, Record<string, unknown> | null>) {
       }
     },
   } as any
-  return { db, written, commits }
+  return { db, written, commits, countQueries }
 }
 
 beforeEach(() => {
@@ -67,13 +81,13 @@ beforeEach(() => {
 })
 
 describe('POST /api/conversations/batch-flags', () => {
-  it('標記待跟進：只寫沒標過的那幾筆，已標的算略過', async () => {
+  it('標記待跟進：寫的是 pinnedAt（原本的釘選），只寫沒標過的那幾筆，已標的算略過', async () => {
     const { db, written } = fakeDb({
       [`${WS}_U1`]: { workspaceId: WS },
-      [`${WS}_U2`]: { workspaceId: WS, followUpAt: new Date() },
+      [`${WS}_U2`]: { workspaceId: WS, pinnedAt: new Date() },
     })
     vi.mocked(getDb).mockReturnValue(db)
-    currentBody = { userIds: [`${WS}_U1`, `${WS}_U2`], followUp: true }
+    currentBody = { userIds: [`${WS}_U1`, `${WS}_U2`], pinned: true }
 
     const res: any = await (handler as any)({})
 
@@ -82,19 +96,72 @@ describe('POST /api/conversations/batch-flags', () => {
     expect(res.skipped).toEqual([{ id: `${WS}_U2`, reason: 'already_set' }])
     expect(written).toEqual([{
       id: `${WS}_U1`,
-      data: { followUpAt: '__serverTimestamp__', followUpBy: UID },
+      data: { pinnedAt: '__serverTimestamp__', pinnedBy: UID },
     }])
   })
 
-  it('取消待跟進要刪掉欄位，不是寫 false（否則「只看待跟進」還撈得到）', async () => {
+  it('⛔ 舊的 followUpAt 不算待跟進：只有 followUpAt 的那一筆照樣會被標上 pinnedAt', async () => {
     const { db, written } = fakeDb({ [`${WS}_U1`]: { workspaceId: WS, followUpAt: new Date() } })
     vi.mocked(getDb).mockReturnValue(db)
-    currentBody = { userIds: [`${WS}_U1`], followUp: false }
+    currentBody = { userIds: [`${WS}_U1`], pinned: true }
 
     const res: any = await (handler as any)({})
 
     expect(res.done).toBe(1)
-    expect(written[0]!.data).toEqual({ followUpAt: '__delete__', followUpBy: '__delete__' })
+    expect(written[0]!.data).toEqual({ pinnedAt: '__serverTimestamp__', pinnedBy: UID })
+  })
+
+  it('取消待跟進要刪掉欄位，不是寫 false（否則還是排在最上面）', async () => {
+    const { db, written, countQueries } = fakeDb({ [`${WS}_U1`]: { workspaceId: WS, pinnedAt: new Date() } })
+    vi.mocked(getDb).mockReturnValue(db)
+    currentBody = { userIds: [`${WS}_U1`], pinned: false }
+
+    const res: any = await (handler as any)({})
+
+    expect(res.done).toBe(1)
+    expect(written[0]!.data).toEqual({ pinnedAt: '__delete__', pinnedBy: '__delete__' })
+    // 取消不用數上限
+    expect(countQueries).toEqual([])
+  })
+
+  it('上限：已經標了 48 筆、再勾 3 筆 → 前 2 筆標上、第 3 筆回「已經標滿」，⛔ 不可以超過 50', async () => {
+    const { db, written, countQueries } = fakeDb({
+      [`${WS}_U1`]: { workspaceId: WS },
+      [`${WS}_U2`]: { workspaceId: WS },
+      [`${WS}_U3`]: { workspaceId: WS },
+    }, 48)
+    vi.mocked(getDb).mockReturnValue(db)
+    currentBody = { userIds: [`${WS}_U1`, `${WS}_U2`, `${WS}_U3`], pinned: true }
+
+    const res: any = await (handler as any)({})
+
+    expect(countQueries).toEqual(['pinnedAt'])
+    expect(res.done).toBe(2)
+    expect(res.doneIds).toEqual([`${WS}_U1`, `${WS}_U2`])
+    expect(res.skipped).toEqual([{ id: `${WS}_U3`, reason: 'limit_reached' }])
+    expect(written.map(w => w.id)).toEqual([`${WS}_U1`, `${WS}_U2`])
+  })
+
+  it('已經標滿 50 筆：一筆都不寫、每筆都講', async () => {
+    const { db, written } = fakeDb({ [`${WS}_U1`]: { workspaceId: WS } }, 50)
+    vi.mocked(getDb).mockReturnValue(db)
+    currentBody = { userIds: [`${WS}_U1`], pinned: true }
+
+    const res: any = await (handler as any)({})
+
+    expect(res.done).toBe(0)
+    expect(res.skipped).toEqual([{ id: `${WS}_U1`, reason: 'limit_reached' }])
+    expect(written).toEqual([])
+  })
+
+  it('數不到目前幾筆（缺索引）＝這次不擋（同單筆），⛔ 不可以因此整批失敗', async () => {
+    const { db } = fakeDb({ [`${WS}_U1`]: { workspaceId: WS } }, null)
+    vi.mocked(getDb).mockReturnValue(db)
+    currentBody = { userIds: [`${WS}_U1`], pinned: true }
+
+    const res: any = await (handler as any)({})
+
+    expect(res.done).toBe(1)
   })
 
   it('⛔ 別家官方帳號、或查不到的對話一律不寫', async () => {
@@ -103,7 +170,7 @@ describe('POST /api/conversations/batch-flags', () => {
       [`${WS}_U2`]: null,
     })
     vi.mocked(getDb).mockReturnValue(db)
-    currentBody = { userIds: [`${WS}_U1`, `${WS}_U2`], followUp: true }
+    currentBody = { userIds: [`${WS}_U1`, `${WS}_U2`], pinned: true }
 
     const res: any = await (handler as any)({})
 
@@ -118,7 +185,7 @@ describe('POST /api/conversations/batch-flags', () => {
   it('LINE userId 與對話主鍵混著送只算一筆（正規化後去重）', async () => {
     const { db } = fakeDb({ [`${WS}_U1`]: { workspaceId: WS } })
     vi.mocked(getDb).mockReturnValue(db)
-    currentBody = { userIds: ['U1', `${WS}_U1`], followUp: true }
+    currentBody = { userIds: ['U1', `${WS}_U1`], pinned: true }
 
     const res: any = await (handler as any)({})
 
@@ -126,13 +193,16 @@ describe('POST /api/conversations/batch-flags', () => {
     expect(res.done).toBe(1)
   })
 
-  it('followUp 沒帶或不是布林就擋下（不猜要標還是要取消）', async () => {
+  it('pinned 沒帶或不是布林就擋下（不猜要標還是要取消）；舊的 followUp 參數不認', async () => {
     const { db } = fakeDb({})
     vi.mocked(getDb).mockReturnValue(db)
     currentBody = { userIds: [`${WS}_U1`] }
-    await expect((handler as any)({})).rejects.toThrow(/followUp/)
+    await expect((handler as any)({})).rejects.toThrow(/pinned/)
 
-    currentBody = { userIds: Array.from({ length: 101 }, (_, i) => `${WS}_U${i}`), followUp: true }
+    currentBody = { userIds: [`${WS}_U1`], followUp: true }
+    await expect((handler as any)({})).rejects.toThrow(/pinned/)
+
+    currentBody = { userIds: Array.from({ length: 101 }, (_, i) => `${WS}_U${i}`), pinned: true }
     await expect((handler as any)({})).rejects.toThrow(/最多 100 筆/)
   })
 })

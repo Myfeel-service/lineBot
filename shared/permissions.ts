@@ -55,7 +55,7 @@ export const CAPABILITIES = {
   // 表裡卻沒有它們，前端也只能用 canOperate 猜。門檻照現況（`D-110` 拍板：客服照樣能發推播、
   // 換圖文選單、刪使用中的東西），補進來是為了讓前後端讀同一份，不是改規則。
   'broadcast.send': 'agent', // 正式發送／排程／取消／重發（⛔ 仍是「永遠留人按」的紅線，小幫手不代按）
-  'conversations.reply': 'agent', // 回覆客人、送客服預存、接手／交還／結束、釘選／待跟進、指派、標答錯
+  'conversations.reply': 'agent', // 回覆客人、送客服預存、接手／交還／結束、待跟進、指派、標答錯
   'customers.write': 'agent', // 幫客人貼標／拆標、客人備註、採用 AI 標籤建議、從 LINE 同步好友
   'tags.write': 'agent', // 標籤 新增／編輯／停用、AI 發現的採用／合併／忽略
   'presets.write': 'agent', // 客服預存 新增／編輯／刪除
