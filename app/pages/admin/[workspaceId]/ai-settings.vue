@@ -327,7 +327,7 @@
               轉真人本身照常發生——客服上班回來在「對話」頁就能接手。時間以台灣時區為準。
             </p>
             <p class="ai-section-hint">
-              勾了「週六日整天休息」還會多一件事:<strong>假日不發每日摘要</strong>,那些事會併進上班日的那一則。
+              週末或國定假日設成休息還會多一件事:<strong>休假日不發每日摘要</strong>,回來上班那天的那一則一次講完。
             </p>
             <div class="admin-field-group">
               <AdminFieldLabel text="啟用服務時間 / 勿擾" tight />
@@ -368,6 +368,16 @@
               />
             </div>
             <div class="admin-field-group">
+              <AdminFieldLabel text="國定假日" tight />
+              <el-switch
+                v-model="form.serviceHours.holidayOff"
+                active-text="國定假日整天休息"
+                inactive-text="國定假日照常服務"
+                :disabled="!form.serviceHours.enabled"
+              />
+              <p v-if="nextHolidayHint" class="ai-section-hint">{{ nextHolidayHint }}</p>
+            </div>
+            <div class="admin-field-group">
               <AdminFieldLabel text="勿擾時段回覆客人的訊息" tight />
               <el-input
                 v-model="form.serviceHours.dndReply"
@@ -384,7 +394,7 @@
                    那就是在畫面上示範一句客人永遠不會收到的話。 -->
               <p v-if="serviceHoursPreview" class="ai-section-hint">
                 送出時會自動在後面補一行實際的服務時間(「服務時間：{{ serviceHoursPreview }}」),
-                客人才知道要等到什麼時候。文案裡自己寫了時間就不會重複補。
+                客人才知道要等到什麼時候。文案裡自己寫了時間就不會重複補。<template v-if="form.serviceHours.holidayOff">國定假日前後改講下次幾號幾點回覆。</template>
               </p>
             </div>
           </div>
@@ -715,7 +725,9 @@ import {
   INBOUND_TIME_TRACKING_SINCE,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
-import { serviceHoursSentence, taipeiYyyyMm } from '~~/shared/time'
+import { serviceHoursSentence, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
+import { nextTaiwanHoliday } from '~~/shared/taiwan-holidays'
+import { mdw } from '~~/shared/digest-window'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { AI_TONE_TEMPLATES, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
 
@@ -781,6 +793,14 @@ const form = ref<FormShape>(defaultForm())
  * ⛔ 也不要餵 enabled: true:那會讓「功能關著」也算出一句話來。
  */
 const serviceHoursPreview = computed(() => serviceHoursSentence(form.value.serviceHours))
+/**
+ * 國定假日開關下面那行：講「下一個是哪天」，比「含補假、照行政院行事曆」好懂。
+ * 表用完了（`taiwan-holidays.ts` 沒補下一年）就不講，⛔ 不編一個日子出來。
+ */
+const nextHolidayHint = computed(() => {
+  const h = nextTaiwanHoliday(taipeiDate(), { skipWeekends: form.value.serviceHours.weekendOff })
+  return h ? `含補假。下一個是 ${mdw(h.date)}${h.name}。` : ''
+})
 const saving = ref(false)
 const showAdvanced = ref(false)
 const loadError = ref(false)

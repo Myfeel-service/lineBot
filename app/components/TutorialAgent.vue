@@ -312,7 +312,7 @@
           <!-- 昨日摘要（日報）：打的是統計頁同一支查詢，兩邊數字永遠對得上 -->
           <div v-if="briefVisible && briefY" class="ta-brief">
             <div class="ta-brief__head">
-              <span>昨日摘要{{ briefDateLabel }}</span>
+              <span>{{ briefTitle }}</span>
               <button type="button" class="ta-brief__link" @click="goStats">看完整統計 →</button>
             </div>
             <!-- 新朋友：跟對話是兩件事（加了好友沒開口不算對話），所以自成一行、不進下面的母數。
@@ -320,14 +320,14 @@
             <p v-if="briefY.newFriends > 0" class="ta-brief__friends">
               新朋友 <b>+{{ briefY.newFriends }}</b> 位加了好友
             </p>
-            <p v-if="!briefY.total" class="ta-brief__empty">昨天沒有客人對話。</p>
+            <p v-if="!briefY.total" class="ta-brief__empty">{{ briefPeriod }}沒有客人對話。</p>
             <template v-else>
               <!-- 母數：全卡唯一的大字，底下每個數字都是它的一部分（單位統一用統計頁的「場」） -->
               <div class="ta-brief__total">
                 <span class="ta-brief__num">{{ briefY.total }}</span>
                 <span class="ta-brief__label">場對話</span>
                 <!-- 帶單位：只寫「前天 12」要讀的人自己猜它跟左邊那個大數字是不是同一種東西 -->
-                <span class="ta-brief__delta">前天 {{ briefD?.total ?? 0 }} 場</span>
+                <span class="ta-brief__delta">{{ briefCompareLabel }} {{ briefD?.total ?? 0 }} 場</span>
               </div>
 
               <!-- 問題一：互斥分項，加起來一定等於母數——讀的人不必自己減 -->
@@ -672,6 +672,7 @@ import IconRobot from '~/components/icons/IconRobot.vue'
 import zhTw from 'element-plus/es/locale/lang/zh-tw'
 import { festivalHint } from '~/utils/festival-hint'
 import { taipeiDate } from '~~/shared/time'
+import { coverTitle } from '~~/shared/digest-window'
 import { ADMIN_OP_CAPABILITY, AGENT_FESTIVAL_ASK, AGENT_SETUP_ASKS } from '~~/shared/agent-entry'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
@@ -817,13 +818,21 @@ const briefVisible = computed(() => {
     return false
   return b.yesterday.total > 0 || b.dayBefore.total > 0 || allRequiredDone.value
 })
-const briefDateLabel = computed(() => {
-  const d = brief.value?.date
-  if (!d)
-    return ''
-  const [, m, day] = d.split('-')
-  return `（${Number(m)}/${Number(day)}）`
+/** 講幾天：1＝昨天；休假日之後的第一個上班日＝上一則 LINE 摘要之後的每一天（`D-137`①，跟 LINE 同一段） */
+const briefDays = computed(() => brief.value?.days ?? 1)
+const briefTitle = computed(() => {
+  const b = brief.value
+  if (!b)
+    return '昨日摘要'
+  if (b.days > 1)
+    return coverTitle(b.startDate, b.date)
+  const [, m, day] = b.date.split('-')
+  return `昨日摘要（${Number(m)}/${Number(day)}）`
 })
+/** 句子裡的主詞：「昨天」／「這 3 天」 */
+const briefPeriod = computed(() => briefDays.value > 1 ? `這 ${briefDays.value} 天` : '昨天')
+/** 比較那格：單日比前天；好幾天比上週同一段（見 useDailyBrief） */
+const briefCompareLabel = computed(() => briefDays.value > 1 ? '上週同期' : '前天')
 const briefD = computed(() => brief.value?.dayBefore ?? null)
 
 /**
@@ -896,8 +905,13 @@ const trendLine = computed(() => {
   if (!b?.baseline || !b.yesterday.total)
     return ''
   const h = b.yesterday.handoffs
-  if (h >= 3 && h >= b.baseline.handoffs * 2)
-    return `昨天轉真人 ${h} 件，平常一天約 ${formatAvg(b.baseline.handoffs)} 件——可能有哪類問題答不好，建議到統計頁看一下。`
+  // 好幾天時基準乘上天數（`D-137`①）：3 天的轉真人拿去比「一天平均的兩倍」，每個週一都會喊
+  const usual = b.baseline.handoffs * b.days
+  if (h >= 3 && h >= usual * 2) {
+    return b.days > 1
+      ? `這 ${b.days} 天轉真人 ${h} 件，平常 ${b.days} 天約 ${formatAvg(usual)} 件——可能有哪類問題答不好，建議到統計頁看一下。`
+      : `昨天轉真人 ${h} 件，平常一天約 ${formatAvg(usual)} 件——可能有哪類問題答不好，建議到統計頁看一下。`
+  }
   return ''
 })
 /**
@@ -924,7 +938,7 @@ const waitAllOffHours = computed(() => {
 /** 沒人回的場數是不是異常偏多（門檻同上）；只拿來在既有的警語裡補一句「比平常多」 */
 const unhandledSpike = computed(() => {
   const b = brief.value
-  return Boolean(b?.baseline && b.yesterday.unhandled >= 3 && b.yesterday.unhandled >= b.baseline.unhandled * 2)
+  return Boolean(b?.baseline && b.yesterday.unhandled >= 3 && b.yesterday.unhandled >= b.baseline.unhandled * b.days * 2)
 })
 /** 平均數給人看：≥10 取整數，小的留一位小數（0.3 件/天四捨五入成 0 會變成在說謊） */
 function formatAvg(n: number): string {
@@ -1034,7 +1048,7 @@ const strip = computed<{ tone: string, icon: Component, text: string, sub: strin
     else if (suggestionBadgeCount.value)
       sub = `・${suggestionBadgeCount.value} 個可以更好的建議`
     else if (briefY.value)
-      sub = `・昨天 ${briefY.value.total} 場對話`
+      sub = `・${briefPeriod.value} ${briefY.value.total} 場對話`
     return { ...v, sub }
   }
   if (loaded.value && onboardingIncomplete.value)
@@ -1259,10 +1273,11 @@ function goStats() {
   if (!wid)
     return
   closePanel()
-  const day = brief.value?.date
+  // 好幾天時帶整段（`D-137`①）：卡上寫 3 天 84 場，點進去就要是那 3 天
+  const b = brief.value
   void router.push({
     path: `/admin/${wid}/conversation-stats`,
-    query: day ? { startDate: day, endDate: day } : undefined,
+    query: b ? { startDate: b.startDate, endDate: b.date } : undefined,
   })
 }
 

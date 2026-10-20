@@ -11,7 +11,7 @@
  * - 連結一律是短網址（`/c/xxxx`，見 `server/routes/c/[code].get.ts`），在 LINE 裡點會轉去手機的
  *   Safari／Chrome：後台是 Google 登入，LINE 內建瀏覽器登不進去。
  */
-import { isServiceDayOff, type ServiceHoursLike } from './time'
+import { holidayOffOf, isServiceDayOff, type ServiceHoursLike } from './time'
 import { waitPhrase } from './daily-digest-message'
 
 /** 「什麼時候通知」那幾格（跟 `AiSettingsDoc['handoffNotify']` 同名，只取文案要用的） */
@@ -39,22 +39,37 @@ export function digestTimeLabel(hour: number): string {
 
 /**
  * 下一則摘要什麼時候到：「今天早上 10:00」「明天早上 10:00」「週一早上 10:00」。
- * 跟排程同一套規則：過了設定的整點那一輪才發、休假日（服務時間開著＋週六日休息）整天不發。
+ * 跟排程同一套規則：過了設定的整點那一輪才發、休假日（服務時間開著＋勾了休息的週末／國定假日）整天不發。
+ * 一週以後才到（春節）就講日期——「週一」會被讀成這週的週一。
  */
 export function nextDigestPhrase(nowMs: number, digestHour: number, serviceHours: NotifyServiceHoursLike | null | undefined): string {
   const taipeiHour = new Date(nowMs + TAIPEI_OFFSET_MS).getUTCHours()
   const label = digestTimeLabel(digestHour)
   // 今天還沒到那個整點＝今天就會發（前提是今天不是休假日）
   let offset = taipeiHour < digestHour ? 0 : 1
-  for (let i = 0; i < 7; i++) {
+  // 春節最長 9 天加前後週末，看三週夠了
+  for (let i = 0; i < 21; i++) {
     const day = new Date(nowMs + offset * 86_400_000)
     if (!isServiceDayOff(serviceHours, day)) break
     offset++
   }
   if (offset === 0) return `今天${label}`
   if (offset === 1) return `明天${label}`
-  const dow = new Date(nowMs + offset * 86_400_000 + TAIPEI_OFFSET_MS).getUTCDay()
-  return `週${WEEKDAY[dow]}${label}`
+  const t = new Date(nowMs + offset * 86_400_000 + TAIPEI_OFFSET_MS)
+  if (offset >= 7) return `${t.getUTCMonth() + 1}/${t.getUTCDate()}（${WEEKDAY[t.getUTCDay()]}）${label}`
+  return `週${WEEKDAY[t.getUTCDay()]}${label}`
+}
+
+/** 摘要哪些日子不傳：「週末與國定假日」；都沒勾＝空字串 */
+export function digestDaysOffPhrase(serviceHours: NotifyServiceHoursLike | null | undefined): string {
+  if (!serviceHours?.enabled) return ''
+  return [serviceHours.weekendOff ? '週末' : '', holidayOffOf(serviceHours) ? '國定假日' : ''].filter(Boolean).join('與')
+}
+
+/** 「你會收到什麼」那行的括號：「（週末與國定假日不傳）」 */
+function digestDaysOffNote(serviceHours: NotifyServiceHoursLike | null | undefined): string {
+  const phrase = digestDaysOffPhrase(serviceHours)
+  return phrase ? `（${phrase}不傳）` : ''
 }
 
 /**
@@ -65,8 +80,7 @@ export function notifyWhatYouGetLines(cfg: NotifyTimingLike, serviceHours: Notif
   const lines = [cfg.mode === 'missed_only'
     ? `・客人要找真人、等超過 ${cfg.slaRemindMinutes} 分鐘沒人接手時`
     : '・客人要找真人時（馬上）']
-  const weekend = serviceHours?.enabled && serviceHours.weekendOff ? '（週末不傳）' : ''
-  lines.push(`・每天${digestTimeLabel(cfg.digestHour)} 的摘要${weekend}`)
+  lines.push(`・每天${digestTimeLabel(cfg.digestHour)} 的摘要${digestDaysOffNote(serviceHours)}`)
   if (cfg.criticalAlertPush) lines.push('・出大事的時候')
   // `H-16`：同事在對話頁把客人指派給你（你自己按「我接手」的不傳）
   lines.push('・同事把客人交給你的時候')

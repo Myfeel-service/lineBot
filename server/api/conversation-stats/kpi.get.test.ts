@@ -299,3 +299,40 @@ describe('KPI：日結與現場算必須一致（E-29）', () => {
     expect(f.selected).not.toContain('lastActivityAt')
   })
 })
+
+/**
+ * `window=digest`（`D-137`①）：後台小幫手那張卡要跟 LINE 每日摘要講同一段日子。
+ * 區間由後端照服務時間推（前端沒有那份設定），回傳實際算的頭尾兩天。
+ */
+describe('KPI：照每日摘要的規則推區間', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] })
+    // clearAllMocks 不會清掉上一條設的假回傳值，這裡重設回「沒開服務時間」
+    const { getAiSettings } = await import('~~/server/utils/ai-settings')
+    vi.mocked(getAiSettings).mockResolvedValue({ handoffNotify: { slaRemindMinutes: 30 }, serviceHours: undefined } as never)
+  })
+
+  it('週末休息的帳號，週一（8/31）→ 算週五到週日，⛔ 帶進來的 startDate／endDate 不算數', async () => {
+    const { getAiSettings } = await import('~~/server/utils/ai-settings')
+    vi.mocked(getAiSettings).mockResolvedValue({
+      handoffNotify: { slaRemindMinutes: 30 },
+      serviceHours: { enabled: true, start: '10:00', end: '19:00', weekendOff: true },
+    } as never)
+    const kpi = await runKpi(fakeDb({ rollups: rollupsFromSessions() }).db, { window: 'digest' })
+    expect(kpi.rangeStart).toBe('2026-08-28')
+    expect(kpi.rangeEnd).toBe('2026-08-30')
+  })
+
+  it('沒開服務時間 → 永遠只有昨天', async () => {
+    const kpi = await runKpi(fakeDb({ rollups: rollupsFromSessions() }).db, { window: 'digest' })
+    expect(kpi.rangeStart).toBe('2026-08-30')
+    expect(kpi.rangeEnd).toBe('2026-08-30')
+  })
+
+  it('一般查詢也回實際算的頭尾兩天', async () => {
+    const kpi = await runKpi(fakeDb({ rollups: rollupsFromSessions() }).db)
+    expect(kpi.rangeStart).toBe('2026-08-19')
+    expect(kpi.rangeEnd).toBe('2026-08-31')
+  })
+})

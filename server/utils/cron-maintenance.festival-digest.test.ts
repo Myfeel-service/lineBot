@@ -43,7 +43,10 @@ vi.mock('./ai-settings', () => ({ getAiSettings }))
 // 摘要開頭「昨天的成績」走日結（2026-09-17 `D-81`）；這裡固定給一份，
 // 節慶提醒的接線才不會被昨天的數字干擾
 const { loadDayStats } = vi.hoisted(() => ({ loadDayStats: vi.fn() }))
-vi.mock('./conversation-stats-rollup', () => ({ loadDayStats }))
+vi.mock('./conversation-stats-rollup', async (importOriginal) => ({
+  loadDayStats,
+  mergeDays: (await importOriginal<typeof import('./conversation-stats-rollup')>()).mergeDays,
+}))
 
 // `C-357`：方案能不能發推播（免費＝'none'）。預設付費方案，個別測試改
 const { workspaceBroadcastTier } = vi.hoisted(() => ({ workspaceBroadcastTier: vi.fn(async (): Promise<string | null> => 'advanced') }))

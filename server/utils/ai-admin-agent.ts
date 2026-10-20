@@ -34,7 +34,7 @@ import type { KpiResult } from '~~/shared/types/conversation-stats'
 import type { AdminAgentToolId } from '~~/shared/types/admin-agent'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 import type { AgentMsg } from '~~/shared/types/agent-messages'
-import { addDays, dndSentence, serviceHoursSentence, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
+import { addDays, dndSentence, holidayOffOf, serviceHoursSentence, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
 import { can, type Capability } from '~~/shared/permissions'
 import { AUDIT_ACTION_LABELS, AUDIT_ACTOR_LABELS, auditFieldLabel, auditValueText, type AuditActor } from '~~/shared/types/audit'
 import { AUDIT_LOGS_COLLECTION } from './audit-log'
@@ -271,6 +271,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
               serviceText: serviceHoursSentence(s.serviceHours) ?? '(設定不完整)',
               dndText: dndSentence(s.serviceHours),
               weekendOff: s.serviceHours.weekendOff === true,
+              holidayOff: holidayOffOf(s.serviceHours),
             }
           : {
               enabled: false,

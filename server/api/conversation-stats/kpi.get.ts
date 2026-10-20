@@ -6,6 +6,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { DEFAULT_SLA_REMIND_MINUTES } from '~~/shared/types/ai-knowledge'
 import { isServiceHoursDnd } from '~~/shared/time'
+import { digestCoverDays } from '~~/shared/digest-window'
 import { loadDayStats, mergeDays, taipeiDayKeysBetween } from '~~/server/utils/conversation-stats-rollup'
 
 export default defineEventHandler(async (event): Promise<KpiResult> => {
@@ -13,12 +14,27 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
   const query = getQuery(event)
   const db = getDb()
 
+  // 門檻與服務時間在下面才套（見原則③）；`window=digest` 也要靠服務時間推區間，所以提早讀
+  const settings = await getAiSettings(workspaceId, db).catch((e) => {
+    console.error('[conversation-stats] getAiSettings error:', e)
+    return null
+  })
+
+  /**
+   * `window=digest`：照每日摘要的規則推區間（`D-137`①）——後台小幫手那張卡用。
+   * 平常就是昨天；休假日（週末、國定假日）之後的第一個上班日＝上一則之後的每一天。
+   * ⛔ 區間一定要跟 LINE 那則同一支 `digestCoverDays` 推，不然一邊 84 場、一邊 27 場。
+   */
+  const digestDays = query.window === 'digest'
+    ? digestCoverDays(settings?.serviceHours, taipeiDateKey(new Date()))
+    : null
+
   // 預設區間與 trend.get.ts 對齊（近 30 天），否則「KPI 全時段 vs 趨勢近 30 天」會出現
   // 「KPI 有數字、趨勢無資料」的矛盾。前端一律會帶 startDate/endDate，此預設為直呼 API 的保險。
   // 日界線一律取台北時間（見 taipei-day.ts；舊寫法在 UTC 伺服器上會把窗平移 8 小時）。
-  const startDate = taipeiDayStart(query.startDate)
+  const startDate = taipeiDayStart(digestDays?.[0] ?? query.startDate)
     ?? taipeiDayStart(taipeiDateKey(new Date(Date.now() - 29 * 24 * 3600_000)))!
-  const endDate = taipeiDayEnd(query.endDate) ?? new Date()
+  const endDate = taipeiDayEnd(digestDays?.[digestDays.length - 1] ?? query.endDate) ?? new Date()
 
   /**
    * 數字來源＝每一天的日結（沒有／過期／今天就現場算，見 conversation-stats-rollup.ts）。
@@ -54,10 +70,6 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
   // 設 0（關閉提醒）時退回預設 30：提醒可以不吵，日報照樣要誠實。
   // ⛔ 門檻與服務時間**在這裡才套**，日結只存原料：設定改了，歷史數字要跟著改口徑
   //    （見 conversation-stats-rollup.ts 檔頭原則③）。
-  const settings = await getAiSettings(workspaceId, db).catch((e) => {
-    console.error('[conversation-stats] getAiSettings error:', e)
-    return null
-  })
   const slaMinutes = settings?.handoffNotify?.slaRemindMinutes || DEFAULT_SLA_REMIND_MINUTES
   const nowMs = Date.now()
   const slaExceeded = agg.handoffWaits
@@ -108,5 +120,7 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
     handoffWaitSlaMinutes: slaMinutes,
     handoffWaitOffHours: slaExceeded.filter(x => x.offHours).length,
     handoffWaitSamples,
+    rangeStart: dayKeys[0],
+    rangeEnd: dayKeys[dayKeys.length - 1],
   }
 })

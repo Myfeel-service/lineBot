@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, anchoredPeriod, dayOfDate, isServiceDayOff, isServiceHoursDnd, nextAnchoredPeriod, normalizeAnchorDay, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from './time'
+import { addDays, anchoredPeriod, appendServiceHoursLine, dayOfDate, dndSentence, isServiceDayOff, isServiceHoursDnd, nextAnchoredPeriod, nextServiceStartMs, normalizeAnchorDay, serviceDayOffReason, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from './time'
 
 describe('taipeiYyyyMm（成本報表的月結桶）', () => {
   it('月中:UTC 與台灣同月', () => {
@@ -142,8 +142,17 @@ describe('isServiceHoursDnd（服務時間 / 勿擾時段，台灣時區）', ()
  */
 describe('serviceHoursSentence（把服務時間講成一句人話）', () => {
   it('週末休息 → 講「週一至週五」', () => {
-    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: true }))
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: true, holidayOff: false }))
       .toBe('週一至週五 10:00–19:00')
+  })
+
+  it('國定假日休息 → 後面補「（國定假日休息）」；沒設過（舊資料）＝跟週末一樣', () => {
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: true, holidayOff: true }))
+      .toBe('週一至週五 10:00–19:00（國定假日休息）')
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: true }))
+      .toBe('週一至週五 10:00–19:00（國定假日休息）')
+    expect(serviceHoursSentence({ enabled: true, start: '10:00', end: '19:00', weekendOff: false }))
+      .toBe('每天 10:00–19:00')
   })
 
   it('週末不休息 → 講「每天」', () => {
@@ -197,5 +206,123 @@ describe('isServiceDayOff（整天休假，只看週末不看鐘點）', () => {
   it('台灣時區為準：UTC 週五晚上已是台灣週六', () => {
     expect(isServiceDayOff(svc, new Date('2026-07-17T16:00:00Z'))).toBe(true) // 台灣週六 00:00
     expect(isServiceDayOff(svc, new Date('2026-07-17T15:00:00Z'))).toBe(false) // 台灣週五 23:00
+  })
+})
+
+/**
+ * 國定假日（`D-137`②，2026-10-21）。
+ *
+ * 情境用 MYFEEL 的真實設定（10:00–19:00、週末休）與 2026 國慶、光復節連假：
+ * 10/9（五）國慶補假、10/10（六）國慶日、10/25（日）光復節、10/26（一）光復節補假。
+ * MYFEEL 這幾天實際沒上班，系統原本只認得週末——照樣傳摘要、客人收到「將盡快回覆您」。
+ */
+describe('國定假日也休息', () => {
+  /** 台北時間 → Date（台灣沒有夏令時間，固定 +8） */
+  const at = (md: string, hm = '11:00') => new Date(`2026-${md}T${hm}:00+08:00`)
+  /** 舊資料沒有 holidayOff 這格 */
+  const myfeel = { enabled: true, start: '10:00', end: '19:00', weekendOff: true }
+
+  it('沒設過＝跟週末一樣：國定假日的平日整天休，原因講國定假日', () => {
+    expect(isServiceDayOff(myfeel, at('10-09'))).toBe(true)
+    expect(serviceDayOffReason(myfeel, at('10-09'))).toBe('holiday')
+    expect(isServiceHoursDnd(myfeel, at('10-09'))).toBe(true) // 上班時段也勿擾
+    expect(serviceDayOffReason(myfeel, at('10-26'))).toBe('holiday') // 補假也算
+  })
+
+  it('國定假日剛好是週六 → 講國定假日；連假裡單純的週日 → 講週末', () => {
+    expect(serviceDayOffReason(myfeel, at('10-10'))).toBe('holiday')
+    expect(serviceDayOffReason(myfeel, at('10-11'))).toBe('weekend')
+  })
+
+  it('一般平日不受影響', () => {
+    expect(isServiceDayOff(myfeel, at('10-12'))).toBe(false)
+    expect(isServiceHoursDnd(myfeel, at('10-12'))).toBe(false)
+  })
+
+  it('明確關掉 → 國定假日照常上班', () => {
+    expect(isServiceDayOff({ ...myfeel, holidayOff: false }, at('10-09'))).toBe(false)
+  })
+
+  it('週末照常營業、國定假日休息 → 週六的國慶日休，連假裡的週日照常', () => {
+    const shop = { ...myfeel, weekendOff: false, holidayOff: true }
+    expect(serviceDayOffReason(shop, at('10-10'))).toBe('holiday')
+    expect(isServiceDayOff(shop, at('10-11'))).toBe(false)
+  })
+
+  it('服務時間沒開 → 國定假日也不算（完全不影響行為）', () => {
+    expect(isServiceDayOff({ ...myfeel, enabled: false, holidayOff: true }, at('10-09'))).toBe(false)
+  })
+
+  it('勿擾時段講成一句人話時帶上國定假日', () => {
+    expect(dndSentence(myfeel)).toBe('19:00–10:00，以及週六、週日與國定假日整天')
+    expect(dndSentence({ ...myfeel, holidayOff: false })).toBe('19:00–10:00，以及週六、週日整天')
+    expect(dndSentence({ ...myfeel, weekendOff: false, holidayOff: true })).toBe('19:00–10:00，以及國定假日整天')
+  })
+})
+
+describe('nextServiceStartMs：下次開始服務是什麼時候', () => {
+  const at = (md: string, hm: string) => Date.parse(`2026-${md}T${hm}:00+08:00`)
+  const myfeel = { enabled: true, start: '10:00', end: '19:00', weekendOff: true }
+
+  it('現在就在服務時間內 → 就是現在', () => {
+    expect(nextServiceStartMs(myfeel, at('10-12', '11:00'))).toBe(at('10-12', '11:00'))
+  })
+
+  it('國慶連假前一晚 → 跳過補假與週末到週一；當作照常上班算則是隔天早上', () => {
+    expect(nextServiceStartMs(myfeel, at('10-08', '20:00'))).toBe(at('10-12', '10:00'))
+    expect(nextServiceStartMs(myfeel, at('10-08', '20:00'), { ignoreHolidays: true })).toBe(at('10-09', '10:00'))
+  })
+
+  it('光復節連假的週六 → 週二（週一補假）', () => {
+    expect(nextServiceStartMs(myfeel, at('10-24', '15:00'))).toBe(at('10-27', '10:00'))
+  })
+
+  it('沒開／起訖同一分鐘 → null', () => {
+    expect(nextServiceStartMs({ ...myfeel, enabled: false }, at('10-08', '20:00'))).toBeNull()
+    expect(nextServiceStartMs({ ...myfeel, start: '10:00', end: '10:00' }, at('10-08', '20:00'))).toBeNull()
+  })
+})
+
+/**
+ * 客人找真人、遇到勿擾時收到的那則後面補的那行（`H-19`＋`D-137`②）。
+ * 因為國定假日才要等更久時改講下次幾號幾點——「服務時間：週一至週五」在國定假日的週五讀起來像說謊。
+ */
+describe('appendServiceHoursLine：勿擾訊息後面補哪一行', () => {
+  const at = (md: string, hm: string) => Date.parse(`2026-${md}T${hm}:00+08:00`)
+  const myfeel = { enabled: true, start: '10:00', end: '19:00', weekendOff: true }
+  const BASE = '您好，目前非客服服務時間，我們會在服務時間盡快回覆您 🙏'
+
+  it('國定假日當天 → 講下次幾號幾點', () => {
+    expect(appendServiceHoursLine(BASE, myfeel, at('10-09', '11:00')))
+      .toBe(`${BASE}\n國定假日休息，10/12（一）10:00 起回覆您。`)
+  })
+
+  it('放假前一晚、連假裡的週日也講（照「週一至週五」推會推錯）', () => {
+    expect(appendServiceHoursLine(BASE, myfeel, at('10-08', '20:00')))
+      .toBe(`${BASE}\n國定假日休息，10/12（一）10:00 起回覆您。`)
+    expect(appendServiceHoursLine(BASE, myfeel, at('10-25', '15:00')))
+      .toBe(`${BASE}\n國定假日休息，10/27（二）10:00 起回覆您。`)
+  })
+
+  it('國定假日落在週末、下次上班本來就是週一 → 照舊講服務時間', () => {
+    expect(appendServiceHoursLine(BASE, myfeel, at('10-10', '15:00')))
+      .toBe(`${BASE}\n服務時間：週一至週五 10:00–19:00（國定假日休息）`)
+  })
+
+  it('一般的下班時間 → 照舊', () => {
+    expect(appendServiceHoursLine(BASE, myfeel, at('10-13', '20:00')))
+      .toBe(`${BASE}\n服務時間：週一至週五 10:00–19:00（國定假日休息）`)
+  })
+
+  it('國定假日照常上班的店 → 不講國定假日', () => {
+    expect(appendServiceHoursLine(BASE, { ...myfeel, holidayOff: false }, at('10-08', '20:00')))
+      .toBe(`${BASE}\n服務時間：週一至週五 10:00–19:00`)
+  })
+
+  it('店家文案自己寫了時間：平常不重複補；國定假日照樣講日期（他的文案不會知道今年哪天放假）', () => {
+    const own = '目前非服務時間，我們 10:00 後回覆您'
+    expect(appendServiceHoursLine(own, myfeel, at('10-13', '20:00'))).toBe(own)
+    expect(appendServiceHoursLine(own, myfeel, at('10-09', '11:00')))
+      .toBe(`${own}\n國定假日休息，10/12（一）10:00 起回覆您。`)
   })
 })

@@ -15,6 +15,8 @@
  * 兩把尺分開,是為了讓「月底才升級的人」不會付了整月的錢只買到幾天、額度還被
  * 同月份的免費用量吃掉。報表歸報表,計費歸計費。
  */
+import { taiwanHolidayName } from './taiwan-holidays'
+
 const TAIPEI_OFFSET_MS = 8 * 60 * 60 * 1000
 
 const p2 = (n: number) => String(n).padStart(2, '0')
@@ -135,6 +137,16 @@ export interface ServiceHoursLike {
   end: string
   /** 週六日整天視為勿擾 */
   weekendOff: boolean
+  /**
+   * 國定假日（含補假，表在 `taiwan-holidays.ts`）整天視為勿擾（`D-137`②）。
+   * 沒帶＝跟 `weekendOff` 一樣（見 `holidayOffOf`）：週末休息的店，國定假日幾乎也休。
+   */
+  holidayOff?: boolean
+}
+
+/** 國定假日休不休。沒設過（舊資料）＝跟週末一樣 */
+export function holidayOffOf(cfg: ServiceHoursLike | null | undefined): boolean {
+  return cfg?.holidayOff ?? cfg?.weekendOff ?? false
 }
 
 /** "HH:mm" → 午夜起算的分鐘；格式不合回 null。 */
@@ -148,16 +160,26 @@ function hhmmToMinutes(s: string): number | null {
 }
 
 /**
- * 今天（台灣時區）是不是「整天不上班」的日子＝開了服務時間又勾了週六日休息的週末。
+ * 今天（台灣時區）為什麼整天不上班：`'holiday'`＝國定假日、`'weekend'`＝週末、`null`＝上班日。
+ * 兩個都成立時（國定假日剛好是週六）講國定假日——講給客人聽的時候比較準。
+ */
+export function serviceDayOffReason(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): 'holiday' | 'weekend' | null {
+  if (!cfg?.enabled) return null
+  if (holidayOffOf(cfg) && taiwanHolidayName(taipeiDate(date))) return 'holiday'
+  if (!cfg.weekendOff) return null
+  const dow = new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
+  return dow === 0 || dow === 6 ? 'weekend' : null
+}
+
+/**
+ * 今天（台灣時區）是不是「整天不上班」的日子＝開了服務時間，而且今天是勾了休息的週末或國定假日。
  *
  * 和 `isServiceHoursDnd` 刻意分開:勿擾是「現在這個時間點不要吵」,休假日是「今天整天
  * 沒人上班」。每日摘要這種**商家自選時段**的推播只能看後者——若拿整個勿擾去擋,
  * 摘要時間設 20:00 而服務時間到 18:00 的商家會永遠收不到摘要。
  */
 export function isServiceDayOff(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): boolean {
-  if (!cfg?.enabled || !cfg.weekendOff) return false
-  const dow = new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
-  return dow === 0 || dow === 6
+  return serviceDayOffReason(cfg, date) !== null
 }
 
 /**
@@ -199,8 +221,71 @@ export function serviceHoursSentence(cfg: ServiceHoursLike | null | undefined): 
   if (start === null || end === null) return null
   if (start === end) return null
   const days = cfg.weekendOff ? '週一至週五' : '每天'
+  const holiday = holidayOffOf(cfg) ? '（國定假日休息）' : ''
   // 用整理過的字串而不是原值：設定存的是 "9:00" 也要講成 "09:00"
-  return `${days} ${minutesToHhmm(start)}–${minutesToHhmm(end)}`
+  return `${days} ${minutesToHhmm(start)}–${minutesToHhmm(end)}${holiday}`
+}
+
+/**
+ * 下一次開始服務的時間點（毫秒）；現在就在服務時間內回 `nowMs`，沒開／設定壞掉回 `null`。
+ *
+ * @param opts.ignoreHolidays 當作國定假日照常上班來算——拿來比較「是不是因為放假才等這麼久」
+ */
+export function nextServiceStartMs(
+  cfg: ServiceHoursLike | null | undefined,
+  nowMs: number,
+  opts: { ignoreHolidays?: boolean } = {},
+): number | null {
+  if (!cfg?.enabled) return null
+  const start = hhmmToMinutes(cfg.start)
+  const end = hhmmToMinutes(cfg.end)
+  if (start === null || end === null || start === end) return null
+  const c: ServiceHoursLike = opts.ignoreHolidays ? { ...cfg, holidayOff: false } : cfg
+  if (!isServiceHoursDnd(c, new Date(nowMs))) return nowMs
+  const today = taipeiDate(new Date(nowMs))
+  // 春節最長 9 天，加上前後週末；給到 31 天綽綽有餘
+  for (let i = 0; i <= 31; i++) {
+    const t = Date.parse(`${addDays(today, i)}T00:00:00+08:00`) + start * 60_000
+    if (t > nowMs && !isServiceHoursDnd(c, new Date(t))) return t
+  }
+  return null
+}
+
+/**
+ * 在勿擾訊息後面補一行實際的服務時間（客人找真人、遇到勿擾時收到的那則；2026-10-21 從 handler 搬來好測）。
+ *
+ * 為什麼由程式補、不是叫店家自己寫進去：①店家改了營業時間只會改上面的時間欄位，
+ * 手寫在文案裡的那句會留在原地變成假資訊 ②預設文案（`DEFAULT_DND_REPLY`）本來就只說
+ * 「會在服務時間盡快回覆」，沒開口講服務時間是幾點——客人無從判斷要等 10 分鐘還是
+ * 到明天早上，只好一直重按（`H-19`）。
+ *
+ * ⛔ 店家自己已經寫了時間就不補：用「文案裡有沒有出現那個開始時間」判斷。
+ *    寧可漏補一次，也不要送出「…10:00–19:00 回覆您。服務時間：週一至週五 10:00–19:00」。
+ *
+ * **因為國定假日才要等更久時，改講下次幾號幾點**（`D-137`②）：國定假日的週五讀到「服務時間：
+ * 週一至週五」會覺得「今天週五啊」；放假前一晚、假日前的週末，照那句推出來的時間也是錯的。
+ * 判斷＝「照放假算的下次上班」比「當作國定假日照常上班算的」晚。這句不看店家文案裡寫了什麼時間
+ * ——講的是日期，店家的文案不會知道今年哪天放假。
+ */
+export function appendServiceHoursLine(base: string, cfg: ServiceHoursLike | null | undefined, nowMs = Date.now()): string {
+  const next = nextServiceStartMs(cfg, nowMs)
+  const nextIgnoringHolidays = nextServiceStartMs(cfg, nowMs, { ignoreHolidays: true })
+  if (next !== null && nextIgnoringHolidays !== null && next > nextIgnoringHolidays)
+    return `${base}\n國定假日休息，${taipeiMdwHm(next)} 起回覆您。`
+
+  const sentence = serviceHoursSentence(cfg)
+  if (!sentence) return base
+  const startHhmm = sentence.split(' ')[1]?.split('–')[0] ?? ''
+  if (startHhmm && base.includes(startHhmm)) return base
+  return `${base}\n服務時間：${sentence}`
+}
+
+const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六']
+
+/** 時間點講成「10/12（一）10:00」 */
+export function taipeiMdwHm(ms: number): string {
+  const t = new Date(ms + TAIPEI_OFFSET_MS)
+  return `${t.getUTCMonth() + 1}/${t.getUTCDate()}（${WEEKDAY_ZH[t.getUTCDay()]}）${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}`
 }
 
 /**
@@ -214,7 +299,8 @@ export function serviceHoursSentence(cfg: ServiceHoursLike | null | undefined): 
  */
 export function dndSentence(cfg: ServiceHoursLike | null | undefined): string {
   if (!cfg?.enabled) return '目前沒有勿擾時段（任何時間找真人都會通知）'
-  const weekend = cfg.weekendOff ? '，以及週六、週日整天' : ''
+  const days = [cfg.weekendOff ? '週六、週日' : '', holidayOffOf(cfg) ? '國定假日' : ''].filter(Boolean)
+  const weekend = days.length ? `，以及${days.join('與')}整天` : ''
   return `${cfg.end}–${cfg.start}${weekend}`
 }
 

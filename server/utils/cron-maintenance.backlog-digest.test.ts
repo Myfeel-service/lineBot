@@ -52,7 +52,18 @@ vi.mock('./ai-settings', () => ({ getAiSettings }))
 // 昨天的成績走日結（統計頁同一支算式）——這裡只驗「有沒有被放進訊息」，算式本身在
 // conversation-stats-rollup 自己的測試守
 const { loadDayStats } = vi.hoisted(() => ({ loadDayStats: vi.fn() }))
-vi.mock('./conversation-stats-rollup', () => ({ loadDayStats }))
+// 好幾天加總（`D-137`①）用真的 mergeDays：那是統計頁同一支加總，假的就驗不出加錯
+vi.mock('./conversation-stats-rollup', async (importOriginal) => ({
+  loadDayStats,
+  mergeDays: (await importOriginal<typeof import('./conversation-stats-rollup')>()).mergeDays,
+}))
+
+// 週報只驗「哪天附、窗口錨在哪個週一」；內容由 weekly-insights 自己的測試守。預設沒東西可講
+const { buildWeeklyInsights } = vi.hoisted(() => ({ buildWeeklyInsights: vi.fn(async (..._a: any[]) => null as string[] | null) }))
+vi.mock('./weekly-insights', () => ({ buildWeeklyInsights }))
+
+/** 每一個 where 條件（欄位、值）——驗「到期下架的知識看多久以前」用 */
+const whereLog: Array<[string, unknown]> = []
 
 import { dailyBacklogDigest } from './cron-maintenance'
 
@@ -135,6 +146,7 @@ function makeDb(
     const q: any = {
       __ws: ws,
       where: (field: string, _op: string, value: unknown) => {
+        whereLog.push([field, value])
         if (field === 'workspaceId') return query(docs, count, String(value))
         // 別家工作區一律查到空的
         if (q.__ws && q.__ws !== WS) return query([], 0, q.__ws)
@@ -212,6 +224,9 @@ beforeEach(() => {
     liveDays: [],
     rollupDays: keys,
   }))
+  buildWeeklyInsights.mockClear()
+  buildWeeklyInsights.mockResolvedValue(null)
+  whereLog.length = 0
 })
 
 afterEach(() => {
@@ -495,5 +510,98 @@ describe('dailyBacklogDigest 休假日', () => {
     const text = sentText()
     expect(text).toContain('都是下班時段進來的')
     expect(text).not.toContain('🔴')
+  })
+})
+
+/**
+ * 回來那天把上一則之後的每一天講完（`D-137`，2026-10-21）。
+ *
+ * 原本週一那則只講「昨天」＝週日，週五、週六的成績從來沒有被講過（MYFEEL 9/17～10/19
+ * 854 場有 200 場落在這兩天）；國定假日系統又不認得，連假回來只講最後一天。
+ */
+describe('dailyBacklogDigest 休假日之後的第一則', () => {
+  /** MYFEEL 的設定：舊資料沒有 holidayOff ＝ 跟週末一樣休 */
+  const myfeel = (extra: Record<string, unknown> = {}) => ({
+    ...settings(10),
+    serviceHours: { enabled: true, start: '10:00', end: '19:00', weekendOff: true, dndReply: '', ...extra },
+  })
+  const MON = Date.UTC(2026, 9, 19, 3, 0, 0) // 台北 2026-10-19(一) 11:00
+  const TUE_AFTER_HOLIDAY = Date.UTC(2026, 9, 27, 3, 0, 0) // 台北 2026-10-27(二) 11:00，前一天光復節補假
+
+  it('週一 → 查週五到週日三天，一句講完（每天 8 場 → 24 場）', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, ['2026-10-16', '2026-10-17', '2026-10-18'])
+    expect(sentText()).toContain('10/16（五）到 10/18（日）這 3 天共 24 場對話，AI 全部自己搞定')
+    expect(sentText()).toContain('新朋友 +6 位。')
+  })
+
+  it('週一 → 到期下架的知識看 72 小時（週五這時候之後），不是 24 小時', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    const expired = whereLog.filter(([f]) => f === 'expiredAt').map(([, v]) => (v as any).__ts)
+    expect(expired).toEqual([MON - 72 * 3600_000])
+  })
+
+  it('週一 → 附本週顧客觀察，窗口錨在這個週一', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-19')
+  })
+
+  it('國定假日（10/26 一）整天不發，也不吃掉當天名額', async () => {
+    vi.setSystemTime(Date.UTC(2026, 9, 26, 3, 0, 0))
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db, state } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(state[WS]).toBeUndefined()
+  })
+
+  it('連假回來（10/27 二）→ 講 10/23 到 10/26 四天；週報改在今天附、窗口照樣錨在週一 10/26', async () => {
+    vi.setSystemTime(TUE_AFTER_HOLIDAY)
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, ['2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26'])
+    expect(sentText()).toContain('10/23（五）到 10/26（一）這 4 天共 32 場對話')
+    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-26')
+  })
+
+  it('國定假日照常上班的店 → 10/27 只講 10/26，週報週一就附過了', async () => {
+    vi.setSystemTime(TUE_AFTER_HOLIDAY)
+    getAiSettings.mockResolvedValue(myfeel({ holidayOff: false }))
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, ['2026-10-26'])
+    expect(sentText()).toContain('昨天 8 場對話')
+    expect(buildWeeklyInsights).not.toHaveBeenCalled()
+  })
+
+  it('三天裡缺一天 → 整段講「查不到」，⛔ 不拿兩天的數字當三天講', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    loadDayStats.mockResolvedValue({
+      days: new Map([['2026-10-16', dayStats()], ['2026-10-18', dayStats()]]),
+      liveDays: [], rollupDays: [],
+    })
+    // 有一位在等才會發（成績查不到、又沒別的事可講時整則不發，下一輪重來）
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('這 3 天的數字這次查不到')
+    expect(sentText()).not.toContain('16 場')
   })
 })

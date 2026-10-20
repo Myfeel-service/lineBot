@@ -160,6 +160,12 @@ export interface KpiResult {
    * 真正要檢討的是「上班時間還讓客人等」的那幾場，點名要點到它們。
    */
   handoffWaitSamples: { userId: string; displayName: string }[]
+  /**
+   * 這次實際算的頭尾兩天（`YYYY-MM-DD`，含頭尾）。
+   * 帶 `window=digest` 時區間由後端照每日摘要的規則推（`D-137`①），前端要靠這兩格知道算了哪幾天。
+   */
+  rangeStart?: string
+  rangeEnd?: string
 }
 
 export interface TrendBucket {

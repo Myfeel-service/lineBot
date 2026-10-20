@@ -253,3 +253,50 @@ describe('指路那一行帶連結', () => {
     expect(digestPlaces({ ...base, ...busy } as DigestInput)).toEqual(['「對話」'])
   })
 })
+
+/**
+ * 回來那天講好幾天（`D-137`①，2026-10-21）。數字用 MYFEEL 10/16～10/18 的真實日結：
+ * 84 場＝AI 自己搞定 31＋你出手 50＋沒人回 3（原本週一那則只講週日 27 場）。
+ */
+describe('休假日之後的第一則：講上一則之後的每一天', () => {
+  const WEEKEND = ['2026-10-16', '2026-10-17', '2026-10-18'] as const
+  const weekend: Partial<DigestInput> = {
+    dateLabel: '10/19（一）',
+    coverDays: WEEKEND,
+    yesterday: {
+      total: 84, selfServed: 31, humanServed: 50, unhandled: 3,
+      unhandledNames: ['王小姐', 'Jason', '陳先生'], newFriends: 144,
+    },
+    waiting: { count: 2, offHoursCount: 2, samples: [], truncated: false, staleHumanCount: 0 },
+  }
+
+  it('主詞換成日期與天數，三個數字照樣加起來等於總數；「一整天沒人回」改講「沒人回」', () => {
+    const t = text(weekend)
+    expect(t).toContain('10/16（五）到 10/18（日）這 3 天共 84 場對話，AI 自己搞定 31 場、你出手 50 場、3 場沒人回。')
+    expect(t).not.toContain('昨天')
+    expect(t).not.toContain('一整天沒人回')
+    expect(t).toContain('沒人回的是王小姐、Jason與陳先生。')
+    expect(t).toContain('新朋友 +144 位。')
+  })
+
+  it('順利的一天（一行版）：日期不黏在一起，接「早安，」', () => {
+    const lines = buildDigestLines({ ...base, ...weekend, waiting: base.waiting })!
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toBe('☀️ 10/19（一）早安，10/16（五）到 10/18（日）這 3 天共 84 場對話，AI 自己搞定 31 場、你出手 50 場、3 場沒人回，沒有人在等。新朋友 +144 位。')
+  })
+
+  it('全部自己搞定、沒有對話、查不到——三種說法都換主詞', () => {
+    expect(text({ ...weekend, yesterday: { ...weekend.yesterday!, selfServed: 84, humanServed: 0, unhandled: 0, unhandledNames: [] } }))
+      .toContain('10/16（五）到 10/18（日）這 3 天共 84 場對話，AI 全部自己搞定。')
+    expect(text({ ...weekend, yesterday: { ...weekend.yesterday!, total: 0, selfServed: 0, humanServed: 0, unhandled: 0, unhandledNames: [] } }))
+      .toContain('10/16（五）到 10/18（日）這 3 天沒有客人對話。')
+    const unknown = text({ ...weekend, yesterday: null })
+    expect(unknown).toContain('這 3 天的數字這次查不到。')
+    expect(unknown).not.toContain('0 場')
+  })
+
+  it('只講一天時跟原本一模一樣（帶了 coverDays 也一樣）', () => {
+    expect(text({ coverDays: ['2026-09-16'] })).toBe(text())
+    expect(text()).toContain('昨天 23 場對話')
+  })
+})

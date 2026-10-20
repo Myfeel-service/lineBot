@@ -74,7 +74,7 @@ import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { syncNotifyRecipientFollowState } from './line-notify-delivery'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
-import { isServiceHoursDnd, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
+import { appendServiceHoursLine, isServiceHoursDnd } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
@@ -3583,25 +3583,6 @@ async function dndHandoffReplyText(workspaceId: string): Promise<string | null> 
   if (!isServiceHoursDnd(settings?.serviceHours)) return null
   const base = settings?.serviceHours?.dndReply || DEFAULT_DND_REPLY
   return appendServiceHoursLine(base, settings?.serviceHours)
-}
-
-/**
- * 在勿擾訊息後面補一行實際的服務時間。
- *
- * 為什麼由程式補、不是叫店家自己寫進去：①店家改了營業時間只會改上面的時間欄位，
- * 手寫在文案裡的那句會留在原地變成假資訊 ②預設文案（`DEFAULT_DND_REPLY`）本來就只說
- * 「會在服務時間盡快回覆」，沒開口講服務時間是幾點——客人無從判斷要等 10 分鐘還是
- * 到明天早上，只好一直重按（`H-19`）。
- *
- * ⛔ 店家自己已經寫了時間就不補：用「文案裡有沒有出現那個開始時間」判斷。
- *    寧可漏補一次，也不要送出「…10:00–19:00 回覆您。服務時間：週一至週五 10:00–19:00」。
- */
-function appendServiceHoursLine(base: string, cfg: ServiceHoursLike | null | undefined): string {
-  const sentence = serviceHoursSentence(cfg)
-  if (!sentence) return base
-  const startHhmm = sentence.split(' ')[1]?.split('–')[0] ?? ''
-  if (startHhmm && base.includes(startHhmm)) return base
-  return `${base}\n服務時間：${sentence}`
 }
 
 /**

@@ -13,7 +13,7 @@
  * - 每次執行寫 `auditLogs`，`actor='agent'`——這是「AI 動過手」唯一查得到的地方。
  */
 import { FieldValue } from 'firebase-admin/firestore'
-import { dndSentence, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
+import { dndSentence, holidayOffOf, serviceHoursSentence, type ServiceHoursLike } from '~~/shared/time'
 import {
   previewScriptToggleImpact,
   toReachabilityScriptsWithDisabled,
@@ -151,6 +151,8 @@ const aiSettingsServiceHours: AdminOpDef = {
       start: args.start!,
       end: args.end!,
       weekendOff: args.weekendOff ?? before?.weekendOff ?? true,
+      // 國定假日休不休（`D-137`②）這裡不改，照原本的；不帶的話舊資料會跟著新的週末設定變
+      holidayOff: holidayOffOf(before),
     }
     return {
       opId: 'ai-settings-service-hours',
@@ -179,6 +181,7 @@ const aiSettingsServiceHours: AdminOpDef = {
           start: args.start!,
           end: args.end!,
           weekendOff: args.weekendOff ?? before?.weekendOff ?? true,
+          holidayOff: holidayOffOf(before),
         }
       : { ...before, enabled: false }
 

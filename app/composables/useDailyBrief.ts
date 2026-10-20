@@ -2,12 +2,13 @@
  * 昨日摘要（小幫手的日報資料）。
  *
  * 刻意不開新端點、不發明新口徑：直接打對話統計的 KPI 端點
- * （/api/conversation-stats/kpi，昨天與前天各查一次）。同一支查詢、同一套
+ * （/api/conversation-stats/kpi，摘要那段與比較那段各查一次）。同一支查詢、同一套
  * 首接/轉真人定義，小幫手講的數字和統計頁看到的永遠對得上——
  * 兩處口徑漂移是這個後台踩過最痛的坑（詳見 docs/CONVERSATION-STATS-DEFINITIONS.md）。
  */
 
 import { taipeiDateKey } from '~~/shared/taipei-day'
+import { addDays, daysBetween } from '~~/shared/time'
 import type { KpiResult } from '~~/shared/types/conversation-stats'
 
 /**
@@ -46,12 +47,21 @@ export interface DailyBriefDay {
 }
 
 export interface DailyBrief {
-  /** 摘要對象日期（昨天），本地時間 YYYY-MM-DD */
+  /** 摘要講的最後一天（永遠是昨天，台北 YYYY-MM-DD）；拿來判斷快取是不是隔天了 */
   date: string
+  /**
+   * 摘要講的第一天（`D-137`①）。平常＝`date`；休假日之後的第一個上班日＝上一則 LINE 摘要之後的
+   * 第一天（週一＝週五）。⛔ 跟 LINE 那則同一支規則（後端 `window=digest`），兩邊才講同一段。
+   */
+  startDate: string
+  /** 講幾天（1＝昨天） */
+  days: number
+  /** 那幾天加起來（欄位名沿用：單日時就是昨天） */
   yesterday: DailyBriefDay
+  /** 比較用：單日＝前天；好幾天＝上週同一段（週五～週日比上週五～週日，平日跟週末不混著比） */
   dayBefore: DailyBriefDay
   /**
-   * 前 7 天（昨天不算，往前推 7 天）的每日平均，給「昨天是不是特別多」當基準。
+   * 第一天之前 7 天的**每日**平均，給「這段是不是特別多」當基準（用的時候乘上天數）。
    * 查不到＝null——趨勢就不下結論，日報本體照常。
    */
   baseline: { total: number; handoffs: number; unhandled: number } | null
@@ -119,18 +129,28 @@ export function useDailyBrief() {
 
     inflight = (async () => {
       try {
-        const dStr = taipeiDaysAgo(2)
-        const [yk, dk, base] = await Promise.all([
-          apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: yStr, endDate: yStr } }),
-          apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { startDate: dStr, endDate: dStr } }),
+        // 先問後端這次講哪幾天（照每日摘要的規則，`D-137`①）：要看服務時間的週末／國定假日設定，
+        // 那份設定前端這裡沒有，所以區間由後端推、跟著數字一起回來
+        const yk = await apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: { window: 'digest' } })
+        const start = yk.rangeStart ?? yStr
+        const end = yk.rangeEnd ?? yStr
+        const days = daysBetween(start, end) + 1
+        // 比較：單日照舊比前天；好幾天比上週同一段——週末比週末，跟平日比會永遠「比較少」
+        const compare = days > 1
+          ? { startDate: addDays(start, -7), endDate: addDays(end, -7) }
+          : { startDate: addDays(start, -1), endDate: addDays(start, -1) }
+        const [dk, base] = await Promise.all([
+          apiFetch<KpiResult>('/api/conversation-stats/kpi', { params: compare }),
           // 基準查失敗不拖垮日報本體：趨勢缺席比整份日報缺席無害
-          // 趨勢基準窗＝昨天往前推 7 天（-8 ～ -2）
+          // 趨勢基準窗＝第一天往前推 7 天（單日時就是原本的 -8 ～ -2）
           apiFetch<KpiResult>('/api/conversation-stats/kpi', {
-            params: { startDate: taipeiDaysAgo(8), endDate: taipeiDaysAgo(2) },
+            params: { startDate: addDays(start, -7), endDate: addDays(start, -1) },
           }).catch(() => null),
         ])
         brief.value = {
-          date: yStr,
+          date: end,
+          startDate: start,
+          days,
           yesterday: toDay(yk),
           dayBefore: toDay(dk),
           baseline: base

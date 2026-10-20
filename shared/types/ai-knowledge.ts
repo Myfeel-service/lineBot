@@ -414,6 +414,8 @@ export interface AiSettingsDoc {
     end: string
     /** 週六、週日整天視為勿擾 */
     weekendOff: boolean
+    /** 國定假日（含補假）整天視為勿擾（`D-137`②）；舊資料沒有這格＝跟 weekendOff 一樣 */
+    holidayOff: boolean
     /** 勿擾時段回覆客人的訊息 */
     dndReply: string
   }
@@ -1244,6 +1246,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
       start: '09:00',
       end: '18:00',
       weekendOff: true,
+      holidayOff: true,
       dndReply: DEFAULT_DND_REPLY,
     },
     inactiveTag: {

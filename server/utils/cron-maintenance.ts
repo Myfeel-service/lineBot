@@ -27,7 +27,7 @@ import { gsheetSyncAuditNote, syncGoogleSheetSource } from './gsheet-sync'
 import { writeAuditLog } from './audit-log'
 import { closeConversationSession, handBackSessionToBot } from './conversation-session'
 import { getAiSettings } from './ai-settings'
-import { buildWeeklyInsights, isTaipeiMonday } from './weekly-insights'
+import { buildWeeklyInsights } from './weekly-insights'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasAiCallCeilingNotified, wasQuotaExhaustedNotified } from './ai-handoff-notify'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushToNotifyList } from './line-notify-delivery'
@@ -37,8 +37,8 @@ import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { daysBetween, isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
-import { taipeiDateKey } from '~~/shared/taipei-day'
-import { loadDayStats } from './conversation-stats-rollup'
+import { loadDayStats, mergeDays } from './conversation-stats-rollup'
+import { digestCoverDays, isFirstDigestDayOfWeek, mondayOf } from '~~/shared/digest-window'
 import { buildDigestLines, digestPlaces, taipeiDateLabel } from './daily-digest-message'
 import type { DigestWaiting, DigestYesterday } from './daily-digest-message'
 import {
@@ -996,7 +996,9 @@ export async function cleanupExpiredWebhookEventLocks(db: Firestore) {
 // pending)都留在資料上,摘要每天照著標記喊,直到有人處理——比「事件當下那一則」更不會漏。
 // 每 workspace 每天最多一則(標記存 cronState/backlog-digest)。
 // 發送時段由各 workspace 的 handoffNotify.digestHour 自選(台北時間整點);
-// 休假日(服務時間有開 + 週六日休息)整天不發,週末累積的事上班日那則會一次講完。
+// 休假日(服務時間有開 + 勾了休息的週末／國定假日)整天不發,上班日那則一次講完——
+// 待辦是照當下的標記講、本來就不會漏;成績則要把上一則之後的每一天加起來講（`D-137`①，
+// 原本只講「昨天」＝週一講週日，週五週六的成績從來沒人講過）。
 //
 // ── 2026-09-17 改版（`D-81` 老闆拍板三題）─────────────────────────────
 // ① **開頭先講昨天的成績**（場數／AI 自己搞定／你出手／沒人回／新朋友）。數字取
@@ -1108,15 +1110,19 @@ async function digestDisplayNames(db: Firestore, ws: string, userIds: string[]):
 }
 
 /**
- * 昨天的成績。**數字一律取 `loadDayStats`**（統計頁與後台那張卡同一支算式）——
- * ⛔不可以在這裡自己數一遍，兩把尺遲早算出不同的數字，而使用者只會看到
- * 「LINE 說 23 場、後台說 21 場」。查不到回 `null`（⛔不是 0 場）。
+ * 這一則要講的那幾天（平常就是昨天）加起來的成績。**數字一律取 `loadDayStats`＋`mergeDays`**
+ * （統計頁與後台那張卡同一支算式）——⛔不可以在這裡自己數一遍，兩把尺遲早算出不同的數字，
+ * 而使用者只會看到「LINE 說 23 場、後台說 21 場」。查不到回 `null`（⛔不是 0 場）；
+ * 好幾天裡缺任何一天也算查不到——少加一天的總數比「查不到」更會騙人。
  */
-async function loadDigestYesterday(db: Firestore, ws: string, dayKey: string): Promise<DigestYesterday | null> {
-  const day = await loadDayStats(db, ws, [dayKey])
-    .then(r => r.days.get(dayKey) ?? null)
+async function loadDigestYesterday(db: Firestore, ws: string, dayKeys: readonly string[]): Promise<DigestYesterday | null> {
+  const day = await loadDayStats(db, ws, [...dayKeys])
+    .then((r) => {
+      const list = dayKeys.map(k => r.days.get(k))
+      return list.every(Boolean) ? mergeDays(dayKeys[dayKeys.length - 1]!, list as NonNullable<typeof list[number]>[]) : null
+    })
     .catch((e) => {
-      console.warn('[backlog-digest] 昨天的數字查不到:', ws, (e as Error)?.message)
+      console.warn('[backlog-digest] 成績查不到:', ws, (e as Error)?.message)
       return null
     })
   if (!day) return null
@@ -1194,8 +1200,11 @@ async function loadDigestWaiting(
   }
 }
 
-/** 「今天可以處理」那一段的件數。每一類各自 `null`＝這一類查不到（⛔不是 0） */
-async function loadDigestCounts(db: Firestore, ws: string, nowMs: number) {
+/**
+ * 「今天可以處理」那一段的件數。每一類各自 `null`＝這一類查不到（⛔不是 0）
+ * @param coverDayCount 這一則講幾天（`D-137`①）：到期下架的知識要算「上一則之後」，不是固定 24 小時
+ */
+async function loadDigestCounts(db: Firestore, ws: string, nowMs: number, coverDayCount = 1) {
   // 只要數字就用 count 聚合：不論命中幾筆都只計 1 次讀取，而且沒有「撈滿上限」的問題
   const countOf = (q: FirebaseFirestore.Query): Promise<number | null> =>
     q.count().get().then(s => s.data().count).catch(() => null)
@@ -1204,12 +1213,13 @@ async function loadDigestCounts(db: Firestore, ws: string, nowMs: number) {
   const [outdatedSources, failedSources, expiredCards, suggestions, tagSuggestUsers, quotaSkippedRows] = await Promise.all([
     countOf(sources.where('outdatedAt', '>', Timestamp.fromMillis(0))),
     countOf(sources.where('status', '==', 'failed')),
-    // 近 24 小時剛到期下架的卡；更早的到期卡當天已經講過，不重複喊。
+    // 上一則之後剛到期下架的卡（平常＝近 24 小時；週一＝週五這時候之後的 72 小時）；
+    // 更早的到期卡上一則已經講過，不重複喊。原本固定 24 小時＝週末下架的永遠沒講（`D-137`①）。
     // 只算「這次真的被下架」的：先前就 disabled/failed 的到期只是搬欄位去重。
     countOf(db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
       .where('workspaceId', '==', ws)
       .where('status', '==', 'disabled')
-      .where('expiredAt', '>', Timestamp.fromMillis(nowMs - 24 * 3600_000))),
+      .where('expiredAt', '>', Timestamp.fromMillis(nowMs - coverDayCount * 24 * 3600_000))),
     countOf(db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
       .where('workspaceId', '==', ws)
       .where('status', '==', 'pending')),
@@ -1240,8 +1250,6 @@ export async function dailyBacklogDigest(db: Firestore) {
   const taipeiNow = new Date(Date.now() + 8 * 3600_000)
   const taipeiHour = taipeiNow.getUTCHours()
   const today = taipeiNow.toISOString().slice(0, 10)
-  /** 摘要講的「昨天」＝台北日曆的前一天（⛔不可以用伺服器本機時區算） */
-  const yesterdayKey = taipeiDateKey(new Date(Date.now() - 24 * 3600_000))
 
   const stateRef = db.collection('cronState').doc('backlog-digest')
   // 這一份只用來便宜地早退「今天已經發過」的 workspace（省掉設定讀取與聚合）；
@@ -1263,8 +1271,6 @@ export async function dailyBacklogDigest(db: Firestore) {
   // 提醒進度（1 次讀取）要用到才讀：節日表上有一檔進入 7 天內、或某個帳號自己的檔期快到了（`D-122`②）。
   // 一整輪只讀一次，一年裡大多數日子完全不讀。
   const festivalWindowOpen = hasFestivalInWindow(today)
-  /** 週一＝摘要尾巴附「本週顧客觀察」（D-25 洞察週報；同節慶的掛法：搭同一則，不另發） */
-  const weeklyWindowOpen = isTaipeiMonday(today)
   const festivalStateRef = db.collection('cronState').doc('festival-digest')
   let festivalState: FestivalSentState | null = null
   const loadFestivalState = async (): Promise<FestivalSentState> => {
@@ -1288,21 +1294,27 @@ export async function dailyBacklogDigest(db: Firestore) {
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
     if (!cfg.enabled || !cfg.lineUserIds.length) continue
-    // 休假日整天不發（服務時間有開 + 勾了週六日休息）。摘要是照著資料上的標記每天重
-    // 喊一次,今天跳過不會漏掉任何一條——上班日那則照樣會把週末累積的全部講完。
+    // 休假日整天不發（服務時間有開 + 勾了休息的週末／國定假日）。待辦是照著資料上的標記
+    // 每天重喊一次，今天跳過不會漏；成績則由上班日那則把上一則之後的每一天加起來講（coverDays）。
     // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
     // 之外（例如 09:00–18:00 上班、20:00 收摘要）很合理,拿勿擾去擋會變成永遠不發。
     if (isServiceDayOff(settings.serviceHours)) continue
     if (taipeiHour < cfg.digestHour) continue // 商家自選時段還沒到,下一輪再看
 
+    /**
+     * 這一則講哪幾天（`D-137`①）：上一個會傳摘要的日子起到昨天，平常就是昨天一天。
+     * ⛔ 跟後台小幫手那張卡同一支（`digestCoverDays`），兩邊才講同一段日子。
+     */
+    const coverDays = digestCoverDays(settings.serviceHours, today)
+
     // ── 這裡開始才是真的要花錢的查詢（每個工作區一天只會走到一次）──────
     const unknownNotes: string[] = []
     const [yesterday, waiting, counts] = await Promise.all([
-      loadDigestYesterday(db, ws, yesterdayKey),
+      loadDigestYesterday(db, ws, coverDays),
       loadDigestWaiting(db, ws, nowMs, settings.serviceHours),
-      loadDigestCounts(db, ws, nowMs),
+      loadDigestCounts(db, ws, nowMs, coverDays.length),
     ])
-    if (!yesterday) unknownNotes.push('昨天的數字')
+    if (!yesterday) unknownNotes.push(coverDays.length > 1 ? '這幾天的數字' : '昨天的數字')
     if (!waiting) unknownNotes.push('正在等真人的名單')
     if (counts.unknown) unknownNotes.push('知識庫與標籤的部分')
 
@@ -1310,8 +1322,10 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 但要排在認領**之前**——週一「只有週報可講」的帳號得先知道有沒有東西，
     // 先認領再發現是空的會把今天記成發過，當天真正的摘要就再也出不去了。
     // 週報壞了只記 log，不准拖垮摘要本體。
-    const insights = weeklyWindowOpen && cfg.weeklyInsights !== false
-      ? await buildWeeklyInsights(db, ws, today).catch((e) => {
+    // 這週第一則摘要才附（D-25 洞察週報；同節慶的掛法：搭同一則，不另發）。平常就是週一；
+    // 週一放假時換那週第一個上班日，統計窗口照樣錨在週一（`D-137`②）——不然那一週就沒了。
+    const insights = isFirstDigestDayOfWeek(settings.serviceHours, today) && cfg.weeklyInsights !== false
+      ? await buildWeeklyInsights(db, ws, mondayOf(today)).catch((e) => {
           console.warn('[weekly-insights] build failed:', ws, e)
           return null
         })
@@ -1411,6 +1425,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       : undefined
     const lines = buildDigestLines({
       dateLabel: taipeiDateLabel(today),
+      coverDays,
       yesterday,
       waiting: digestWaiting,
       todo: digestTodo,

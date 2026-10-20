@@ -24,6 +24,8 @@
  * - **操作步驟不寫進 LINE**：這則只回答「是什麼、幾件、去哪」，怎麼按是進了後台的事。
  * - **查不到要講**：任何一類查失敗都不可以當成 0（那是「沒有」的另一種意思），
  *   統一收在一句括號裡講出來。
+ * - **回來那天講好幾天**（2026-10-21 `D-137`①）：休假日不傳，下一則把上一則之後的每一天一次講完
+ *   （「10/16（五）到 10/18（日）這 3 天共 84 場對話…」）。⛔ 不逐天列——一天一行就是一張表，手機上掃不完。
  * - **指路帶連結**（2026-09-27 `C-270`）：有短網址時「→ 後台…」換成「👉 後台…」＋下一行網址，
  *   點了開到後台首頁；沒有網址（本機、`PUBLIC_BASE_URL` 沒設）照舊只講去哪。
  *   順利的一天那一行**不加**連結——沒有要去後台做的事，多一行網址只是噪音。
@@ -32,6 +34,7 @@
  * 同一則（⛔ 預覽另寫一份遲早對不上）。`server/utils/daily-digest-message.ts` 留著轉出，舊的 import 不用改。
  */
 import { HUMAN_STALE_HOURS } from './types/conversation-stats'
+import { coverPhrase } from './digest-window'
 
 /** 昨天的成績。數字口徑與統計頁／後台那張卡同源（日結 `foldSessionIntoDay`） */
 export interface DigestYesterday {
@@ -83,7 +86,12 @@ export interface DigestTodo {
 export interface DigestInput {
   /** 「9/17（三）」 */
   dateLabel: string
-  /** `null`＝昨天的數字這次查不到（⛔不可以靜靜當成 0 場） */
+  /**
+   * 這一則講的日子（由舊到新，`D-137`①）。沒帶或只有一天＝「昨天」。
+   * 休假日不傳摘要，回來那天把上一則之後的每一天一次講完（日子怎麼算見 `digest-window.ts`）。
+   */
+  coverDays?: readonly string[]
+  /** 那幾天加起來的成績；`null`＝這次查不到（⛔不可以靜靜當成 0 場） */
   yesterday: DigestYesterday | null
   waiting: DigestWaiting
   todo: DigestTodo
@@ -125,22 +133,25 @@ export function taipeiDateLabel(dateKey: string): string {
 }
 
 /**
- * 昨天那句的主幹（不含句號，句號由呼叫端補——短版要接「，沒有人在等」）。
+ * 昨天（或回來那天講的那幾天）那句的主幹（不含句號，句號由呼叫端補——短版要接「，沒有人在等」）。
  *
- * ⚠️ 三個數字互斥、相加等於總場數，這是這句話唯一的規矩。
+ * ⚠️ 三個數字互斥、相加等於總場數，這是這句話唯一的規矩——好幾天加總也一樣成立。
+ * 好幾天時「一整天沒人回」改講「沒人回」：那幾場不一定落在同一天。
  */
-function yesterdayCore(y: DigestYesterday | null): string {
-  if (!y) return '昨天的數字這次查不到'
-  if (!y.total) return '昨天沒有客人對話'
+function yesterdayCore(y: DigestYesterday | null, coverDays?: readonly string[]): string {
+  const multi = coverDays && coverDays.length > 1 ? coverDays : null
+  if (!y) return multi ? `這 ${multi.length} 天的數字這次查不到` : '昨天的數字這次查不到'
+  if (!y.total) return multi ? `${coverPhrase(multi)}沒有客人對話` : '昨天沒有客人對話'
+  const head = multi ? `${coverPhrase(multi)}共 ${y.total} 場對話` : `昨天 ${y.total} 場對話`
   // 全部自己搞定＝這則訊息最值得講的好消息，給它一句專屬說法
-  if (y.selfServed === y.total) return `昨天 ${y.total} 場對話，AI 全部自己搞定`
+  if (y.selfServed === y.total) return `${head}，AI 全部自己搞定`
 
   const parts: string[] = []
   if (y.selfServed) parts.push(`AI 自己搞定 ${y.selfServed} 場`)
   if (y.humanServed) parts.push(`你出手 ${y.humanServed} 場`)
-  if (y.unhandled) parts.push(`${y.unhandled} 場一整天沒人回`)
-  if (!parts.length) return `昨天 ${y.total} 場對話`
-  return `昨天 ${y.total} 場對話，${parts.join('、')}`
+  if (y.unhandled) parts.push(multi ? `${y.unhandled} 場沒人回` : `${y.unhandled} 場一整天沒人回`)
+  if (!parts.length) return head
+  return `${head}，${parts.join('、')}`
 }
 
 /**
@@ -191,16 +202,22 @@ export function buildDigestLines(input: DigestInput): string[] | null {
 
   const lines: string[] = []
 
+  const core = yesterdayCore(y, input.coverDays)
+  const multiDay = (input.coverDays?.length ?? 0) > 1
+
   // ── 順利的一天：一行講完（拍板選項 B）──────────────────
   if (nothingToDo) {
     const tail = y ? '，沒有人在等。' : '，目前沒有人在等。'
-    lines.push(`☀️ ${input.dateLabel} ${yesterdayCore(y)}${tail}${friendsLine}`)
+    // 好幾天時那句自己就以日期開頭，接在「9/17（三）」後面會變成兩個日期黏在一起
+    lines.push(multiDay
+      ? `☀️ ${input.dateLabel}早安，${core}${tail}${friendsLine}`
+      : `☀️ ${input.dateLabel} ${core}${tail}${friendsLine}`)
     if (unknownLine) lines.push(unknownLine)
   }
   else {
-    // ── 段一：昨天 ────────────────────────────────────────
+    // ── 段一：昨天（回來那天＝上一則之後的每一天）──────────────
     lines.push(`☀️ ${input.dateLabel}早安`, '')
-    lines.push(`${yesterdayCore(y)}。`)
+    lines.push(`${core}。`)
     if (y?.unhandledNames.length) {
       const more = y.unhandled > y.unhandledNames.length ? `等 ${y.unhandled} 位` : ''
       lines.push(`沒人回的是${joinZh(y.unhandledNames)}${more}。`)

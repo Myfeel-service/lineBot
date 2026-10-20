@@ -316,6 +316,7 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   start: '服務時段起',
   end: '服務時段迄',
   weekendOff: '週末整天不打擾',
+  holidayOff: '國定假日整天不打擾',
   dndReply: '勿擾時段回給客人的話',
   days: '幾天沒來訊算沉睡',
   role: '權限',

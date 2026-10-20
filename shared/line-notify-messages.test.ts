@@ -42,6 +42,14 @@ describe('nextDigestPhrase：第一則摘要什麼時候到', () => {
   it('服務時間沒開，週末照發', () => {
     expect(nextDigestPhrase(taipei(2026, 10, 2, 15), 10, OFF)).toBe('明天早上 10:00')
   })
+  it('國定假日也休（`D-137`②）：光復節連假前的週五下午綁的 → 週二（10/26 週一補假）', () => {
+    expect(nextDigestPhrase(taipei(2026, 10, 23, 15), 10, WEEKEND_OFF)).toBe('週二早上 10:00')
+    expect(nextDigestPhrase(taipei(2026, 10, 23, 15), 10, { ...WEEKEND_OFF, holidayOff: false })).toBe('週一早上 10:00')
+  })
+  it('一週以後才到（春節）→ 講日期，⛔「週四」會被讀成這週的週四', () => {
+    // 2027 春節 2/4（四）～2/10（三）：2/3 下午綁的，下一則是 2/11
+    expect(nextDigestPhrase(taipei(2027, 2, 3, 15), 10, WEEKEND_OFF)).toBe('2/11（四）早上 10:00')
+  })
 })
 
 describe('notifyWhatYouGetLines：這支手機之後會收到什麼', () => {
@@ -51,7 +59,10 @@ describe('notifyWhatYouGetLines：這支手機之後會收到什麼', () => {
       .toBe('・客人要找真人、等超過 60 分鐘沒人接手時')
   })
   it('週末休息才講「週末不傳」；出大事關掉就不列', () => {
-    expect(notifyWhatYouGetLines(cfg(), WEEKEND_OFF)).toContain('・每天早上 10:00 的摘要（週末不傳）')
+    // 國定假日沒設過（舊資料）＝跟週末一樣休（`D-137`②）
+    expect(notifyWhatYouGetLines(cfg(), WEEKEND_OFF)).toContain('・每天早上 10:00 的摘要（週末與國定假日不傳）')
+    expect(notifyWhatYouGetLines(cfg(), { ...WEEKEND_OFF, holidayOff: false })).toContain('・每天早上 10:00 的摘要（週末不傳）')
+    expect(notifyWhatYouGetLines(cfg(), { ...WEEKEND_OFF, weekendOff: false, holidayOff: true })).toContain('・每天早上 10:00 的摘要（國定假日不傳）')
     expect(notifyWhatYouGetLines(cfg(), OFF)).toContain('・每天早上 10:00 的摘要')
     expect(notifyWhatYouGetLines(cfg({ criticalAlertPush: false }), OFF)).not.toContain('・出大事的時候')
   })

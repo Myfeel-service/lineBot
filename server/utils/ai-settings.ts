@@ -209,11 +209,15 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
       const validHHmm = (v: unknown, fallback: string) =>
         (typeof v === 'string' && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim())) ? v.trim() : fallback
       const reply = typeof sh?.dndReply === 'string' && sh.dndReply.trim() ? sh.dndReply.trim().slice(0, 500) : DEFAULT_DND_REPLY
+      const weekendOff = typeof sh?.weekendOff === 'boolean' ? sh.weekendOff : true
       return {
         enabled: sh?.enabled === true,
         start: validHHmm(sh?.start, '09:00'),
         end: validHHmm(sh?.end, '18:00'),
-        weekendOff: typeof sh?.weekendOff === 'boolean' ? sh.weekendOff : true,
+        weekendOff,
+        // 舊工作區沒有這格（`D-137`②，2026-10-21 才加）→ 跟週末一樣：週末休息的店國定假日幾乎也休，
+        // MYFEEL 9/25、9/28、10/9 實際就沒上班。前端 holidayOffOf 同一個口徑
+        holidayOff: typeof sh?.holidayOff === 'boolean' ? sh.holidayOff : weekendOff,
         dndReply: reply,
       }
     })(),

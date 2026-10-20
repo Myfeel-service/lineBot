@@ -199,7 +199,8 @@ describe('op：服務時間／勿擾時段', () => {
     const args = op.normalize({ mode: 'dnd', start: '22:00', end: '08:00' })
     const preview = await op.preview(ctx, args)
 
-    expect(preview.items.map(i => i.label)).toEqual(['週一至週五 09:00–18:00', '週一至週五 08:00–22:00'])
+    // 國定假日沒設過＝跟週末一樣休（`D-137`②）；小幫手改時間不動這一格
+    expect(preview.items.map(i => i.label)).toEqual(['週一至週五 09:00–18:00（國定假日休息）', '週一至週五 08:00–22:00（國定假日休息）'])
     expect(preview.items[1]?.note).toContain('22:00–08:00') // 改完的勿擾時段
     expect(preview.warning).toContain('找真人')
     expect(setCalls).toHaveLength(0)
@@ -227,6 +228,12 @@ describe('op：服務時間／勿擾時段', () => {
     settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: false, dndReply: 'x' }
     await op.execute(ctx, op.normalize({ mode: 'service', start: '10:00', end: '19:00' }))
     expect(setCalls[0].serviceHours.weekendOff).toBe(false)
+  })
+
+  it('國定假日照常上班的店：改時間不會順手把「國定假日休息」打開（`D-137`②）', async () => {
+    settingsStore.serviceHours = { enabled: true, start: '09:00', end: '18:00', weekendOff: true, holidayOff: false, dndReply: 'x' }
+    await op.execute(ctx, op.normalize({ mode: 'service', start: '10:00', end: '19:00', weekendOff: true }))
+    expect(setCalls[0].serviceHours.holidayOff).toBe(false)
   })
 
   it('本來就是關的還要關：說不用改，且不寫入', async () => {

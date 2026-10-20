@@ -255,8 +255,8 @@
                     </el-select>
                     <span class="ln-when__tail">傳：昨天的成績、今天要處理的事</span>
                   </div>
-                  <p v-if="data.serviceHours.enabled && data.serviceHours.weekendOff" class="ai-section-hint">
-                    週末不傳（「服務時間」設了週六日休息）
+                  <p v-if="digestDaysOff" class="ai-section-hint">
+                    {{ digestDaysOff }}不傳，回來上班那天一次講完（「服務時間」設了休息）
                   </p>
                   <!-- `D-107`：兩個勾選是附在摘要裡的一段，⛔ 不是另外傳一則（08-06 拍板「一則錢講完全部」），
                        原本看起來像兩個獨立的通知。說明照送出端實際內容寫：festivalReminderText 三個里程碑、
@@ -353,6 +353,7 @@ import {
   buildCriticalAlertText,
   buildHandoffNotifyText,
   buildNotifyConfirmText,
+  digestDaysOffPhrase,
   nextDigestPhrase,
 } from '~~/shared/line-notify-messages'
 import { buildDigestLines, taipeiDateLabel } from '~~/shared/daily-digest-message'
@@ -412,7 +413,7 @@ interface PageData {
   others: Other[]
   deliveryKnown: boolean
   timing: Timing
-  serviceHours: { enabled: boolean, start: string, end: string, weekendOff: boolean }
+  serviceHours: { enabled: boolean, start: string, end: string, weekendOff: boolean, holidayOff?: boolean }
   /** 通知裡有沒有放連結（開關關著時預覽也不畫連結） */
   linksEnabled: boolean
 }
@@ -888,6 +889,9 @@ useAgentOpRefresh('line-notify', async (evt, { mode }) => {
  * 「節日前的行銷提醒」底下那行（`C-357`）：照送出端實際會講的寫——免費方案（推播等級 none）的提醒
  * 不叫他排推播（`festivalReminderText` 的 canBroadcast），這行也不寫「再排推播」。讀不到等級＝照舊。
  */
+/** 摘要哪些日子不傳（「週末與國定假日」），跟排程同一套休假規則；都沒勾就不出那行 */
+const digestDaysOff = computed(() => digestDaysOffPhrase(data.value?.serviceHours))
+
 const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
 const festivalTipsHint = computed(() => broadcastTier.value === 'none'
   ? '節日前 7／3／1 天各講一次：先備素材、再確認庫存和出貨、最後確認客服有沒有人顧。'

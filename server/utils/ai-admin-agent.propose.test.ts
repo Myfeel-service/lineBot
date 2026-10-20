@@ -676,9 +676,11 @@ describe('get_ai_settings 的服務時間／勿擾時段', () => {
     await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '勿擾幾點到幾點?' })
 
     const prompt = generateJson.mock.calls[1]![0] as string
-    // 假設值是「服務 09:00–18:00、週末休」→ 勿擾就是 18:00–09:00 加整個週末
-    expect(prompt).toContain('"serviceText":"週一至週五 09:00–18:00"')
-    expect(prompt).toContain('"dndText":"18:00–09:00，以及週六、週日整天"')
+    // 假設值是「服務 09:00–18:00、週末休」→ 勿擾就是 18:00–09:00 加整個週末；
+    // 國定假日沒設過＝跟週末一樣休（`D-137`②），兩句都要講到
+    expect(prompt).toContain('"serviceText":"週一至週五 09:00–18:00（國定假日休息）"')
+    expect(prompt).toContain('"dndText":"18:00–09:00，以及週六、週日與國定假日整天"')
+    expect(prompt).toContain('"holidayOff":true')
     // ⛔ 裸的起訖不可以再出現：它離開這裡就沒有人記得那是「服務時間」的起訖
     expect(prompt).not.toContain('"start":"09:00"')
     expect(prompt).not.toContain('"end":"18:00"')
