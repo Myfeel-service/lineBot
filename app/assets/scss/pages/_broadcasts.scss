@@ -193,6 +193,28 @@
   border-left: 0;
 }
 
+/* `D-48`：同一支預覽（AdminBroadcastPreview layout="drawer"）放進客服對話頁的群發抽屜。
+   抽屜自己有外框與捲動，這裡只排「說明句在上、手機框在下」，⛔ 不要 sticky、不要寫死高度
+   （那兩條是推播頁右欄才有的版面）。手機框跟著抽屜寬，最多 372px（跟推播頁一樣大）。 */
+.bc-sent-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.bc-sent-preview .fmp {
+  /* ⛔ 一定要寫：_flow-preview.scss 在 ≤1100px 把 .fmp 整個藏起來（機器人模組頁的側欄預覽），
+     抽屜裡藏掉＝1100 與手機上點開只剩一句說明、看不到客人收到的樣子（實測 1100／390 都中） */
+  display: flex;
+  width: 100%;
+  max-width: 372px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border-left: 0;
+}
+
 /* 節慶行銷提醒（2026-08-28 拍板：不再只在 LINE）——側欄清單頂上的一行。
    ⛔不用警示色：這不是異常，紅橘是留給「壞掉」的。中性淡底＋一般字色，
    跟小幫手裡那張節慶卡同一族（components/_tutorial-agent.scss 的 .ta-festival）。 */

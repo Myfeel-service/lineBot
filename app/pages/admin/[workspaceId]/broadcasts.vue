@@ -484,62 +484,17 @@
 
       <!--
         即時預覽。⛔ 已發送／已取消的推播也要看得到：那時人正在回頭查「我那天到底發了什麼」。
-
-        `C-245`（2026-09-24）**修掉一個畫了四個月、客人一次都沒收到的預覽**：
-        選「觸發機器人模組」時，`unifiedActionToLineMessages()` 組出來的那張
-        「點下面的按鈕看看＋開始」卡片，**送出端會在送出前整張換成模組自己的那幾則訊息**
-        （`broadcast-send.ts`，2026-05-07 起）。所以這裡分三條路，判斷用的是**送出端同一支**
-        `extractBroadcastTriggerModuleId()`：
-          ① 已送出且有留存 → 畫**當時真的送出去的那一份**（`C-246` 的快照）
-          ② 模組型 → 用共用的 `AdminActionPreview` 把那個模組**真的抓回來畫**（三態它自己講）
-          ③ 純文字／開啟網址 → 原本就是對的，原封不動
-        ⛔ 不要為了推播另寫第二套預覽元件（`H-27`：預覽在說謊比沒有預覽更糟）。
+        三條路（留存的那一份／模組抓回來畫／照訊息本身畫）在 AdminBroadcastPreview 裡，
+        客服對話頁點「已發送群發」滑出來的抽屜吃同一支（`D-48`）——⛔ 不要再另寫第二套。
       -->
-      <template v-if="previewOpen">
-        <!-- ① 已送出，而且當時的內容有留存 -->
-        <div v-if="sentContentMessages.length" class="bc-preview bc-preview--panel">
-          <p class="aap__source">
-            這是<b>當時真的送出去</b>的 {{ sentContentMessages.length }} 則{{ sentContentModuleName ? `（機器人模組「${sentContentModuleName}」）` : '' }}：
-          </p>
-          <p v-if="sentContentVarNote" class="aap__note" :class="sentWithBlankVariables ? 'aap__note--warn' : 'aap__note--quiet'">{{ sentContentVarNote }}</p>
-          <FlowMessagePreview :messages="sentContentPreview.value" :oa-name="currentWorkspaceName" />
-        </div>
-
-        <!-- ② 觸發機器人模組：去把那個模組真的抓回來畫 -->
-        <AdminActionPreview
-          v-else-if="previewModuleId"
-          class="bc-preview bc-preview--panel"
-          :action="{ type: 'module', moduleId: previewModuleId, text: '', uri: '' }"
-          :module-options="flowOptions"
-          title=""
-          broadcast
-          :blank-variables="sentWithBlankVariables"
-        >
-          <template #ready-note="{ count }">
-            <!-- ⛔ 這句只有推播講得出來：別處是客人按了才收到，推播是直接送到手機上 -->
-            <p v-if="isReadOnly" class="aap__note aap__note--warn">
-              這則推播<b>沒有留存當時送出去的內容</b>（2026-09-24 之前送出的都沒有），
-              上面畫的是那個模組<b>現在</b>的樣子，中間可能已經被改過。
-            </p>
-            <p v-else class="aap__note aap__note--quiet">
-              客人會<b>直接收到這 {{ count }} 則</b>，不需要點任何按鈕。
-            </p>
-          </template>
-        </AdminActionPreview>
-
-        <!-- ③ 純文字／開啟網址：用了名字變數時多講一句（範例名字，或舊推播當時是空白），改用跟①同一種面板（手機上面一句、下面手機）；
-             ⛔ 句子直接接在手機旁邊會變成預覽區的第二欄，把手機擠到中間 -->
-        <div v-else-if="textPreviewVarNote" class="bc-preview bc-preview--panel">
-          <p class="aap__note" :class="sentWithBlankVariables ? 'aap__note--warn' : 'aap__note--quiet'">{{ textPreviewVarNote }}</p>
-          <FlowMessagePreview :messages="textPreview.value" :oa-name="currentWorkspaceName" />
-        </div>
-        <FlowMessagePreview
-          v-else
-          class="bc-preview"
-          :messages="textPreview.value"
-          :oa-name="currentWorkspaceName"
-        />
-      </template>
+      <AdminBroadcastPreview
+        v-if="previewOpen"
+        :messages="previewLineMessages"
+        :sent-content="detailSentContent"
+        :blank-variables="sentWithBlankVariables"
+        :read-only="isReadOnly"
+        :module-options="flowOptions"
+      />
       </div>
     </template>
   </AdminSplitLayout>
@@ -741,8 +696,7 @@ import { ElMessageBox } from 'element-plus'
 import type { UnifiedAction } from '~~/shared/action-schema'
 import { normalizeUnifiedAction, validateUnifiedAction } from '~~/shared/action-schema'
 import {
-  extractBroadcastTriggerModuleId,
-  lineMessagesToPreviewMessages,
+  broadcastSentWithBlankVariables,
   parseLineMessagesToUnifiedAction,
   unifiedActionToLineMessages,
 } from '~~/shared/broadcast-content'
@@ -764,12 +718,6 @@ import {
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
-import {
-  broadcastBlankVariableNote,
-  previewVariableNote,
-  renderBroadcastVariablesDeep,
-  renderPreviewVariablesDeep,
-} from '~~/shared/preview-variables'
 // `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
 import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import { taipeiDate, taipeiDateTime } from '~~/shared/time'
@@ -830,7 +778,7 @@ function isNotFoundApiError(e: unknown): boolean {
   return o.statusCode === 404 || o.status === 404
 }
 
-const { workspaceId, apiFetch, currentWorkspaceName } = useWorkspace()
+const { workspaceId, apiFetch } = useWorkspace()
 // `G-109`：草稿（新增／儲存／試發）＝`broadcast.write`；真的送出去（發送／排程／取消／重發／到期處理）＝`broadcast.send`
 const { can, assertCan } = useAdminOperateGuard()
 
@@ -1081,39 +1029,21 @@ function buildMessages(): Record<string, unknown>[] {
 }
 
 /**
- * `C-229`：右側預覽吃的內容（**純文字／開啟網址**這兩條路）。
- * ⭐ 走的是 `buildMessages()`——這兩型送出端只會把 {{變數}} 換成空白（`server/utils/render-attributes.ts`），
- *    下面 `textPreview` 照同一條規則畫，所以畫出來的就是客人收到的。
+ * `C-229`：右側預覽吃的內容＝`buildMessages()`，送出端吃的也是它（預覽怎麼畫見 AdminBroadcastPreview）。
  * ⛔ 不要改成照 `form.contentAction` 另外拼一份給預覽看：那樣系統套進去的預設文案
  * （「點下面的按鈕看看」那句）就不會出現在預覽裡，等於換個地方繼續騙人。
+ * ⭐ 模組型判斷也在元件裡用送出端同一支（`extractBroadcastTriggerModuleId`），不看 `form.contentAction.type`。
  */
-const previewMessages = computed(() => lineMessagesToPreviewMessages(buildMessages()))
-
-/**
- * `C-245`：這一則會不會在送出當下被整份換成某個模組的內容。
- * ⭐ **用送出端同一支函式判斷**（`extractBroadcastTriggerModuleId`），不是看
- * `form.contentAction.type`——後者是「店家選了什麼」，前者才是「送出去會發生什麼」。
- * 兩者現在一致，但只要送出端哪天多一個條件，照表單判斷的那邊就會再次默默對不上。
- */
-const previewModuleId = computed(() => extractBroadcastTriggerModuleId(buildMessages()))
+const previewLineMessages = computed(() => buildMessages())
 
 /**
  * `C-246`：已送出的推播回頭看時，畫的是**當時真的送出去的那一份**（送出端存下來的）。
- * ⚠️ 2026-09-24 之前送出的推播沒有這份資料，`sentContentMessages` 會是空陣列——
- * 那時走模組那條路畫「現在的內容」，⛔ 但畫面上一定要講「這不是當時的」。
- */
-/**
+ * ⚠️ 2026-09-24 之前送出的推播沒有這份資料——那時走模組那條路畫「現在的內容」，⛔ 但畫面上一定要講「這不是當時的」。
  * ⚠️ 這一份**只從詳情 API 來，不從列表來**：留存的內容含圖文訊息的整份設定，
  * 一則就好幾 KB。跟著列表一起回，等於每次開頁、每次背景刷新都把幾十則的內容全部搬一次
  * （`docs/ADMIN-PERF-AUDIT-20260827.md` 已經為了同樣的事瘦過一次身）。
  */
 const detailSentContent = ref<Record<string, any> | null>(null)
-const sentContent = computed(() => detailSentContent.value)
-const sentContentMessages = computed<any[]>(() => {
-  const msgs = sentContent.value?.messages
-  return Array.isArray(msgs) ? msgs : []
-})
-const sentContentModuleName = computed(() => String(sentContent.value?.moduleName ?? ''))
 
 /**
  * 這則送出去的時候是群發還是一人一則（`D-118` A，送出端寫的 `sendMode`，只有詳情 API 有）。
@@ -1127,24 +1057,13 @@ const detailSendMode = ref<string | null>(null)
  * 其他（草稿、排程中、之後送的）跟別頁一樣畫範例名字。
  * ⚠️ 失敗／發送中的要真的送到過人（`sentCount > 0`）才算——沒送出去就沒有人收到空白。
  * ⚠️ 新的推播沒用變數時是 `multicast`，但那種內容沒有變數可換，畫哪一種都一樣。
+ * 規則本身在 `broadcastSentWithBlankVariables`（客服對話頁的群發抽屜吃同一支，`D-48`）。
  */
 const sentWithBlankVariables = computed(() => {
   const item = selectedItem.value
-  if (!isReadOnly.value || !item || detailSendMode.value) return false
-  if (item.status === 'completed') return true
-  return (item.status === 'failed' || item.status === 'processing') && Number(item.sentCount ?? 0) > 0
+  if (!isReadOnly.value || !item) return false
+  return broadcastSentWithBlankVariables({ status: item.status, sentCount: item.sentCount, sendMode: detailSendMode.value })
 })
-const renderForPreview = (messages: any[]) => (sentWithBlankVariables.value
-  ? renderBroadcastVariablesDeep(messages)
-  // `D-128`：範例值標黃色（FlowMessagePreview 用 PreviewText 畫）
-  : renderPreviewVariablesDeep(messages, { mark: true }))
-const noteForPreview = (keys: string[]) => (sentWithBlankVariables.value
-  ? broadcastBlankVariableNote(keys)
-  : previewVariableNote(keys))
-const sentContentPreview = computed(() => renderForPreview(sentContentMessages.value))
-const sentContentVarNote = computed(() => noteForPreview(sentContentPreview.value.keys))
-const textPreview = computed(() => renderForPreview(previewMessages.value))
-const textPreviewVarNote = computed(() => noteForPreview(textPreview.value.keys))
 
 // ── `C-248`：試發一則給自己看（`D-119` ⑥：收件人改成固定名單打勾）──────────────────
 interface TestRecipient { lineUserId: string; displayName: string; pictureUrl: string; email?: string; unreachable?: 'blocked' | 'gone' }

@@ -724,8 +724,25 @@
               搜到「按了按鈕：查詢訂單」點進去就會停在對話最新處、什麼都沒亮（實機守門員抓到）。
               系統事件（新會話開始…）不是訊息，沒有 id 可以指，不套。
             -->
+            <!--
+              `D-48`：「已發送群發：XXX」可以點——從右邊滑出那則推播客人收到的樣子（手機上整頁抽屜）。
+              群發不逐筆寫進對話（一次幾百人會把整個收件匣排序洗掉，見 messages.get.ts 的 loadBroadcastItems），
+              這一行本來就只帶推播編號，點了才去讀那一則，不多寫任何資料。
+            -->
+            <button
+              v-if="row.kind === 'event' && row.broadcastId"
+              type="button"
+              class="conv-timeline-event conv-timeline-event--broadcast"
+              :aria-label="`${row.label}，查看客人收到的內容`"
+              @click="openBroadcastDrawer(row.broadcastId, row.timestamp, row.label)"
+            >
+              <span class="conv-timeline-event__icon" aria-hidden="true">📣</span>
+              <span class="conv-timeline-event__label">{{ row.label }}</span>
+              <span class="conv-timeline-event__time">{{ formatClockTime(row.timestamp) }}</span>
+              <span class="conv-timeline-event__more" aria-hidden="true">查看內容 ›</span>
+            </button>
             <div
-              v-if="row.kind === 'event'"
+              v-else-if="row.kind === 'event'"
               class="conv-timeline-event"
               :data-msg-id="row.variant === 'action' ? row.key : undefined"
               :class="{
@@ -1415,6 +1432,37 @@
     />
   </el-drawer>
 
+  <!--
+    `D-48`：點對話裡「已發送群發：XXX」那一行，從右邊滑出那則推播「客人真的收到的樣子」。
+    預覽跟推播頁右欄同一支（AdminBroadcastPreview：當時留存的那一份＞模組抓回來畫＞照訊息本身畫）。
+    電腦版 420px 蓋在客人檔案那一欄上（對話照樣看得到）；手機上整頁（跟客人檔案抽屜同一個樣子）。
+    destroy-on-close＝收起來就卸掉（模組那條路會去抓模組內容，不要留在背景）。
+  -->
+  <el-drawer
+    v-model="broadcastDrawerOpen"
+    :title="broadcastDrawerTitle"
+    direction="rtl"
+    :size="isPhone ? '100%' : '420px'"
+    append-to-body
+    destroy-on-close
+    class="conv-broadcast-drawer"
+  >
+    <div class="conv-broadcast-drawer__body">
+      <p v-if="broadcastDrawerSentText" class="conv-broadcast-drawer__meta">{{ broadcastDrawerSentText }}</p>
+      <div v-if="broadcastDetailLoading" class="split-sidebar-loading"><div class="spinner" /></div>
+      <!-- ⛔ 讀不到要講（三態）：畫成空白等於告訴他「那則推播什麼都沒有」 -->
+      <p v-else-if="broadcastDetailError" class="aap__note aap__note--warn">{{ broadcastDetailError }}</p>
+      <AdminBroadcastPreview
+        v-else-if="broadcastDetail"
+        layout="drawer"
+        read-only
+        :messages="broadcastDetail.messages ?? []"
+        :sent-content="broadcastDetail.sentContent ?? null"
+        :blank-variables="broadcastSentWithBlankVariables(broadcastDetail)"
+      />
+    </div>
+  </el-drawer>
+
   <el-dialog
     v-model="mediaDialogVisible"
     :title="quickSendDialogTitle"
@@ -1578,6 +1626,7 @@ import {
   type ModuleType,
 } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL, followUpMenuItems } from '~~/shared/conversation-flags'
+import { broadcastSentWithBlankVariables } from '~~/shared/broadcast-content'
 import {
   CONVERSATION_BATCH_LIMIT,
   CONVERSATION_BATCH_SKIP_LABELS,
@@ -2137,7 +2186,9 @@ type ChatRowEvent = { kind: 'event'; key: string; label: string; timestamp: any;
   /** 原始事件型別：用來分「換手／客人動作」與「純軌跡」，⛔別用 label 字串猜（文案改了就失效） */
   eventType?: string
   /** entered_module 專用：摘要列要講「進了哪一種模組」，label 已經被包成「進入：X」不好拆 */
-  moduleType?: string }
+  moduleType?: string
+  /** 群發那一行（`D-48`）：點了用它去讀那則推播、畫客人收到的樣子 */
+  broadcastId?: string }
 type ChatRowMsg = { kind: 'msg'; key: string; msg: MsgItem }
 type ChatRow = ChatRowEvent | ChatRowMsg
 
@@ -3269,6 +3320,7 @@ const serverChatRows = computed<ChatRow[]>(() => {
         timestamp: item.timestamp,
         eventType: item.eventType ? String(item.eventType) : undefined,
         moduleType: item.moduleType ? String(item.moduleType) : undefined,
+        broadcastId: item.type === 'broadcast' && item.broadcastId ? String(item.broadcastId) : undefined,
       })
       continue
     }
@@ -3446,7 +3498,74 @@ function openContextMenuFromButton(ev: MouseEvent, target: ConvItem | SessionIte
   openContextMenuAt(rect.left, rect.bottom + 4, target)
 }
 
-/** 同一位客人可能同時出現在 conversations 與 sessions 兩份清單，兩邊都要跟著更新 */
+/* ── 群發抽屜（`D-48`）─────────────────────────────────────────
+ * 對話裡那行「已發送群發：XXX」點下去，從右邊滑出那則推播「客人真的收到的樣子」。
+ * 只讀不寫：用時間軸本來就帶的推播編號去讀推播詳情（`GET /api/broadcast/:id`，看得到對話的角色都讀得到）。
+ * 讀過的留在這一頁（同一則來回點不重讀；換頁就丟）。 */
+interface BroadcastDetail {
+  id: string
+  name?: string
+  status?: string
+  sentCount?: number
+  sendMode?: string
+  messages?: Record<string, unknown>[]
+  sentContent?: Record<string, any> | null
+}
+const broadcastDrawerOpen = ref(false)
+const broadcastDrawerId = ref('')
+/** 從那一行帶過來的：詳情還沒回來前標題就先寫得出名字 */
+const broadcastDrawerLabel = ref('')
+const broadcastDrawerAtMs = ref(0)
+const broadcastDetailCache = new Map<string, BroadcastDetail>()
+const broadcastDetail = ref<BroadcastDetail | null>(null)
+const broadcastDetailLoading = ref(false)
+const broadcastDetailError = ref('')
+let broadcastLoadSeq = 0
+
+const broadcastDrawerTitle = computed(() =>
+  broadcastDetail.value?.name?.trim()
+  || broadcastDrawerLabel.value.replace(/^已發送群發：/, '').trim()
+  || '群發內容')
+
+/** 「今天 10:30 發出」：跟對話裡的日期膠囊＋時間同一種說法 */
+const broadcastDrawerSentText = computed(() => {
+  const ms = broadcastDrawerAtMs.value
+  return ms > 0 ? `${formatChatDayLabel(ms)} ${formatClockTime(ms)} 發出` : ''
+})
+
+async function openBroadcastDrawer(broadcastId: string, timestamp: unknown, label = '') {
+  if (!broadcastId) return
+  broadcastDrawerId.value = broadcastId
+  broadcastDrawerLabel.value = label
+  broadcastDrawerAtMs.value = messageTimestampToMs(timestamp)
+  broadcastDetailError.value = ''
+  broadcastDrawerOpen.value = true
+  const cached = broadcastDetailCache.get(broadcastId)
+  if (cached) {
+    broadcastDetail.value = cached
+    broadcastDetailLoading.value = false
+    return
+  }
+  broadcastDetail.value = null
+  broadcastDetailLoading.value = true
+  // ⛔ 連點兩則：慢回來的上一則不可以蓋掉這一則（同 listLoadSeq 的理由）
+  const seq = ++broadcastLoadSeq
+  try {
+    const res = await apiFetch<BroadcastDetail>(`/api/broadcast/${encodeURIComponent(broadcastId)}`)
+    broadcastDetailCache.set(broadcastId, res)
+    if (seq === broadcastLoadSeq) broadcastDetail.value = res
+  }
+  catch (e: any) {
+    if (seq !== broadcastLoadSeq) return
+    broadcastDetailError.value = e?.statusCode === 404 || e?.status === 404
+      ? '這則推播已經被刪掉了，看不到當時的內容。'
+      : '這次沒能把那則推播讀回來，請稍後再點一次；也可以到「推播」頁找這一則。'
+  }
+  finally {
+    if (seq === broadcastLoadSeq) broadcastDetailLoading.value = false
+  }
+}
+
 /* ── 負責人員（G-27 功能缺口②）─────────────────────────────── */
 
 interface AssignableMember { uid: string, name: string }

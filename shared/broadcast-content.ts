@@ -210,6 +210,43 @@ export function lineMessagesToPreviewMessages(
 }
 
 /**
+ * 一則推播的預覽要畫哪一份（`C-245`／`C-246` 定的三條路；`D-48` 起推播頁右欄與客服對話頁的群發抽屜
+ * 共用 `AdminBroadcastPreview`，判斷抽到這裡兩邊同一支）：
+ *   sent   ＝送出端留存了「當時真的送出去」的那一份（`sentContent`）→ 畫那一份
+ *   module ＝觸發機器人模組型（送出端會整份換成模組內容，判斷用送出端同一支）→ 把模組抓回來畫
+ *   text   ＝純文字／開啟網址 → 照訊息本身畫
+ * ⛔ 有留存一律畫留存的：模組之後可能被改過，「現在的樣子」不等於客人當時收到的。
+ */
+export type BroadcastPreviewRoute = 'sent' | 'module' | 'text'
+
+export function broadcastPreviewRoute(b: {
+  messages?: unknown[] | null
+  sentContent?: { messages?: unknown } | null
+}): BroadcastPreviewRoute {
+  const kept = b.sentContent?.messages
+  if (Array.isArray(kept) && kept.length) return 'sent'
+  if (extractBroadcastTriggerModuleId(b.messages ?? [])) return 'module'
+  return 'text'
+}
+
+/**
+ * 回頭看一則推播時，名字變數那一格客人當時收到的是不是**空白**（`D-118`）。
+ * 2026-10-15 以前推播一律群發、送出端沒有任何一位客人的資料 → 變數換成空字串；之後用了變數改成一人一則，
+ * 送出端會寫 `sendMode`。所以「已經送到過人、而且沒有 `sendMode`」＝空白。
+ * ⚠️ 失敗／發送中的要真的送到過人（`sentCount > 0`）才算——沒送出去就沒有人收到空白。
+ * 推播頁右欄與客服對話頁的群發抽屜都吃這一支（`D-48`），⛔ 不要各判各的。
+ */
+export function broadcastSentWithBlankVariables(b: {
+  status?: unknown
+  sentCount?: unknown
+  sendMode?: unknown
+}): boolean {
+  if (typeof b.sendMode === 'string' && b.sendMode) return false
+  if (b.status === 'completed') return true
+  return (b.status === 'failed' || b.status === 'processing') && Number(b.sentCount ?? 0) > 0
+}
+
+/**
  * 卡片本文：店家自己寫的優先，沒寫就用預設，最後照按鈕範本的 160 字上限截斷。
  * ⛔ 截斷走 `truncateLineText`，不要自己 `.slice()`——預覽與送出必須切在同一格
  * （`H-27` 的教訓，見 `shared/line-text-limits.ts`）。

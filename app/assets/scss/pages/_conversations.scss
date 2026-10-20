@@ -838,6 +838,39 @@
   }
 
   /**
+   * `D-48`：「已發送群發：XXX」那一行可以點（滑出那則推播客人收到的樣子）。
+   * 形狀跟系統事件同一顆膠囊（不是泡泡：那不是誰在對話裡說的話），差在「看得出能按」：
+   * 實線框＋滑過變色＋尾巴一句「查看內容 ›」。⛔ 不用品牌綠當底：綠在這頁是「主要動作」（我接手、送出）。
+   */
+  .conv-timeline-event--broadcast {
+    border-style: solid;
+    font: inherit;
+    font-size: 0.78rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+
+    &:hover {
+      background: var(--bg-elevated);
+      border-color: var(--border-active);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--border-active);
+      outline-offset: 2px;
+    }
+  }
+
+  .conv-timeline-event__more {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    /* 可讀深綠（AA）：淺底上的連結字，跟後台其他「查看」連結同一個色 */
+    color: var(--brand-green-text);
+    white-space: nowrap;
+  }
+
+  /**
    * 「上面還有更早的」／「這場之後還有」那一列。
    *
    * 刻意做得比事件膠囊更輕（沒有邊框、字更小）：它講的是**載入狀態**，不是對話內容，
@@ -2802,6 +2835,38 @@
   .el-drawer__body {
     padding: 0.9rem 0.85rem 6rem;
   }
+}
+
+/* `D-48` 群發抽屜（也掛在 body 底下）。標頭跟客人檔案抽屜同一個樣子；
+   底部留白讓得過右下角小幫手那顆（同上），不然手機框最下面那一截會被它蓋住。 */
+.conv-broadcast-drawer {
+  .el-drawer__header {
+    margin-bottom: 0;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .el-drawer__title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .el-drawer__body {
+    padding: 0.9rem 0.85rem 6rem;
+  }
+}
+
+.conv-broadcast-drawer__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.conv-broadcast-drawer__meta {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
 }
 
 .conv-picker-popover {
