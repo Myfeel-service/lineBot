@@ -2,7 +2,15 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { buildSourceClearFailure, getSource, KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
+import {
+  buildSourceClearFailure,
+  getSource,
+  KNOWLEDGE_SOURCES_COLLECTION,
+  loadAppliedPage,
+  saveAppliedPage,
+  sourceNumbersVolatile,
+} from '~~/server/utils/ai-knowledge-sources'
+import { diffPageLines, pageLinesChanged } from '~~/shared/page-line-diff'
 import { getResyncExtracted } from '~~/server/utils/ai-knowledge-resync'
 import { extractionQualityWarnings } from '~~/server/utils/ai-source-extractors'
 import { normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
@@ -92,7 +100,18 @@ export default defineEventHandler(async (event) => {
    * （之前是排程偵測到中途改過又改回來、或已被小改自動套用處理掉）。
    */
   const baseline = String(source.data.appliedContentHash ?? '').trim()
-  if (!force && baseline && baseline === extracted.contentHash) {
+  /**
+   * 再跟「這批知識是照哪一版網頁做的」原文一行一行比（`C-368`）。逐字指紋對不上的常見原因是
+   * 空白、行的順序（首頁商品換位置）——一行都沒改就跟指紋相同一樣處理：沒有要決定的事。
+   * 數字會自己跳的網址：比行時抹掉數字；行都一樣但數字動了的話照樣要跑（改價只能從卡片上的數字看出來）。
+   * 按「還是要重新整理一次」（force）＝不比、整份照舊給人看。
+   */
+  const appliedPage = force ? null : await loadAppliedPage(db, sourceId)
+  const ignoreNumbers = sourceNumbersVolatile(source.data)
+  const lineDiff = appliedPage ? diffPageLines(appliedPage.text, extracted.text, { ignoreNumbers }) : null
+  const sameLines = !!appliedPage && !pageLinesChanged(lineDiff!)
+    && (!ignoreNumbers || !pageLinesChanged(diffPageLines(appliedPage.text, extracted.text, { ignoreNumbers: false })))
+  if (!force && ((baseline && baseline === extracted.contentHash) || sameLines)) {
     // 兩道指紋要一起更新（排程用「抹掉數字後的指紋」分辨「網頁真的改了」與「計數器又跳了」）。
     // 只更新其中一道會讓兩者對應到不同版本，下次數字一動就被誤判成文字改過。
     const { createHash } = await import('node:crypto')
@@ -110,7 +129,12 @@ export default defineEventHandler(async (event) => {
       // 而且殘留的 checkFailCount 會餵給退避演算法，把健康來源推到 24 小時才檢查一次。
       // （buildSourceClearFailure 本身就會 delete checkFailCount／failureReason，不必再寫一次）
       ...buildSourceClearFailure(source.data.status),
+      // 一行都沒改＝這批知識就是對到這一版：版本記號跟原文一起推到這一版（`C-368`），下次從這裡比
+      ...(sameLines ? { appliedContentHash: extracted.contentHash, outdatedReason: null } : { outdatedReason: null }),
     }).catch(e => console.warn('[resync] unchanged bookkeeping failed:', e))
+    // 兩種進來的路都代表「這批知識就是對到現在這一版網頁」：順手把原文存成比對基準
+    //（舊資料就是在這裡補到第一份原文的）
+    await saveAppliedPage(db, sourceId, extracted.text, extracted.contentHash)
     return {
       status: 'unchanged' as const,
       sourceId,
@@ -139,6 +163,8 @@ export default defineEventHandler(async (event) => {
   work.truncated = extracted.rawLength > extracted.text.length
   work.resyncContentHash = extracted.contentHash
   work.resyncFetchedChars = extracted.text.trim().length
+  // 改了哪幾行（`C-368`）：finalize 拿它把「跟改了的行都無關」的那幾條收起來；null＝照舊整份比對
+  work.resyncLineDiff = lineDiff
   // 與匯入同一套擷取守門:同個網址在兩條路上要得到同樣的診斷
   work.warnings.push(...extractionQualityWarnings('url', extracted.text, (extracted as any).truncatedBySize === true))
   primeChunking(work, extracted.text)

@@ -32,7 +32,8 @@ import { recordAiUsage } from './ai-usage'
 import { aiUsageOfError, callsOf, usageFromCalls, type AiCallsCarrier, type AiCallUsage } from './ai-usage-calls'
 import { GEMINI_MODEL_PRICES, modelKeyOf, type GeminiModelKey } from './ai-cost-buckets'
 import type { ChunkInput } from './ai-knowledge-chunks'
-import { normalizeForCompare, type DiffResult } from './ai-knowledge-resync'
+import { normalizeForCompare, type DiffResult, type PageLineVerdict } from './ai-knowledge-resync'
+import type { PageLineDiff } from '~~/shared/page-line-diff'
 
 export const KNOWLEDGE_PREVIEW_JOBS_COLLECTION = 'knowledgePreviewJobs'
 
@@ -174,6 +175,11 @@ export interface WorkState {
    * 「網頁到底有沒有變」，不必每次都重跑 LLM 切卡去比兩批生成結果。
    */
   extractedHash?: string
+  /**
+   * 網址來源（新加入，`C-368`）：這次抓到的原文（＝extractedHash 那一份）。
+   * 匯入時存成「這批知識是照哪一版網頁做的」原文；之後更新才比得出網頁改了哪幾行。
+   */
+  extractedText?: string
   // ── resync 工作專用(input.resyncSourceId 有值時)──
   /** finalize 算出的新舊卡差異 */
   resyncDiff?: DiffResult
@@ -183,7 +189,29 @@ export interface WorkState {
   resyncFetchedChars?: number
   /** 內容縮水偵測:抓到的字數或切出的卡數暴跌、且真有卡消失 → 疑似動態頁/抓取故障 */
   resyncShrink?: { oldChars: number; newChars: number; oldCards: number; newCards: number } | null
+  /**
+   * 網頁跟「這批知識是照哪一版網頁做的」那份原文比，改了哪幾行（`C-368`，建 job 時算好）。
+   * null／沒有＝沒有上一版原文（舊資料）或使用者按了「還是要重新整理一次」→ 照舊整份比對、不收。
+   */
+  resyncLineDiff?: PageLineDiff | null
+  /** finalize 依 resyncLineDiff 收完之後的結果（給畫面講「網頁改了這幾行」）；null＝這次沒有逐行比 */
+  resyncPage?: ResyncPageSummary | null
 }
+
+/** 給畫面的「網頁改了這幾行」（`C-368`） */
+export interface ResyncPageSummary {
+  /** 改了的行（最多 RESYNC_PAGE_MAX_LINES 行；總數看 addedCount／removedCount） */
+  lines: PageLineVerdict[]
+  addedCount: number
+  removedCount: number
+  /** 跟改了的行都無關、收起來的條數 */
+  folded: number
+  /** 對不到知識的行數 */
+  uncertain: number
+}
+
+/** 「網頁改了這幾行」最多帶幾行給畫面：網站整個改版時可能上千行，畫面也只會先顯示幾行 */
+export const RESYNC_PAGE_MAX_LINES = 200
 
 /** Firestore job 文件（保持極小） */
 export interface PreviewJobDoc {
@@ -584,6 +612,8 @@ export function workToPreviewResult(work: WorkState) {
             contentHash: work.resyncContentHash ?? '',
             diff: work.resyncDiff ?? null,
             shrink: work.resyncShrink ?? null,
+            // 網頁改了這幾行（`C-368`）；null＝這次沒有逐行比（舊資料沒有上一版原文、或按了「還是要重新整理一次」）
+            page: work.resyncPage ?? null,
           },
         }
       : {}),

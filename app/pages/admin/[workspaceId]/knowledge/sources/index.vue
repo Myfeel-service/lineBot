@@ -495,10 +495,11 @@
           @close="resyncNoChange = null"
         >
           <template #title>
-            網頁內容跟你上次整理的時候一模一樣
+            網頁沒有要更新的地方
           </template>
           <div>
-            剛剛重新抓了一次這個網址，內容逐字比對完全相同，所以沒有需要你決定的事，知識也不用動。
+            <!-- `C-368`：不再寫「逐字比對完全相同」——一行一行比，空白、順序、會自己跳的數字不算改 -->
+            剛剛重新抓了一次這個網址，跟你上次整理的時候比，沒有改到任何知識，不用動。
             <el-button text size="small" :loading="resyncing" @click="startResync(true)">
               還是要讓 AI 重新整理一次
             </el-button>
@@ -514,13 +515,31 @@
           :closable="false"
           class="src-outdated-alert"
         >
+          <!-- `C-368`：沒衝突的變動系統自己做完了，會走到這裡的只剩要你看的那幾種——講是哪一種 -->
           <template #title>
-            偵測到網頁內容變動 — {{ relativeTime(selectedSource.outdatedAtMs) }}
+            {{ outdatedCopy.title }} — {{ relativeTime(selectedSource.outdatedAtMs) }}
           </template>
-          <div>
-            最後一次自動偵測發現原始網址內容已改變，建議點上方「立即更新」檢視差異後決定要不要套用。
-          </div>
+          <div>{{ outdatedCopy.body }}</div>
         </el-alert>
+
+        <!-- 上一次照網頁自動更新做了什麼（`C-368`）：系統自己改了知識，一定要看得到改了哪些 -->
+        <div
+          v-if="selectedSource.type === 'url' && recentAutoUpdate"
+          class="src-detect-note src-auto-update"
+        >
+          <p class="src-detect-note__title">
+            {{ formatDateShort(recentAutoUpdate.atMs) }} 網頁有更新：{{ autoUpdateSummary(recentAutoUpdate) }}，已自動更新知識
+            <el-button text size="small" @click="autoUpdateOpen = !autoUpdateOpen">
+              {{ autoUpdateOpen ? '收合' : '看是哪些' }}
+            </el-button>
+          </p>
+          <ul v-if="autoUpdateOpen" class="src-auto-update__list">
+            <li v-for="t in recentAutoUpdate.addedTitles" :key="`a-${t}`"><span class="src-auto-update__tag src-auto-update__tag--add">多了</span>{{ t }}</li>
+            <li v-for="t in recentAutoUpdate.updatedTitles" :key="`u-${t}`"><span class="src-auto-update__tag">改了</span>{{ t }}</li>
+            <li v-for="t in recentAutoUpdate.removedTitles" :key="`r-${t}`"><span class="src-auto-update__tag src-auto-update__tag--rem">拿掉</span>{{ t }}</li>
+            <li v-if="recentAutoUpdate.overviewUpdated"><span class="src-auto-update__tag">改了</span>總覽（有賣什麼）換成現在的商品</li>
+          </ul>
+        </div>
 
         <!-- gsheet 手編鎖分歧（C-44）:改了表格卻永遠不生效的唯一原因,必須常駐講出來,
              不能只有卡片上一顆沒解釋的小鎖 icon -->
@@ -682,7 +701,7 @@
                   <p v-else class="src-readonly-value">{{ optionLabel(ON_CHANGE_OPTIONS, settingsForm.onChangeBehavior) }}</p>
                 </div>
                 <div class="admin-field-group">
-                  <AdminFieldLabel text="小幅文字變動" tight />
+                  <AdminFieldLabel text="網頁改了的時候" tight />
                   <el-radio-group v-if="canEditSources" v-model="settingsForm.urlAutoApply" :disabled="settingsForm.onChangeBehavior === 'log_only'">
                     <el-radio v-for="o in AUTO_APPLY_OPTIONS" :key="String(o.value)" :value="o.value">{{ o.label }}</el-radio>
                   </el-radio-group>
@@ -952,7 +971,34 @@
     destroy-on-close
   >
     <div v-if="diffData" class="diff-body">
-      <p class="text-muted text-sm">
+      <!-- 有上一版網頁原文（`C-368`）：先講網頁本身改了哪幾行，下面只列跟這幾行有關的知識 -->
+      <template v-if="diffData.page">
+        <p class="text-muted text-sm">
+          網頁跟上次比改了下面這幾行。只有跟這幾行有關的知識要你決定，網頁沒改的地方，原本的知識都不動。
+        </p>
+        <div class="diff-page-lines">
+          <p class="diff-page-lines__title">網頁改了這幾行</p>
+          <ul>
+            <li
+              v-for="(l, i) in visiblePageLines"
+              :key="i"
+              class="diff-page-line"
+              :class="`diff-page-line--${l.side}`"
+            >
+              <span class="diff-page-line__mark">{{ l.side === 'added' ? '多了' : '少了' }}</span>
+              <span class="diff-page-line__text">{{ l.display || '（只有符號或網址）' }}</span>
+              <span v-if="l.status === 'uncertain'" class="diff-entry-hint diff-entry-hint--alert">對不到是哪條知識</span>
+            </li>
+          </ul>
+          <el-button v-if="diffData.page.lines.length > PAGE_LINES_PREVIEW" text size="small" @click="showAllPageLines = !showAllPageLines">
+            {{ showAllPageLines ? '收合' : `顯示全部 ${diffData.page.addedCount + diffData.page.removedCount} 行` }}
+          </el-button>
+          <p v-if="diffData.page.uncertain" class="diff-page-lines__warn">
+            有 {{ diffData.page.uncertain }} 行改了、系統對不到是哪條知識：看一下下面的知識有沒有要跟著改的，沒有就照原本的。
+          </p>
+        </div>
+      </template>
+      <p v-else class="text-muted text-sm">
         已重新抓一次網頁、重新整理成一條條知識，請逐條決定要換成新的、還是保留舊的。
         你手動改過的內容預設保留你的版本。
       </p>
@@ -992,7 +1038,7 @@
       <!-- 切法漂了:一張都沒對上卻大量增減,幾乎都是 AI 換了切法,不是網頁整頁重寫。
            不講清楚的話,使用者會照著「移除 N」把好卡刪掉,或認定系統在亂報。 -->
       <el-alert
-        v-if="diffLooksResplit"
+        v-if="diffLooksResplit && !diffData.page"
         type="warning"
         show-icon
         :closable="false"
@@ -1010,10 +1056,10 @@
       </el-alert>
 
       <div class="diff-summary">
-        <span class="diff-summary-chip diff-summary-chip--add">新增 {{ diffData.diff.summary.added }}</span>
-        <span class="diff-summary-chip diff-summary-chip--mod">修改 {{ diffData.diff.summary.modified }}</span>
-        <span class="diff-summary-chip diff-summary-chip--rem">移除 {{ diffData.diff.summary.removed }}</span>
-        <span class="diff-summary-chip diff-summary-chip--same">未變 {{ diffData.diff.summary.unchanged }}</span>
+        <span class="diff-summary-chip diff-summary-chip--add">新增 {{ diffCounts.added }}</span>
+        <span class="diff-summary-chip diff-summary-chip--mod">修改 {{ diffCounts.modified }}</span>
+        <span class="diff-summary-chip diff-summary-chip--rem">移除 {{ diffCounts.removed }}</span>
+        <span class="diff-summary-chip diff-summary-chip--same">{{ diffData.page ? '不動' : '未變' }} {{ diffCounts.unchanged }}</span>
       </div>
 
       <!--
@@ -1060,7 +1106,10 @@
             <span v-if="entry.kind === 'modified' && entry.numbersChanged" class="diff-entry-hint diff-entry-hint--alert">
               數字有變{{ formatNumberChanges(entry.numberChanges) }}
             </span>
-            <span v-if="entry.cosmetic" class="diff-entry-hint">
+            <span v-if="entry.pageUnchanged" class="diff-entry-hint">
+              網頁這一段沒改（原本的不動）
+            </span>
+            <span v-else-if="entry.cosmetic" class="diff-entry-hint">
               換句話說(意思沒變)
             </span>
             <span v-else-if="entry.stillOnPage" class="diff-entry-hint">
@@ -1256,7 +1305,28 @@
           placeholder="例：退換貨政策"
         />
       </div>
-      <div class="admin-field-group">
+      <!--
+        總覽分兩段（`C-369`）：商品清單那段系統照資料重做、這裡只給看；能改的是你自己補充的那段。
+        ⛔ 不給整張改：整張改了就會被鎖住、不再跟著資料更新——MYFEEL 首頁總覽停在 7 月就是這樣來的
+      -->
+      <template v-if="chunkOverviewAuto !== null">
+        <div class="admin-field-group">
+          <AdminFieldLabel text="目前有賣的商品（系統跟著資料自動更新）" tight />
+          <p class="src-readonly-value src-readonly-value--multiline">{{ chunkOverviewAuto }}</p>
+        </div>
+        <div class="admin-field-group">
+          <AdminFieldLabel text="你想補充的話（系統不會改）" tight />
+          <el-input
+            v-model="chunkOwnerNote"
+            type="textarea"
+            :rows="4"
+            :maxlength="1500"
+            show-word-limit
+            placeholder="例：客服請找 LINE 官方帳號；新品不定期上架，最新品項請看官網。"
+          />
+        </div>
+      </template>
+      <div v-else class="admin-field-group">
         <AdminFieldLabel text="內容" tight />
         <el-input
           v-model="chunkForm.content"
@@ -1687,7 +1757,7 @@ interface SourceSummary {
   productName: string
   /** 型錄／列表資料（旗下本來就有很多不同產品）→ 不該催它設「所屬產品」 */
   generateOverview: boolean
-  /** type='url'：小幅文字變動是否自動套用 */
+  /** type='url'：網頁改了要不要照網頁自動更新（`C-368` 前只限小幅文字變動） */
   urlAutoApply: boolean
   lastFetchedAtMs: number
   outdatedAtMs: number
@@ -1710,6 +1780,22 @@ interface SourceSummary {
   summary: string[]
   /** 摘要是什麼時候寫的（ms）；0＝還沒寫過 */
   summaryAt: number
+  /** type='url'（`C-368`）：為什麼停下來要你看；null＝沒原因可講。⚠️ 舊伺服器沒有這一格 */
+  outdatedReason?: { kind: string, count: number } | null
+  /** type='url'（`C-368`）：上一次照網頁自動更新做了什麼。⚠️ 舊伺服器沒有這一格 */
+  lastAutoUpdate?: AutoUpdateRecord | null
+}
+
+interface AutoUpdateRecord {
+  atMs: number
+  added: number
+  removed: number
+  updated: number
+  addedTitles: string[]
+  removedTitles: string[]
+  updatedTitles: string[]
+  quotaSkipped: number
+  overviewUpdated: boolean
 }
 
 interface ChunkRow {
@@ -1734,6 +1820,11 @@ interface ChunkRow {
   activeUntilMs: number
   /** 到期自動停用的時間（0 = 沒發生過） */
   expiredAtMs: number
+  isOverview?: boolean
+  /** 拆成兩段的總覽（`C-369`）：系統照資料做的那段；沒有＝一般知識或還沒拆的舊總覽 */
+  overviewAuto?: string
+  /** 拆成兩段的總覽：店家自己寫的那段 */
+  ownerNote?: string
 }
 
 interface DiffEntry {
@@ -1758,6 +1849,23 @@ interface DiffEntry {
   numberChanges?: { removed: string[]; added: string[] }
   /** kind='modified'：標題(忽略標點空白後)真的變了 */
   titleChanged?: boolean
+  /** 跟網頁改了的那幾行都無關（`C-368`）：網頁上那一段沒動、差別只在 AI 這次的寫法——收合、原本的不動 */
+  pageUnchanged?: boolean
+}
+
+/** 「網頁改了這幾行」的一行（`C-368`；伺服器 PageLineVerdict） */
+interface PageLineRow {
+  side: 'added' | 'removed'
+  display: string
+  /** claimed＝對到知識；uncovered＝從來沒人寫成知識（頁尾樣板）；uncertain＝對不到、要人看 */
+  status: 'claimed' | 'uncovered' | 'uncertain'
+}
+interface ResyncPage {
+  lines: PageLineRow[]
+  addedCount: number
+  removedCount: number
+  folded: number
+  uncertain: number
 }
 
 interface DiffData {
@@ -1780,6 +1888,8 @@ interface DiffData {
   shrink?: { oldChars: number; newChars: number } | null
   /** 擷取品質警示(太薄 / 只抓到選單頁尾),與匯入流程共用同一套判斷 */
   warnings?: string[]
+  /** 網頁改了哪幾行（`C-368`）；null＝沒有上一版原文（舊資料）或按了「還是要重新整理一次」，照舊整份比 */
+  page: ResyncPage | null
 }
 
 const { apiFetch, workspaceId, can } = useWorkspace()
@@ -2160,9 +2270,10 @@ const ON_CHANGE_OPTIONS = [
   { label: '通知我（在資料頁掛 提示）', value: 'notify' as const },
   { label: '只記錄不通知', value: 'log_only' as const },
 ]
+// `C-368`：自動的不再只限「小幅文字變動」——網頁改了、沒動到你改過的，就照網頁更新
 const AUTO_APPLY_OPTIONS = [
-  { label: '自動更新（建議）', value: true },
-  { label: '一律等我確認', value: false },
+  { label: '自動更新（你改過的會先問你）', value: true },
+  { label: '每次都先問我', value: false },
 ]
 /** 對不上任何選項（舊資料的自訂間隔）時照實講數字，⛔ 不要冒充成最接近的那一個 */
 function optionLabel<T>(options: { label: string, value: T }[], value: T): string {
@@ -2214,8 +2325,41 @@ const visibleDiffEntries = computed(() => {
   const entries = diffData.value?.diff.entries ?? []
   return showUnchangedDiff.value
     ? entries
-    : entries.filter(e => e.kind !== 'unchanged' && !e.cosmetic && !e.stillOnPage)
+    : entries.filter(e => !diffEntryFolded(e))
 })
+/** 不用人決定、收起來的那幾種（`C-368` 加了「網頁這一段沒改」） */
+function diffEntryFolded(e: DiffEntry): boolean {
+  return e.kind === 'unchanged' || !!e.cosmetic || !!e.stillOnPage || !!e.pageUnchanged
+}
+/**
+ * 上面那排數字（`C-368`）：有逐行比的時候只數「要你決定的」，其他（網頁沒改的、換句話說的、其實還在網頁上的）
+ * 全算「不動」——不然首頁換了 15 個商品，上面寫「修改 8、未變 0」，跟下面列出來的對不上。
+ */
+const diffCounts = computed(() => {
+  const d = diffData.value
+  if (!d) return { added: 0, modified: 0, removed: 0, unchanged: 0 }
+  if (!d.page) return d.diff.summary
+  const shown = d.diff.entries.filter(e => !diffEntryFolded(e))
+  return {
+    added: shown.filter(e => e.kind === 'new').length,
+    modified: shown.filter(e => e.kind === 'modified').length,
+    removed: shown.filter(e => e.kind === 'removed').length,
+    unchanged: d.diff.entries.length - shown.length,
+  }
+})
+/** 「網頁改了這幾行」先顯示幾行；網站改版時可能上百行 */
+const PAGE_LINES_PREVIEW = 8
+const showAllPageLines = ref(false)
+const visiblePageLines = computed(() => {
+  const lines = diffData.value?.page?.lines ?? []
+  // 對不到知識的那幾行排前面：那是唯一要人特別看的
+  const sorted = [...lines].sort((a, b) => Number(b.status === 'uncertain') - Number(a.status === 'uncertain'))
+  return showAllPageLines.value ? sorted : sorted.slice(0, PAGE_LINES_PREVIEW)
+})
+/** 跟網頁改了的行都無關、收起來的條數（`C-368`） */
+const pageUnchangedCount = computed(() =>
+  (diffData.value?.diff.entries ?? []).filter(e => e.pageUnchanged).length,
+)
 const hiddenUnchangedCount = computed(() =>
   (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'unchanged').length,
 )
@@ -2238,6 +2382,50 @@ const stillOnPageCount = computed(() =>
 const resyncNoChange = ref<string | null>(null)
 
 /**
+ * 黃色「要你看」那一塊講什麼（`C-368`）。沒衝突的變動系統自己做完了，會掛著的只剩這幾種，
+ * 每一種講是哪一件事、按哪裡——不再一律寫「偵測到網頁內容變動，建議檢視差異」。
+ */
+const outdatedCopy = computed(() => {
+  const r = selectedSource.value?.outdatedReason
+  const n = r?.count ?? 0
+  const open = '按上方「立即更新」看網頁改了哪幾行，再決定要不要換。'
+  switch (r?.kind) {
+    case 'manual_edit': return { title: `網頁改了，其中 ${n} 條是你改過的`, body: `你改過的不會自動換。${open}` }
+    case 'big_change': return { title: `網頁改了很多（${n} 行），可能是網站改版`, body: `改這麼多不自動更新。${open}` }
+    case 'shrink': return { title: '這次抓到的網頁少了一大半', body: '可能是網頁壞了或暫時抓不到，為了不刪錯知識先不動。網頁恢復後會自己更新；確定是網頁改版了，按上方「立即更新」。' }
+    case 'unclaimed': return { title: `網頁改了 ${n} 行，系統對不到是哪條知識`, body: open }
+    // ⛔ 不講「下一次更新會補上」：網頁沒再改的話排程不會再試，要他按一下才補得上
+    case 'quota': return { title: `網頁多了新的內容，還有 ${n} 條沒加進來`, body: 'AI 知識量滿了。刪掉用不到的知識或升級方案後，按上方「立即更新」就會補上。' }
+    case 'disabled': return { title: `網頁改了，動到 ${n} 條停用中的知識`, body: `停用中的不會自動換。${open}` }
+    case 'ask': return { title: `網頁改了 ${n} 行`, body: `這份設定成每次都先問你。${open}` }
+    default: return { title: '網頁內容有變', body: open }
+  }
+})
+
+/** 資料頁那一行「網頁有更新…已自動更新」只講最近 14 天的（`C-368`）；太舊的講了也沒用 */
+const AUTO_UPDATE_SHOW_DAYS = 14
+const autoUpdateOpen = ref(false)
+const recentAutoUpdate = computed(() => {
+  const u = selectedSource.value?.lastAutoUpdate
+  if (!u?.atMs || Date.now() - u.atMs > AUTO_UPDATE_SHOW_DAYS * 86_400_000) return null
+  if (!u.added && !u.removed && !u.updated && !u.overviewUpdated) return null
+  return u
+})
+watch(selectedId, () => { autoUpdateOpen.value = false })
+function autoUpdateSummary(u: AutoUpdateRecord): string {
+  const parts = [
+    u.added && `多了 ${u.added} 條`,
+    u.removed && `拿掉 ${u.removed} 條`,
+    u.updated && `改了 ${u.updated} 條`,
+  ].filter(Boolean)
+  return parts.length ? parts.join('、') : '總覽換成現在的商品'
+}
+function formatDateShort(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+/**
  * 「切法漂了」的提示條件:一張都沒對上(未變 0)卻同時大量新增+移除。
  * 這種形狀幾乎都是 AI 這次換了一種切法,不是網頁真的整頁重寫——要講出來,
  * 不然使用者會照著「移除 14」把好卡刪掉,或以為系統在亂報。
@@ -2254,7 +2442,8 @@ const diffLooksResplit = computed(() => {
  * 反過來說：修改張數扣掉這個，就是純粹換句話說、客人拿到的事實沒變的那些。
  */
 const diffNumbersChangedCount = computed(() =>
-  (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'modified' && e.numbersChanged).length,
+  // 收起來的（網頁那一段沒改，`C-368`）不算：上面那排已經寫「修改 0」，這裡再講「有 N 條數字變了」就對不上
+  (diffData.value?.diff.entries ?? []).filter(e => e.kind === 'modified' && e.numbersChanged && !e.pageUnchanged).length,
 )
 /**
  * 「數字沒變、只是換個說法」還**需要人看**的筆數。
@@ -2263,7 +2452,7 @@ const diffNumbersChangedCount = computed(() =>
  */
 const diffRewordOnlyCount = computed(() =>
   (diffData.value?.diff.entries ?? [])
-    .filter(e => e.kind === 'modified' && e.numbersChanged === false && !e.cosmetic).length,
+    .filter(e => e.kind === 'modified' && e.numbersChanged === false && !e.cosmetic && !e.pageUnchanged).length,
 )
 
 /** 「數字有變」badge 後面接的內容:「(1000 → 1200)」;只有一邊有值就只顯示那一邊 */
@@ -2665,6 +2854,10 @@ const chunkEditOpen = ref(false)
 const chunkEditingId = ref<string | null>(null)
 // questions 是 AI 整理產生的常見問法,使用者不直接編;沒值就不送、後端保留既有
 const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions: undefined as string[] | undefined })
+/** 正在編輯的是拆成兩段的總覽（`C-369`）：系統照資料做的那段（只給看）；null＝一般知識 */
+const chunkOverviewAuto = ref<string | null>(null)
+/** 總覽裡「你寫的那段」 */
+const chunkOwnerNote = ref('')
 /** 打開的那一條有沒有被鎖（＞0＝用他改過的版本，見鎖頭那段）；編輯框講「它跟不跟著來源」用 */
 const chunkEditLockedAtMs = ref(0)
 /**
@@ -2672,6 +2865,8 @@ const chunkEditLockedAtMs = ref(0)
  * ⛔ 一句就好——要一直有效該去哪裡改、或改回去的那顆按鈕，都接在同一行
  */
 const chunkSyncNote = computed(() => {
+  // 拆成兩段的總覽（`C-369`）改的只是「你寫的那段」、不會鎖：兩個欄位名稱已經講了誰跟著資料、誰不會動
+  if (chunkOverviewAuto.value !== null) return ''
   const t = selectedSource.value?.type
   const locked = chunkEditLockedAtMs.value > 0
   if (t === 'gsheet') return locked ? '這一條用你改過的版本，不跟著表格。' : '在這裡改了，這一條就不再跟著表格更新；要一直有效，直接改試算表。'
@@ -4388,12 +4583,15 @@ interface ResyncDoneResponse {
     diff: DiffData['diff'] | null
     shrink: { oldChars: number; newChars: number } | null
     warnings?: string[]
+    /** `C-368`；舊伺服器沒有這一格 */
+    page?: ResyncPage | null
   }
 }
 
 const foldedNoteParts = computed(() => {
   const parts: string[] = []
   if (hiddenUnchangedCount.value) parts.push(`${hiddenUnchangedCount.value} 條未變`)
+  if (pageUnchangedCount.value) parts.push(`${pageUnchangedCount.value} 條在網頁沒改的地方(原本的不動)`)
   if (stillOnPageCount.value) parts.push(`${stillOnPageCount.value} 條「移除」其實還在網頁上(這次 AI 換了分法，已自動保留)`)
   if (cosmeticCount.value) parts.push(`${cosmeticCount.value} 條只是換句話說(意思沒變，已自動保留原本的)`)
   return parts
@@ -4472,6 +4670,7 @@ async function startResync(force = false) {
       diff: res.resync.diff,
       shrink,
       warnings: res.resync.warnings ?? [],
+      page: res.resync.page ?? null,
     }
     // 用後端 defaultAction 初始化使用者決定。
     // 內容縮水時「移除」多半是抓不到而不是真下架 → 一律預設保留,不能預設刪除
@@ -4482,6 +4681,22 @@ async function startResync(force = false) {
     }
     decisions.value = init
     shrinkAcknowledged.value = false
+    showAllPageLines.value = false
+    /**
+     * 比完網頁、一條要你決定的都沒有（`C-368`：只有會自己跳的數字在動、或改的是頁尾版權年份這種沒人寫成知識的字）：
+     * ⛔ 不丟一個「全部收合、只有一顆套用」的視窗給人——照「沒變」那樣回答，順手在背景套用一次，
+     *    把版本記號推到這一版、「有變動」提示清掉（全部保留＝伺服器豁免帳本認得，不算保留了跟網頁不同的內容）。
+     */
+    if (diffData.value.page && !diffData.value.diff.entries.some(e => !diffEntryFolded(e)) && !shrink) {
+      await apiFetch(`/api/ai/sources/${sid}/resync-apply`, {
+        method: 'POST',
+        body: { entries: res.resync.diff.entries, decisions: init, contentHash: res.resync.contentHash, applyId: diffData.value.applyId },
+      }).catch(e => console.warn('[resync] 背景套用沒成（下次排程會再對一次）:', e))
+      diffData.value = null
+      resyncNoChange.value = sid
+      await loadSources(true)
+      return
+    }
     void loadDiffQuota() // 背景讀；讀到之前那一行不出現
     diffOpen.value = true
   }
@@ -4627,7 +4842,7 @@ async function applyDiff() {
     // ⛔ 措辭差異保留原卡不算（`C-146`，與後端 countDivergentKeeps 同一把尺）：
     //    畫面剛跟人說「已自動保留原卡、不需要做決定」，套用時再跳一個
     //    「你保留了 N 項與網頁不同的內容」等於自打嘴巴——而他根本沒做過任何決定。
-    if ((e.cosmetic || e.stillOnPage) && (a === 'keep_old' || a === 'skip' || a === undefined)) return false
+    if ((e.cosmetic || e.stillOnPage || e.pageUnchanged) && (a === 'keep_old' || a === 'skip' || a === undefined)) return false
     return (e.kind === 'modified' && (a === 'keep_old' || a === 'skip'))
       || (e.kind === 'removed' && a === 'keep_old')
       || (e.kind === 'new' && a === 'skip')
@@ -4635,7 +4850,8 @@ async function applyDiff() {
   if (divergentKeeps > 0) {
     try {
       await ElMessageBox.confirm(
-        `你保留了 ${divergentKeeps} 項與網頁不同的內容（那幾條維持舊版）。網頁的新內容這次不會套用；之後按「立即更新」時，這些差異仍會再列出來。`,
+        // `C-368`：選了保留就算決定過了——網頁那幾處之後沒再改，不會再拿出來問（以前是每次都再列一次）
+        `你保留了 ${divergentKeeps} 項與網頁不同的內容（那幾條維持舊版）。之後網頁這幾處沒再改，就不會再問你。`,
         '有保留與網頁不同的內容',
         { confirmButtonText: '照我的選擇套用', cancelButtonText: '回去再看看', type: 'warning' },
       )
@@ -4869,6 +5085,9 @@ function openEditChunk(chunk: ChunkRow, resolveQuery = '', reference = '') {
     // 改不掉；那句話會一直被 AI 學著，可能還夾著電話姓名）
     questions: [...(chunk.questions ?? [])],
   }
+  // 拆成兩段的總覽（`C-369`）：只給改「你寫的那段」
+  chunkOverviewAuto.value = chunk.isOverview && typeof chunk.overviewAuto === 'string' ? chunk.overviewAuto : null
+  chunkOwnerNote.value = chunk.ownerNote ?? ''
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
   chunkEditRetryCount.value = chunk.retryCount ?? 0
@@ -5007,10 +5226,14 @@ async function verifyChunkAnswerable(title: string, question?: string) {
 async function saveChunk() {
   const t = chunkForm.value.title.trim()
   const c = chunkForm.value.content.trim()
-  if (!t || !c) return
+  const overviewMode = chunkOverviewAuto.value !== null
+  if (!t || (!c && !overviewMode)) return
   chunkSaving.value = true
   try {
-    const body: Record<string, unknown> = { title: t, content: c }
+    // 總覽（`C-369`）只送「你寫的那段」：內容由伺服器把系統那段跟這段接起來，⛔ 不上鎖
+    const body: Record<string, unknown> = overviewMode
+      ? { title: t, ownerNote: chunkOwnerNote.value.trim() }
+      : { title: t, content: c }
     /*
      * 標籤（`C-314`：欄位不給看了，系統自己管）：只有「AI 整理一下」換了標籤才送——⛔ 沒換就不送：後端 PUT 沒帶 tags＝不改那一格，
      * 原本的標籤一個都不會被洗掉（照送也行，但舊資料若有超過上限的標籤，照送會被擋下 400、整條存不了）

@@ -383,6 +383,54 @@ export async function summarizeAsOverviewCard(
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  手改過的總覽：留下店家自己寫的那幾句（`C-369`）
+//  總覽整張被手改過之後，系統以前一律保留、不再重做——MYFEEL 首頁那張 7/31 改過，
+//  「目前有賣的商品」就停在 7 月。現在改成「商品清單跟著資料、店家寫的另外留著」，
+//  第一次要從那張手改的總覽裡分出哪幾句是店家自己的話。
+//
+//  ⛔ AI 只「挑句子編號」、不改寫：留下來的每個字都是店家原本寫的，AI 編不出新的話。
+//     原文整張另外存著（legacyManualContent），挑錯了找得回來。
+// ═══════════════════════════════════════════════════════════════════
+
+const OWNER_NOTE_SYSTEM_INSTRUCTION = `你在整理商家客服知識庫的「商品總覽」。使用者會給你一段店家自己改寫過的總覽，已經拆成編號的句子。
+系統之後會自動列出「目前有賣的商品」，所以要把跟商品清單有關的句子拿掉，只留下店家自己的話。
+
+請挑出要「留下」的句子編號。留下：講店家或平台本身是什麼、提供什麼服務、客服與售後怎麼找、購買或付款方式、去哪裡看最新品項這類，跟「現在有哪幾個商品」無關的句子。
+不要留：列舉商品或品項的句子、介紹某一個商品的句子、某個商品的狀態（募資結束、缺貨、上市）。
+沒有把握的句子不要留（之後店家可以自己補）。
+
+輸出格式（嚴格 JSON）：{ "keep": [0, 3] }`
+
+/** 把手改過的總覽拆成句子（「重點：」那行不算，那行系統會自己重做） */
+export function splitOwnerNoteSentences(content: string): string[] {
+  return String(content ?? '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('重點：') && !l.startsWith('重點:'))
+    .flatMap(l => l.split(/(?<=[。！？!?])/))
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+export async function pickOwnerNoteSentences(sentences: string[]): Promise<{ keep: number[] } & AiCallsCarrier> {
+  if (!sentences.length) return { keep: [], inputTokens: 0, outputTokens: 0 }
+  const prompt = [
+    '請挑出要留下的句子編號：',
+    ...sentences.map((s, i) => `[${i}] ${s}`),
+  ].join('\n')
+  const { data, inputTokens, outputTokens, model } = await generateJson<{ keep?: unknown }>(prompt, {
+    systemInstruction: OWNER_NOTE_SYSTEM_INSTRUCTION,
+    temperature: 0,
+    maxOutputTokens: 512,
+    thinkingBudget: 0,
+  })
+  const keep = Array.isArray(data?.keep)
+    ? [...new Set(data.keep.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n < sentences.length))].sort((a, b) => a - b)
+    : []
+  return { keep, inputTokens, outputTokens, model }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  Enrich（補問法）
 //  Google Sheet / 乾淨 Excel 的「一列一卡」不經 LLM，卡片天生沒有 questions
 //  （客人問法）——而 questions 進 embedding 對 query-card 相似度的拉抬，

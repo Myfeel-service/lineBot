@@ -6,7 +6,7 @@ import { canonicalProductName, getProductAliases } from '~~/server/utils/ai-prod
 import { listFolders } from '~~/server/utils/ai-knowledge-folders'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
-import { applyCosmeticVerdicts, computeDiff, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
+import { applyCosmeticVerdicts, computeDiff, gateDiffByPageChanges, judgeCosmeticRewrites, loadOldChunksForDiff, markRemovedStillOnPage, pickCosmeticCandidates, saveDiffExemptIds } from '~~/server/utils/ai-knowledge-resync'
 import { aiUsageOfError } from '~~/server/utils/ai-usage-calls'
 import {
   addJobUsage,
@@ -21,6 +21,7 @@ import {
   loadWork,
   loadWorkWithGeneration,
   progressFor,
+  RESYNC_PAGE_MAX_LINES,
   saveWork,
   workToPreviewResult,
   type PreviewJobDoc,
@@ -141,6 +142,26 @@ export async function advancePreviewJob(
           questions: c.questions ?? [],
         })))
         /**
+         * 先看網頁改了哪幾行（`C-368`，建 job 時跟上一版原文比好了）：跟改了的行都無關的那幾條
+         * 是 AI 的寫法在飄（換句話說、換了分法、這次多寫了頁尾），收起來、不採用。
+         * ⛔ 排在「其實還在網頁上」與意思判官前面：收起來的不用再判，省 AI 的錢。
+         * 沒有上一版原文（舊資料）→ 不收，照舊整份比對；套用完就有了。
+         */
+        if (work.resyncLineDiff) {
+          const gate = gateDiffByPageChanges(work.resyncDiff, work.resyncLineDiff)
+          work.resyncPage = {
+            lines: gate.lines.slice(0, RESYNC_PAGE_MAX_LINES),
+            addedCount: work.resyncLineDiff.added.length,
+            removedCount: work.resyncLineDiff.removed.length,
+            folded: gate.folded,
+            uncertain: gate.uncertain,
+          }
+          console.log(`[resync] ${work.input.resyncSourceId} 網頁改了 ${work.resyncLineDiff.added.length + work.resyncLineDiff.removed.length} 行，收起 ${gate.folded} 條無關的、${gate.uncertain} 行對不到知識`)
+        }
+        else {
+          work.resyncPage = null
+        }
+        /**
          * 先做**零成本**的確定性檢查（`C-154`）：被列成「移除」的卡，內容是不是其實
          * 還在剛抓下來的網頁上——是的話就不是網頁刪了，只是這次 AI 換了一種分法。
          * ⛔ 排在判官前面是刻意的：這一項處理的是雜訊的大宗（實測「移除 18／新增 1／修改 8」
@@ -183,7 +204,8 @@ export async function advancePreviewJob(
           db,
           work.input.resyncSourceId,
           work.resyncContentHash ?? '',
-          work.resyncDiff.entries.filter(e => e.cosmetic || e.stillOnPage).map(e => e.id),
+          // 跟網頁改了的行都無關而收起來的（`C-368`）也豁免：網頁上那一段沒動，保留原本的就是對的
+          work.resyncDiff.entries.filter(e => e.cosmetic || e.stillOnPage || e.pageUnchanged).map(e => e.id),
         )
         // 縮水偵測(空內容當一等公民錯誤)。兩種都要抓,漏一種就會整源被刪:
         //  · 抓到的網頁字數暴跌 → 頁面掛掉 / 改成動態載入

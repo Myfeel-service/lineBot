@@ -9,7 +9,11 @@ import {
 } from '~~/server/utils/ai-knowledge-chunks'
 import { KNOWLEDGE_SOURCES_COLLECTION } from '~~/server/utils/ai-knowledge-sources'
 import { writeAuditLog } from '~~/server/utils/audit-log'
+import { composeOverviewContent } from '~~/server/utils/ai-overview'
 import type { KnowledgeChunkStatus } from '~~/shared/types/ai-knowledge'
+
+/** 總覽裡「你寫的那段」最多幾個字（整張還要放得下商品清單，單條上限 5000） */
+const OWNER_NOTE_MAX_CHARS = 1500
 
 /** 比對用：去空白、去空的、不管順序（換個順序對 AI 沒有差別，updateKnowledgeChunk 判斷要不要重學也是這樣比） */
 function sameList(a: string[], b: string[]): boolean {
@@ -38,9 +42,6 @@ export default defineEventHandler(async (event) => {
   if (!chunkId) throw createError({ statusCode: 400, statusMessage: 'chunkId required' })
 
   const rawBody = await readBody(event)
-  const input = normalizeChunkInput(rawBody)
-  const err = validateChunkInput(input)
-  if (err) throw createError({ statusCode: 400, statusMessage: err })
   const tagsProvided = Array.isArray(rawBody?.tags)
 
   const db = getDb()
@@ -56,10 +57,25 @@ export default defineEventHandler(async (event) => {
     questions?: unknown
     status?: string
     failureReason?: string
+    isOverview?: boolean
+    overviewAuto?: string
   }
   if (existing.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: 'chunk not found' })
   }
+
+  /**
+   * 總覽只改「你寫的那段」（`C-369`）：商品清單那段系統照資料重做，這裡收的是店家補充的話。
+   * ⛔ 不鎖：改了這段之後商品清單照樣跟著資料換——整張鎖住就是 MYFEEL 首頁總覽停在 7 月的原因。
+   * 只對拆過兩段的總覽有效；還沒拆的（舊的）照一般知識改，下次資料更新時才拆。
+   */
+  const ownerNoteEdit = existing.isOverview === true && typeof existing.overviewAuto === 'string' && typeof rawBody?.ownerNote === 'string'
+  const ownerNote = ownerNoteEdit ? String(rawBody.ownerNote).trim().slice(0, OWNER_NOTE_MAX_CHARS) : ''
+  const input = normalizeChunkInput(ownerNoteEdit
+    ? { ...rawBody, content: composeOverviewContent(existing.overviewAuto!, ownerNote) }
+    : rawBody)
+  const err = validateChunkInput(input)
+  if (err) throw createError({ statusCode: 400, statusMessage: err })
 
   // 存著的值照 body 同一套整理（trim、去空的、問法最多 3 句），才不會「沒改」也比出差異
   const stored = normalizeChunkInput({
@@ -90,10 +106,18 @@ export default defineEventHandler(async (event) => {
     chunkId,
     // title 也在 embedding 文字裡，改標題同樣要重新索引；問法變了 updateKnowledgeChunk 自己會判斷要重學
     contentChanged: contentChanged || titleChanged,
-    manualEdit: true,
+    // 總覽只改「你寫的那段」不鎖（`C-369`）
+    manualEdit: !ownerNoteEdit,
     ...input,
     tags: tagsProvided ? input.tags : undefined,
   })
+  if (ownerNoteEdit) {
+    await ref.update({ ownerNote })
+  }
+  else if (existing.isOverview === true && contentChanged) {
+    // 拆過兩段的總覽被整張改了（不是只改你寫的那段）：照手改處理，兩段的記號拿掉，下次資料更新時再拆一次
+    await ref.update({ ownerNote: FieldValue.delete(), overviewAuto: FieldValue.delete() })
+  }
 
   // 若是 manual source 的單張卡 → 同步更新 source.name；同時拿來源種類，紀錄才講得出「之後不跟著哪裡更新」
   let sourceType = ''
@@ -121,12 +145,14 @@ export default defineEventHandler(async (event) => {
    */
   const what = [
     titleChanged && '標題',
-    contentChanged && '內容',
+    contentChanged && (ownerNoteEdit ? '你寫的介紹' : '內容'),
     questionsChanged && '客人問法',
     tagsChanged && '標籤',
   ].filter(Boolean).join('、')
   const relearn = titleChanged || contentChanged || questionsChanged
-  const lockNote = sourceType === 'gsheet'
+  const lockNote = ownerNoteEdit
+    ? '；商品清單照樣跟著資料更新'
+    : sourceType === 'gsheet'
     ? '；之後不會跟著表格更新（可以在這條解除鎖定）'
     : sourceType === 'url'
       ? '；之後不會跟著網頁更新（可以在這條解除鎖定）'

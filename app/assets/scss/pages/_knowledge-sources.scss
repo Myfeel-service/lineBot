@@ -572,6 +572,84 @@
 .diff-title-old { text-decoration: line-through; }
 .diff-title-new { color: var(--el-color-success); }
 
+/*
+ * 「網頁改了這幾行」（`C-368`）：網頁本身的前後，不是兩份 AI 寫的東西。
+ * 少了的劃掉、多了的標綠——跟上面標題改了那一行同一套顏色。
+ */
+.diff-page-lines {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  &__title {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  &__warn {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--el-color-danger);
+  }
+}
+.diff-page-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+
+  &__mark {
+    flex: none;
+    font-weight: 600;
+  }
+  &__text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  &--removed {
+    color: var(--el-text-color-secondary);
+    .diff-page-line__text { text-decoration: line-through; }
+  }
+  &--added .diff-page-line__mark,
+  &--added .diff-page-line__text { color: var(--el-color-success); }
+}
+
+/* 資料頁那一行「網頁有更新…已自動更新」（`C-368`）：系統自己改了知識，看得到改了哪些 */
+.src-auto-update {
+  &__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  &__tag {
+    display: inline-block;
+    min-width: 32px;
+    margin-right: 6px;
+    font-weight: 600;
+    color: var(--el-text-color-secondary);
+
+    &--add { color: var(--el-color-success); }
+    &--rem { color: var(--el-color-danger); }
+  }
+}
+
 .diff-entry-cols {
   display: grid;
   grid-template-columns: 1fr 1fr;

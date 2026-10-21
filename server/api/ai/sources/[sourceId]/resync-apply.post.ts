@@ -9,17 +9,9 @@ import {
   countSourceChunks,
   getSource,
   KNOWLEDGE_SOURCES_COLLECTION,
-  listChunksBySource,
+  promoteExtractedToApplied,
 } from '~~/server/utils/ai-knowledge-sources'
-import { chunkCountsTowardQuota, getKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
-import {
-  buildChunkSoftDeletePatch,
-  createKnowledgeChunk,
-  KNOWLEDGE_CHUNKS_COLLECTION,
-  normalizeChunkInput,
-  updateKnowledgeChunk,
-  validateChunkInput,
-} from '~~/server/utils/ai-knowledge-chunks'
+import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import { regenerateOverviewCard } from '~~/server/utils/ai-overview'
 import {
@@ -28,6 +20,7 @@ import {
   type DiffAction,
   type DiffEntry,
 } from '~~/server/utils/ai-knowledge-resync'
+import { applyResyncEntries } from '~~/server/utils/ai-knowledge-resync-apply'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
 /**
@@ -42,6 +35,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
  *   - delete_old → 刪掉舊 chunk
  *   - skip      → 不動（跟 keep_old 等價，但語意上指「新版被略過」）
  *
+ * 套用本身（額度、驗證、逐條改）跟每天排程的自動更新共用 `applyResyncEntries`（`C-368`）。
  * 套用後：清掉 outdatedAt 旗標、更新 source.lastFetchedAt / chunkCount。
  */
 export default defineEventHandler(async (event) => {
@@ -70,147 +64,14 @@ export default defineEventHandler(async (event) => {
   const source = await getSource(db, sourceId, workspaceId)
   if (!source) throw createError({ statusCode: 404, statusMessage: 'source not found' })
 
-  // entries 整包由 client 提供:任何引用舊卡的動作（覆寫 / 刪除 / questions 回填）都必須
-  // 先驗證該卡確實屬於本 workspace + 本 source,否則帶任意 chunkId 就能跨租戶刪改。
-  // 直接讀 listChunksBySource（loadOldChunksForDiff 包的就是它、一樣排除總覽卡）：
-  // 下面算額度還要知道哪幾張是草稿，同一次讀取一起拿，不多讀一輪
-  const sourceChunks = (await listChunksBySource(db, workspaceId, sourceId)).filter(c => !c.isOverview)
-  const ownedChunkIds = new Set(sourceChunks.map(c => c.id))
-  // 刪了空得出位置的＝有算額度的那幾張（同一把尺見 chunkCountsTowardQuota；listChunksBySource 已排除回收桶）
-  const quotaChunkIds = new Set(sourceChunks.filter(c => chunkCountsTowardQuota(c)).map(c => c.id))
-
-  /**
-   * 方案知識量（`C-296` 審查 → `C-308`⑪ 改成跟加入同一個規矩）：**收到滿為止**。
-   * 為什麼要守：匯入時空間不夠可以只收前幾條，可是之後按「重新同步」，沒收的那幾條會變成「新增」——
-   * 不看額度就等於繞過方案上限。以前是「淨增加超過剩下的空間就整次 403」：覆蓋、刪除也一起不做，
-   * 他只看到「失敗」，網頁上改了的價錢一條都沒更新。現在：
-   *  · 先套刪除、覆蓋、保留（不佔空間；刪掉有算額度的那幾條還會空出位置——⛔ 草稿除外，本來就沒算）；
-   *  · 新增照清單順序建到滿為止，沒建的數成 `quotaSkipped` 回給畫面、寫進操作紀錄；
-   *  · 同一次套用重按（applyId 一樣）時，上一次已經建好的那條是原地覆寫，不佔新的位置。
-   * 不限張數的方案、或讀不到方案（同 assertKnowledgeChunkQuota 的 fail-open）＝全部建。
-   */
-  const quota = await getKnowledgeChunkQuota(workspaceId, db).catch(() => null)
-  let room: number | null = !quota || quota.limit == null ? null : Math.max(0, quota.limit - quota.used)
-
-  let added = 0
-  let updated = 0
-  let deleted = 0
-  let kept = 0
-  let quotaSkipped = 0
-  const errors: Array<{ entryId: string; message: string }> = []
-
-  // 先跑「不新增」的決定（刪掉的空出位置要先算給新增用），再照原本順序跑新增
-  const ordered = [
-    ...entries.filter(e => decisions[e.id] !== 'add_new'),
-    ...entries.filter(e => decisions[e.id] === 'add_new'),
-  ]
-  for (const entry of ordered) {
-    const action = decisions[entry.id]
-    if (!action) {
-      kept++
-      continue
-    }
-    if (entry.oldChunk && !ownedChunkIds.has(entry.oldChunk.id)) {
-      errors.push({ entryId: entry.id, message: '這條知識不屬於這份資料，已略過' })
-      continue
-    }
-    try {
-      if (action === 'keep_old' || action === 'skip') {
-        // 內容完全相同（kind=unchanged）的卡：順手回填新切卡生成的「常見問法」。
-        // 內容沒變所以問句安全可採；不回填的話，舊卡（多在 questions 功能上線前建立）
-        // 永遠吃不到問句帶來的檢索提升。updateKnowledgeChunk 偵測到 questions 變更會自動重新索引。
-        if (
-          entry.kind === 'unchanged'
-          && entry.oldChunk
-          && entry.newChunk?.questions?.length
-        ) {
-          await updateKnowledgeChunk(db, {
-            chunkId: entry.oldChunk.id,
-            title: entry.oldChunk.title,
-            content: entry.oldChunk.content,
-            tags: entry.oldChunk.tags,
-            questions: entry.newChunk.questions,
-            contentChanged: false,
-            manualEdit: false,
-          }).catch(e => console.warn('[resync-apply] questions backfill failed:', entry.oldChunk?.id, e))
-        }
-        kept++
-        continue
-      }
-      if (action === 'add_new' && entry.newChunk) {
-        // 新內容也由 client 提供:過品質/格式驗證（trim、5000 上限、過短 placeholder）
-        const input = normalizeChunkInput(entry.newChunk)
-        const verr = validateChunkInput(input)
-        if (verr) {
-          errors.push({ entryId: entry.id, message: verr })
-          continue
-        }
-        const chunkId = applyId ? deterministicChunkId(entry.id) : uuidv4()
-        // 上一次（同一個 applyId）已經建好的：原地覆寫，不佔新的位置
-        const overwrite = applyId && ownedChunkIds.has(chunkId)
-        if (!overwrite && room !== null) {
-          if (room <= 0) {
-            quotaSkipped++
-            continue
-          }
-          room--
-        }
-        await createKnowledgeChunk(db, {
-          workspaceId,
-          // 有 applyId 就用決定性 id（重按覆寫同一張，不重複建卡）；舊 client 沒帶則照舊隨機
-          chunkId,
-          title: input.title,
-          content: input.content,
-          tags: input.tags,
-          questions: input.questions ?? [],
-          sourceId,
-        })
-        added++
-        continue
-      }
-      if (action === 'use_new' && entry.oldChunk && entry.newChunk) {
-        const input = normalizeChunkInput(entry.newChunk)
-        const verr = validateChunkInput(input)
-        if (verr) {
-          errors.push({ entryId: entry.id, message: verr })
-          continue
-        }
-        await updateKnowledgeChunk(db, {
-          chunkId: entry.oldChunk.id,
-          title: input.title,
-          content: input.content,
-          tags: input.tags,
-          questions: input.questions ?? [],
-          // title 也在 embedding 文字裡，title 或 content 變了都要重新索引
-          contentChanged: entry.oldChunk.content !== input.content
-            || entry.oldChunk.title !== input.title,
-          manualEdit: false, // re-sync 是自動的，不算手動編輯
-        })
-        // 清掉 manuallyEditedAt（使用者已選擇用新版了）
-        await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(entry.oldChunk.id).update({
-          manuallyEditedAt: null,
-        }).catch(() => {})
-        updated++
-        continue
-      }
-      if (action === 'delete_old' && entry.oldChunk) {
-        // 進回收桶（軟刪除）而非真刪：診斷 diff 誤選「刪除」、或縮水誤判時還有 30 天可還原
-        await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(entry.oldChunk.id)
-          .update(buildChunkSoftDeletePatch())
-        deleted++
-        // 有算額度的那條進了回收桶＝空出一個位置給等一下的新增（草稿本來就沒算，空不出來）
-        if (room !== null && quotaChunkIds.has(entry.oldChunk.id)) room++
-        continue
-      }
-      errors.push({ entryId: entry.id, message: `invalid action "${action}" for kind "${entry.kind}"` })
-    }
-    catch (err: any) {
-      errors.push({
-        entryId: entry.id,
-        message: String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200),
-      })
-    }
-  }
+  const { added, updated, deleted, kept, quotaSkipped, errors } = await applyResyncEntries(db, {
+    workspaceId,
+    sourceId,
+    entries,
+    decisions,
+    // 有 applyId 就用決定性 id（重按覆寫同一張，不重複建卡）；舊 client 沒帶則照舊隨機
+    chunkIdFor: e => (applyId ? deterministicChunkId(e.id) : uuidv4()),
+  })
 
   // 列表頁來源：依套用後的子卡片重新合成總覽卡（覆蓋舊的；手動編輯過則保留）。
   // 只在真的動過卡時重生（C-49D）：全選保留＝什麼都沒改，也重生等於白付一次總覽 LLM＋embedding
@@ -260,6 +121,14 @@ export default defineEventHandler(async (event) => {
     // 「這份在講什麼」（`C-316`）：網頁內容套用了，舊摘要作廢（/code-review 第 4 條）
     ...(added || updated || deleted ? { summary: [], summaryAt: null } : {}),
   })
+  /**
+   * 存「這批知識是照哪一版網頁做的」原文（`C-368`）：之後才比得出網頁改了哪幾行。
+   * ⚠️ 條件比指紋寬一格：**選了「保留舊版／略過」也存**。那是他看過這一版網頁之後做的決定——
+   *    下次只該問「網頁又改了哪裡」，不該把他決定過的那幾條再端出來（`D-139` 老闆嫌的「一直叫我更新」）。
+   *    指紋照 `C-44` 不推進，所以精確比對那條捷徑不會說「已是最新」；逐行比才會。
+   * ⛔ 有沒套成功的、或空間不夠少加的就不存：那幾行要下次還比得出來，才補得上。
+   */
+  if (bodyHash && errors.length === 0 && quotaSkipped === 0) await promoteExtractedToApplied(db, sourceId, bodyHash)
   // 「有變動」旗標：全部套完（含保留決定）就清——使用者剛剛親手看過這份 diff；
   // 若卡片仍與網頁不同，排程下一輪確認到變動會再標回來，不會永久消失。
   // 逐卡有失敗時不清：這次套用沒完成，提示留著。空間不夠沒建完也一樣（空出位置之後再套一次才收得進來）。

@@ -2513,7 +2513,7 @@ try {
       radios: document.querySelectorAll('.split-editor .el-radio-group').length,
       save: [...document.querySelectorAll('.split-editor .el-button')].some(b => b.offsetParent !== null && b.innerText.trim() === '儲存設定'),
     }))
-    if (before.meta === '網址・3 條・1 小時前更新' && before.radios === 0 && !before.editor.includes('排程會定期抓網頁內容') && opened.radios === 2 && opened.save) pass('網址：自動更新一行，「偵測到變動時」「小幅文字變動」收在預設關著的「更多設定」裡（打開照樣按「儲存設定」）')
+    if (before.meta === '網址・3 條・1 小時前更新' && before.radios === 0 && !before.editor.includes('排程會定期抓網頁內容') && opened.radios === 2 && opened.save) pass('網址：自動更新一行，「偵測到變動時」「網頁改了的時候」收在預設關著的「更多設定」裡（打開照樣按「儲存設定」）')
     else fail('網址的自動更新那一塊不對', JSON.stringify({ before: { ...before, editor: before.editor.includes('排程會定期抓網頁內容') }, opened }))
     const lockPop = async () => {
       await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())

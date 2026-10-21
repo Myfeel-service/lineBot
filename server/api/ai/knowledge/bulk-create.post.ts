@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
-import { KNOWLEDGE_PREVIEW_JOBS_COLLECTION, loadSourceFile } from '~~/server/utils/ai-preview-jobs'
+import { KNOWLEDGE_PREVIEW_JOBS_COLLECTION, loadSourceFile, loadWork } from '~~/server/utils/ai-preview-jobs'
 import { deleteSourceFiles, keepOriginalFile } from '~~/server/utils/knowledge-source-files'
 import { fileExtension, KNOWLEDGE_FILE_MIME_BY_EXT } from '~~/shared/knowledge-file-types'
 import { requireCapability } from '~~/server/utils/workspace-auth'
@@ -11,6 +11,7 @@ import {
   countSourceQuotaChunks,
   invalidateCatalogSourceCache,
   recycleSourceChunks,
+  saveAppliedPage,
 } from '~~/server/utils/ai-knowledge-sources'
 import { resolveKnowledgeFolderId } from '~~/server/utils/ai-knowledge-folder-guard'
 import { productNameForFolderId } from '~~/server/utils/ai-knowledge-product-group'
@@ -438,6 +439,10 @@ export default defineEventHandler(async (event) => {
         ? Promise.resolve(true)
         : keepImportedOriginal(db, workspaceId, sourceId, importId, String(body?.source?.fileName ?? ''), !!replaceSourceId)
     }
+    // 網址：存下「這批知識是照哪一版網頁做的」原文（`C-368`），之後更新才比得出網頁改了哪幾行
+    if (sourceType === 'url' && importId) {
+      await keepImportedPage(db, workspaceId, sourceId, importId, String(body?.source?.contentHash ?? '').trim())
+    }
   }
 
   // ── 批次建立 chunks（含 embedding），用 concurrency 控速 ──────────
@@ -636,6 +641,24 @@ async function resolveKeptEdited(
  * 「更新這一份」卻留存失敗時，把舊版的原檔一起清掉：寧可沒有「下載原檔」，
  * 也不要讓人下載到一份跟現在的知識對不上的舊版。
  */
+/**
+ * 網址匯入：整理工作暫存裡的那份原文，存成這份資料的比對基準（`C-368`）。
+ * ⛔ 指紋對得上才存——對不上＝不是這批知識對應的那一版（例如前端帶了別份的指紋），寧可不存：
+ *    沒存的後果只是第一次更新照舊整份比對，存錯的後果是之後每次都比錯。
+ * 暫存過期（整理完超過一小時才按加入）也一樣不存。任何錯都不擋匯入。
+ */
+async function keepImportedPage(db: Firestore, workspaceId: string, sourceId: string, jobId: string, contentHash: string): Promise<void> {
+  if (!contentHash) return
+  try {
+    const work = await loadWork(workspaceId, jobId)
+    if (!work.extractedText || work.extractedHash !== contentHash) return
+    await saveAppliedPage(db, sourceId, work.extractedText, contentHash)
+  }
+  catch (e) {
+    console.warn(`[bulk-create] ${sourceId} 網頁原文沒存成（第一次更新照舊整份比對）:`, (e as Error)?.message)
+  }
+}
+
 async function keepImportedOriginal(
   db: Firestore,
   workspaceId: string,

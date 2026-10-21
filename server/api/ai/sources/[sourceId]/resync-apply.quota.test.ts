@@ -26,8 +26,9 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
 vi.mock('~~/server/utils/ai-usage', () => ({ assertMaintenanceBudget: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/ai-overview', () => ({ regenerateOverviewCard: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
-vi.mock('~~/server/utils/ai-knowledge-resync', () => ({
-  countDivergentKeeps: () => 0,
+vi.mock('~~/server/utils/ai-knowledge-resync', async importOriginal => ({
+  // 「保留了跟網頁不同的」那一把尺用真的（`C-368` 那一條要靠它分出指紋推不推進）
+  countDivergentKeeps: (await importOriginal<typeof import('~~/server/utils/ai-knowledge-resync')>()).countDivergentKeeps,
   loadDiffExemptIds: async () => new Set<string>(),
 }))
 vi.mock('~~/server/utils/ai-knowledge-quota', async importOriginal => ({
@@ -48,6 +49,7 @@ vi.mock('~~/server/utils/ai-knowledge-sources', () => ({
     CARDS.filter(c => c.workspaceId === ws && c.sourceId === sid && !c.deleted).map(c => ({ ...c, isOverview: false }))),
   countSourceChunks: vi.fn(async () => CARDS.filter(c => !c.deleted).length),
   clearSourceOutdated: vi.fn(async () => {}),
+  promoteExtractedToApplied: vi.fn(async () => {}),
   buildSourceClearFailure: () => ({}),
 }))
 vi.mock('~~/server/utils/ai-knowledge-chunks', () => ({
@@ -88,7 +90,7 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 
 const { createKnowledgeChunk, updateKnowledgeChunk } = await import('~~/server/utils/ai-knowledge-chunks')
 const { invalidateKnowledgeChunkCount } = await import('~~/server/utils/ai-knowledge-quota')
-const { clearSourceOutdated } = await import('~~/server/utils/ai-knowledge-sources')
+const { clearSourceOutdated, promoteExtractedToApplied } = await import('~~/server/utils/ai-knowledge-sources')
 const { writeAuditLog } = await import('~~/server/utils/audit-log')
 const { default: handler } = await import('./resync-apply.post')
 const call = () => (handler as unknown as (e: unknown) => Promise<any>)({})
@@ -117,6 +119,8 @@ describe('resync-apply 的知識量：收到滿為止（`C-308`⑪）', () => {
     expect(lastSourceUpdate().contentHash).toBeUndefined()
     expect(lastSourceUpdate().appliedContentHash).toBeUndefined()
     expect(clearSourceOutdated).not.toHaveBeenCalled()
+    // ⛔ 原文也不能存成「這一版」（`C-368`）：存了，沒收的那幾行下次就比不出來
+    expect(promoteExtractedToApplied).not.toHaveBeenCalled()
     // ⛔ 沒建的要寫進操作紀錄，不然只看到「新增 1」
     expect(vi.mocked(writeAuditLog).mock.calls[0]![0].note).toContain('還有 2 條新的沒有加進來')
   })
@@ -150,6 +154,20 @@ describe('resync-apply 的知識量：收到滿為止（`C-308`⑪）', () => {
     await expect(call()).resolves.toMatchObject({ added: 2, deleted: 1, quotaSkipped: 0, fingerprintAdvanced: true })
     expect(lastSourceUpdate().contentHash).toBe('h-new')
     expect(clearSourceOutdated).toHaveBeenCalledTimes(1)
+    // 指紋推進的同時存下「這批知識是照哪一版網頁做的」原文（`C-368`）
+    expect(promoteExtractedToApplied).toHaveBeenCalledWith(expect.anything(), SRC, 'h-new')
+  })
+
+  it('選了保留舊版（看過、決定過了）：指紋照 C-44 不推進，但原文照存——網頁那幾處沒再改就不再問（`C-368`）', async () => {
+    const [a] = CARDS
+    body = {
+      entries: [added('c'), removed(a!)],
+      decisions: { c: 'add_new', [`rm-${a!.id}`]: 'keep_old' },
+      contentHash: 'h-new',
+    }
+    await expect(call()).resolves.toMatchObject({ added: 1, fingerprintAdvanced: false, divergentKeeps: 1 })
+    expect(lastSourceUpdate().appliedContentHash).toBeUndefined()
+    expect(promoteExtractedToApplied).toHaveBeenCalledWith(expect.anything(), SRC, 'h-new')
   })
 
   it('⛔ 刪掉草稿騰不出空間（草稿本來就沒算額度）', async () => {

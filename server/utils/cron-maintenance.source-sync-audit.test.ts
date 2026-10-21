@@ -14,17 +14,23 @@ vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => ({ __op: 'ts' }), delete: () => ({ __op: 'del' }) },
   Timestamp: { now: () => ({ __ts: 'now' }), fromMillis: (ms: number) => ({ __ts: ms }) },
 }))
-const { clearSourceFailure, markSourceOutdated } = vi.hoisted(() => ({ clearSourceFailure: vi.fn(async () => {}), markSourceOutdated: vi.fn(async () => {}) }))
+const { clearSourceFailure, markSourceOutdated, saveAppliedPage } = vi.hoisted(() => ({
+  clearSourceFailure: vi.fn(async () => {}),
+  markSourceOutdated: vi.fn(async () => {}),
+  saveAppliedPage: vi.fn(async () => {}),
+}))
 vi.mock('./ai-knowledge-sources', () => ({
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
   buildSourceClearFailure: () => ({}),
   clearSourceFailure,
+  countSourceChunks: vi.fn(async () => 20),
   markSourceOutdated,
+  saveAppliedPage,
 }))
 vi.mock('./ai-knowledge-chunks', () => ({ KNOWLEDGE_CHUNKS_COLLECTION: 'knowledgeChunks' }))
 vi.mock('./ai-knowledge-suggest', () => ({ KNOWLEDGE_SUGGESTIONS_COLLECTION: 'knowledgeSuggestions' }))
-const { tryAutoApplyMinorChange } = vi.hoisted(() => ({ tryAutoApplyMinorChange: vi.fn() }))
-vi.mock('./ai-knowledge-autoapply', () => ({ tryAutoApplyMinorChange }))
+const { tryAutoApplyMinorChange, tryAutoApplyPageChange } = vi.hoisted(() => ({ tryAutoApplyMinorChange: vi.fn(), tryAutoApplyPageChange: vi.fn() }))
+vi.mock('./ai-knowledge-autoapply', () => ({ tryAutoApplyMinorChange, tryAutoApplyPageChange }))
 const { extractUrlText } = vi.hoisted(() => ({ extractUrlText: vi.fn() }))
 vi.mock('./ai-source-extractors', () => ({ extractUrlText }))
 vi.mock('./gemini', () => ({ runWithLlmBudget: (_w: string, fn: () => unknown) => fn() }))
@@ -81,6 +87,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   SOURCES = []
   UPDATES = []
+  // 預設：沒有上一版原文（舊資料）→ 照舊路（`C-368`）
+  tryAutoApplyPageChange.mockResolvedValue({ kind: 'legacy', usedAi: false })
 })
 
 describe('試算表自動同步的操作紀錄（`C-308`⑥）', () => {
@@ -166,5 +174,83 @@ describe('網頁小改自動套用的操作紀錄（`C-308`⑥）', () => {
     expect(auditCalls()).toHaveLength(1)
     expect(auditCalls()[0]).toMatchObject({ actor: 'system', uid: '', action: 'source.resyncApply', targetId: 'url1', after: { updated: 2 } })
     expect(auditCalls()[0]!.note).toContain('更新 2 條，1 條沒有套用成功')
+  })
+})
+
+/**
+ * `C-368`：先比網頁。照網頁那一條路的結果，排程要怎麼收尾。
+ * 來源都是「連兩輪抓到同一份新內容」＝確認變了的那一刻（observedHash＝這次的指紋）。
+ */
+describe('先比網頁、沒衝突就自動做完（`C-368`）', () => {
+  const text = '首頁換了一批商品'
+  const hash = createHash('sha256').update(text).digest('hex')
+  const homepage = (extra: Record<string, any> = {}) => ({
+    id: 'home',
+    data: {
+      workspaceId: 'ws1', type: 'url', url: 'https://www.myfeel-tw.com/', name: '官網首頁', refreshIntervalMinutes: 1440,
+      contentHash: 'old', appliedContentHash: 'old', observedHash: hash, status: 'ready', generateOverview: true, ...extra,
+    },
+  })
+  const record = { added: 15, removed: 2, updated: 0, addedTitles: ['乾淨方MAX'], removedTitles: ['DEAR.min'], updatedTitles: [], quotaSkipped: 0, overviewUpdated: true }
+  const homeUpdates = () => UPDATES.filter(u => u.id === 'home').map(u => u.payload)
+
+  beforeEach(() => {
+    extractUrlText.mockResolvedValue({ text, rawLength: text.length })
+  })
+
+  it('型錄也照網頁自動做完：推進版本、存原文、清掉「有變動」、記一行紀錄與操作紀錄，⛔ 不走舊路', async () => {
+    SOURCES = [homepage()]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'applied', usedAi: true, fingerprintSafe: true, failed: 0, record })
+    const r = await detectSourceUpdates(makeDb())
+    expect(r).toMatchObject({ autoApplied: 1 })
+    expect(tryAutoApplyMinorChange).not.toHaveBeenCalled()
+    const p = homeUpdates().find(x => x.lastAutoUpdate)!
+    expect(p).toMatchObject({ contentHash: hash, appliedContentHash: hash, outdatedAt: null, outdatedReason: null, chunkCount: 20 })
+    expect(p.lastAutoUpdate).toMatchObject({ added: 15, removed: 2, overviewUpdated: true })
+    expect(saveAppliedPage).toHaveBeenCalledWith(expect.anything(), 'home', text, hash)
+    expect(markSourceOutdated).not.toHaveBeenCalled()
+    expect(auditCalls()[0]).toMatchObject({ actor: 'system', action: 'source.resyncApply', targetId: 'home' })
+    expect(auditCalls()[0]!.note).toContain('新增 15、拿掉 2')
+    expect(auditCalls()[0]!.note).toContain('總覽跟著換成現在的')
+  })
+
+  it('⛔ 空間不夠沒加完：做完的照留，但不推進版本、不存原文，標「有變動」並寫原因', async () => {
+    SOURCES = [homepage()]
+    tryAutoApplyPageChange.mockResolvedValue({
+      kind: 'applied', usedAi: true, fingerprintSafe: false, failed: 0,
+      reason: { kind: 'quota', count: 5 }, record: { ...record, added: 10, quotaSkipped: 5 },
+    })
+    await detectSourceUpdates(makeDb())
+    const p = homeUpdates().find(x => x.lastAutoUpdate)!
+    expect(p.appliedContentHash).toBeUndefined()
+    expect(saveAppliedPage).not.toHaveBeenCalled()
+    expect(markSourceOutdated).toHaveBeenCalledWith(expect.anything(), 'home', { kind: 'quota', count: 5 })
+    expect(auditCalls()[0]!.note).toContain('還有 5 條新的沒有加進來')
+  })
+
+  it('網頁一行都沒改（只有順序、空白）→ 推進版本、存原文、不標、不花 AI', async () => {
+    SOURCES = [homepage({ outdatedAt: { __ts: 1 } })]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'noop', usedAi: false })
+    await detectSourceUpdates(makeDb())
+    expect(homeUpdates().some(x => x.appliedContentHash === hash && x.outdatedAt === null)).toBe(true)
+    expect(saveAppliedPage).toHaveBeenCalledWith(expect.anything(), 'home', text, hash)
+    expect(markSourceOutdated).not.toHaveBeenCalled()
+  })
+
+  it('有衝突（動到手改過的）→ 標「有變動」並帶原因', async () => {
+    SOURCES = [homepage()]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'manual', usedAi: true, reason: { kind: 'manual_edit', count: 1 } })
+    const r = await detectSourceUpdates(makeDb())
+    expect(r).toMatchObject({ changedNotified: 1 })
+    expect(markSourceOutdated).toHaveBeenCalledWith(expect.anything(), 'home', { kind: 'manual_edit', count: 1 })
+    expect(saveAppliedPage).not.toHaveBeenCalled()
+  })
+
+  it('⛔ 這一輪請 AI 的名額用完了：先不收（不推進 contentHash），下一輪再來；不標「有變動」', async () => {
+    SOURCES = [homepage()]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'needs_ai', usedAi: false })
+    await detectSourceUpdates(makeDb())
+    expect(homeUpdates().every(x => x.contentHash === undefined)).toBe(true)
+    expect(markSourceOutdated).not.toHaveBeenCalled()
   })
 })

@@ -142,6 +142,41 @@ describe('PUT：沒改就不鎖、不記（`C-308`①）', () => {
   })
 })
 
+describe('總覽只改「你寫的那段」（`C-369`）', () => {
+  const ov = (extra: Record<string, any> = {}) => chunk({
+    title: '商品總覽', isOverview: true, overviewAuto: '重點：家電（除濕機）\n\n我們賣家電。', ownerNote: '舊的介紹',
+    content: '重點：家電（除濕機）\n\n我們賣家電。\n\n舊的介紹', manuallyEditedAt: null, ...extra,
+  })
+
+  it('改你寫的那段 → 內容＝系統那段＋新的話、⛔ 不上鎖（商品清單照樣跟著資料更新）', async () => {
+    STORE.knowledgeChunks = { c1: ov() }
+    body = { title: '商品總覽', ownerNote: '客服請找 LINE 官方帳號。' }
+    await expect(run(putHandler)).resolves.toMatchObject({ changed: true })
+    expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1]).toMatchObject({
+      manualEdit: false,
+      contentChanged: true,
+      content: '重點：家電（除濕機）\n\n我們賣家電。\n\n客服請找 LINE 官方帳號。',
+    })
+    expect(STORE.knowledgeChunks.c1!.ownerNote).toBe('客服請找 LINE 官方帳號。')
+    expect(lastAudit().note).toBe('商品總覽：改了你寫的介紹，AI 會照新的內容再學一次；商品清單照樣跟著資料更新')
+  })
+
+  it('整張改（不是只改你寫的那段）→ 照手改上鎖、拿掉兩段記號（下次資料更新再拆）', async () => {
+    STORE.knowledgeChunks = { c1: ov() }
+    body = { title: '商品總覽', content: '我自己寫的整張總覽' }
+    await run(putHandler)
+    expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1]).toMatchObject({ manualEdit: true })
+    expect(STORE.knowledgeChunks.c1!.ownerNote).toBeUndefined()
+    expect(STORE.knowledgeChunks.c1!.overviewAuto).toBeUndefined()
+  })
+
+  it('還沒拆過的舊總覽帶 ownerNote 來 → 不認（照一般知識改：body 沒內容就擋）', async () => {
+    STORE.knowledgeChunks = { c1: ov({ overviewAuto: undefined, ownerNote: undefined }) }
+    body = { title: '商品總覽', ownerNote: '想補的話' }
+    await expect(run(putHandler)).rejects.toMatchObject({ statusCode: 400 })
+  })
+})
+
 describe('解除鎖定要真的生效（`C-308`②）', () => {
   it('試算表：清掉那一份的指紋（下一次同步整份比對）、回 appliesOn=next_sync、記一筆', async () => {
     STORE.knowledgeChunks!.c1!.manuallyEditedAt = '__ts__'

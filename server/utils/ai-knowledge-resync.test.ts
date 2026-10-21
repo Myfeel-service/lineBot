@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { COSMETIC_JUDGE_SYSTEM, applyCosmeticVerdicts, computeDiff, contentSimilarity, contentStillOnPage, countDivergentKeeps, markRemovedStillOnPage, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
+import { diffPageLines } from '~~/shared/page-line-diff'
+import { COSMETIC_JUDGE_SYSTEM, applyCosmeticVerdicts, computeDiff, contentSimilarity, contentStillOnPage, countDivergentKeeps, gateDiffByPageChanges, markRemovedStillOnPage, normalizeForCompare, pickCosmeticCandidates } from './ai-knowledge-resync'
 
 const oldChunk = (id: string, title: string, content: string, manual = false) => ({
   id,
@@ -94,6 +95,58 @@ describe('computeDiff 數字變動標記', () => {
     )
     expect(entries[0]!.kind).toBe('modified') // 文字確實改了（另計 → 另外計算）
     expect(entries[0]!.numbersChanged).toBe(false) // 但價格沒變
+  })
+})
+
+describe('C-367：型號不拆成數字、提幾次不算、網址裡的不算', () => {
+  const changesOf = (oldC: string, newC: string) => {
+    const { entries } = computeDiff([oldChunk('c1', '卡', oldC)], [newChunk('卡', newC)])
+    return { changed: entries[0]!.numbersChanged, changes: entries[0]!.numberChanges }
+  }
+
+  // 2026-10-21 MYFEEL 首頁那次重新同步的三條原文（只換句話說，卻被標「數字有變」）
+  it('吸塵器：型號寫兩次變一次＝沒變（舊版報「少了 9、9」）', () => {
+    expect(changesOf(
+      '重點：品牌：SHARP｜特色：靜音、無線｜型號：EC-SR9TW-W、EC-SR9TW-B｜類型：吸塵器\n\nSHARP靜音無線吸塵器，型號有EC-SR9TW-W和EC-SR9TW-B，主打靜音和無線設計。\n連結：https://www.myfeel-tw.com/projects/EC-SR9TW',
+      '重點：品牌：SHARP｜型號：EC-SR9TW-W/EC-SR9TW-B｜特色：靜音、無線\n\nSHARP「噓塵器」靜音無線吸塵器提供白色和黑色兩種選擇。\n連結：https://www.myfeel-tw.com/projects/EC-SR9TW',
+    ).changed).toBe(false)
+  })
+  it('空氣清淨機：型號後面直接接中文也整串認（舊版報「少了 201、0」）', () => {
+    expect(changesOf(
+      '重點：品牌：LG｜功能：空氣清淨、藍牙音響、無線充電｜型號：AS201SHU0\nLG小蘑菇AeroSpeaker空氣清淨機，型號為AS201SHU0，結合了潔淨空氣、藍牙音響和無線充電三種功能。\n連結：https://www.myfeel-tw.com/projects/aerospeaker',
+      '重點：品牌：LG｜型號：AS201SHU0｜特色：潔淨空氣、藍牙音響、無線充電、小蘑菇造型\n\nLG「小蘑菇」AeroSpeaker空氣清淨機結合了潔淨空氣、藍牙音響和無線充電功能。\n連結：https://www.myfeel-tw.com/projects/aerospeaker',
+    ).changed).toBe(false)
+  })
+  it('顯微鏡：網址裡本來就有的型號，新版多寫一次不算（舊版報「多了 3、01」）', () => {
+    expect(changesOf(
+      '重點：品牌：Anyty｜特色：攜帶式、數位｜功能：探索微觀世界\nAnyty攜帶式數位顯微鏡，讓使用者能用『魔法放大鏡』共同探索微觀世界的樂趣。\n連結：https://www.myfeel-tw.com/projects/3R-MJL01',
+      '重點：品牌：Anyty｜型號：3R-MJL01｜特色：攜帶式、數位顯微鏡\n\nAnyty攜帶式數位顯微鏡，又稱「魔法放大鏡」，可用於探索微觀世界。\n連結：https://www.myfeel-tw.com/projects/3R-MJL01',
+    ).changed).toBe(false)
+  })
+
+  // 真的改了的照樣要抓到（拿掉型號規則、改成全部只看有沒有，這幾條就會漏）
+  it.each([
+    ['容量 6L', '容量 12L', ['6'], ['12']],
+    ['售價 1,000 元', '售價 1,200 元', ['1000'], ['1200']],
+    ['A 方案 500 元、B 方案 800 元、C 方案 800 元', 'A 方案 500 元、B 方案 500 元、C 方案 800 元', ['800'], ['500']],
+    ['濾網型號 FZ-F30HFE', '濾網型號 FZ-F50HFE', ['FZ-F30HFE'], ['FZ-F50HFE']],
+    ['適用 HD5225', '適用 HD7000', ['HD5225'], ['HD7000']],
+    ['保固 1 年、7 天鑑賞期', '保固 2 年、7 天鑑賞期', ['1'], ['2']],
+    ['３ 天內出貨', '5 天內出貨', ['3'], ['5']],
+  ])('%s → %s 照樣標數字有變', (o, n, removed, added) => {
+    expect(changesOf(o, n)).toEqual({ changed: true, changes: { removed, added } })
+  })
+
+  it('網址裡的數字不算（網址另外靠連結配對）', () => {
+    expect(changesOf(
+      '保固一年。\n連結：https://example.com/p/2024',
+      '保固一年，售後找客服。\n連結：https://example.com/p/2025',
+    ).changed).toBe(false)
+  })
+
+  it('⚠️ 刻意留著的：同一個數字講兩次改成一次，還是算數字有變', () => {
+    // 要解就得改成「數字也只看有沒有」，那 B 方案 800 改 500 那條就會漏掉
+    expect(changesOf('保固 1 年，保固期 1 年內免費維修', '保固 1 年內免費維修').changed).toBe(true)
   })
 })
 
@@ -421,5 +474,164 @@ describe('contentStillOnPage / markRemovedStillOnPage（C-154）', () => {
     }
     expect(markRemovedStillOnPage(diff, '   ').marked).toBe(0)
     expect(diff.entries[0].stillOnPage).toBeUndefined()
+  })
+})
+
+/**
+ * `C-368`：只採用跟網頁改了的那幾行有關的變動。
+ * 案例照 2026-10-21 MYFEEL 首頁那次：首頁換了一批主打（多 1 個商品、少 1 個），
+ * AI 重寫整份之後，沒動的商品變成「修改」、頁尾多寫了一條——這兩種都要收起來。
+ */
+describe('gateDiffByPageChanges（C-368）', () => {
+  const line = (name: string, slug: string) =>
+    `${name} 人數達標解鎖更多獎勵！ NT$ 0 9,895,800 / 每月 9,896 % 10 天 即將上市 0 432 人支持 / 每月 10 天（https://www.myfeel-tw.com/projects/${slug}）`
+  const FOOTER = '來瞭解\n關於我們（https://www.myfeel-tw.com/aboutUs）\n隱私權保護條款（https://www.myfeel-tw.com/privacy）'
+  const card = (name: string, slug: string, body: string) =>
+    `重點：品牌：${name}\n\n${body}\n連結：https://www.myfeel-tw.com/projects/${slug}`
+  const BASE = [line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW'), line('DEAR.min 不落枕記憶枕', 'dearminpillow'), FOOTER].join('\n')
+  const NOW = [line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW'), line('SHARP 乾淨方MAX 清淨除濕機', 'DW-UX22FT'), FOOTER].join('\n')
+
+  const run = () => {
+    const diff = computeDiff(
+      [
+        oldChunk('sharp', 'SHARP 靜音無線吸塵器', card('SHARP', 'EC-SR9TW', 'SHARP靜音無線吸塵器，主打靜音和無線設計。')),
+        oldChunk('dear', 'DEAR.min 記憶枕', card('DEAR.min', 'dearminpillow', 'DEAR.min 不落枕零壓可調節深睡記憶枕。')),
+      ],
+      [
+        newChunk('SHARP 靜音無線吸塵器 EC-SR9TW', card('SHARP', 'EC-SR9TW', 'SHARP「噓塵器」靜音無線吸塵器提供兩種顏色。')),
+        newChunk('SHARP 乾淨方MAX 清淨除濕機', card('SHARP', 'DW-UX22FT', '這是 SHARP 的最新機種「乾淨方MAX」雙氣流智慧變頻美學清淨除濕機。')),
+        newChunk('MYFEEL關於我們', '您可以透過「關於我們」頁面了解MYFEEL的相關資訊。\n連結：https://www.myfeel-tw.com/aboutUs'),
+      ],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(BASE, NOW, { ignoreNumbers: true }))
+    const byTitle = (t: string) => diff.entries.find(e => (e.newChunk?.title ?? e.oldChunk?.title) === t)!
+    return { diff, gate, byTitle }
+  }
+
+  it('網頁上沒動的商品：AI 換句話說的「修改」收起來、保留原本的', () => {
+    const { byTitle } = run()
+    expect(byTitle('SHARP 靜音無線吸塵器 EC-SR9TW')).toMatchObject({ kind: 'modified', pageUnchanged: true, defaultAction: 'keep_old' })
+  })
+  it('網頁多了的商品：照新增、不收', () => {
+    const { byTitle } = run()
+    const e = byTitle('SHARP 乾淨方MAX 清淨除濕機')
+    expect(e.kind).toBe('new')
+    expect(e.pageUnchanged).toBeUndefined()
+    expect(e.defaultAction).toBe('add_new')
+  })
+  it('網頁少了的商品：照移除、不收', () => {
+    const { byTitle } = run()
+    const e = byTitle('DEAR.min 記憶枕')
+    expect(e.kind).toBe('removed')
+    expect(e.pageUnchanged).toBeUndefined()
+    expect(e.defaultAction).toBe('delete_old')
+  })
+  it('頁尾沒動、AI 這次多寫的那條：略過', () => {
+    const { byTitle } = run()
+    expect(byTitle('MYFEEL關於我們')).toMatchObject({ kind: 'new', pageUnchanged: true, defaultAction: 'skip' })
+  })
+  it('改了的兩行都有人認領＝沒有對不到的', () => {
+    const { gate } = run()
+    expect(gate.uncertain).toBe(0)
+    expect(gate.lines.map(l => [l.side, l.status])).toEqual([['removed', 'claimed'], ['added', 'claimed']])
+    expect(gate.folded).toBe(2)
+  })
+
+  it('沒有連結的說明頁：改了的那一題用文字認，其他換句話說的收起來', () => {
+    const base = 'Q：運費怎麼算？\nA：單筆訂單滿 1000 元免運，未滿酌收 100 元運費。\nQ：多久出貨？\nA：付款後三個工作天內出貨，假日不出貨。'
+    const now = base.replace('滿 1000 元免運，未滿酌收 100 元', '滿 1500 元免運，未滿酌收 120 元')
+    const diff = computeDiff(
+      [
+        oldChunk('ship', '運費', '重點：免運門檻：1000 元｜運費：100 元\n\n單筆訂單滿 1000 元免運，未滿酌收 100 元運費。'),
+        oldChunk('when', '出貨時間', '付款後三個工作天內出貨，假日不出貨。'),
+      ],
+      [
+        newChunk('運費', '重點：免運門檻：1500 元｜運費：120 元\n\n單筆訂單滿 1500 元免運，未滿酌收 120 元運費。'),
+        newChunk('出貨時間', '付款完成後，我們會在三個工作天內出貨，假日不出貨喔。'),
+      ],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(base, now, { ignoreNumbers: false }))
+    expect(diff.entries.find(e => e.oldChunk?.id === 'ship')).toMatchObject({ kind: 'modified', numbersChanged: true })
+    expect(diff.entries.find(e => e.oldChunk?.id === 'ship')!.pageUnchanged).toBeUndefined()
+    expect(diff.entries.find(e => e.oldChunk?.id === 'when')).toMatchObject({ kind: 'modified', pageUnchanged: true, defaultAction: 'keep_old' })
+    expect(gate.uncertain).toBe(0)
+  })
+
+  it('⛔ 數字紅線：網頁行看不出（數字會跳的網址抹掉了數字），卡上數字變了照樣不收', () => {
+    const diff = computeDiff(
+      [oldChunk('p', '價格', '早鳥價 3990 元。')],
+      [newChunk('價格', '早鳥價 4290 元。')],
+    )
+    gateDiffByPageChanges(diff, diffPageLines('早鳥價 3990 元', '早鳥價 4290 元', { ignoreNumbers: true }))
+    expect(diff.entries[0]).toMatchObject({ kind: 'modified', numbersChanged: true })
+    expect(diff.entries[0]!.pageUnchanged).toBeUndefined()
+  })
+
+  it('⛔ 改了的一行對不到任何知識、又跟某條沾到邊＝對不到，要問（不默默略過）', () => {
+    const base = '本店提供七天鑑賞期，商品需保持完整包裝，退貨請先聯絡客服。'
+    const now = '本店提供七天鑑賞期，拆封後的耳機類商品恕不退貨，退貨請先聯絡客服。'
+    const diff = computeDiff(
+      [oldChunk('ret', '退貨', '我們提供七天鑑賞期，退貨前請先聯絡客服。')],
+      [newChunk('退貨', '我們提供七天鑑賞期，退貨前請先聯絡客服。')],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(base, now, { ignoreNumbers: false }))
+    expect(gate.uncertain).toBeGreaterThan(0)
+  })
+
+  // 2026-10-21 BOYA FAQ 真的請 AI 重新整理一次量到的兩件事
+  it('FAQ 多一題：問句那一行短、跟內文重疊不夠，靠 AI 寫的問法認得出是同一題', () => {
+    const base = 'Q：保固多久？\nA：集資期間下單享 2 年保固。'
+    const now = `${base}\nQ：可以分期付款嗎？\nA：可以，結帳時選擇信用卡分期，支援 3 期 0 利率，單筆滿 3000 元才能分期。`
+    const diff = computeDiff(
+      [oldChunk('w', '保固', '集資期間下單享 2 年保固。')],
+      [
+        newChunk('保固', '集資期間下單享 2 年保固。'),
+        { title: '平台分期付款', content: '重點：期數：3期0利率\n\n在平台結帳時可以選信用卡分期，支援3期0利率，單筆滿3000元可分期。', tags: [], questions: ['平台可以分期付款嗎？'] },
+      ],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(base, now, { ignoreNumbers: false }))
+    expect(gate.uncertain).toBe(0)
+    expect(gate.lines.map(l => l.status)).toEqual(['claimed', 'claimed'])
+  })
+
+  it('問句旁邊那一行對到了＝問句也算同一題（AI 沒寫問法時）', () => {
+    const base = '付款方式'
+    const now = `${base}\nQ：可以分期付款嗎？\nA：可以，結帳時選擇信用卡分期，支援 3 期 0 利率，單筆滿 3000 元才能分期。`
+    // 問句跟這條知識沾到一點邊（可以／分期付款）、但不到六成——沒有「緊挨著答句」這條就會變成「對不到」
+    const diff = computeDiff([], [newChunk('分期', '結帳時可以用信用卡分期付款，支援 3 期 0 利率，單筆滿 3000 元才能分期。')])
+    const gate = gateDiffByPageChanges(diff, diffPageLines(base, now, { ignoreNumbers: false }))
+    expect(gate.lines.map(l => l.status)).toEqual(['claimed', 'claimed'])
+    expect(gate.uncertain).toBe(0)
+  })
+
+  it('⛔ 長的一段沾到邊卻沒人認領，不跟著旁邊那行算：照樣要問', () => {
+    const base = '付款方式'
+    const long = 'A：分期付款需於結帳時選擇合作銀行之信用卡，並依各銀行規定之期數與手續費計算，部分商品恕不適用分期。'
+    const now = `${base}\n${long}\nQ：可以用 Apple Pay 嗎？`
+    const diff = computeDiff([], [
+      newChunk('Apple Pay', '可以用 Apple Pay 付款。'),
+      // 跟那一段只重疊三成多：沾到邊、但不夠算是它
+      newChunk('付款', '分期付款需於結帳時選擇信用卡，期數依銀行規定。'),
+    ])
+    const gate = gateDiffByPageChanges(diff, diffPageLines(base, now, { ignoreNumbers: false }))
+    expect(gate.lines.find(l => l.display === long)!.status).toBe('uncertain')
+  })
+
+  it('數字不會跳的網址：網頁那一題沒改，AI 這次少寫一次型號／規格（「數字有變」）照樣收起來', () => {
+    const page = 'Q：可以收樂器嗎？\nA：可以，BOYA mini2 支援 48kHz/24-bit 高解析錄音。\nQ：保固多久？\nA：享 2 年保固。'
+    const diff = computeDiff(
+      [oldChunk('m', '樂器收音', '重點：音質：48kHz\n\nBOYA mini2 支援 48kHz/24-bit 高解析錄音。'), oldChunk('w', '保固', '享 2 年保固。')],
+      [newChunk('樂器收音', '支援48kHz/24-bit高解析錄音。'), newChunk('保固', '享 3 年保固。')],
+    )
+    gateDiffByPageChanges(diff, diffPageLines(page, page.replace('2 年', '3 年'), { ignoreNumbers: false }))
+    expect(diff.entries.find(e => e.oldChunk?.id === 'm')).toMatchObject({ numbersChanged: true, pageUnchanged: true })
+    expect(diff.entries.find(e => e.oldChunk?.id === 'w')!.pageUnchanged).toBeUndefined()
+  })
+
+  it('改了的一行從來沒人寫成知識（頁尾版權年份這種）＝可以安心略過', () => {
+    const diff = computeDiff([oldChunk('a', '運費', '滿千免運。')], [newChunk('運費', '滿千免運。')])
+    const gate = gateDiffByPageChanges(diff, diffPageLines('All rights reserved ⓒ MYFEEL Inc. 2025', 'All rights reserved ⓒ MYFEEL Inc. 2026', { ignoreNumbers: false }))
+    expect(gate.lines.map(l => l.status)).toEqual(['uncovered', 'uncovered'])
+    expect(gate.uncertain).toBe(0)
   })
 })

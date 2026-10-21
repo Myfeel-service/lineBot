@@ -12,18 +12,25 @@
  * 且 computeDiff 第二輪本來就不讓手編卡參與內容配對。
  */
 import type { Firestore } from 'firebase-admin/firestore'
-import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
+import type { KnowledgeSourceDoc, SourceAutoUpdateRecord, SourceOutdatedReason } from '~~/shared/types/ai-knowledge'
+import { diffPageLines, pageChangeIsLarge, pageLinesChanged } from '~~/shared/page-line-diff'
 import { chunkTextWithLlm } from './ai-knowledge-chunker'
 import {
   applyCosmeticVerdicts,
   computeDiff,
+  gateDiffByPageChanges,
   judgeCosmeticRewrites,
   markRemovedStillOnPage,
+  normalizeForCompare,
   pickCosmeticCandidates,
+  type DiffAction,
   type DiffResult,
 } from './ai-knowledge-resync'
+import { applyResyncEntries } from './ai-knowledge-resync-apply'
 import { normalizeChunkInput, updateKnowledgeChunk, validateChunkInput } from './ai-knowledge-chunks'
-import { listChunksBySource } from './ai-knowledge-sources'
+import { invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
+import { listChunksBySource, loadAppliedPage, sourceNumbersVolatile } from './ai-knowledge-sources'
+import { regenerateOverviewCard } from './ai-overview'
 import { recordAiUsage } from './ai-usage'
 import { callsOf, usageFromCalls } from './ai-usage-calls'
 
@@ -261,5 +268,175 @@ export async function tryAutoApplyMinorChange(
   catch (e: any) {
     console.warn(`[auto-apply] ${sourceId} 自動套用失敗,退回人工審:`, e)
     return manual('自動比對過程出錯')
+  }
+}
+
+// ── 先比網頁、沒衝突就自動做完（`C-368`，設計見 docs/KB-URL-UPDATE-DESIGN-20261021.md）────────
+//
+// 跟上面那支（舊路）的差別：舊路只敢自動套用「標題一模一樣的小改」，有新增、有刪除、型錄來源一律退人工
+// ——首頁只要換一個商品就掛「有變動」。新路先拿「這批知識是照哪一版網頁做的」原文跟這一版一行一行比：
+//   · 一行都沒改 → 什麼都不做（不花 AI 的錢）
+//   · 改了 → 請 AI 整理，但只採用跟改了的那幾行有關的變動；沒衝突就自動做完
+//   · 只有三種衝突才停下來問：動到手改過的／網頁少了一大半／有改了的行對不到知識
+// 沒有上一版原文（舊資料）→ 回 'legacy'，呼叫端照舊走上面那支。
+
+export interface PageAutoApplyResult {
+  /**
+   * legacy：沒有上一版原文，照舊路；noop：一行都沒改、或改了的都不影響知識；
+   * applied：做完了；manual：要人看（reason 講為什麼）；needs_ai：要 AI 整理但這一輪的名額用完了，下一輪再來
+   */
+  kind: 'legacy' | 'noop' | 'applied' | 'manual' | 'needs_ai'
+  reason?: SourceOutdatedReason
+  /** 這一次有沒有花 AI 的錢（呼叫端扣每輪名額用） */
+  usedAi: boolean
+  /** kind='applied'：做了什麼（資料頁那一行紀錄） */
+  record?: Omit<SourceAutoUpdateRecord, 'at'>
+  /** kind='applied'：全部套成功、沒有因為空間不夠少加——這批知識才算對到這一版網頁 */
+  fingerprintSafe?: boolean
+  /** kind='applied'：沒套成功的條數 */
+  failed?: number
+}
+
+/** 紀錄裡每一種最多列幾條標題（資料頁「看是哪些」） */
+const RECORD_MAX_TITLES = 30
+
+export async function tryAutoApplyPageChange(
+  db: Firestore,
+  sourceId: string,
+  source: KnowledgeSourceDoc,
+  newText: string,
+  newHash: string,
+  opts: { allowAi: boolean, autoApply: boolean },
+): Promise<PageAutoApplyResult> {
+  const manualOf = (kind: SourceOutdatedReason['kind'], count: number, usedAi: boolean): PageAutoApplyResult =>
+    ({ kind: 'manual', reason: { kind, count }, usedAi })
+
+  const applied = await loadAppliedPage(db, sourceId)
+  if (!applied) return { kind: 'legacy', usedAi: false }
+  const lineDiff = diffPageLines(applied.text, newText, { ignoreNumbers: sourceNumbersVolatile(source) })
+  // 一行都沒改（空白、順序、會自己跳的數字）＝這批知識還是對的
+  if (!pageLinesChanged(lineDiff)) return { kind: 'noop', usedAi: false }
+  const changedLines = lineDiff.added.length + lineDiff.removed.length
+  // 店家設定成「每次都先問我」：照樣不自動，但講得出網頁改了幾行
+  if (!opts.autoApply) return manualOf('ask', changedLines, false)
+  if (pageChangeIsLarge(lineDiff)) return manualOf('big_change', changedLines, false)
+  // 抓到的網頁少了一大半：多半是網頁壞了或改成動態載入，不能照著刪知識
+  if (newText.trim().length < applied.text.trim().length * MIN_NEW_CONTENT_RATIO) return manualOf('shrink', 0, false)
+  if (!opts.allowAi) return { kind: 'needs_ai', usedAi: false }
+
+  try {
+    const rechunked = await chunkTextWithLlm(newText, { hint: source.name })
+    await recordAiUsage(source.workspaceId, usageFromCalls('build', callsOf(rechunked)))
+    if (!rechunked.chunks.length) return manualOf('other', 0, true)
+
+    const allChunks = await listChunksBySource(db, source.workspaceId, sourceId)
+    const oldChunks = allChunks.filter(c => !c.isOverview).map(c => ({
+      id: c.id,
+      title: c.title,
+      content: c.content,
+      tags: c.tags,
+      manuallyEditedAtMs: c.manuallyEditedAtMs,
+    }))
+    const disabledIds = new Set(allChunks.filter(c => c.status === 'disabled').map(c => c.id))
+    const diff = computeDiff(oldChunks, rechunked.chunks)
+    const gate = gateDiffByPageChanges(diff, lineDiff)
+    markRemovedStillOnPage(diff, newText)
+    const candidates = pickCosmeticCandidates(diff)
+    if (candidates.length) {
+      try {
+        const judged = await judgeCosmeticRewrites(candidates.map(e => ({
+          oldTitle: e.oldChunk?.title ?? '',
+          old: e.oldChunk?.content ?? '',
+          nextTitle: e.newChunk?.title ?? '',
+          next: e.newChunk?.content ?? '',
+        })))
+        await recordAiUsage(source.workspaceId, usageFromCalls('build', callsOf(judged)))
+        applyCosmeticVerdicts(candidates, judged.verdicts)
+      }
+      catch (e) {
+        console.warn('[autoapply] 意思判官失敗（照舊當成真的修改）:', (e as Error)?.message)
+      }
+    }
+    // ⛔ 有改了的行對不到任何知識：不知道該改哪條，停下來問（不默默略過）
+    if (gate.uncertain > 0) return manualOf('unclaimed', gate.uncertain, true)
+
+    const decisions: Record<string, DiffAction> = {}
+    let manualHits = 0
+    let disabledHits = 0
+    for (const e of diff.entries) {
+      if (e.kind === 'unchanged' || e.pageUnchanged || e.cosmetic || e.stillOnPage) continue
+      if (e.kind === 'new') {
+        decisions[e.id] = 'add_new'
+        continue
+      }
+      if (e.oldChunk?.manuallyEdited) {
+        manualHits++
+        continue
+      }
+      if (e.kind === 'modified') {
+        // 停用／到期的卡不能自動改寫：updateKnowledgeChunk 會把它寫回 indexed，等於讓過期的募資卡復活
+        if (disabledIds.has(e.oldChunk!.id)) disabledHits++
+        else decisions[e.id] = 'use_new'
+        continue
+      }
+      // 網頁上那一段沒了：照網頁拿掉（停用中的也一樣拿掉，本來就不對客人講話）
+      decisions[e.id] = 'delete_old'
+    }
+    if (manualHits) return manualOf('manual_edit', manualHits, true)
+    if (disabledHits) return manualOf('disabled', disabledHits, true)
+    if (!Object.keys(decisions).length) return { kind: 'noop', usedAi: true }
+
+    // 自動路徑沒有人把關：先驗一輪，有一條不合規就整份停下來（不做一半）
+    for (const e of diff.entries) {
+      if (decisions[e.id] !== 'add_new' && decisions[e.id] !== 'use_new') continue
+      if (validateChunkInput(normalizeChunkInput({ ...e.newChunk!, questions: e.newChunk!.questions ?? [] }))) {
+        return manualOf('other', 1, true)
+      }
+    }
+
+    const { createHash } = await import('node:crypto')
+    const r = await applyResyncEntries(db, {
+      workspaceId: source.workspaceId,
+      sourceId,
+      entries: diff.entries,
+      decisions,
+      // 同一版網頁、同一個標題＝同一個編號：這一輪中途逾時、下一輪重跑時覆寫同一條，不會長出重複的
+      chunkIdFor: e => createHash('sha256')
+        .update(`autosync:${sourceId}:${newHash}:${normalizeForCompare(e.newChunk?.title ?? e.id)}`)
+        .digest('hex').slice(0, 32),
+    })
+
+    let overviewUpdated = false
+    if (source.generateOverview && (r.added || r.updated || r.deleted)) {
+      const outcome = await regenerateOverviewCard(db, source.workspaceId, sourceId)
+        .catch((e) => {
+          console.warn(`[autoapply] ${sourceId} 總覽沒重做成:`, e)
+          return 'skipped' as const
+        })
+      overviewUpdated = outcome === 'updated' || outcome === 'created'
+    }
+    if (r.added || r.deleted) invalidateKnowledgeChunkCount(source.workspaceId)
+
+    return {
+      kind: 'applied',
+      usedAi: true,
+      fingerprintSafe: r.errors.length === 0 && r.quotaSkipped === 0,
+      failed: r.errors.length,
+      ...(r.quotaSkipped ? { reason: { kind: 'quota' as const, count: r.quotaSkipped } } : r.errors.length ? { reason: { kind: 'other' as const, count: r.errors.length } } : {}),
+      record: {
+        added: r.added,
+        removed: r.deleted,
+        updated: r.updated,
+        addedTitles: r.addedTitles.slice(0, RECORD_MAX_TITLES),
+        removedTitles: r.removedTitles.slice(0, RECORD_MAX_TITLES),
+        updatedTitles: r.updatedTitles.slice(0, RECORD_MAX_TITLES),
+        quotaSkipped: r.quotaSkipped,
+        overviewUpdated,
+      },
+    }
+  }
+  catch (e) {
+    console.warn(`[autoapply] ${sourceId} 照網頁自動更新失敗，留給人看:`, e)
+    return manualOf('other', 0, true)
   }
 }

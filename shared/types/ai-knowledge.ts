@@ -38,6 +38,21 @@ export interface KnowledgeChunkDoc {
    * 答題時 top-1 命中總覽卡則不進反問澄清（總覽贏了本身就是答案）。
    */
   isOverview?: boolean
+  /**
+   * 總覽卡專用（`C-369`）：系統照子卡做的那一段（「目前有賣的商品」那類）。每次重做只換這一段。
+   * 沒有這一欄＝舊的總覽（整張都是系統做的、或整張被手改過）。
+   */
+  overviewAuto?: string
+  /**
+   * 總覽卡專用（`C-369`）：店家自己寫的那一段（平台介紹、客服、購買方式…），系統不會動。
+   * 內容＝`overviewAuto`＋空一行＋這一段。空字串＝店家沒寫。
+   */
+  ownerNote?: string
+  /**
+   * 總覽卡專用（`C-369`）：從「整張手改過」改成「清單跟著資料、你寫的另外留著」那一次，原本整張的內容。
+   * 只留著備查／還原用（拆的時候是 AI 挑句子，挑錯了要找得回原文）。
+   */
+  legacyManualContent?: string
   /** Firestore VectorValue（768 dim）；尚未索引時為 null */
   embedding: EmbeddingVector | null
   /** 約略 token 數，用來估成本與檢索預算 */
@@ -264,8 +279,55 @@ export interface KnowledgeSourceDoc {
   lastCheckedAt?: Timestamp | null
   /** 切出來的 chunk 數量（給 UI 顯示用） */
   chunkCount: number
+  /** type='url'（`C-368`）：為什麼停下來要人看（黃色提示照這個講具體的事）；null＝沒有原因可講（舊的或手動） */
+  outdatedReason?: SourceOutdatedReason | null
+  /** type='url'（`C-368`）：上一次系統照網頁自動更新做了什麼（資料頁那一行「網頁有更新…已自動更新」） */
+  lastAutoUpdate?: SourceAutoUpdateRecord | null
+  /**
+   * type='url'（`C-368`）：學到「這個網址的數字本來就會自己跳」的時間。`numericDriftRounds` 每次網頁
+   * 真的改了都會歸零，偏偏比對「改了哪幾行」就在那一刻——要一個不會歸零的記號。
+   */
+  numbersVolatileAt?: Timestamp | null
+  /**
+   * type='url'（`C-368`）：存著的「這批知識是照哪一版網頁做的」原文是哪一版（＝那份原文的 contentHash）。
+   * 原文本身在 cache/applied；這格讓排程不用每輪多讀一次就知道要不要補存。
+   */
+  appliedPageHash?: string
   createdAt: Timestamp | FieldValue
   updatedAt: Timestamp | FieldValue
+}
+
+/**
+ * 網址資料停下來要人看的原因（`C-368`）。沒有衝突的變動系統會自己做完，只有這幾種才問：
+ * - `manual_edit`：動到你手改過的知識
+ * - `big_change`：網頁改了一大半（多半是網站改版）
+ * - `shrink`：這次抓到的網頁少了一大半（可能網頁壞了、或改成動態載入）
+ * - `unclaimed`：網頁改了的幾行，系統對不到是哪條知識
+ * - `quota`：網頁多了新的，AI 知識量不夠、沒全部加進來
+ * - `disabled`：動到停用中的知識
+ * - `ask`：網頁改了，這份設定成「每次都先問我」（count＝改了幾行）
+ * - `other`：其他（AI 整理失敗、整理出來不合規…）
+ */
+export type SourceOutdatedReasonKind = 'manual_edit' | 'big_change' | 'shrink' | 'unclaimed' | 'quota' | 'disabled' | 'ask' | 'other'
+export interface SourceOutdatedReason {
+  kind: SourceOutdatedReasonKind
+  /** 幾條／幾行（依 kind） */
+  count: number
+}
+
+export interface SourceAutoUpdateRecord {
+  at: Timestamp | FieldValue
+  added: number
+  removed: number
+  updated: number
+  /** 給「看是哪些」用：各最多 30 條 */
+  addedTitles: string[]
+  removedTitles: string[]
+  updatedTitles: string[]
+  /** 知識量不夠、這次沒加進來的條數 */
+  quotaSkipped: number
+  /** 總覽跟著換了 */
+  overviewUpdated: boolean
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -20,6 +20,7 @@ vi.mock('./ai-knowledge-chunks', () => ({
   updateKnowledgeChunk: vi.fn(async () => {}),
 }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./ai-knowledge-quota', () => ({
   assertKnowledgeChunkQuota: vi.fn(async () => {}),
   invalidateKnowledgeChunkCount: vi.fn(),
@@ -30,11 +31,12 @@ const { summarizeAsOverviewCard } = await import('./ai-knowledge-chunker')
 const { createKnowledgeChunk, updateKnowledgeChunk } = await import('./ai-knowledge-chunks')
 const { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } = await import('./ai-knowledge-quota')
 
-/** 假 Firestore：那一份資料底下的卡 */
+/** 假 Firestore：那一份資料底下的卡（總覽的兩段欄位另外 update，`C-369`） */
 function dbWith(cards: Array<Record<string, unknown>>) {
   const q: any = {
     where: () => q,
     get: async () => ({ docs: cards.map((c, i) => ({ id: `c${i}`, data: () => c })) }),
+    doc: () => ({ update: async () => {} }),
   }
   return { collection: () => q } as any
 }

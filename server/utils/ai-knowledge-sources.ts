@@ -18,6 +18,9 @@ import type {
   KnowledgeSourceDoc,
   KnowledgeSourceStatus,
   KnowledgeSourceType,
+  SourceAutoUpdateRecord,
+  SourceOutdatedReason,
+  SourceOutdatedReasonKind,
 } from '~~/shared/types/ai-knowledge'
 import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
 import type { KnowledgeRelearnState } from '~~/shared/knowledge-relearn'
@@ -115,6 +118,10 @@ export interface SourceSummary {
   summary: string[]
   /** summary 是什麼時候整理的（ms）；0＝還沒整理過 */
   summaryAt: number
+  /** type='url'（`C-368`）：為什麼停下來要你看；null＝沒原因可講（黃色提示用通用說法） */
+  outdatedReason: SourceOutdatedReason | null
+  /** type='url'（`C-368`）：上一次照網頁自動更新做了什麼；null＝沒有 */
+  lastAutoUpdate: (Omit<SourceAutoUpdateRecord, 'at'> & { atMs: number }) | null
 }
 
 /** 資料文件上「這份在講什麼」那兩格（`C-316`）。共用型別沒有這兩格，只在這支讀寫，型別就留在這裡 */
@@ -150,8 +157,7 @@ export function docToSourceSummary(id: string, raw: SourceDocWithSummary): Sourc
     lastFetchedAtMs: tsToMs(raw.lastFetchedAt),
     outdatedAtMs: tsToMs(raw.outdatedAt),
     updatedAtMs: tsToMs(raw.updatedAt),
-    // 從輪數推導，不另存布林值：兩個地方各存一份遲早會對不起來
-    numbersVolatile: Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS,
+    numbersVolatile: sourceNumbersVolatile(raw),
     detectStalledAtMs: tsToMs(raw.detectStalledAt),
     manualKeptCount: Number(raw.manualKeptCount ?? 0),
     quotaSkippedCount: Number(raw.quotaSkippedCount ?? 0),
@@ -166,6 +172,45 @@ export function docToSourceSummary(id: string, raw: SourceDocWithSummary): Sourc
       ? raw.summary.map(s => String(s ?? '').trim()).filter(Boolean).slice(0, SOURCE_SUMMARY_MAX_LINES)
       : [],
     summaryAt: tsToMs(raw.summaryAt),
+    outdatedReason: outdatedReasonOf(raw.outdatedReason),
+    lastAutoUpdate: autoUpdateOf(raw.lastAutoUpdate),
+  }
+}
+
+/**
+ * 這個網址的數字本來就會自己跳嗎（集資金額、人數、剩幾天）。
+ * 兩個來源都算：正在數的輪數（`numericDriftRounds`，網頁真的改了就歸零），
+ * 跟學會那一刻留下的記號（`numbersVolatileAt`，`C-368`）——只看輪數的話，網頁一改就忘了，
+ * 偏偏比「網頁改了哪幾行」就在那一刻，數字沒抹掉的話每個商品那一行都會算成改了。
+ */
+export function sourceNumbersVolatile(raw: { numericDriftRounds?: unknown, numbersVolatileAt?: unknown }): boolean {
+  return Number(raw.numericDriftRounds ?? 0) >= NUMERIC_DRIFT_LEARN_ROUNDS || tsToMs(raw.numbersVolatileAt) > 0
+}
+
+const OUTDATED_REASON_KINDS: ReadonlySet<SourceOutdatedReasonKind> = new Set(['manual_edit', 'big_change', 'shrink', 'unclaimed', 'quota', 'disabled', 'ask', 'other'])
+
+function outdatedReasonOf(raw: unknown): SourceOutdatedReason | null {
+  const r = raw as { kind?: unknown, count?: unknown } | null | undefined
+  if (!r || !OUTDATED_REASON_KINDS.has(r.kind as SourceOutdatedReasonKind)) return null
+  return { kind: r.kind as SourceOutdatedReasonKind, count: Math.max(0, Number(r.count ?? 0) || 0) }
+}
+
+function autoUpdateOf(raw: unknown): SourceSummary['lastAutoUpdate'] {
+  const r = raw as Partial<Record<keyof SourceAutoUpdateRecord, unknown>> | null | undefined
+  const atMs = tsToMs(r?.at)
+  if (!r || !atMs) return null
+  const titles = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(t => t.trim()) : [])
+  const n = (v: unknown) => Math.max(0, Number(v ?? 0) || 0)
+  return {
+    atMs,
+    added: n(r.added),
+    removed: n(r.removed),
+    updated: n(r.updated),
+    addedTitles: titles(r.addedTitles),
+    removedTitles: titles(r.removedTitles),
+    updatedTitles: titles(r.updatedTitles),
+    quotaSkipped: n(r.quotaSkipped),
+    overviewUpdated: r.overviewUpdated === true,
   }
 }
 
@@ -437,7 +482,7 @@ export async function listChunksBySource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; retryCount: number; relearnState?: KnowledgeRelearnState; isOverview: boolean; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
+): Promise<Array<{ id: string; title: string; content: string; tags: string[]; questions: string[]; status: string; failureReason?: string; retryCount: number; relearnState?: KnowledgeRelearnState; isOverview: boolean; overviewAuto?: string; ownerNote?: string; manuallyEditedAtMs: number; updatedAtMs: number; activeUntilMs: number; expiredAtMs: number }>> {
   const snap = await db.collection(KNOWLEDGE_CHUNKS_COLLECTION)
     .where('workspaceId', '==', workspaceId)
     .where('sourceId', '==', sourceId)
@@ -461,6 +506,10 @@ export async function listChunksBySource(
       // 重學沒成、AI 先用原本學好的（`C-351`）：還會自己再學的畫面不講；試完 5 次的灰字一行＋「再試一次」
       ...(data?.relearnState === 'retrying' || data?.relearnState === 'exhausted' ? { relearnState: data.relearnState as KnowledgeRelearnState } : {}),
       isOverview: data?.isOverview === true,
+      // 總覽拆成兩段的（`C-369`）：編輯視窗只讓改「你寫的那段」，系統那段照資料重做
+      ...(data?.isOverview === true && typeof data?.overviewAuto === 'string'
+        ? { overviewAuto: String(data.overviewAuto), ownerNote: String(data?.ownerNote ?? '') }
+        : {}),
       manuallyEditedAtMs: tsToMs(data?.manuallyEditedAt),
       updatedAtMs: tsToMs(data?.updatedAt),
       activeUntilMs: tsToMs(data?.activeUntil),
@@ -536,6 +585,9 @@ export async function deleteSourceWithChunks(
   const tail = db.batch()
   // 變動偵測的全文暫存（subcollection）也一併清掉，避免孤兒 doc
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('extracted'))
+  // 「這批知識是照哪一版網頁做的」原文（`C-368`）與重新同步的豁免帳本，同一個理由
+  tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc(APPLIED_PAGE_DOC))
+  tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).collection('cache').doc('lastDiffExempt'))
   tail.delete(db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId))
   await tail.commit()
   /**
@@ -667,11 +719,83 @@ export async function updateSourceSettings(
 export async function markSourceOutdated(
   db: Firestore,
   sourceId: string,
+  /** 為什麼要人看（`C-368`）；沒帶＝講不出原因，黃色提示用通用說法 */
+  reason: SourceOutdatedReason | null = null,
 ): Promise<void> {
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
     outdatedAt: FieldValue.serverTimestamp(),
+    outdatedReason: reason,
     updatedAt: FieldValue.serverTimestamp(),
   })
+}
+
+// ── 「這批知識是照哪一版網頁做的」原文（`C-368`）──────────────────────────────
+//
+// 以前只存指紋（appliedContentHash）：只知道「網頁有變」，講不出「哪一行變」，
+// 只好請 AI 整份重寫再拿兩份 AI 寫的東西互比——那就是「一直叫人更新」的病根。
+// 存在 knowledgeSources/{id}/cache/applied（跟抓網頁暫存 cache/extracted 並排）：一頁最多 10 萬字，
+// 在單筆上限內；放子集合是為了不讓資料列表拖著幾百 KB 的內文。
+//
+// ⛔ 只在「這批知識真的對到這一版網頁」時寫（跟 appliedContentHash 同一個規矩，`C-44`）：
+//    有任何一條刻意保留成跟網頁不同、或沒套成功，就不能寫——寫了，那幾行的差異以後就比不出來了。
+
+export const APPLIED_PAGE_DOC = 'applied'
+
+export interface AppliedPage {
+  text: string
+  /** sha256(text)＝這一版的 contentHash */
+  hash: string
+}
+
+export async function loadAppliedPage(db: Firestore, sourceId: string): Promise<AppliedPage | null> {
+  try {
+    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+      .collection('cache').doc(APPLIED_PAGE_DOC).get()
+    const d = snap.data() as { text?: unknown, hash?: unknown } | undefined
+    const text = typeof d?.text === 'string' ? d.text : ''
+    if (!text.trim()) return null
+    return { text, hash: String(d?.hash ?? '') }
+  }
+  catch (e) {
+    // 讀不到＝當作沒有原文，退回舊的整份比對（方向安全：多給人看，不會少做）
+    console.warn(`[applied-page] ${sourceId} 讀不到上一版原文（照舊整份比對）:`, (e as Error)?.message)
+    return null
+  }
+}
+
+/**
+ * 寫不進去不擋流程：後果只是下次照舊整份比對。
+ * 資料本身記一格 `appliedPageHash`：排程每輪要判斷「要不要補存」，看這格就知道，不用每輪多讀一次原文。
+ */
+export async function saveAppliedPage(db: Firestore, sourceId: string, text: string, hash: string): Promise<void> {
+  if (!sourceId || !String(text ?? '').trim()) return
+  const sourceRef = db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+  try {
+    await sourceRef.collection('cache').doc(APPLIED_PAGE_DOC)
+      .set({ text, hash, savedAt: FieldValue.serverTimestamp() })
+    await sourceRef.update({ appliedPageHash: hash })
+  }
+  catch (e) {
+    console.warn(`[applied-page] ${sourceId} 原文沒存成（下次照舊整份比對）:`, (e as Error)?.message)
+  }
+}
+
+/**
+ * 手動「立即更新」套用完：當時抓的那一版在 cache/extracted（`getResyncExtracted` 寫的），
+ * 指紋對得上才搬過去——對不上＝排程中途又抓了一次蓋掉了，那份不是這批知識對應的版本，不搬。
+ */
+export async function promoteExtractedToApplied(db: Firestore, sourceId: string, hash: string): Promise<void> {
+  if (!hash) return
+  try {
+    const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
+      .collection('cache').doc('extracted').get()
+    const d = snap.data() as { text?: unknown, hash?: unknown } | undefined
+    if (typeof d?.text !== 'string' || String(d?.hash ?? '') !== hash) return
+    await saveAppliedPage(db, sourceId, d.text, hash)
+  }
+  catch (e) {
+    console.warn(`[applied-page] ${sourceId} 原文沒搬成（下次照舊整份比對）:`, (e as Error)?.message)
+  }
 }
 
 /**
@@ -683,6 +807,7 @@ export async function clearSourceOutdated(
 ): Promise<void> {
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
     outdatedAt: null,
+    outdatedReason: null,
     updatedAt: FieldValue.serverTimestamp(),
   })
 }

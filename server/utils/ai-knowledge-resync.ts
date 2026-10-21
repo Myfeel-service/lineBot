@@ -13,6 +13,8 @@
  *   ——使用者的結論會是「系統說有變更但其實沒有」，整個 diff 從此不被信任。
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { normalizePageLink, type PageLine, type PageLineDiff } from '~~/shared/page-line-diff'
+import { normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
 import { listChunksBySource } from './ai-knowledge-sources'
 import { extractUrlText } from './ai-source-extractors'
 import { aiUsageOfError, callsOf, type AiCallUsage } from './ai-usage-calls'
@@ -69,7 +71,13 @@ export interface DiffEntry {
    * 而且是**確定性的字串比對、零 LLM 成本**，判不錯。
    */
   stillOnPage?: boolean
-  /** kind=modified 且數字有變：變掉的數字（各最多 6 個），前端直接列給人看 */
+  /**
+   * 這一條跟網頁改了的那幾行**都無關**（`C-368`）：網頁上它那一段沒有動，差別只在 AI 這次的寫法
+   * （換句話說、換了分法、這次多寫了頁尾）。收起來、不採用，原本的知識一個字不動。
+   * 只有存了「這批知識是照哪一版網頁做的」原文的資料才判得出來（見 `gateDiffByPageChanges`）。
+   */
+  pageUnchanged?: boolean
+  /** kind=modified 且數字有變：變掉的數字或型號（各最多 6 個，見 `cardFactChanges`），前端直接列給人看 */
   numberChanges?: { removed: string[]; added: string[] }
   /** kind=modified 才有：標題（正規化後）是否真的變了 */
   titleChanged?: boolean
@@ -211,6 +219,83 @@ export function extractNumbers(s: string): string[] {
   return (normalizeForCompare(s).match(NUMBER_RE) ?? []).map(n => n.replace(/,/g, ''))
 }
 
+/**
+ * 一張卡講到的「事實值」，給重新同步的「數字有變」用（`C-367`）。數字與型號分開算：
+ *  - 數字（價格、天數、容量、度數）：**算次數**。B 方案從 800 改成 500、而 500 本來就出現過，
+ *    只看「有沒有」會漏掉這種真的改價。
+ *  - 型號（英文和數字混在一起的一串：EC-SR9TW-W、AS201SHU0、HD5225）：**整串當一個、只看有沒有**。
+ *
+ * 為什麼要分：2026-10-21 MYFEEL 首頁重新同步，三條只是換句話說的卡被標「數字有變」——
+ * 舊版 `extractNumbers` 把 EC-SR9TW 的 9、AS201SHU0 的 201 拆出來當數字，
+ * 舊版內文把型號寫兩次、新版寫一次就算成「少了 9、9」。而「數字有變」的卡照規定不送意思判官、
+ * 不准收起來，這三條就一定攤在店家面前。
+ *
+ * 另外兩條：網址裡的字不算（網址另外靠連結配對比過）；這張卡網址裡本來就有的型號，
+ * 提不提都不算（顯微鏡的網址是 /projects/3R-MJL01，新版在重點又寫一次 3R-MJL01 不是事實改了）。
+ * 數字後面接單位的（12L、500ml、1200W、10S）照舊當數字比：6L 改 12L 是規格真的變了。
+ */
+export interface CardFacts {
+  /** 型號：小寫 → 第一次出現的原樣（畫面要照原樣列給人看） */
+  codes: Map<string, string>
+  nums: string[]
+}
+
+const URL_IN_TEXT_RE = /https?:\/\/[^\s）)」』]+/gi
+
+function toHalfWidthAlnum(s: string): string {
+  return String(s ?? '').replace(/[０-９Ａ-Ｚａ-ｚ－．，]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+}
+
+/** 這段文字的網址裡出現的型號（小寫）。網址本身另外比過，裡面的型號拿來當「這張卡本來就有」 */
+function codesInLinks(s: string): Set<string> {
+  const out = new Set<string>()
+  for (const url of toHalfWidthAlnum(s).match(URL_IN_TEXT_RE) ?? []) {
+    for (const part of url.toLowerCase().split(/[^a-z0-9\-_]+/)) {
+      if (/\d/.test(part) && /[a-z]/.test(part)) out.add(part)
+    }
+  }
+  return out
+}
+
+export function extractCardFacts(s: string, ignoreCodes: ReadonlySet<string> = new Set()): CardFacts {
+  const text = toHalfWidthAlnum(s)
+    .replace(URL_IN_TEXT_RE, ' ')
+    // 「1 000」這種被空白隔開的千位數照舊當一個數字（舊版靠 normalizeForCompare 去空白做到）
+    .replace(/(\d) (?=\d{3}(?!\d))/g, '$1')
+  const codes = new Map<string, string>()
+  const nums: string[] = []
+  for (const raw of text.split(/[^A-Za-z0-9.,\-_]+/)) {
+    const tok = raw.replace(/^[.,\-_]+|[.,\-_]+$/g, '')
+    if (!/\d/.test(tok)) continue
+    const unit = tok.match(/^(\d+(?:[.,]\d+)*)[A-Za-z]{0,4}$/)
+    if (unit) {
+      nums.push(unit[1]!.replace(/,/g, ''))
+      continue
+    }
+    if (/[A-Za-z]/.test(tok)) {
+      const key = tok.toLowerCase()
+      if (!ignoreCodes.has(key) && !codes.has(key)) codes.set(key, tok)
+      continue
+    }
+    // 只有數字和符號的一串（2026-10-21、02-1234-5678）：裡面的數字照舊一個一個算
+    for (const n of tok.match(/\d+(?:[.,]\d+)*/g) ?? []) nums.push(n.replace(/,/g, ''))
+  }
+  return { codes, nums }
+}
+
+/** 兩版內容的事實值差在哪（給 computeDiff 標「數字有變」）；兩邊都空＝沒變 */
+export function cardFactChanges(oldContent: string, newContent: string): { removed: string[]; added: string[] } {
+  const ignore = new Set([...codesInLinks(oldContent), ...codesInLinks(newContent)])
+  const a = extractCardFacts(oldContent, ignore)
+  const b = extractCardFacts(newContent, ignore)
+  const removed = [...a.codes].filter(([k]) => !b.codes.has(k)).map(([, v]) => v)
+  const added = [...b.codes].filter(([k]) => !a.codes.has(k)).map(([, v]) => v)
+  return {
+    removed: [...removed, ...multisetDiff(a.nums, b.nums)],
+    added: [...added, ...multisetDiff(b.nums, a.nums)],
+  }
+}
+
 /** 多重集合差集：a 有而 b 沒有的（含重複次數） */
 function multisetDiff(a: string[], b: string[]): string[] {
   const pool = [...b]
@@ -248,14 +333,8 @@ export function extractCardLink(content: string): string | null {
     .map(l => l.slice('連結：'.length).trim())
     .filter(Boolean)
   if (links.length !== 1) return null
-  try {
-    const u = new URL(links[0]!)
-    const path = u.pathname.replace(/\/+$/, '')
-    return `${u.host.toLowerCase()}${path}`
-  }
-  catch {
-    return null
-  }
+  // 跟網頁那一行的連結同一套正規化（`C-368`）：網頁改了哪一行，才認得出是哪一條知識
+  return normalizePageLink(links[0]!)
 }
 
 /** 集合內「只出現一次」的連結才可靠：同一產品頁切出的多張卡會共用同一條連結，不能拿來配對 */
@@ -302,10 +381,7 @@ export function computeDiff(oldChunks: OldChunk[], newChunks: NewChunk[]): DiffR
 
   const pushModified = (o: OldChunk, n: NewChunk) => {
     const manuallyEdited = o.manuallyEditedAtMs > 0
-    const oldNums = extractNumbers(o.content)
-    const newNums = extractNumbers(n.content)
-    const gone = multisetDiff(oldNums, newNums)
-    const came = multisetDiff(newNums, oldNums)
+    const { removed: gone, added: came } = cardFactChanges(o.content, n.content)
     entries.push({
       id: `mod:${o.id}`,
       kind: 'modified',
@@ -530,6 +606,8 @@ export function pickCosmeticCandidates(diff: DiffResult): DiffEntry[] {
   return diff.entries.filter(e =>
     e.kind === 'modified'
     && !e.numbersChanged
+    // 已經因為「網頁那一段沒動」收起來的不用再判（`C-368`），省一次 AI 的錢
+    && !e.pageUnchanged
     && (e.oldChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS
     && (e.newChunk?.content?.length ?? 0) <= COSMETIC_JUDGE_MAX_CHARS,
   )
@@ -730,10 +808,151 @@ export function markRemovedStillOnPage(diff: DiffResult, pageText: string): { ma
     if (e.kind !== 'removed' || !e.oldChunk) continue
     // 手動編輯過的卡本來就預設保留、而且人特別在意 → 不摺疊，照樣給人看
     if (e.oldChunk.manuallyEdited) continue
+    if (e.pageUnchanged) continue // 已經收起來了（`C-368`）
     if (!contentStillOnPage(e.oldChunk.content, pageText)) continue
     e.stillOnPage = true
     e.defaultAction = 'keep_old'
     marked++
   }
   return { marked }
+}
+
+
+// ── 只採用跟「網頁改了的那幾行」有關的變動（`C-368`）──────────────────────────
+//
+// 重新同步照樣請 AI 把整份網頁整理一次，但 AI 每次的寫法都不一樣——沒改的地方也會長出
+// 「修改」「新增」「移除」。有了上一版網頁原文，就知道網頁到底改了哪幾行：
+//   - 跟改了的行有關的 → 照舊比對、照舊給人看（或自動套用）
+//   - 跟改了的行都無關的 → 那是 AI 的寫法在飄，收起來、不採用，原本的知識一個字不動
+// 「有關」怎麼認：有附連結的行用連結認（首頁一個商品一行、一條連結）；沒有連結看文字重疊。
+//
+// ⛔ 每一行改動都要有一條知識「認領」。有一行沒人認領、又不像頁尾樣板那種從來沒人寫成知識的字，
+//    就是「系統對不到」——停下來問，不默默略過（`feedback_filters_must_report_what_they_dropped`）。
+// ⛔ 數字有變的那一條一律不收（數字紅線）：數字會自己跳的網址比行的時候把數字抹掉了，
+//    改價在行上看不出來，只能靠卡片上的數字變化抓。
+
+/** 一行跟一條知識「有關」的門檻：那一行的字有六成出現在知識裡 */
+export const LINE_CLAIM_MIN_OVERLAP = 0.6
+/** 低於這個就算「完全沒人寫過這一行」（頁尾樣板、選單這種）：可以安心略過 */
+export const LINE_UNCOVERED_MAX_OVERLAP = 0.3
+/** 一行少於這麼多個字組就不拿文字判（太短在哪裡都撞得到），只看連結 */
+const LINE_MIN_GRAMS = 3
+/** 「緊挨著一行對到知識的就算同一題」只給這麼短的行（問句），見 gateDiffByPageChanges */
+const NEIGHBOR_CLAIM_MAX_CHARS = 40
+
+export type PageLineStatus = 'claimed' | 'uncovered' | 'uncertain'
+
+export interface PageLineVerdict {
+  side: 'added' | 'removed'
+  display: string
+  status: PageLineStatus
+}
+
+export interface PageGateResult {
+  lines: PageLineVerdict[]
+  /** 被收起來（跟網頁改了的行都無關）的條數 */
+  folded: number
+  /** 對不到知識的行數（> 0 就不能自動更新） */
+  uncertain: number
+}
+
+function factGrams(s: string): Set<string> {
+  // 兩邊都抹數字再比：數字會跳的網址那一行的數字已經是 #，卡片上還是真的數字
+  return bigramSet(normalizeForCompare(normalizeVolatileNumbers(String(s ?? '').replace(URL_IN_TEXT_RE, ' '))))
+}
+
+function overlapOf(lineGrams: Set<string>, cardGrams: Set<string>): number {
+  if (!lineGrams.size) return 0
+  let hit = 0
+  for (const g of lineGrams) if (cardGrams.has(g)) hit++
+  return hit / lineGrams.size
+}
+
+function linksIn(content: string): Set<string> {
+  const out = new Set<string>()
+  for (const url of String(content ?? '').match(URL_IN_TEXT_RE) ?? []) {
+    const l = normalizePageLink(url)
+    if (l) out.add(l)
+  }
+  return out
+}
+
+/**
+ * 依網頁改了哪幾行，把 diff 裡「跟改了的行都無關」的那幾條收起來（就地標 `pageUnchanged`）。
+ * 收起來的：修改／移除 → 保留原本的；新增 → 略過。之後的意思判官、自動套用都只看沒收起來的。
+ */
+export function gateDiffByPageChanges(diff: DiffResult, change: PageLineDiff): PageGateResult {
+  const entries = diff.entries.filter(e => e.kind !== 'unchanged')
+  const prepared = diff.entries.map(e => ({
+    e,
+    oldGrams: e.oldChunk ? factGrams(`${e.oldChunk.title}\n${e.oldChunk.content}`) : new Set<string>(),
+    // 新的那份連「客人可能怎麼問」一起算：FAQ 頁多了一題，問句那一行（「Q：可以分期付款嗎？」）
+    // 跟知識內文的字重疊不夠，但 AI 幫那條寫的問法幾乎就是那一句（2026-10-21 BOYA FAQ 實測）
+    newGrams: e.newChunk ? factGrams(`${e.newChunk.title}\n${e.newChunk.content}\n${(e.newChunk.questions ?? []).join('\n')}`) : new Set<string>(),
+    oldLinks: e.oldChunk ? linksIn(e.oldChunk.content) : new Set<string>(),
+    newLinks: e.newChunk ? linksIn(e.newChunk.content) : new Set<string>(),
+  }))
+  const related = new Set<DiffEntry>()
+  const lines: PageLineVerdict[] = []
+  const verdicts: Array<{ verdict: PageLineVerdict, line: PageLine }> = []
+
+  const judge = (line: PageLine, side: 'added' | 'removed') => {
+    const grams = factGrams(line.key)
+    const textUsable = grams.size >= LINE_MIN_GRAMS
+    let claimed = false
+    let best = 0
+    for (const p of prepared) {
+      // 網頁少了的那一行對舊的知識、多了的那一行對新的知識
+      const links = side === 'removed' ? p.oldLinks : p.newLinks
+      const cardGrams = side === 'removed' ? p.oldGrams : p.newGrams
+      const byLink = line.links.some(l => links.has(l))
+      const overlap = textUsable ? overlapOf(grams, cardGrams) : 0
+      best = Math.max(best, overlap, byLink ? 1 : 0)
+      if (byLink || overlap >= LINE_CLAIM_MIN_OVERLAP) {
+        claimed = true
+        if (p.e.kind !== 'unchanged') related.add(p.e)
+      }
+    }
+    // 修改的那條兩邊都算：網頁少了的那行可能被寫進新版，多了的那行可能本來就寫在舊版
+    for (const p of prepared) {
+      if (p.e.kind !== 'modified') continue
+      const links = side === 'removed' ? p.newLinks : p.oldLinks
+      const cardGrams = side === 'removed' ? p.newGrams : p.oldGrams
+      const byLink = line.links.some(l => links.has(l))
+      const overlap = textUsable ? overlapOf(grams, cardGrams) : 0
+      if (byLink || overlap >= LINE_CLAIM_MIN_OVERLAP) {
+        claimed = true
+        related.add(p.e)
+      }
+    }
+    const status: PageLineStatus = claimed
+      ? 'claimed'
+      : (!textUsable && !line.links.length) || best < LINE_UNCOVERED_MAX_OVERLAP ? 'uncovered' : 'uncertain'
+    verdicts.push({ verdict: { side, display: line.display, status }, line })
+  }
+  for (const l of change.removed) judge(l, 'removed')
+  for (const l of change.added) judge(l, 'added')
+  /**
+   * 問句緊挨著答句（FAQ 一題拆成兩行）：答句那一行對到知識了，緊鄰的短行（問句）算同一題。
+   * ⛔ 只給短行：長的一段沒人認領卻沾到邊，是「真的改了、AI 沒寫進任何一條」的樣子，要問。
+   */
+  for (const v of verdicts) {
+    if (v.verdict.status !== 'uncertain' || v.line.display.length > NEIGHBOR_CLAIM_MAX_CHARS) continue
+    const neighbourClaimed = verdicts.some(o => o !== v && o.verdict.side === v.verdict.side
+      && o.verdict.status === 'claimed' && Math.abs(o.line.index - v.line.index) === 1)
+    if (neighbourClaimed) v.verdict.status = 'claimed'
+  }
+  lines.push(...verdicts.map(v => v.verdict))
+
+  let folded = 0
+  for (const e of entries) {
+    if (related.has(e)) continue
+    // ⛔ 數字紅線：數字會跳的網址比行時把數字抹掉了，改價只能從卡片上的數字看出來——數字有變的不收。
+    //    數字不會跳的網址行上照比數字（改價那一行就會算改了），這裡的數字差別只是 AI 這次的寫法（少寫一次型號、少提一次規格）
+    if (change.ignoreNumbers && e.kind === 'modified' && e.numbersChanged) continue
+    e.pageUnchanged = true
+    e.defaultAction = e.kind === 'new' ? 'skip' : 'keep_old'
+    folded++
+  }
+  return { lines, folded, uncertain: lines.filter(l => l.status === 'uncertain').length }
 }

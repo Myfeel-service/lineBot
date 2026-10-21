@@ -1,5 +1,5 @@
 /**
- * 總覽卡（isOverview）重生——resync-apply 與 gsheet 同步共用（C-49C）。
+ * 總覽卡（isOverview）重生——resync-apply、網址自動更新與 gsheet 同步共用（C-49C）。
  *
  * 修掉的三個病（健檢 P1-5）：
  * 1. 子卡刪光後總覽卡留著，繼續對客人唸已下架的品項——而它走較寬鬆的回答門檻，
@@ -9,11 +9,17 @@
  * 3. gsheet 型錄的總覽永遠停在第一次匯入的版本。現在同步有增刪改就重生。
  *
  * 呼叫端記得只在「這輪真的動過卡」時呼叫——沒動也重生是白花一次 LLM＋embedding
- * （健檢「白花錢五處」之一）。手動編輯過的總覽卡永遠不自動覆蓋。
+ * （健檢「白花錢五處」之一）。
+ *
+ * **總覽分兩段（`C-369`，2026-10-21 老闆拍板）**：系統照子卡做的那一段（`overviewAuto`）每次重做；
+ * 店家自己寫的那一段（`ownerNote`）系統不動。內容＝兩段接起來。
+ * 以前「手動編輯過的總覽卡永遠不自動覆蓋」——MYFEEL 首頁那張 7/31 改過，「目前有賣的商品」就一直停在 7 月。
+ * 現在整張手改過的舊總覽在下一次重做時拆一次：AI 只挑出哪幾句是店家自己的話（不改寫），
+ * 商品清單換成現在的，原本整張存在 `legacyManualContent` 備查。拆不成（AI 掛了）就照舊保留、不動。
  */
 import { v4 as uuidv4 } from 'uuid'
 import type { Firestore } from 'firebase-admin/firestore'
-import { summarizeAsOverviewCard } from './ai-knowledge-chunker'
+import { pickOwnerNoteSentences, splitOwnerNoteSentences, summarizeAsOverviewCard } from './ai-knowledge-chunker'
 import {
   buildChunkSoftDeletePatch,
   createKnowledgeChunk,
@@ -23,12 +29,28 @@ import {
 import { recordAiUsage } from './ai-usage'
 import { callsOf, usageFromCalls } from './ai-usage-calls'
 import { assertKnowledgeChunkQuota, invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
+import { writeAuditLog } from './audit-log'
 
 /**
  * 這一輪做了什麼。同步那兩條路不看；「匯入完才問要不要做總表」那支（`D-123`②）要靠它講結果——
  * ⛔ 沒做出來（子卡不夠、AI 沒給、手改過）不可以回成功：按了「做一張」卻什麼都沒有，人只會以為按了沒用。
  */
 export type OverviewRegenOutcome = 'created' | 'updated' | 'retired' | 'kept_manual' | 'skipped'
+
+/** 總覽的內容＝系統做的那段＋店家寫的那段（`C-369`）。店家沒寫就只有系統那段 */
+export function composeOverviewContent(auto: string, ownerNote: string): string {
+  const note = String(ownerNote ?? '').trim()
+  return note ? `${String(auto ?? '').trim()}\n\n${note}` : String(auto ?? '').trim()
+}
+
+interface ExistingOverview {
+  id: string
+  manuallyEdited: boolean
+  status: string
+  content: string
+  /** undefined＝舊的總覽（沒拆過） */
+  ownerNote: string | undefined
+}
 
 export async function regenerateOverviewCard(
   db: Firestore,
@@ -40,7 +62,7 @@ export async function regenerateOverviewCard(
     .where('sourceId', '==', sourceId)
     .get()
 
-  let existingOverview: { id: string; manuallyEdited: boolean; status: string } | null = null
+  let existingOverview: ExistingOverview | null = null
   const childCards: Array<{ title: string; content: string; tags: string[] }> = []
   /**
    * 「暫時說不出話」的子卡（pending / failed）：不能拿來合成總覽（內容可能還沒索引好），
@@ -55,6 +77,8 @@ export async function regenerateOverviewCard(
         id: d.id,
         manuallyEdited: data?.manuallyEditedAt != null,
         status: String(data?.status ?? 'pending'),
+        content: String(data?.content ?? ''),
+        ownerNote: typeof data?.ownerNote === 'string' ? data.ownerNote : undefined,
       }
       continue
     }
@@ -69,9 +93,6 @@ export async function regenerateOverviewCard(
     })
   }
 
-  // 手動編輯過的總覽卡：尊重人工版本，不自動覆蓋
-  if (existingOverview?.manuallyEdited) return 'kept_manual'
-
   /**
    * ⛔子卡「暫時」不可用時什麼都不做（C-49C）：Gemini 一次故障就會讓整批子卡變 failed，
    * 若照 childCards<2 判定就會把總覽卡收進回收桶——之後 retry 把子卡修好了，
@@ -80,15 +101,39 @@ export async function regenerateOverviewCard(
    */
   if (transientChildren > 0 && childCards.length < 2) return 'skipped'
 
-  // 子卡真的沒了：舊總覽收進回收桶（不能留著——型錄改版清空後它會繼續唸已下架品項）
+  // 子卡真的沒了：舊總覽收進回收桶（不能留著——型錄改版清空後它會繼續唸已下架品項）。
+  // 整張手改過、還沒拆的照舊留著（那是店家的字，不替他丟）；拆過的跟系統做的一樣退休
   if (childCards.length < 2) {
-    if (existingOverview) {
+    if (existingOverview && !existingOverview.manuallyEdited) {
       await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(existingOverview.id)
         .update(buildChunkSoftDeletePatch(existingOverview.status))
         .catch(e => console.warn('[overview] retire failed:', e))
       return 'retired'
     }
-    return 'skipped'
+    return existingOverview ? 'kept_manual' : 'skipped'
+  }
+
+  /**
+   * 店家自己寫的那段（`C-369`）：
+   * - 拆過的（有 ownerNote）→ 照用
+   * - 整張手改過、還沒拆的 → 這一次拆：AI 挑出哪幾句是店家自己的話（只挑、不改寫）
+   * - 都不是（整張系統做的）→ 沒有
+   * 拆不成就照舊保留整張、不動——寧可清單舊一點，也不要把店家寫的話弄丟。
+   */
+  let ownerNote = existingOverview?.ownerNote ?? ''
+  let splitFrom: string | null = null
+  if (existingOverview?.manuallyEdited && existingOverview.ownerNote === undefined) {
+    try {
+      const sentences = splitOwnerNoteSentences(existingOverview.content)
+      const picked = await pickOwnerNoteSentences(sentences)
+      if (sentences.length) await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(picked)))
+      ownerNote = picked.keep.map(i => sentences[i]!).join('')
+      splitFrom = existingOverview.content
+    }
+    catch (e) {
+      console.warn(`[overview] ${workspaceId}/${sourceId} 手改過的總覽沒拆成，照舊保留:`, (e as Error)?.message)
+      return 'kept_manual'
+    }
   }
 
   /**
@@ -111,32 +156,59 @@ export async function regenerateOverviewCard(
   const ov = await summarizeAsOverviewCard(
     childCards.map(c => ({ ...c, sourceId: null })),
   )
-  if (!ov) return 'skipped'
+  if (!ov) return existingOverview?.manuallyEdited && splitFrom ? 'kept_manual' : 'skipped'
 
   await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(ov)))
+
+  const parts = {
+    overviewAuto: ov.card.content,
+    ownerNote,
+  }
+  const content = composeOverviewContent(ov.card.content, ownerNote)
 
   if (existingOverview) {
     await updateKnowledgeChunk(db, {
       chunkId: existingOverview.id,
       title: ov.card.title,
-      content: ov.card.content,
+      content,
       tags: ov.card.tags,
       questions: ov.card.questions ?? [],
       contentChanged: true,
       manualEdit: false,
     })
+    await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(existingOverview.id).update({
+      ...parts,
+      // 拆完就不是「整張手改過」了：之後清單照資料重做，店家的話在 ownerNote 裡
+      manuallyEditedAt: null,
+      ...(splitFrom !== null ? { legacyManualContent: splitFrom } : {}),
+    })
+    if (splitFrom !== null) {
+      // 系統動了店家改過的東西：一定要記（`C-254`），講清楚原文去哪找
+      await writeAuditLog({
+        workspaceId,
+        uid: '',
+        actor: 'system',
+        action: 'knowledge.put',
+        targetId: existingOverview.id,
+        after: { title: ov.card.title },
+        note: `總覽「${ov.card.title}」：商品清單改成跟著資料自動更新${ownerNote ? '，你寫的介紹留在最後一段' : ''}；你原本改過的整段另外存著，要還原可以找回來`,
+      }, db).catch(e => console.warn('[overview] 操作紀錄沒寫成（不影響總覽）:', e))
+    }
     return 'updated'
   }
+  const chunkId = uuidv4()
   await createKnowledgeChunk(db, {
     workspaceId,
-    chunkId: uuidv4(),
+    chunkId,
     title: ov.card.title,
-    content: ov.card.content,
+    content,
     tags: ov.card.tags,
     questions: ov.card.questions ?? [],
     isOverview: true,
     sourceId,
   })
+  await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(chunkId).update(parts)
+    .catch(e => console.warn('[overview] 兩段欄位沒寫成（下次重做會補）:', e))
   // 條數快取 60 秒：不作廢的話，緊接著的空間檢查會少算剛長出來的這一條
   invalidateKnowledgeChunkCount(workspaceId)
   return 'created'

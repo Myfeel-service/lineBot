@@ -270,6 +270,8 @@ export default defineEventHandler(async (event) => {
     work.extractedHash = createHash('sha256').update(extracted.text).digest('hex')
     const dupUrl = await duplicateOf(work.extractedHash, 'url')
     if (dupUrl) return dupUrl
+    // 原文也留在工作裡（`C-368`）：匯入時存成「這批知識是照哪一版網頁做的」，之後更新才比得出改了哪幾行
+    work.extractedText = extracted.text
     setChunkingFromExtracted(work, extracted)
   }
   else if (type === 'text') {

@@ -15,12 +15,14 @@ import {
   KNOWLEDGE_SOURCES_COLLECTION,
   buildSourceClearFailure,
   clearSourceFailure,
+  countSourceChunks,
   markSourceOutdated,
+  saveAppliedPage,
 } from './ai-knowledge-sources'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { deleteSourceFiles } from './knowledge-source-files'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
-import { tryAutoApplyMinorChange } from './ai-knowledge-autoapply'
+import { tryAutoApplyMinorChange, tryAutoApplyPageChange } from './ai-knowledge-autoapply'
 import { runWithLlmBudget } from './gemini'
 import { extractUrlText } from './ai-source-extractors'
 import { gsheetSyncAuditNote, syncGoogleSheetSource } from './gsheet-sync'
@@ -281,6 +283,15 @@ async function checkOneSource(
          */
         ...(!data.appliedContentHash && !data.outdatedAt ? { appliedContentHash: newHash } : {}),
       })
+      /**
+       * 舊資料補存「這批知識是照哪一版網頁做的」原文（`C-368`）。條件跟上面補 appliedContentHash 同一個道理：
+       * 網頁跟版本記號是同一版、而且沒有待處理的變動＝現在這一份就是這批知識的出處。
+       * 看 appliedPageHash 那一格就知道存過沒，不用每輪多讀一次原文、也不會每輪重寫一次。
+       */
+      const appliedNow = String(data.appliedContentHash ?? '').trim() || newHash
+      if (!data.outdatedAt && appliedNow === newHash && String(data.appliedPageHash ?? '') !== newHash) {
+        await saveAppliedPage(db, sourceId, extracted.text, newHash)
+      }
       return { sourceId, outcome: 'unchanged' }
     }
 
@@ -295,10 +306,13 @@ async function checkOneSource(
         textHash: newTextHash,
         pendingHash: FieldValue.delete(),
         outdatedAt: null,
+        outdatedReason: null,
         ...observed,
         ...detectState,
         ...clearFailure,
       })
+      // 正好是這批知識對應的那一版：舊資料在這裡也能補到原文（`C-368`）
+      if (String(data.appliedPageHash ?? '') !== newHash) await saveAppliedPage(db, sourceId, extracted.text, newHash)
       return { sourceId, outcome: 'unchanged', message: 'back-to-applied-version' }
     }
 
@@ -317,6 +331,11 @@ async function checkOneSource(
         ...observed,
         ...detectState,
         ...clearFailure,
+        /**
+         * 記住「這個網址的數字會自己跳」（`C-368`）：numericDriftRounds 在網頁真的改了那一輪會歸零，
+         * 偏偏比「改了哪幾行」就在那一刻——要一個不會歸零的記號，數字才會被抹掉再比。
+         */
+        ...(data.numbersVolatileAt ? {} : { numbersVolatileAt: FieldValue.serverTimestamp() }),
       })
       return { sourceId, outcome: 'unchanged', message: 'numeric-drift（這個網址的數字天天在動）' }
     }
@@ -381,6 +400,63 @@ async function checkOneSource(
       })
 
     if (behavior === 'notify') {
+      /**
+       * 先比網頁（`C-368`）：跟「這批知識是照哪一版網頁做的」原文一行一行比。
+       * 一行都沒改就收工；改了而且沒衝突就自動做完；只有衝突才標「有變動」、並寫明為什麼。
+       * 型錄（有總覽的）也照做——以前型錄一律跳過，首頁換一個商品就掛「有變動」。
+       * 「每次都先問我」（urlAutoApply=false）也先比：一行都沒改就不用問。
+       * 沒有上一版原文（舊資料）→ 'legacy'，照舊走下面的小改自動套用。
+       */
+      const page = await runWithLlmBudget(data.workspaceId, () => tryAutoApplyPageChange(db, sourceId, data, extracted.text, newHash, {
+        allowAi: run.autoApplyRemaining > 0,
+        autoApply: data.urlAutoApply !== false,
+      }))
+      if (page.usedAi) run.autoApplyRemaining--
+      if (page.kind === 'needs_ai') {
+        // 這一輪的名額用完了（一輪最多請 AI 整理幾份）：先不收這次變動，下一輪同一份新內容會再走到這裡。
+        // ⛔ 不推進 contentHash——推了下一輪就判成「沒變」，這次的變動從此沒人處理
+        await sourceRef.update({ ...observed, ...detectState, ...clearFailure })
+        return { sourceId, outcome: 'unchanged', message: 'page-change-deferred（這一輪的名額用完，下一輪再整理）' }
+      }
+      if (page.kind === 'noop') {
+        // 網頁一行都沒改、或改了的那幾行都不影響知識：這批知識就是對到這一版
+        await commitChange({ appliedContentHash: newHash, outdatedAt: null, outdatedReason: null })
+        await saveAppliedPage(db, sourceId, extracted.text, newHash)
+        return { sourceId, outcome: 'unchanged', message: 'page-lines-same' }
+      }
+      if (page.kind === 'applied') {
+        const rec = page.record!
+        await commitChange({
+          ...(page.fingerprintSafe ? { appliedContentHash: newHash, outdatedAt: null, outdatedReason: null } : {}),
+          lastAutoUpdate: { at: FieldValue.serverTimestamp(), ...rec },
+          chunkCount: await countSourceChunks(db, data.workspaceId, sourceId),
+          // 「這份在講什麼」（`C-316`）：內容換了，舊摘要作廢
+          summary: [],
+          summaryAt: null,
+        })
+        if (page.fingerprintSafe) await saveAppliedPage(db, sourceId, extracted.text, newHash)
+        // 空間不夠沒加完、或有幾條沒套成功：做完的照留，剩下的要人看（不推進版本記號，下一輪會再試）
+        else await markSourceOutdated(db, sourceId, page.reason ?? { kind: 'other', count: page.failed ?? 0 })
+        await writeSystemSourceAudit(db, sourceId, data, {
+          action: 'source.resyncApply',
+          after: { name: String(data.name ?? ''), added: rec.added, updated: rec.updated, deleted: rec.removed },
+          note: `${String(data.name ?? '')}：網頁有更新，系統照網頁自動更新知識（新增 ${rec.added}、拿掉 ${rec.removed}、改了 ${rec.updated}`
+            + (rec.overviewUpdated ? '，總覽跟著換成現在的' : '')
+            + (rec.quotaSkipped ? `；AI 知識量不夠，還有 ${rec.quotaSkipped} 條新的沒有加進來` : '')
+            + (page.failed ? `；⚠️ 有 ${page.failed} 條沒套用成功，還停在舊版` : '')
+            + '）',
+        })
+        console.log(`[detect-source-updates] ${sourceId} page-auto-applied +${rec.added} -${rec.removed} ~${rec.updated}`)
+        return { sourceId, outcome: 'auto_applied', message: `+${rec.added} -${rec.removed} ~${rec.updated}` }
+      }
+      if (page.kind === 'manual') {
+        await commitChange()
+        await markSourceOutdated(db, sourceId, page.reason ?? null)
+        console.log(`[detect-source-updates] ${sourceId} changed, needs review (${page.reason?.kind ?? '?'} ${page.reason?.count ?? 0})`)
+        return { sourceId, outcome: 'changed_notified' }
+      }
+
+      // ── 舊路（page.kind === 'legacy'：沒有上一版原文）──
       // 小改自動套用(P2-7):標題精確配對的內容修改(不涉手編卡/無增刪/比例受限/長度未暴跌)
       // 直接更新+摘要通知;結構變化照舊退人工審。每輪有嘗試限額(LLM 重切卡貴且慢)。
       // 型錄來源與明確關閉自動更新的來源在這裡就排除,不佔限額也不花錢跑 LLM。
@@ -394,6 +470,8 @@ async function checkOneSource(
           // appliedContentHash 也推到新值:現有卡片與這一版內容等價,已經沒有東西要決定,
           // 少了這句,店家之後按「重新同步」還是會被要求審一份全是假差異的 diff。
           await commitChange({ appliedContentHash: newHash })
+          // 這批知識對到這一版了：原文一起存下來，下次就能一行一行比（`C-368`）
+          await saveAppliedPage(db, sourceId, extracted.text, newHash)
           return { sourceId, outcome: 'unchanged', message: 'content-equivalent' }
         }
         if (auto.applied) {
@@ -401,6 +479,7 @@ async function checkOneSource(
           // 否則來源會永遠掛著提示,店家點進去看到的卻是「全部未變」的空 diff。
           // 卡片已更新到這一版 → appliedContentHash 同步推進(手動重新同步據此判斷「沒變」)。
           await commitChange({ outdatedAt: null, appliedContentHash: newHash })
+          await saveAppliedPage(db, sourceId, extracted.text, newHash)
           // 自動更新成功不推播(2026-08-06 拍板:成功不需要行動);留 log 供追查
           console.log(`[detect-source-updates] ${sourceId} auto-applied ~${auto.updated}${auto.failed ? ` (${auto.failed} failed)` : ''}`)
           // 但要進操作紀錄（`C-308`⑥）：知識的內容換了，「誰改的」答案是「網頁改了、系統自動換」

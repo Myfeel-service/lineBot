@@ -181,15 +181,15 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
       <p><b>先回答最重要的一句：你自己編輯過的知識，不會被自動蓋掉</b>（除非你點那一條標題旁的小鎖頭解除）。
       自動更新只會動「從這個網址／試算表原封抓進來、之後沒人碰過」的那些。
       檔案不會自動更新：改了就按「上傳新版」，你改過的那幾條會列出來、預設照你改的帶過去。</p>
-      <svg viewBox="0 0 520 96" role="img" aria-label="流程示意：網頁改了之後，小幅文字更新會自動套用，新增刪除或大幅改版會先問過你" style="width:100%;height:auto;margin:10px 0">
+      <svg viewBox="0 0 520 96" role="img" aria-label="流程示意：網頁改了之後，系統照網頁自動更新；動到你改過的、或網頁改了一大半，會先問過你" style="width:100%;height:auto;margin:10px 0">
         <rect x="4" y="30" width="120" height="34" rx="5" fill="var(--el-fill-color-light)" stroke="var(--el-border-color-lighter)" />
         <text x="64" y="51" font-size="12" text-anchor="middle" fill="var(--text-primary)">網頁改了</text>
         <path d="M128 47 L162 47" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
         <rect x="168" y="4" width="164" height="38" rx="5" fill="var(--el-color-success-light-9)" stroke="var(--el-color-success-light-5)" />
-        <text x="250" y="20" font-size="11" text-anchor="middle" fill="var(--el-color-success)">只是改字、錯字、小段落</text>
-        <text x="250" y="35" font-size="12" text-anchor="middle" fill="var(--text-primary)">自動更新，不吵你</text>
+        <text x="250" y="20" font-size="11" text-anchor="middle" fill="var(--el-color-success)">多了、少了、改了哪幾行</text>
+        <text x="250" y="35" font-size="12" text-anchor="middle" fill="var(--text-primary)">照網頁自動更新</text>
         <rect x="168" y="52" width="164" height="38" rx="5" fill="var(--el-color-warning-light-9)" stroke="var(--el-color-warning-light-5)" />
-        <text x="250" y="68" font-size="11" text-anchor="middle" fill="var(--el-color-warning)">新增／刪除／大幅改版</text>
+        <text x="250" y="68" font-size="11" text-anchor="middle" fill="var(--el-color-warning)">動到你改過的／改了一大半</text>
         <text x="250" y="83" font-size="12" text-anchor="middle" fill="var(--text-primary)">先標提示，等你看過</text>
         <path d="M336 23 L370 23" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
         <path d="M336 71 L370 71" stroke="var(--border-active)" stroke-width="1.5" marker-end="url(#fhArrow)" />
@@ -207,9 +207,9 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
       要更新只能自己按「立即更新」。<br>
       <b>② 偵測到變動時</b>＝發現不一樣了要不要告訴你。選「只記錄不通知」的話，
       <b>第三格會整個變灰</b>——都不通知了，也就沒有「要不要自動套用」的問題。<br>
-      <b>③ 小幅文字變動</b>＝只有改字這種小變動，要直接套用還是等你確認。</p>
-      <p>不確定就用<b>預設值</b>（每天偵測、通知我、小幅自動更新）：這組的意思是
-      「錯字幫你跟上，重要的事一定問過你」。</p>
+      <b>③ 網頁改了的時候</b>＝照網頁自動更新，還是每次都先問你。網頁沒改的地方，系統一律不動。</p>
+      <p>不確定就用<b>預設值</b>（每天偵測、通知我、自動更新）：這組的意思是
+      「網頁改了就跟上，你改過的一定問過你」。</p>
     `,
   },
 
