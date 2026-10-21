@@ -1,8 +1,10 @@
 <template>
   <!--
-    `D-138`④：按「新增」先挑起點。三種都進同一個編輯畫面（之後要多問一題、多一條路照樣加）——
+    `D-138`④：按「新增」先挑起點。都進同一個編輯畫面（之後要多問一題、多一條路照樣加）——
     延續 08-09「一種東西、兩種深度」，不是回到兩種東西。
     以前範本與「AI 搭草稿」只出現在「什麼都沒選」的時候，點過任何一條就要「新增 → 取消」才找得到。
+    ⛔ 不放「客人加好友時」（2026-10-22 老闆「統一在左邊設定」）：它一個帳號只有一條、不是「新增一條」，
+       唯一的入口是清單最上面那一列，這裡再放一張＝同一件事兩個地方。
   -->
   <div class="scripts-starter">
     <div>
@@ -22,11 +24,6 @@
         <b>客人打特定的字，就回固定內容</b>
         <span class="scripts-starter__desc">字要一模一樣才回，不經過 AI。適合活動口令、固定公告。</span>
         <span class="scripts-starter__eg">例：輸入「抽獎」就送活動說明</span>
-      </button>
-      <button type="button" class="scripts-starter__card" @click="emit('follow')">
-        <b>客人加好友時</b>
-        <span class="scripts-starter__desc">一加好友就打招呼，可以直接選一個做好的模組。一個帳號一條。</span>
-        <span class="scripts-starter__eg" :class="{ 'is-unset': !followSet }">{{ followSet ? '已經設好了，點這裡改' : '目前還沒設定' }}</span>
       </button>
     </div>
 
@@ -68,14 +65,11 @@ import type { ScriptTemplate } from '~~/shared/types/ai-script-templates'
 
 defineProps<{
   heading: string
-  /** 「客人加好友時」那一條是不是已經有了（卡片字不同） */
-  followSet: boolean
   templates: ScriptTemplate[]
   generating: boolean
 }>()
 const emit = defineEmits<{
   start: [kind: 'handoff' | 'fixed' | 'blank']
-  follow: []
   template: [tpl: ScriptTemplate]
   generate: [description: string]
 }>()

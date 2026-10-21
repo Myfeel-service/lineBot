@@ -620,8 +620,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '新增一條自動回應',
         description:
           // `D-138`④：「新增」先挑起點，不再直接給一張空白表單
-          '按「<strong>新增</strong>」會先讓你挑一個起點：<strong>先問資料，再交給真人</strong>（查訂單、改地址）、'
-          + '<strong>客人打特定的字就回固定內容</strong>（活動口令），或<strong>客人加好友時</strong>。',
+          // 2026-10-22：加好友那種不在起點裡（只從清單最上面那一列進），後面有一步專門講它
+          '按「<strong>新增</strong>」會先讓你挑一個起點：<strong>先問資料，再交給真人</strong>（查訂單、改地址），'
+          + '或<strong>客人打特定的字就回固定內容</strong>（活動口令）。',
         placement: 'right',
       },
       {
@@ -634,7 +635,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           // ⛔ 2026-09-29（`D-109`）：原本寫「建立後記得把狀態切成啟用才會生效」——反了：
           //    起點、範本、AI 生成**一建就是啟用**（只有「複製」是停用），照原本那句理解的人
           //    會以為還沒上線，其實客人已經收得到。
-          '三種都進同一個編輯畫面，之後要多問一題、多一條路都可以再加；下面還有幾個<strong>範本</strong>。'
+          '都進同一個編輯畫面，之後要多問一題、多一條路都可以再加；下面還有幾個<strong>範本</strong>。'
           + '⚠️ 建出來<strong>就是啟用的</strong>，存檔之後客人就會收到；還沒改好就先把右上角切成「停用」再存。',
         placement: 'top',
       },
@@ -670,9 +671,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         clickBeforeUnless: '[data-tour="scr-trigger-mode"]',
         title: '先決定「什麼時候開始」',
         description:
-          '三選一：<strong>客人在問這類事（AI 判斷）</strong>＝填幾句客人會怎麼講，意思相近就接；'
-          + '<strong>客人打特定的字</strong>＝只看字、不經過 AI；'
-          + '<strong>客人加好友時</strong>＝一加好友就跑，不用他打任何字。',
+          // 2026-10-22：加好友那種不在這裡切（只從清單最上面那一列進），前面「最上面這一列」那步講過
+          '二選一：<strong>客人在問這類事（AI 判斷）</strong>＝填幾句客人會怎麼講，意思相近就接；'
+          + '<strong>客人打特定的字</strong>＝只看字、不經過 AI。',
         placement: 'right',
       },
       {
@@ -695,9 +696,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         targetFallback: '[data-tour="scr-palette"]',
         title: '要先問客人的，一題一列',
         description:
-          '照順序問：每一題先選「<strong>這一題問的是</strong>」（訂單編號、電話…），問句會自動帶好。'
-          + '「<strong>答了 →</strong>」決定答完去哪；問訂單編號這種客人可能沒有的，加一條「<strong>客人說沒有 →</strong>」，'
-          + '不然他會被一直重問。客人傳截圖也算回答。',
+          // `D-140`（2026-10-22）：照順序就是下一題、不再每題一列「答了 →」；存進客人資料勾在題目上；⠿ 拖曳換順序
+          '照順序問：每一題先選「<strong>這一題問的是</strong>」（訂單編號、電話…），問句會自動帶好；要留下來的勾「<strong>存進客人資料</strong>」。'
+          + '按住左邊 <strong>⠿</strong> 拖曳可以換順序。要跳題、或客人可能沒有這個資料（例如訂單編號），按那一題的「<strong>⋯</strong>」設定，'
+          + '不然沒有編號的客人會被一直重問。',
         placement: 'right',
       },
       {

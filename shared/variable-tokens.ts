@@ -54,6 +54,7 @@ export const SCRIPT_PRESET_FIELD_LABELS: Readonly<Record<string, string>> = {
   phone: '電話',
   email: 'Email',
   address: '地址',
+  note: '備註',
 }
 
 /** 這個變數在膠囊上顯示的字 */

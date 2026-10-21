@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendQuestion, insertEndStep, removeEndStep, removeQuestion, replaceTerminal, toQuestionList } from './script-question-list'
+import { appendQuestion, insertEndStep, isBackwardTarget, moveQuestion, orderNextOf, removeEndStep, removeQuestion, replaceTerminal, toQuestionList } from './script-question-list'
 import { validateScriptDoc, type ScriptNode } from './types/ai-script'
 
 /** 正式站 MYFEEL「查詢訂單」的骨架（2026-10-21 唯讀查到的節點順序） */
@@ -108,5 +108,73 @@ describe('清單上的增刪：改完一律還是合法的流程', () => {
     const v = toQuestionList(nodes, 't')!
     expect(v.terminal).toEqual({ id: 'r', type: 'module', moduleId: 'm1' })
     expect(v.saveLead?.next).toBe('r')
+  })
+})
+
+describe('換順序（拖曳、上移下移）', () => {
+  const valid = (nodes: ScriptNode[]) => validateScriptDoc({ name: 'x', nodes, rootNodeId: 't' })
+  const next = (nodes: ScriptNode[], id: string) => (nodes.find(n => n.id === id) as any)
+
+  /** 三題照順序問、全部接下一題 */
+  function linear(): ScriptNode[] {
+    return [
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: [], examples: ['x'], priority: 50, next: 'a' },
+      { id: 'a', type: 'collect', question: 'A?', fieldName: 'name', expireMs: 1, format: 'any', next: 'b' },
+      { id: 'b', type: 'collect', question: 'B?', fieldName: 'phone', expireMs: 1, format: 'phone', next: 'c' },
+      { id: 'c', type: 'collect', question: 'C?', fieldName: 'email', expireMs: 1, format: 'email', next: 'r' },
+      { id: 'r', type: 'reply', text: 'ok', thenHandoff: false },
+    ]
+  }
+
+  it('全部照順序的：換完一樣照新順序一路問到最後，開頭接新的第一題', () => {
+    const nodes = linear()
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 2, 0)
+    const v = toQuestionList(nodes, 't')!
+    expect(v.items.map(i => i.id)).toEqual(['c', 'a', 'b'])
+    expect(next(nodes, 't').next).toBe('c')
+    expect(next(nodes, 'c').next).toBe('a')
+    expect(next(nodes, 'a').next).toBe('b')
+    expect(next(nodes, 'b').next).toBe('r')
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('MYFEEL 查詢訂單把最後一題（電話）拖到最上面：指定的跳題跟著原本那一題，照順序的跟著新順序', () => {
+    const nodes = orderFlow()
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 4, 0)
+    const v = toQuestionList(nodes, 't')!
+    expect(v.items.map(i => i.id)).toEqual(['c_phone', 'c_id', 'q_mail', 'c_mail', 'c_name'])
+    expect(next(nodes, 'c_phone').next).toBe('c_id') // 原本是最後一題的「直接到最後」＝照順序 → 接新的下一題
+    expect(next(nodes, 'c_id').next).toBe('save') // 第 1 題「答得出編號就收尾」是指定的，不變
+    expect(next(nodes, 'c_id').skipNext).toBe('q_mail') // 「客人說沒有 → 下一題」照順序，新的下一題還是它
+    expect(next(nodes, 'q_mail').options.map((o: any) => o.next)).toEqual(['c_mail', 'c_name'])
+    expect(next(nodes, 'c_mail').next).toBe('save') // 不是最後一題卻「直接到最後」＝指定的，不變
+    expect(next(nodes, 'c_name').next).toBe('save') // 原本接下一題（電話），現在是最後一題 → 直接到最後
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('⛔ 指定的跳題換完變成往回跳：不偷偷改掉，認得出來讓畫面標紅', () => {
+    const nodes = linear()
+    next(nodes, 'a').next = 'c' // 第 1 題答了直接跳第 3 題
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 2, 0)
+    const v = toQuestionList(nodes, 't')!
+    expect(v.items.map(i => i.id)).toEqual(['c', 'a', 'b'])
+    expect(next(nodes, 'a').next).toBe('c')
+    expect(isBackwardTarget(v, 1, 'c')).toBe(true)
+    expect(isBackwardTarget(v, 1, 'b')).toBe(false)
+    expect(isBackwardTarget(v, 1, v.endId)).toBe(false)
+  })
+
+  it('同一個位置、超出範圍：什麼都不動', () => {
+    const nodes = linear()
+    const before = JSON.stringify(nodes)
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 1, 1)
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 0, 3)
+    expect(JSON.stringify(nodes)).toBe(before)
+  })
+
+  it('orderNextOf：中間的題目是下一題，最後一題是「最後」那一段的入口', () => {
+    const v = toQuestionList(orderFlow(), 't')!
+    expect(orderNextOf(v, 0)).toBe('q_mail')
+    expect(orderNextOf(v, 4)).toBe('save')
   })
 })

@@ -932,10 +932,16 @@
   color: var(--el-text-color-secondary);
 }
 
-/* 「什麼時候開始」三選一：字比較長，窄的時候整排換行而不是擠成一團 */
+/* 「什麼時候開始」二選一：字比較長，窄的時候整排換行而不是擠成一團 */
 .scripts-trigger-modes {
   flex-wrap: wrap;
   row-gap: 6px;
+}
+
+/* 加好友那一條：不給切，直接寫明（2026-10-22，只從清單最上面那一列進來） */
+.scripts-trigger-fixed {
+  font-size: 15px;
+  color: var(--el-text-color-primary);
 }
 
 /* ── 右邊：試試看 ── */
@@ -1052,11 +1058,62 @@
     box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
   }
 
+  /* 拖曳（`D-140`，同機器人模組訊息卡 `.message-card.dragging / .drag-over`） */
+  &.is-dragging {
+    opacity: 0.4;
+  }
+
+  &.is-drag-over {
+    border-color: var(--el-color-primary);
+    border-style: dashed;
+    background: var(--brand-green-wash);
+  }
+
   &__head {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+  }
+
+  /* ⠿ 把手：樣子用全站 `.drag-handle`（_flow.scss），這裡只收緊左右，讓編號不被推遠 */
+  &__handle {
+    padding: 0;
+    margin-right: -2px;
+  }
+
+  /* 編號類的題目：客人傳截圖也收（以前是「答了 →」那一列後面的一句話，那一列平常不顯示了） */
+  &__tag {
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--el-color-info-light-9);
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+
+  /* 右邊那組：存進客人資料＋「⋯」。靠右；窄的時候整組一起換到下一行 */
+  &__head-end {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__save {
+    margin-right: 4px;
+    height: auto;
+
+    .el-checkbox__label {
+      font-size: 13px;
+    }
+  }
+
+  /* 換順序之後變成往回跳：標紅讓他自己決定（moveQuestion 不偷偷改掉） */
+  &__warn {
+    font-size: 12px;
+    color: var(--el-color-danger);
   }
 
   &__num {
@@ -1082,10 +1139,6 @@
 
   &__kind {
     font-size: 14px;
-  }
-
-  &__remove {
-    margin-left: auto;
   }
 
   &__routes {
@@ -1122,11 +1175,6 @@
   &__tags {
     flex: 1 1 260px;
     min-width: 0;
-  }
-
-  &__note {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
   }
 
   /* 卡片底下那排「＋ 再問一題」等等 */
@@ -1328,10 +1376,6 @@
     margin-top: auto;
     font-size: 12px;
     color: var(--el-text-color-secondary);
-
-    &.is-unset {
-      color: var(--el-color-warning-dark-2);
-    }
   }
 
   &__kb {

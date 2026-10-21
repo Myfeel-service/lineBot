@@ -70,11 +70,9 @@
         v-if="canEditScripts"
         ref="starterEl"
         heading="新增自動回應：先挑一個起點"
-        :follow-set="Boolean(followScript)"
         :templates="starterTemplates"
         :generating="aiGenerating"
         @start="startFrom"
-        @follow="onFollowRowSelect"
         @template="createFromTemplate"
         @generate="generateFromAi"
       />
@@ -193,11 +191,16 @@
               </div>
               <div class="card-section-stack">
                 <!-- scr-trigger-mode：導覽用這一格當「編輯器已經開著」的判斷，開著就不再幫他點「新增」 -->
+                <!--
+                  「客人加好友時」不在這裡切（2026-10-22 老闆「統一在左邊設定，這邊兩種就好」）：
+                  它只從清單最上面那一列進來，打開就寫明是哪種、不給切——以前在這裡切來切去，
+                  會把「查詢訂單」變成歡迎訊息，或把歡迎訊息切回一般的、左邊那一列變回「還沒設定」。
+                -->
                 <div class="admin-field-group" data-tour="scr-trigger-mode">
-                  <el-radio-group :model-value="triggerUiMode(triggerNode)" class="scripts-trigger-modes" @change="setTriggerMode(triggerNode, $event)">
+                  <b v-if="triggerUiMode(triggerNode) === 'follow'" class="scripts-trigger-fixed">客人加好友時</b>
+                  <el-radio-group v-else :model-value="triggerUiMode(triggerNode)" class="scripts-trigger-modes" @change="setTriggerMode(triggerNode, $event)">
                     <el-radio-button value="semantic">客人在問這類事（AI 判斷）</el-radio-button>
                     <el-radio-button value="keyword">客人打特定的字</el-radio-button>
-                    <el-radio-button value="follow">客人加好友時</el-radio-button>
                   </el-radio-group>
                 </div>
 
@@ -322,14 +325,37 @@
                 </div>
                 <div class="card-section-stack">
                   <p v-if="!qList.items.length" class="scripts-section-hint">不用問，客人一說就直接回「最後」那一段。</p>
+                  <!--
+                    2026-10-22 老闆「這邊的 UIUX 再優化、要能拖曳排序，參考別家」（`D-140`，調查見 docs/AUTO-RESPONSE-QUESTION-LIST-EVAL-20261022.md）：
+                    ① 照順序就是下一題，「答了 →」只在設了跳題的那張卡出現（表單工具與漸強、Intercom 新版都這樣）；
+                    ② 存進客人資料勾在每一題上（ManyChat、respond.io、Landbot 等八家都放在題目上）；
+                    ③ ⠿ 拖曳（同機器人模組）＋「⋯」裡上移下移；刪除、跳題、客人可能沒有收進「⋯」（全站次要動作都在「⋯」）。
+                    ⛔ 「客人可能根本沒有、又沒給路」那種提醒照樣直接露出——那是客人會被一直重問的事，不能藏進選單。
+                  -->
                   <div
                     v-for="(item, i) in qList.items"
                     :key="item.id"
                     class="scripts-q"
-                    :class="{ 'is-focused': highlightStep === item.id }"
+                    :class="{
+                      'is-focused': highlightStep === item.id,
+                      'is-dragging': qDragFrom === i,
+                      'is-drag-over': qDragOver === i && qDragFrom !== null && qDragFrom !== i,
+                    }"
                     :data-node-id="item.id"
+                    @dragover.prevent="onQDragOver(i)"
+                    @dragenter.prevent
+                    @drop.prevent="onQDrop(i)"
                   >
                     <div class="scripts-q__head">
+                      <span
+                        v-if="canEditScripts && qList.items.length > 1"
+                        class="drag-handle scripts-q__handle"
+                        draggable="true"
+                        title="拖曳調整順序"
+                        aria-hidden="true"
+                        @dragstart="onQDragStart($event, i)"
+                        @dragend="onQDragEnd"
+                      >⠿</span>
                       <span class="scripts-q__num">{{ i + 1 }}</span>
                       <template v-if="item.type === 'collect'">
                         <el-select :model-value="presetKeyOf(item)" placeholder="這一題問的是…" class="scripts-q__field" @change="applyFieldPreset(item, $event)">
@@ -349,7 +375,18 @@
                         </el-select>
                       </template>
                       <b v-else class="scripts-q__kind">給客人按鈕選</b>
-                      <el-button v-if="canEditScripts" text type="danger" class="scripts-q__remove" @click="removeListItem(item.id)">移除</el-button>
+                      <span v-if="item.type === 'collect' && isCodeFormat(item)" class="scripts-q__tag" title="客人傳訂單截圖也算回答了這一題">截圖也收</span>
+                      <span class="scripts-q__head-end">
+                        <el-checkbox
+                          v-if="item.type === 'collect' && item.fieldName.trim()"
+                          :model-value="savedFields.includes(item.fieldName)"
+                          :disabled="!canEditScripts"
+                          class="scripts-q__save"
+                          title="後台客人資料看得到，之後回覆也能帶入"
+                          @change="toggleSavedField(item.fieldName, Boolean($event))"
+                        >存進客人資料</el-checkbox>
+                        <AdminMoreMenu v-if="canEditScripts" variant="row" :items="questionMenuItems(item, i)" @command="onQuestionMenu(item, i, $event)" />
+                      </span>
                     </div>
                     <VariableTextField
                       v-model="item.question"
@@ -359,45 +396,45 @@
                     />
                     <el-input v-if="item.type === 'collect' && item.format === 'custom'" v-model="item.pattern" placeholder="進階比對規則，例：[A-Za-z]\d{3,}（訂單編號 A123）" />
 
-                    <div v-if="item.type === 'collect'" class="scripts-q__routes">
-                      <div class="scripts-q__route">
+                    <!-- 照順序的路不寫出來；只有設了跳題、客人說沒有、或要提醒的才多一行 -->
+                    <div v-if="item.type === 'collect' && (isJumpShown(item, i) || isSkipOpen(item) || (canEditScripts && isStuckCollect(item)))" class="scripts-q__routes">
+                      <div v-if="isJumpShown(item, i)" class="scripts-q__route">
                         <span class="scripts-q__route-label">答了 →</span>
                         <el-select :model-value="item.next" class="scripts-q__target" @change="item.next = $event">
-                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                          <el-option v-for="t in listTargets(i, item.next)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
-                        <span v-if="isCodeFormat(item)" class="scripts-q__note">傳截圖也算回答</span>
+                        <el-button v-if="canEditScripts" text type="danger" title="拿掉跳題，改回照順序（接下一題）" @click="resetJump(item, i)">✕</el-button>
+                        <span v-if="isBackwardTarget(qList, i, item.next)" class="scripts-q__warn">會跳回前面那一題，客人要重答</span>
                       </div>
                       <div v-if="isSkipOpen(item)" class="scripts-q__route">
                         <span class="scripts-q__route-label">客人說沒有 →</span>
                         <el-input v-model="item.skipLabel" maxlength="20" placeholder="按鈕字，例：我沒有訂單編號" class="scripts-q__button-label" />
                         <el-select :model-value="item.skipNext ?? ''" placeholder="前往…" class="scripts-q__target" @change="item.skipNext = $event">
-                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                          <el-option v-for="t in listTargets(i, item.skipNext)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
                         <el-button v-if="canEditScripts" text type="danger" title="拿掉這條路" @click="clearCollectSkip(item)">✕</el-button>
+                        <span v-if="item.skipNext && isBackwardTarget(qList, i, item.skipNext)" class="scripts-q__warn">會跳回前面那一題，客人要重答</span>
                       </div>
                       <button
-                        v-else-if="canEditScripts"
+                        v-else-if="canEditScripts && isStuckCollect(item)"
                         type="button"
-                        class="scripts-skip-add"
-                        :class="{ 'is-suggested': isStuckCollect(item) }"
-                        @click="openCollectSkip(item)"
+                        class="scripts-skip-add is-suggested"
+                        @click="openCollectSkip(item, i)"
                       >
-                        <template v-if="isStuckCollect(item)">
-                          ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
-                        </template>
-                        <template v-else>＋ 客人可能沒有這個資料</template>
+                        ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
                       </button>
                     </div>
-                    <div v-else class="scripts-q__routes">
+                    <div v-else-if="item.type === 'quickReply'" class="scripts-q__routes">
                       <div v-for="(o, oi) in item.options" :key="oi" class="scripts-q__route">
                         <el-input v-model="o.label" maxlength="20" placeholder="按鈕字" class="scripts-q__button-label" />
                         <span class="scripts-q__route-label">→</span>
                         <el-select :model-value="o.next" class="scripts-q__target" @change="o.next = $event">
-                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                          <el-option v-for="t in listTargets(i, o.next)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
                         <el-button v-if="canEditScripts" text type="danger" title="拿掉這顆按鈕" @click="removeQuickReplyOption(item, oi)">✕</el-button>
+                        <span v-if="isBackwardTarget(qList, i, o.next)" class="scripts-q__warn">會跳回前面那一題</span>
                       </div>
-                      <div v-if="canEditScripts"><el-button size="small" plain @click="addQuickReplyOption(item, qList.endId)">＋ 新增按鈕</el-button></div>
+                      <div v-if="canEditScripts"><el-button size="small" plain @click="addQuickReplyOption(item, orderNextOf(qList, i))">＋ 新增按鈕</el-button></div>
                     </div>
                   </div>
 
@@ -473,12 +510,7 @@
                     <p class="scripts-section-hint">送出你在「機器人模組」做好的那一組訊息。若那是「真人客服」模組，會照常轉真人。</p>
                   </div>
 
-                  <div v-if="listFields.length" class="admin-field-group">
-                    <AdminFieldLabel text="存進客人資料（後台客人資料看得到，之後回覆也能帶入）" tight />
-                    <el-checkbox-group :model-value="savedFields" @change="setSavedFields">
-                      <el-checkbox v-for="f in listFields" :key="f.value" :value="f.value">{{ f.label }}</el-checkbox>
-                    </el-checkbox-group>
-                  </div>
+                  <!-- 「存進客人資料」2026-10-22 搬到每一題上（`D-140`），這裡不再列一排 -->
 
                   <div v-if="qList.tag" class="admin-field-group">
                     <AdminFieldLabel text="替客人貼上標籤" tight />
@@ -927,6 +959,9 @@ import { DISPLAY_NAME_VARIABLE_OPTION, SCRIPT_PRESET_FIELD_LABELS } from '~~/sha
 import {
   appendQuestion,
   insertEndStep,
+  isBackwardTarget,
+  moveQuestion,
+  orderNextOf,
   removeEndStep,
   removeQuestion,
   replaceTerminal,
@@ -1112,16 +1147,90 @@ function listItemLabel(item: QuestionItem): string {
   return `給按鈕選「${item.question.slice(0, 8) || '…'}」`
 }
 
-/** 「答了 →」「客人說沒有 →」「按鈕 →」可以去哪：別一題，或直接到最後 */
-function listTargets(selfId: string, index: number): Array<{ value: string; label: string }> {
+/**
+ * 「答了 →」「客人說沒有 →」「按鈕 →」可以去哪：後面的題目，或直接到最後（`D-140`：跳題只往後，同 Typeform、Microsoft Forms）。
+ * 換順序之後已經變成往回跳的那個（current）照樣列出來，下拉才顯示得出它現在接哪、旁邊標紅。
+ */
+function listTargets(index: number, current?: string): Array<{ value: string; label: string }> {
   const view = qList.value
   if (!view) return []
   const out = view.items
-    .map((it, i) => ({ it, i }))
-    .filter(({ it }) => it.id !== selfId)
-    .map(({ it, i }) => ({ value: it.id, label: `第 ${i + 1} 題・${listItemLabel(it)}${i === index + 1 ? '（下一題）' : ''}` }))
+    .map((it, k) => ({ it, k }))
+    .filter(({ it, k }) => k > index || (current !== undefined && it.id === current))
+    .map(({ it, k }) => ({ value: it.id, label: `第 ${k + 1} 題・${listItemLabel(it)}${k === index + 1 ? '（下一題）' : k <= index ? '（往回）' : ''}` }))
   out.push({ value: view.endId, label: '直接到最後' })
   return out
+}
+
+/** 「答了 →」那一行要不要出現：沒照順序（設了跳題）、或剛從「⋯」按了「答了改跳到別題」 */
+const openedJumps = ref<Set<string>>(new Set())
+function isJumpShown(item: ScriptCollectNode, index: number): boolean {
+  const view = qList.value
+  return Boolean(view) && (item.next !== orderNextOf(view!, index) || openedJumps.value.has(item.id))
+}
+function resetJump(item: ScriptCollectNode, index: number) {
+  const view = qList.value
+  if (!view) return
+  item.next = orderNextOf(view, index)
+  const next = new Set(openedJumps.value)
+  next.delete(item.id)
+  openedJumps.value = next
+}
+
+/** 每一題的「⋯」：次要動作都收在這裡（同全站），刪除排最後 */
+function questionMenuItems(item: QuestionItem, index: number) {
+  const last = (qList.value?.items.length ?? 1) - 1
+  const isCollect = item.type === 'collect'
+  return [
+    { command: 'jump', label: '答了改跳到別題', show: isCollect && !isJumpShown(item, index) },
+    { command: 'skip', label: '客人可能沒有這個資料', show: isCollect && !isSkipOpen(item) },
+    { command: 'up', label: '上移', show: index > 0 },
+    { command: 'down', label: '下移', show: index < last },
+    { command: 'remove', label: '刪除這一題', danger: true },
+  ]
+}
+function onQuestionMenu(item: QuestionItem, index: number, cmd: string) {
+  if (cmd === 'jump' && item.type === 'collect') openedJumps.value = new Set(openedJumps.value).add(item.id)
+  else if (cmd === 'skip' && item.type === 'collect') openCollectSkip(item, index)
+  else if (cmd === 'up') moveListItem(index, index - 1)
+  else if (cmd === 'down') moveListItem(index, index + 1)
+  else if (cmd === 'remove') removeListItem(item.id)
+}
+
+/** 換順序（拖曳或上移下移）：規則在 moveQuestion——照順序的跟著新順序、指定的跳題不變；換完捲過去亮一下 */
+function moveListItem(from: number, to: number) {
+  const view = qList.value
+  const moved = view?.items[from]
+  if (!view || !moved) return
+  moveQuestion(form.value.nodes, view, from, to)
+  focusStep(moved.id)
+}
+
+// 拖曳：⠿ 是拖的把手、整張卡是放的地方（同機器人模組的訊息卡）
+const qDragFrom = ref<number | null>(null)
+const qDragOver = ref<number | null>(null)
+function onQDragStart(e: DragEvent, index: number) {
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+    // 拖的是整張卡的樣子，不是那個小把手
+    const card = (e.target as HTMLElement | null)?.closest('.scripts-q')
+    if (card) e.dataTransfer.setDragImage(card, 24, 20)
+  }
+  // 同機器人模組：dragstart 當下改 DOM（加 class）Chrome 會把拖曳取消，晚一拍再標
+  requestAnimationFrame(() => { qDragFrom.value = index })
+}
+function onQDragOver(index: number) {
+  if (qDragFrom.value !== null) qDragOver.value = index
+}
+function onQDrop(index: number) {
+  const from = qDragFrom.value
+  onQDragEnd()
+  if (from !== null && from !== index) moveListItem(from, index)
+}
+function onQDragEnd() {
+  qDragFrom.value = null
+  qDragOver.value = null
 }
 
 /** 客人可能拿截圖回答的那種（編號、序號）：旁邊講一句「傳截圖也算回答」（`D-138`②） */
@@ -1161,6 +1270,12 @@ const listFields = computed(() =>
     .map(it => ({ value: it.fieldName, label: fieldLabel(it.fieldName) })),
 )
 const savedFields = computed(() => (qList.value?.saveLead?.fieldMap ?? []).map(m => m.fromField).filter(Boolean))
+
+/** 每一題上的「存進客人資料」勾選（`D-140` 從「最後」那一排搬上來；存法照舊走 setSavedFields） */
+function toggleSavedField(field: string, on: boolean) {
+  const others = savedFields.value.filter(f => f !== field)
+  setSavedFields(on ? listFields.value.map(f => f.value).filter(f => f === field || others.includes(f)) : others)
+}
 
 /**
  * 勾選要存的題目 ↔「存進客人資料」那一步：勾第一個時掛上去、全部取消就拿掉。
@@ -1813,6 +1928,8 @@ const COMMON_COLLECT_FIELDS: Array<{ key: string; label: string; question: strin
   { key: 'phone', label: '電話', question: '請留下方便聯絡的電話 📞', format: 'phone' },
   { key: 'email', label: 'Email', question: '請留下您的 Email', format: 'email' },
   { key: 'address', label: '地址', question: '請提供您的收件地址', format: 'any' },
+  // 2026-10-22：MYFEEL「新增備註」那題叫 note（AI 搭草稿取的），畫面上一直露出英文代號
+  { key: 'note', label: '備註', question: '請問要備註的內容是？', format: 'any' },
 ]
 
 const PRESET_FIELD_KEYS = new Set(COMMON_COLLECT_FIELDS.map(p => p.key))
@@ -1931,8 +2048,16 @@ function isSkipOpen(node: ScriptCollectNode): boolean {
   // 單邊有值也要展開：那是還沒設完的狀態，收起來就沒人修得到（存檔會被擋）
   return !!node.skipLabel || !!node.skipNext || openedSkips.value.has(node.id)
 }
-function openCollectSkip(node: ScriptCollectNode) {
+/**
+ * 打開「客人說沒有 →」。清單編法（傳了 index）先帶好：按鈕字「我沒有＋這一題的名字」、去向＝下一題
+ * （`D-140`：別家的跳過按鈕預設也是去下一題）——不然一打開就是兩格空的、存檔被擋。流程圖編法照舊留空讓他接。
+ */
+function openCollectSkip(node: ScriptCollectNode, index?: number) {
   openedSkips.value = new Set(openedSkips.value).add(node.id)
+  const view = qList.value
+  if (index === undefined || !view) return
+  if (!node.skipLabel?.trim() && node.fieldName.trim()) node.skipLabel = `我沒有${fieldLabel(node.fieldName)}`.slice(0, 20)
+  if (!node.skipNext) node.skipNext = orderNextOf(view, index)
 }
 
 /** 這一題問的是「客人可能根本沒有」的代碼、又還沒給退路（和狀態列讀同一份，不會各算各的） */
@@ -2197,7 +2322,7 @@ function updateKeywords(node: ScriptTriggerNode, value: string) {
 }
 
 /**
- * 觸發方式在畫面上是三選一（關鍵字／看意思／客人加好友時），但資料上是兩個欄位
+ * 觸發方式有三種（關鍵字／看意思／客人加好友時；畫面上只在前兩種之間切），但資料上是兩個欄位
  * （triggerEvent 事件型 vs matchMode 文字比對）——這裡是唯一一處換算，模板都吃這支。
  */
 function triggerUiMode(node: ScriptTriggerNode): 'keyword' | 'semantic' | 'follow' {
@@ -2205,13 +2330,8 @@ function triggerUiMode(node: ScriptTriggerNode): 'keyword' | 'semantic' | 'follo
   return (node.matchMode ?? 'keyword') === 'semantic' ? 'semantic' : 'keyword'
 }
 
+/** 只在兩種文字比對之間切（加好友那種不在這裡切，見模板「什麼時候開始」那段註解） */
 function setTriggerMode(node: ScriptTriggerNode, mode: string | number | boolean | undefined) {
-  if (mode === 'follow') {
-    node.triggerEvent = 'follow'
-    return
-  }
-  // 切回文字比對：關鍵字／範例還留在欄位上，切回來就看得到（存檔時 follow 腳本才會被清空）
-  delete node.triggerEvent
   const m: TriggerMatchMode = mode === 'semantic' ? 'semantic' : 'keyword'
   node.matchMode = m
   if (m === 'semantic' && !node.examples) node.examples = []

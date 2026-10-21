@@ -161,6 +161,60 @@ export function removeEndStep(nodes: ScriptNode[], stepId: string): void {
   retargetAll(nodes, stepId, step.next)
 }
 
+/** 第 index 題「照順序」的下一步：下一題；最後一題就是「直接到最後」 */
+export function orderNextOf(view: QuestionListView, index: number): string {
+  return view.items[index + 1]?.id ?? view.endId
+}
+
+/** 第 index 題的這條路會不會往回跳（指到自己或前面的題目）：換順序之後才可能出現，畫面要標紅 */
+export function isBackwardTarget(view: QuestionListView, index: number, targetId: string): boolean {
+  const t = view.items.findIndex(i => i.id === targetId)
+  return t >= 0 && t <= index
+}
+
+/**
+ * 換順序（拖曳、上移下移；2026-10-22 老闆要能拖曳排序）。
+ * - 原本接「下一題」的路（最後一題的「直接到最後」也算）→ 換完還是接新的下一題；
+ * - 特別指定跳到哪一題、或不是最後一題卻「直接到最後」的 → 跟著那一題走、不變
+ *   （MYFEEL 查詢訂單第 1 題「答了 → 直接到最後」是刻意的，不能因為換順序被改掉）；
+ * - 開頭一律接新的第一題（清單的規則：開頭要接第一題）。
+ * 跳題因此可能變成往回跳——⛔ 不在這裡偷偷改掉，畫面用 isBackwardTarget 標紅，讓他自己決定。
+ */
+export function moveQuestion(nodes: ScriptNode[], view: QuestionListView, from: number, to: number): void {
+  const items = view.items
+  if (from === to || from < 0 || to < 0 || from >= items.length || to >= items.length) return
+
+  // 先記下每一條路是不是「照順序」（用舊順序判）
+  const followsOrder = items.map((it, i) => {
+    const d = orderNextOf(view, i)
+    return it.type === 'collect'
+      ? { next: it.next === d, skip: Boolean(it.skipNext) && it.skipNext === d, options: [] as boolean[] }
+      : { next: false, skip: false, options: it.options.map(o => o.next === d) }
+  })
+
+  const order = items.map((_, i) => i)
+  const [moved] = order.splice(from, 1)
+  order.splice(to, 0, moved!)
+  const reordered = order.map(i => items[i]!)
+
+  // 節點陣列裡題目佔的那幾格照新順序填回（題目以外的節點不動）
+  const slots = nodes.flatMap((n, idx) => (n.type === 'collect' || n.type === 'quickReply' ? [idx] : []))
+  slots.forEach((slot, k) => { nodes[slot] = reordered[k]! })
+
+  reordered.forEach((it, j) => {
+    const d = reordered[j + 1]?.id ?? view.endId
+    const f = followsOrder[order[j]!]!
+    if (it.type === 'collect') {
+      if (f.next) it.next = d
+      if (f.skip) it.skipNext = d
+    }
+    else {
+      it.options.forEach((o, oi) => { if (f.options[oi]) o.next = d })
+    }
+  })
+  view.trigger.next = reordered[0]!.id
+}
+
 /** 結尾換成另一種（回一段話 ↔ 送一個模組）：同一個 id，指到結尾的路都不用動 */
 export function replaceTerminal(nodes: ScriptNode[], view: QuestionListView, next: ScriptReplyNode | ScriptModuleNode): void {
   const idx = nodes.findIndex(n => n.id === view.terminal.id)
