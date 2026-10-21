@@ -39,7 +39,9 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 【可用的節點,只准用這 5 種】
 1. 觸發(起點,恰好一個),兩種:
-   1a 客人「說了什麼」才啟動(預設):{ "id", "type": "trigger", "matchMode": "semantic", "keywords": ["核心詞×2~4"], "examples": ["客人會講的話×3~5句"], "priority": 50, "next": "下一個節點id" }
+   1a 客人「說了什麼」才啟動(預設):{ "id", "type": "trigger", "matchMode": "semantic", "keywords": [], "examples": ["客人會講的話×3~5句"], "priority": 50, "next": "下一個節點id" }
+      ⛔ 1a 的 keywords **一律留空陣列**:系統是讀整句話的意思來判斷,只看 examples;
+         放了字也不會生效,只會讓使用者以為「含這個字就會接」。
    1b 客人「加好友」那一刻啟動:{ "id", "type": "trigger", "triggerEvent": "follow", "matchMode": "keyword", "keywords": [], "examples": [], "priority": 50, "next": "下一個節點id" }
       ⛔ 只有當使用者的描述是「加好友時/加入好友/剛加我/新朋友/歡迎新客人」這一類**時機**時才用 1b。
       ⛔ 用 1b 時 keywords 與 examples **一律留空陣列**——加好友這件事本身就是條件,沒有文字可比對;
@@ -63,9 +65,7 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 【硬規則】
 - rootNodeId 必須指向那個 trigger;至少要有一個 reply 收尾。
-- keywords 每個至少 2 個字,而且必須是**這個流程專屬**的具體詞。⛔ 絕不可用問候語或高頻通用詞
-  (你好、您好、在嗎、哈囉、請問、謝謝、客服、服務、問題、幫我…):關鍵字是「訊息包含就攔走」的
-  子字串比對,太泛的詞會把大量不相關的訊息全部攔進這條流程、蓋掉 AI 回答。
+- examples 寫客人**真的會講的整句話**(3~5 句不同說法),不要只寫單一詞。
 - 每個非 reply 節點的 next(quickReply 是每顆按鈕的 next)必須指向存在的節點 id;id 用短代號(t, c1, q1, s1, r1…)。
 - 流程要收尾需要真人後續處理(退貨、客訴、報價…)→ 最後的 reply 設 "thenHandoff": true。
 - 收集到姓名/電話/email 這類要留存的資料 → 在 reply 前加 saveLead 存起來。
@@ -87,11 +87,11 @@ const SYSTEM_INSTRUCTION = `你是 LINE 官方帳號的客服流程設計師。�
 
 【範例一】
 輸入:客人要退貨時,先問訂單編號,再跟他說會請專員處理
-輸出:{"name":"退換貨查詢","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":["退貨","換貨"],"examples":["我要退貨","東西壞了想退","可以換貨嗎"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的,幫您處理退換貨 🙂 請提供您的訂單編號","fieldName":"order_id","format":"alphanumericSymbol","reaskText":"訂單編號好像不太對,可以再確認一次嗎?","skipLabel":"我沒有訂單編號","skipNext":"c2","next":"r1"},{"id":"c2","type":"collect","question":"沒問題!請提供當時下單的 Email,幫您查詢 🙂","fieldName":"email","format":"email","reaskText":"Email 格式好像不太對,可以再確認一次嗎?","next":"r1"},{"id":"r1","type":"reply","text":"已收到您的資料,將由專人盡快為您處理,謝謝您 🙇","thenHandoff":true}]}
+輸出:{"name":"退換貨查詢","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":[],"examples":["我要退貨","東西壞了想退","可以換貨嗎"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的,幫您處理退換貨 🙂 請提供您的訂單編號","fieldName":"order_id","format":"alphanumericSymbol","reaskText":"訂單編號好像不太對,可以再確認一次嗎?","skipLabel":"我沒有訂單編號","skipNext":"c2","next":"r1"},{"id":"c2","type":"collect","question":"沒問題!請提供當時下單的 Email,幫您查詢 🙂","fieldName":"email","format":"email","reaskText":"Email 格式好像不太對,可以再確認一次嗎?","next":"r1"},{"id":"r1","type":"reply","text":"已收到您的資料,將由專人盡快為您處理,謝謝您 🙇","thenHandoff":true}]}
 
 【範例二】
 輸入:活動報名:收姓名和電話,存進名單,最後跟客人說會再聯絡
-輸出:{"name":"活動報名","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":["報名","參加"],"examples":["我要報名","想參加活動","報名活動"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的~請問您的大名?","fieldName":"name","format":"any","next":"c2"},{"id":"c2","type":"collect","question":"請留下方便聯絡的電話 📞","fieldName":"phone","format":"phone","reaskText":"電話格式好像不太對,可以再確認一次嗎?","next":"s1"},{"id":"s1","type":"saveLead","fieldMap":[{"fromField":"name","attrKey":"姓名"},{"fromField":"phone","attrKey":"電話"}],"next":"r1"},{"id":"r1","type":"reply","text":"{{name}} 您好,已收到您的報名,我們會盡快與您聯繫 🙌","thenHandoff":false}]}
+輸出:{"name":"活動報名","rootNodeId":"t","nodes":[{"id":"t","type":"trigger","matchMode":"semantic","keywords":[],"examples":["我要報名","想參加活動","報名活動"],"priority":50,"next":"c1"},{"id":"c1","type":"collect","question":"好的~請問您的大名?","fieldName":"name","format":"any","next":"c2"},{"id":"c2","type":"collect","question":"請留下方便聯絡的電話 📞","fieldName":"phone","format":"phone","reaskText":"電話格式好像不太對,可以再確認一次嗎?","next":"s1"},{"id":"s1","type":"saveLead","fieldMap":[{"fromField":"name","attrKey":"姓名"},{"fromField":"phone","attrKey":"電話"}],"next":"r1"},{"id":"r1","type":"reply","text":"{{name}} 您好,已收到您的報名,我們會盡快與您聯繫 🙌","thenHandoff":false}]}
 
 【範例三:加好友那一刻(事件型觸發)】
 輸入:客人加好友的時候歡迎他,順便問他想看哪一類商品
@@ -112,12 +112,15 @@ interface RawDraft { name?: unknown; rootNodeId?: unknown; nodes?: unknown; erro
  * - 含敏感情境詞(退款/申訴…)→ 敏感層排在腳本之前,含這個詞的訊息永遠到不了腳本=死關鍵字,
  *   留著只會讓使用者以為設了有用。
  * 拿掉關鍵字是安全的:生成一律 semantic 模式,語意路由吃範例句與腳本名,不靠 keywords 也觸發得了。
+ * ⛔ semantic 那種的字一律清空（`C-370`）:系統不看它,留著只會讓人以為「含這個字就會接」——
+ *    模型就算照舊給了也不算數。
  */
 function sanitizeTriggerKeywords(nodes: ScriptNode[], sensitiveTopics: readonly string[]): { nodes: ScriptNode[]; dropped: string[] } {
   const topics = sensitiveTopics.map(t => String(t).trim().toLowerCase()).filter(Boolean)
   const dropped: string[] = []
   const out = nodes.map((n) => {
     if (n.type !== 'trigger') return n
+    if ((n.matchMode ?? 'keyword') === 'semantic') return n.keywords?.length ? { ...n, keywords: [] } : n
     const kept = (n.keywords ?? []).filter((k) => {
       const norm = k.trim().toLowerCase()
       const bad = isRiskyTriggerKeyword(norm) || topics.some(t => norm.includes(t))

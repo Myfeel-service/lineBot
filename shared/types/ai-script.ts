@@ -51,7 +51,11 @@ export interface ScriptTriggerNode {
   type: 'trigger'
   /** 觸發來源；省略時視為 'message'（向後相容舊腳本）。'follow' 時 keywords／examples 無意義且會被存檔清空 */
   triggerEvent?: ScriptTriggerEvent
-  /** keyword 模式：任一關鍵字命中就觸發 */
+  /**
+   * keyword 模式（畫面上的「客人打特定的字」）：照 keywordMatch 比對就觸發。
+   * ⛔ semantic 模式不看這一格（`C-370`）：存檔清空、比對與健康檢查都跳過——
+   *    以前「看意思」的也藏著幾個字、含那個字就直接接（MYFEEL「查詢訂單」的「訂單」把「保留訂單」接走）。
+   */
   keywords: string[]
   /** 比對方式；省略時視為 'keyword'（向後相容舊腳本） */
   matchMode?: TriggerMatchMode
@@ -61,8 +65,7 @@ export interface ScriptTriggerNode {
   examples?: string[]
   /**
    * semantic 模式：「這些交給 AI 回答，不要接」的講法（`D-138`，例「什麼時候出貨」）。
-   * 交給意圖路由當反例；**有設的話，關鍵字快速通道對這條也先停一下、讓路由看過意思再決定**
-   * （不然「我的訂單什麼時候出貨」含「訂單」就直接被接走，反例永遠用不上）。見 server/utils/script-match.ts。
+   * 交給意圖路由當反例：意思一樣就不選這條。見 server/utils/script-match.ts。
    */
   excludes?: string[]
   /**
@@ -905,9 +908,10 @@ export function consumePrefilledCollect(
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * 關鍵字比對——**不分 matchMode**。把 keywords 一律當「明確觸發詞」的確定性快速通道：
- * 即使腳本是 semantic 模式，只要填了 keywords，核心詞（預約/退貨/找真人）也能被確定性命中，
- * 不必每次都靠 LLM 路由（避免明顯意圖偶爾被路由判錯）。語意範例則留給 LLM 路由補捉變體說法。
+ * 關鍵字比對——**只給 keyword 模式（「客人打特定的字」）**。
+ * semantic 模式（「看意思」）一律不中，交給意圖路由看整句話（`C-370`，2026-10-21 老闆「走長遠」）。
+ * ⛔ 以前「不分 matchMode」：看意思的只要填了 keywords 也會被直接接走，那些字畫面上看不到、
+ *    又是 AI 搭草稿自動放的——MYFEEL「查詢訂單」藏著「訂單」，「請幫我保留訂單」被問訂單編號。
  *
  * keywordMatch 決定怎麼比（與自動回覆規則的 matchType 同一組語意）：
  *   any（預設）＝任一關鍵字是子字串／all＝每個關鍵字都要出現／exact＝整句就是那個詞／
@@ -918,6 +922,15 @@ export function consumePrefilledCollect(
  */
 export function matchesScriptKeywords(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId' | 'enabled'>, inputText: string): boolean {
   return hitScriptKeyword(script, inputText) !== null
+}
+
+/**
+ * 這個開始條件**真的會拿來比對**的字（健康檢查「誰蓋住誰」用，跟 {@link hitScriptKeyword} 同一把尺）：
+ * 「看意思」與「加好友時」那種一律沒有（`C-370`），舊資料殘留的字不算。
+ */
+export function triggerKeywordsInUse(trigger: Pick<ScriptTriggerNode, 'keywords' | 'matchMode' | 'triggerEvent'> | null | undefined): string[] {
+  if (!trigger || trigger.triggerEvent === 'follow' || (trigger.matchMode ?? 'keyword') === 'semantic') return []
+  return (trigger.keywords ?? []).map(k => String(k).trim()).filter(Boolean)
 }
 
 /**
@@ -934,6 +947,8 @@ export function hitScriptKeyword(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId' 
   // 加好友觸發的腳本只由 follow 事件啟動，任何文字都不命中。
   // ⛔ 這行不能省：舊資料若殘留 keywordMatch='anyText'，少了這道守衛它會攔截所有訊息。
   if (root.triggerEvent === 'follow') return null
+  // 「看意思」那種不看字（`C-370`）：舊資料殘留的 keywords、甚至 anyText 都不算
+  if ((root.matchMode ?? 'keyword') === 'semantic') return null
 
   // anyText：有文字就命中，不看關鍵字（和自動回覆的同名選項一樣，會蓋掉 AI，編輯器要跳警告）
   const mode = root.keywordMatch ?? 'any'

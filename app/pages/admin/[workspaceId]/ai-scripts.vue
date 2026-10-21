@@ -222,30 +222,10 @@
                     <p class="scripts-section-hint">意思相近 AI 就會接，不用列出所有講法；3～5 句不同說法就夠（最多 {{ MAX_TRIGGER_EXAMPLES }} 句）。</p>
                   </div>
                   <!--
-                    `C-363`⑩：「看意思」的也可以有關鍵字（含那個字就直接接、不等 AI），以前畫面上看不到——
-                    MYFEEL「查詢訂單」藏著「訂單／查詢／進度」，「請幫我保留訂單」就被接走。現在攤開來、刪得掉。
+                    `C-370`（老闆「走長遠」）：「看意思」的只看這兩格，不再有「含這些字就直接接」——
+                    那份字清單只會越加越亂、加錯沒人發現（MYFEEL「查詢訂單」藏著「訂單」，「保留訂單」被接走）。
+                    要「打這個字就回」的，用另一種開始方式「客人打特定的字」。
                   -->
-                  <div v-if="semanticKeywordsOpen(triggerNode)" class="admin-field-group">
-                    <AdminFieldLabel text="含這些字就直接接，不等 AI 判斷" tight />
-                    <el-input
-                      :model-value="triggerNode.keywords.join('，')"
-                      placeholder="例：查訂單，訂單進度（用逗號或空白分隔）"
-                      @update:model-value="updateKeywords(triggerNode, $event)"
-                    />
-                    <p class="scripts-section-hint">訊息裡只要有其中一個字就接走。接到不相干的訊息（例：「請幫我保留訂單」含「訂單」）就把那個字刪掉，交給 AI 看意思。</p>
-                    <el-alert
-                      v-if="riskyKeywordsOf(triggerNode).length"
-                      type="warning"
-                      :closable="false"
-                      show-icon
-                      :title="`「${riskyKeywordsOf(triggerNode).join('、')}」太常見了，會攔到很多不相關的訊息`"
-                      description="建議改成這一條專屬的具體詞（兩個字以上），或整格清空、全部交給 AI 看意思。"
-                    />
-                  </div>
-                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="openSemanticKeywords">
-                    ＋ 含某些字就直接接（不等 AI 判斷）
-                  </button>
-
                   <div v-if="excludesOpen(triggerNode)" class="admin-field-group">
                     <AdminFieldLabel text="這些交給 AI 回答，不要接（一行一句）" tight />
                     <el-input
@@ -255,7 +235,7 @@
                       placeholder="例：&#10;什麼時候出貨&#10;何時會收到貨"
                       @update:model-value="updateExcludes(triggerNode, $event)"
                     />
-                    <p class="scripts-section-hint">意思一樣的不走這一條、交給 AI 回答。設了之後，就算含上面的字，也會先讓 AI 看過意思再決定。</p>
+                    <p class="scripts-section-hint">意思一樣的不走這一條、交給 AI 回答。</p>
                   </div>
                   <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="openExcludes">
                     ＋ 有些講法不要接（交給 AI 回答）
@@ -1235,13 +1215,8 @@ const questionLabels = computed(() => {
   return items.map((it, i) => ({ nodeId: it.id, label: qList.value ? `${i + 1}　${listItemLabel(it)}` : listItemLabel(it) }))
 })
 
-/** 「看意思」的「含這些字就直接接」與「不要接」：有資料就攤開，沒有的話按了才出現 */
-const openedSemanticKeywords = ref(false)
+/** 「看意思」的「不要接」：有資料就攤開，沒有的話按了才出現 */
 const openedExcludes = ref(false)
-function semanticKeywordsOpen(node: ScriptTriggerNode) {
-  return openedSemanticKeywords.value || (node.keywords ?? []).length > 0
-}
-function openSemanticKeywords() { openedSemanticKeywords.value = true }
 function excludesOpen(node: ScriptTriggerNode) {
   return openedExcludes.value || (node.excludes ?? []).length > 0
 }
@@ -1258,7 +1233,7 @@ function autoName(): string {
   const t = triggerNode.value
   if (!t) return ''
   if (t.triggerEvent === 'follow') return '客人加好友時'
-  if ((t.matchMode ?? 'keyword') === 'semantic') return (t.examples?.[0] || t.keywords?.[0] || '').slice(0, 30)
+  if ((t.matchMode ?? 'keyword') === 'semantic') return (t.examples?.[0] || '').slice(0, 30)
   if (t.keywordMatch === 'anyText') return '客人輸入任何內容'
   return (t.keywords?.[0] || '').slice(0, 30)
 }
@@ -1713,7 +1688,6 @@ const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quic
  */
 function resetEditorDisclosure(nodes: ScriptNode[]) {
   openedSkips.value = new Set()
-  openedSemanticKeywords.value = false
   openedExcludes.value = false
   syncFieldModes(nodes)
   syncEditorMode()

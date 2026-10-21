@@ -11,10 +11,15 @@ import {
 } from './ai-script-reachability'
 import type { ScriptNode } from './ai-script'
 
-function script(over: Partial<ScriptForReachability> & { id: string; keywords?: string[]; examples?: string[] }): ScriptForReachability {
-  const { keywords = ['退貨'], examples = [], ...rest } = over
+/**
+ * 有給字＝「客人打特定的字」那種（看字）；只給句子＝「看意思」那種。
+ * `C-370` 之後「看意思」的不看字，「誰蓋住誰」只在看字的之間算。
+ */
+function script(over: Partial<ScriptForReachability> & { id: string; keywords?: string[]; examples?: string[]; matchMode?: 'keyword' | 'semantic' }): ScriptForReachability {
+  const { keywords = ['退貨'], examples = [], matchMode, ...rest } = over
+  const mode = matchMode ?? (keywords.length ? 'keyword' : 'semantic')
   const nodes: ScriptNode[] = [
-    { id: 't', type: 'trigger', matchMode: 'semantic', keywords, examples, priority: 50, next: 'r' },
+    { id: 't', type: 'trigger', matchMode: mode, keywords, examples, priority: 50, next: 'r' },
     { id: 'r', type: 'reply', text: 'ok', thenHandoff: false },
   ]
   return { name: '退換貨', enabled: true, priority: 50, rootNodeId: 't', nodes, ...rest }
@@ -29,6 +34,12 @@ describe('findUnreachableScripts', () => {
 
   it('只有語意範例、沒有關鍵字 → 不報（走意圖路由，擋不掉整條路）', () => {
     expect(findUnreachableScripts([script({ id: 's1', keywords: [], examples: ['我要退貨'] })])).toEqual([])
+  })
+
+  it('⛔「看意思」那種殘留的字不算（`C-370`）：不會被說「被別條蓋住」，也蓋不住別條', () => {
+    const meaning = script({ id: 'm', name: '查詢訂單', matchMode: 'semantic', keywords: ['訂單'], examples: ['我想查訂單'], priority: 90 })
+    const kw = script({ id: 'k', name: '訂單備註', keywords: ['訂單備註'], priority: 50 })
+    expect(findUnreachableScripts([meaning, kw])).toEqual([])
   })
 
   it('停用的腳本不報（停用是刻意的，不是異常）', () => {
@@ -83,11 +94,12 @@ it('觸發詞都含敏感情境詞 → 安全層先攔走，腳本永遠不啟�
     expect(r[0]!.reason).toBe('sensitiveTopic')
   })
 
-  it('線上 MYFEEL 現況（3 條啟用、規則都停用）→ 乾淨無異常', () => {
+  it('線上 MYFEEL 現況（3 條啟用、都是「看意思」）→ 乾淨無異常', () => {
+    // 2026-10-21 唯讀查到的樣子：看意思＋例句，殘留的字 `C-370` 起不算
     const live = [
-      script({ id: 'a', name: '更改地址', keywords: ['地址錯誤', '更改地址', '改地址', '換地址'] }),
-      script({ id: 'b', name: '新增備註', keywords: ['新增備註', '備註', '要備註'] }),
-      script({ id: 'c', name: '查詢訂單', keywords: ['訂單', '查詢', '進度'] }),
+      script({ id: 'a', name: '更改地址', matchMode: 'semantic', keywords: ['改地址', '收件地址'], examples: ['我地址填錯了怎麼辦'] }),
+      script({ id: 'b', name: '新增備註', matchMode: 'semantic', keywords: ['備註', '註記'], examples: ['我想在訂單上加備註'] }),
+      script({ id: 'c', name: '查詢訂單', matchMode: 'semantic', keywords: ['訂單', '查詢', '進度'], examples: ['我想查訂單'] }),
     ]
     expect(findUnreachableScripts(live, { sensitiveTopics: ['自殺', '提告', '律師'] })).toEqual([])
   })

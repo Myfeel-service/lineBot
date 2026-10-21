@@ -94,11 +94,14 @@ function makeDb() {
   }
 }
 
-/** 跟正式站「查詢訂單」同形：關鍵字「訂單」→ 問編號 */
+/**
+ * 跟正式站「查詢訂單」同形：問編號。開始方式用「客人打特定的字」確定觸發——
+ * 這支測的是「出貨題要不要繞過流程」，不是比對（正式站那條是「看意思」，`C-370` 後靠 AI 判斷）。
+ */
 const ORDER_SCRIPT = {
   id: 'script-order', workspaceId: WS, name: '查詢訂單', enabled: true, priority: 50, rootNodeId: 't',
   nodes: [
-    { id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['訂單', '查詢', '進度'], examples: [], priority: 50, next: 'c1' },
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['訂單', '查詢', '進度'], examples: [], priority: 50, next: 'c1' },
     { id: 'c1', type: 'collect', question: '您好,請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'r1' },
     { id: 'r1', type: 'reply', text: '已收到', thenHandoff: true },
   ],

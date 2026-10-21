@@ -62,9 +62,9 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     description: '客人要退貨 → 問訂單編號 → 收到後轉真人處理',
     rootNodeId: 't',
     nodes: [
-      // 不放「退款」：退款/退費屬敏感詞，讓它走 AI 敏感詞護欄直接轉真人，不被腳本攔截。
-      // 不放「要退」：子字串比對下「我不要退了」也會命中，反悔的客人被拉進退貨流程
-      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['退貨', '退換貨', '換貨'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_order' },
+      // `C-370`：改成「看意思」（AI 判斷）。以前用「退貨」這種字比對，「我不想退貨了」「退貨要多久」也會被拉進來；
+      // 「看意思」只看「客人會這樣講」，不看字。不放「退款」的講法：退款屬敏感詞，走 AI 敏感詞護欄直接轉真人。
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: [], examples: ['我要退貨', '東西壞了想退', '可以換貨嗎', '想辦理退換貨'], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_order' },
       // 跳過出口：客人手邊沒編號也有路走（不加的話 format any 會把「我沒有編號」整句存成編號）
       { id: 'c_order', type: 'collect', question: '好的，請提供您的訂單編號，我們為您處理 🙂', fieldName: 'order_id', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', skipLabel: '我沒有訂單編號', skipNext: 'r_noid', next: 'r' },
       { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', thenHandoff: true },
@@ -79,7 +79,8 @@ export const SCRIPT_TEMPLATES: ScriptTemplate[] = [
     description: '收集姓名與電話、存進客人資料，常用於預約/活動報名',
     rootNodeId: 't',
     nodes: [
-      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['預約', '報名', '登記', '我要約'], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_name' },
+      // `C-370`：改成「看意思」，「預約」「登記」這種字太常見（「預約的話要付訂金嗎？」是在問問題）
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: [], examples: ['我要預約', '想報名', '可以幫我登記嗎', '我想約時間'], priority: DEFAULT_SCRIPT_PRIORITY, next: 'c_name' },
       { id: 'c_name', type: 'collect', question: '好的～請問您的大名？', fieldName: 'name', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'any', next: 'c_phone' },
       { id: 'c_phone', type: 'collect', question: '請留下方便聯絡的電話 📞', fieldName: 'phone', expireMs: DEFAULT_COLLECT_EXPIRE_MS, format: 'phone', reaskText: '電話格式好像不太對，可以再確認一次嗎？', next: 'save' },
       { id: 'save', type: 'saveLead', fieldMap: [{ fromField: 'name', attrKey: '姓名' }, { fromField: 'phone', attrKey: '電話' }], next: 'r' },

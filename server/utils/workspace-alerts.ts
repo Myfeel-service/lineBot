@@ -183,7 +183,8 @@ export async function findAnyTextBlockingScripts(
       const s = d.data() as Record<string, unknown>
       const nodes = (Array.isArray(s.nodes) ? s.nodes : []) as Array<Record<string, unknown>>
       const root = nodes.find(n => n?.id === s.rootNodeId)
-      return root?.type === 'trigger' && root?.keywordMatch === 'anyText'
+      // 「看意思」那種殘留的 anyText 不生效（`C-370`，比對端不看字），不報「攔截所有訊息」
+      return root?.type === 'trigger' && root?.keywordMatch === 'anyText' && root?.matchMode !== 'semantic'
     })
     .map(d => ({ id: d.id, name: String((d.data() as Record<string, unknown>).name ?? '(未命名設定)') }))
 }

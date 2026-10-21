@@ -81,11 +81,15 @@ let uidSeq = 0
 const BAI = 'M20261007002452KOYK訂單編號\n名字白坤永\n電話0982085948'
 const ORDER_NO = 'M20261007002452KOYK'
 
-/** 跟正式站「查詢訂單」同形：關鍵字「訂單／查詢／進度」→ 問編號 → 問姓名 → 收完轉真人 */
+/**
+ * 跟正式站「查詢訂單」同形：問編號 → 問姓名 → 收完轉真人。
+ * 開始方式用「客人打特定的字」（訂單／查詢／進度）：這支測的是流程前後那一問，不是比對——
+ * 正式站那條是「看意思」，`C-370` 之後要靠 AI 判斷才接得到，測試裡用字確定觸發。
+ */
 const ORDER_SCRIPT = {
   id: 'script-order', workspaceId: WS, name: '查詢訂單', enabled: true, priority: 50, rootNodeId: 't',
   nodes: [
-    { id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['訂單', '查詢', '進度'], examples: [], priority: 50, next: 'c1' },
+    { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['訂單', '查詢', '進度'], examples: [], priority: 50, next: 'c1' },
     { id: 'c1', type: 'collect', question: '您好,請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'c2' },
     { id: 'c2', type: 'collect', question: '請問訂購人姓名？', fieldName: 'name', expireMs: 600000, format: 'any', next: 'r1' },
     { id: 'r1', type: 'reply', text: '已收到您的資訊，我們將盡快為您查詢並處理', thenHandoff: true },
@@ -200,7 +204,16 @@ function reply(n: number): any[] {
 }
 
 /** 意圖路由（LLM）把這句送進「查詢訂單」流程——正式站認不出商品的出貨題常被這樣送 */
+/**
+ * 要走「AI 判斷意思」那條路的 case：把查詢訂單換成正式站那種「看意思」（`C-370` 之後只有這種會交給路由），
+ * 再讓路由回答「這句是查詢訂單」。
+ */
 function routeToOrderScript() {
+  const t = ORDER_SCRIPT.nodes[0]!
+  vi.mocked(loadActiveScripts).mockResolvedValue([{
+    ...ORDER_SCRIPT,
+    nodes: [{ ...t, matchMode: 'semantic', keywords: [], examples: ['我想查訂單', '我的訂單進度'] }, ...ORDER_SCRIPT.nodes.slice(1)],
+  }] as any)
   vi.mocked(routeMessage).mockResolvedValue({
     scriptId: 'script-order', intent: 'order_status', isFollowup: false, standaloneQuery: '',
     compareItems: [], subQuestions: [], inputTokens: 0, outputTokens: 0,

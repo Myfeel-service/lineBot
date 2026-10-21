@@ -114,28 +114,36 @@ describe('generateScriptDraft：拒答出口（描述不是流程/腳本做不�
   })
 })
 
-describe('generateScriptDraft：觸發關鍵字後檢(泛用詞/單字/敏感詞剔除)', () => {
-  function withKeywords(keywords: string[]) {
-    return { ...FIXED, nodes: FIXED.nodes.map(n => n.id === 't' ? { ...n, keywords } : n) }
+describe('generateScriptDraft：觸發關鍵字後檢', () => {
+  /** matchMode 不給＝照 FIXED（semantic）；給 'keyword' 模擬模型自己生出「看字」那種 */
+  function withKeywords(keywords: string[], matchMode?: 'keyword') {
+    return { ...FIXED, nodes: FIXED.nodes.map(n => n.id === 't' ? { ...n, keywords, ...(matchMode ? { matchMode } : {}) } : n) }
   }
   function triggerOf(draft: { nodes: any[] }) {
     return draft.nodes.find(n => n.type === 'trigger')
   }
 
-  it('高頻通用詞與單一個字被剔除,具體詞保留(語意路由不靠 keywords,剔光也能觸發)', async () => {
-    generateJson.mockResolvedValueOnce(reply(withKeywords(['你好', '問題', '抽', '退貨', '訂單查詢'])))
+  it('⛔「看意思」那種的字一律清空（`C-370`）：系統不看它，留著只會讓人以為含這個字就會接', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['訂單', '查詢', '進度'])))
+    const draft = await generateScriptDraft('客人查訂單')
+    expect(triggerOf(draft).keywords).toEqual([])
+    expect(triggerOf(draft).examples).toEqual(['我想查訂單'])
+  })
+
+  it('「看字」那種：高頻通用詞與單一個字被剔除，具體詞保留', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['你好', '問題', '抽', '退貨', '訂單查詢'], 'keyword')))
     const draft = await generateScriptDraft('客人查訂單')
     expect(triggerOf(draft).keywords).toEqual(['退貨', '訂單查詢'])
   })
 
-  it('含租戶敏感情境詞的關鍵字是死關鍵字(敏感層排在腳本前面)→ 剔除', async () => {
-    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退款申請', '退錢'])))
+  it('「看字」那種：含租戶敏感情境詞的關鍵字是死關鍵字(敏感層排在腳本前面)→ 剔除', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退款申請', '退錢'], 'keyword')))
     const draft = await generateScriptDraft('客人要退款', { sensitiveTopics: ['退款', '申訴'] })
     expect(triggerOf(draft).keywords).toEqual(['退錢'])
   })
 
-  it('沒帶 sensitiveTopics → 只做泛用詞/單字剔除,不誤傷', async () => {
-    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退貨'])))
+  it('「看字」那種沒帶 sensitiveTopics → 只做泛用詞/單字剔除，不誤傷', async () => {
+    generateJson.mockResolvedValueOnce(reply(withKeywords(['退款', '退貨'], 'keyword')))
     const draft = await generateScriptDraft('客人要退貨')
     expect(triggerOf(draft).keywords).toEqual(['退款', '退貨'])
   })

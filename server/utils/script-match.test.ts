@@ -29,14 +29,15 @@ describe('pickScriptByKeyword', () => {
     expect(pickScriptByKeyword([exact], '我要抽獎')).toBeNull()
   })
 
-  it('「AI 判斷」那種有填關鍵字的，含那個字照樣直接接（MYFEEL 查詢訂單的「訂單」）', () => {
+  it('⛔「AI 判斷」那種不看字（`C-370`）：舊資料殘留的「訂單」不會把「保留訂單」直接接走，交給 AI 看意思', () => {
     const order = row('查詢訂單', { matchMode: 'semantic', keywords: ['訂單', '查詢', '進度'], examples: ['我想查訂單'] })
-    expect(pickScriptByKeyword([order], '決定不退貨，請幫我保留訂單')).toEqual({ script: order, keyword: '訂單' })
+    expect(pickScriptByKeyword([order], '決定不退貨，請幫我保留訂單')).toBeNull()
+    expect(pickScriptByKeyword([order], '我想查訂單')).toBeNull() // 連明確的也不看字：交給 AI 判斷
   })
 
-  it('⛔ 「AI 判斷」那種設了「不要接」→ 含關鍵字也先不接，留給 AI 看意思', () => {
-    const order = row('查詢訂單', { matchMode: 'semantic', keywords: ['訂單'], examples: ['我想查訂單'], excludes: ['什麼時候出貨'] })
-    expect(pickScriptByKeyword([order], '我的訂單什麼時候會出貨')).toBeNull()
+  it('⛔「AI 判斷」那種殘留 anyText 也不會攔下所有訊息', () => {
+    const odd = row('怪', { matchMode: 'semantic', keywordMatch: 'anyText', examples: ['我想查訂單'] })
+    expect(pickScriptByKeyword([odd], '隨便打一句')).toBeNull()
   })
 
   it('加好友時那種任何文字都不接', () => {
@@ -54,10 +55,11 @@ describe('pickScriptByKeyword', () => {
 describe('routeCandidates（交給 AI 判斷的候選）', () => {
   it('⛔ 只有「AI 判斷」那種；「客人打特定的字」那種不會被用意思挑走（`D-138`①）', () => {
     const kw = row('客服選單', { matchMode: 'keyword', keywords: ['客服選單'] })
-    const meaning = row('查詢訂單', { matchMode: 'semantic', keywords: ['訂單'], examples: ['我想查訂單', '訂單'], excludes: ['什麼時候出貨'] })
+    // 提示只給「客人會這樣講」與「不要接」：殘留的字（訂單）不再當提示（`C-370`）
+    const meaning = row('查詢訂單', { matchMode: 'semantic', keywords: ['訂單'], examples: ['我想查訂單', '我的訂單進度'], excludes: ['什麼時候出貨'] })
     const follow = row('歡迎', { triggerEvent: 'follow', matchMode: 'semantic' })
     expect(routeCandidates([kw, meaning, follow])).toEqual([
-      { id: '查詢訂單', name: '查詢訂單', hints: ['訂單', '我想查訂單'], excludes: ['什麼時候出貨'] },
+      { id: '查詢訂單', name: '查詢訂單', hints: ['我想查訂單', '我的訂單進度'], excludes: ['什麼時候出貨'] },
     ])
   })
 

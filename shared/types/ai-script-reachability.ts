@@ -15,6 +15,7 @@
  *
  */
 import type { ScriptDoc } from './ai-script'
+import { triggerKeywordsInUse } from './ai-script'
 
 /** 分析用的最小腳本形狀(id + 文件本體) */
 export type ScriptForReachability = Pick<ScriptDoc, 'name' | 'nodes' | 'rootNodeId' | 'enabled' | 'priority'> & { id: string }
@@ -152,7 +153,8 @@ export function findUnreachableScripts(
     // 加好友觸發是事件型：follow 事件直達、不經文字比對，敏感層與別條腳本都蓋不住它，
     // 也天生沒有觸發詞——跳過整組檢查，否則會對每條 follow 腳本誤報「沒有觸發詞」。
     if (trigger?.triggerEvent === 'follow') continue
-    const keywords = (trigger?.keywords ?? []).map(norm).filter(Boolean)
+    // 只算真的會拿來比對的字：「看意思」那種殘留的字不比對（`C-370`），也就不會被誰蓋住
+    const keywords = triggerKeywordsInUse(trigger).map(norm).filter(Boolean)
     const examples = (trigger?.examples ?? []).map(e => String(e).trim()).filter(Boolean)
     const name = String(script.name || '(未命名流程)')
     const push = (reason: ScriptBlockReason, detail: string) =>
@@ -177,7 +179,7 @@ export function findUnreachableScripts(
     const rival = enabled.find((other) => {
       if (other.id === script.id) return false
       if ((other.priority ?? 0) < (script.priority ?? 0)) return false
-      const otherKeywords = (triggerOf(other)?.keywords ?? []).map(norm).filter(Boolean)
+      const otherKeywords = triggerKeywordsInUse(triggerOf(other)).map(norm).filter(Boolean)
       if (!otherKeywords.length) return false
       return keywords.every(k => otherKeywords.some(ok => k.includes(ok)))
     })

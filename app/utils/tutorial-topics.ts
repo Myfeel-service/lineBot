@@ -681,8 +681,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         targetFallback: '[data-tour="scr-trigger-mode"]',
         title: '最容易做錯的是這幾格',
         description:
-          'AI 判斷的話，填 3～5 句客人會怎麼講就夠。⚠️ 「<strong>含這些字就直接接</strong>」的字一出現就接走、不等 AI——'
-          + '太常見的字（例：訂單）會把不相干的訊息也接走；有些講法不想接，寫在「<strong>這些交給 AI 回答，不要接</strong>」。'
+          // `C-370`：「看意思」的不再有「含這些字就直接接」那一格，全部交給 AI 讀整句話
+          'AI 判斷的話，填 3～5 句客人會怎麼講就夠，<strong>AI 讀整句話的意思</strong>，不是看有沒有某個字。'
+          + '發現接到不該接的話，寫進「<strong>這些交給 AI 回答，不要接</strong>」。'
           // ⛔ 選項的字要照下拉選單寫（「客人輸入任何內容」），`D-109` 抓到原本寫成警告框的標題
           + '選「客人打特定的字」的話，⛔「<strong>客人輸入任何內容</strong>」要特別小心：客人不管打什麼都會走這一條，'
           + '<strong>AI 客服和其他自動回應全部收不到訊息</strong>，而且畫面上不會有任何錯誤。',

@@ -34,7 +34,7 @@ import { invalidateScriptHealthCache } from './script-health'
 import { getWorkspacePlan } from './billing'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import { broadcastPlanBlockFor } from './broadcast-plan-gate'
-import { scriptTriggerEvent, type ScriptTriggerEvent } from '~~/shared/types/ai-script'
+import { scriptTriggerEvent, triggerKeywordsInUse, type ScriptTriggerEvent } from '~~/shared/types/ai-script'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
 import { runMeteredAi, usageFromCalls } from './ai-usage-calls'
@@ -226,7 +226,8 @@ function readScriptRow(id: string, data: Record<string, any>): ScriptRow {
     id,
     name: String(data.name || '(未命名流程)'),
     enabled: data.enabled === true,
-    keywords: Array.isArray(trigger?.keywords) ? trigger.keywords.map(String) : [],
+    // 只列真的會拿來比對的字：「看意思」那種殘留的字不算（`C-370`），不然確認卡會講「客人打『訂單』會走這條」
+    keywords: triggerKeywordsInUse(trigger),
     matchMode: String(trigger?.matchMode ?? 'keyword'),
     triggerEvent: scriptTriggerEvent({ nodes, rootNodeId: data.rootNodeId }),
   }
@@ -316,10 +317,10 @@ const scriptSetEnabled: AdminOpDef = {
       if (blocked) throw new AdminOpUserError(`${blocked}（請照實告訴他；他決定之前⛔不要改提議別的操作。）`)
     }
 
-    const trigger = row.keywords.length
-      ? `客人打「${row.keywords.slice(0, 6).join('、')}」${row.keywords.length > 6 ? ' 等字' : ''}會走這條`
-      : row.matchMode === 'anyText'
-        ? '客人不管打什麼都會走這條'
+    const trigger = row.matchMode === 'semantic'
+      ? '客人講到這類意思時（AI 判斷）會走這條'
+      : row.keywords.length
+        ? `客人打「${row.keywords.slice(0, 6).join('、')}」${row.keywords.length > 6 ? ' 等字' : ''}會走這條`
         : '（這條沒有設定觸發字）'
 
     // 真正的影響常常不在這條身上，在**別條**身上：新開的這條可能把另一條的觸發詞整個包住。

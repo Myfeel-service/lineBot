@@ -22,6 +22,7 @@ import { getQuotaAnswered, getCurrentMonthUsageCounts, currentYyyyMm, monthlyBil
 import { derivePlanState } from '~~/shared/billing/plan-state'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
+import { triggerKeywordsInUse } from '~~/shared/types/ai-script'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 // 只讀：數條數、讀方案上限（`C-308`⑦，跟開通清單、方案額度同一把尺）
 import { countUsableChunks, getKnowledgeChunkQuota } from './ai-knowledge-quota'
@@ -198,8 +199,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
   // `D-116`（2026-10-08）：以前還有一支 list_auto_responses 查同一批東西，畫面上「查了：」並排兩個名字
   // （客服流程清單、自動回應設定），使用者以為是兩樣東西——併成這一支，名字跟側欄同名
   list_scripts: {
-    description: '列出所有自動回應（側欄「自動回應」那一頁的每一條）:名稱、啟用或停用、什麼時候啟動(客人說了關鍵字／加好友時)、'
-      + '關鍵字與比對方式、幾個步驟、啟動／走完次數。問「有哪些自動回應 / 哪些沒啟用 / 打某個字會回什麼 / 完成率」時用。'
+    description: '列出所有自動回應（側欄「自動回應」那一頁的每一條）:名稱、啟用或停用、什麼時候啟動(客人打特定的字／AI 判斷客人在問這類事／加好友時)、'
+      + '關鍵字與比對方式（matchMode=semantic 的是 AI 判斷，看 examples「客人會這樣講」，不看字）、幾個步驟、啟動／走完次數。'
+      + '問「有哪些自動回應 / 哪些沒啟用 / 打某個字會回什麼 / 完成率」時用。'
       + '⛔ 頁面上的開關叫「啟用／停用」,講的時候照這兩個字。',
     requires: 'ai.read',
     mutates: false,
@@ -214,7 +216,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
           enabled: s.enabled === true,
           startsWhen: s.triggerEvent === 'follow' ? '客人加好友時' : '客人傳訊息時',
           matchMode: trig?.matchMode ?? 'keyword',
-          keywords: (trig?.keywords ?? []).join('、'),
+          // 「看意思」那種只講客人會怎麼講；殘留的字不生效（`C-370`），列出來小幫手會講成「打這個字就會走」
+          keywords: triggerKeywordsInUse(trig).join('、'),
+          examples: trig?.matchMode === 'semantic' ? (trig?.examples ?? []).join('、') : '',
           keywordMatch: trig?.keywordMatch ?? 'any',
           stepCount: nodes.length,
           starts: s.stats?.starts ?? 0,

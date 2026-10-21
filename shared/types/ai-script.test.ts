@@ -10,6 +10,7 @@ import {
   addSkipExitsToCollects,
   DEFAULT_SKIP_EXIT_LABEL,
   findStuckCollects,
+  hitScriptKeyword,
   matchesScriptKeywords,
   matchesSemanticTrigger,
   renderScriptTemplate,
@@ -75,10 +76,11 @@ describe('matchesScriptKeywords（腳本關鍵字比對的唯一入口）', () =
     expect(matchesScriptKeywords(s, '退貨')).toBe(false)
   })
 
-  it('semantic 模式也吃 keywords（關鍵字＝確定性快速通道，不必每次都問 LLM）', () => {
+  it('⛔ semantic 模式不看字（`C-370`）：殘留的 keywords 不算，全部交給 AI 看意思', () => {
+    // 以前「不分模式」：看意思的也藏著字、含那個字就直接接（MYFEEL「保留訂單」被接進查詢訂單）
     const s = buildScript({ id: 't1', type: 'trigger', matchMode: 'semantic', keywords: ['預約'], examples: ['想約個時間'] })
-    expect(matchesScriptKeywords(s, '我要預約')).toBe(true)
-    expect(matchesScriptKeywords(s, '今天天氣好')).toBe(false)
+    expect(matchesScriptKeywords(s, '我要預約')).toBe(false)
+    expect(hitScriptKeyword(s, '我要預約')).toBeNull()
   })
 
   // keywordMatch：與自動回覆規則的 matchType 對齊，兩種深度的設定要能互換

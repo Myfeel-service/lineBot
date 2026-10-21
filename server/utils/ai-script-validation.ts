@@ -103,6 +103,8 @@ function normalizeNode(raw: any): ScriptNode | null {
     }
     // semantic 模式才收範例；exampleEmbeddings 一律由 server 算，絕不採信前端傳入
     if (matchMode === 'semantic') {
+      // 「看意思」那種不看字（`C-370`）：殘留的字存檔時清掉，畫面、小幫手、健康檢查都不會再看到一份不生效的清單
+      node.keywords = []
       node.examples = Array.isArray(raw?.examples)
         ? raw.examples.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXAMPLES)
         : []
