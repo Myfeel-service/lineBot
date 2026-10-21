@@ -38,6 +38,19 @@ export function taipeiHour(date: Date = new Date()): number {
   return new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCHours()
 }
 
+/** 星期幾的中文（`getUTCDay()` 的順序：0＝日） */
+export const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
+
+/**
+ * 「2026-10-16」→「10/16（五）」。日期字串不含時區 → 當 UTC 午夜解析，`getUTCDay` 就是那個日曆日的星期幾
+ * （不要換成本機時區）。⛔ 要講「幾月幾號星期幾」的地方都走這支，不要各自再拼一份。
+ */
+export function mdw(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00Z`)
+  if (Number.isNaN(d.getTime())) return dateKey
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}（${WEEKDAY_ZH[d.getUTCDay()]}）`
+}
+
 /**
  * 台灣時區下的「YYYY-MM-DD HH:mm」——講給人看的時間點。
  *
@@ -160,18 +173,6 @@ function hhmmToMinutes(s: string): number | null {
 }
 
 /**
- * 今天（台灣時區）為什麼整天不上班：`'holiday'`＝國定假日、`'weekend'`＝週末、`null`＝上班日。
- * 兩個都成立時（國定假日剛好是週六）講國定假日——講給客人聽的時候比較準。
- */
-export function serviceDayOffReason(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): 'holiday' | 'weekend' | null {
-  if (!cfg?.enabled) return null
-  if (holidayOffOf(cfg) && taiwanHolidayName(taipeiDate(date))) return 'holiday'
-  if (!cfg.weekendOff) return null
-  const dow = new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
-  return dow === 0 || dow === 6 ? 'weekend' : null
-}
-
-/**
  * 今天（台灣時區）是不是「整天不上班」的日子＝開了服務時間，而且今天是勾了休息的週末或國定假日。
  *
  * 和 `isServiceHoursDnd` 刻意分開:勿擾是「現在這個時間點不要吵」,休假日是「今天整天
@@ -179,7 +180,11 @@ export function serviceDayOffReason(cfg: ServiceHoursLike | null | undefined, da
  * 摘要時間設 20:00 而服務時間到 18:00 的商家會永遠收不到摘要。
  */
 export function isServiceDayOff(cfg: ServiceHoursLike | null | undefined, date: Date = new Date()): boolean {
-  return serviceDayOffReason(cfg, date) !== null
+  if (!cfg?.enabled) return false
+  if (holidayOffOf(cfg) && taiwanHolidayName(taipeiDate(date))) return true
+  if (!cfg.weekendOff) return false
+  const dow = new Date(date.getTime() + TAIPEI_OFFSET_MS).getUTCDay() // 0=Sun … 6=Sat（已位移為台灣時區）
+  return dow === 0 || dow === 6
 }
 
 /**
@@ -227,7 +232,13 @@ export function serviceHoursSentence(cfg: ServiceHoursLike | null | undefined): 
 }
 
 /**
- * 下一次開始服務的時間點（毫秒）；現在就在服務時間內回 `nowMs`，沒開／設定壞掉回 `null`。
+ * 下一次開始服務的時間點（毫秒）＝勿擾結束、找真人會通知同事的那一刻；現在就在服務時間內回 `nowMs`，
+ * 沒開／設定壞掉回 `null`。
+ *
+ * 每天看兩個時間點：服務開始那一刻、以及**午夜**。跨夜的服務時間（22:00–06:00）放假那天整天勿擾，
+ * 隔天一過午夜就回到「06:00 以前算上班」——只看開始時間會講成隔天 22:00，比同事真的被通知晚了快一整天。
+ * ⛔ 不要自己推「哪一段算上班」，一律問 `isServiceHoursDnd`：講給客人的時間跟真的通知同事的時間只能有一把尺。
+ * 跨夜那一班遇到放假：照日曆日算（10/8 晚上那班過了午夜進到 10/9 國定假日就勿擾），跟週末一向的算法相同。
  *
  * @param opts.ignoreHolidays 當作國定假日照常上班來算——拿來比較「是不是因為放假才等這麼久」
  */
@@ -245,8 +256,10 @@ export function nextServiceStartMs(
   const today = taipeiDate(new Date(nowMs))
   // 春節最長 9 天，加上前後週末；給到 31 天綽綽有餘
   for (let i = 0; i <= 31; i++) {
-    const t = Date.parse(`${addDays(today, i)}T00:00:00+08:00`) + start * 60_000
-    if (t > nowMs && !isServiceHoursDnd(c, new Date(t))) return t
+    const midnight = Date.parse(`${addDays(today, i)}T00:00:00+08:00`)
+    for (const t of [midnight, midnight + start * 60_000]) {
+      if (t > nowMs && !isServiceHoursDnd(c, new Date(t))) return t
+    }
   }
   return null
 }
@@ -280,12 +293,10 @@ export function appendServiceHoursLine(base: string, cfg: ServiceHoursLike | nul
   return `${base}\n服務時間：${sentence}`
 }
 
-const WEEKDAY_ZH = ['日', '一', '二', '三', '四', '五', '六']
-
 /** 時間點講成「10/12（一）10:00」 */
 export function taipeiMdwHm(ms: number): string {
   const t = new Date(ms + TAIPEI_OFFSET_MS)
-  return `${t.getUTCMonth() + 1}/${t.getUTCDate()}（${WEEKDAY_ZH[t.getUTCDay()]}）${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}`
+  return `${mdw(taipeiDate(new Date(ms)))}${p2(t.getUTCHours())}:${p2(t.getUTCMinutes())}`
 }
 
 /**

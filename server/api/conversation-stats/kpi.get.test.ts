@@ -335,4 +335,37 @@ describe('KPI：照每日摘要的規則推區間', () => {
     expect(kpi.rangeStart).toBe('2026-08-19')
     expect(kpi.rangeEnd).toBe('2026-08-31')
   })
+
+  it('設定讀不到 → 回錯，⛔ 不退回「只講昨天」（卡寫 1 天、LINE 寫 3 天＝兩把尺；`C-362`）', async () => {
+    const { getAiSettings } = await import('~~/server/utils/ai-settings')
+    vi.mocked(getAiSettings).mockRejectedValue(new Error('boom'))
+    await expect(runKpi(fakeDb({ rollups: rollupsFromSessions() }).db, { window: 'digest' }))
+      .rejects.toMatchObject({ statusCode: 503 })
+    // 一般查詢不需要靠設定推區間：照舊算（門檻退回預設）
+    const kpi = await runKpi(fakeDb({ rollups: rollupsFromSessions() }).db)
+    expect(kpi.total).toBe(3)
+    expect(kpi.handoffWaitSlaMinutes).toBe(30)
+  })
+
+  it('好幾天裡同一位客人每天都有一場沒人回／等太久 → 名單只列一次（卡片拿 userId 當 key；`C-362`）', async () => {
+    const { getAiSettings } = await import('~~/server/utils/ai-settings')
+    vi.mocked(getAiSettings).mockResolvedValue({
+      handoffNotify: { slaRemindMinutes: 30 },
+      serviceHours: { enabled: true, start: '10:00', end: '19:00', weekendOff: true },
+    } as never)
+    const rollups = rollupsFromSessions()
+    for (const [i, date] of ['2026-08-28', '2026-08-29', '2026-08-30'].entries()) {
+      const openedAtMs = Date.parse(`${date}T12:00:00+08:00`)
+      Object.assign(rollups[`${WS}_${date}`], {
+        total: 2, ai: 1, unhandled: 1, handoff: 1, aiEscalated: 1,
+        unhandledSamples: [{ userId: i < 2 ? 'U0002' : 'U0001', openedAtMs }],
+        handoffWaits: [{ userId: 'U0001', requestedAtMs: openedAtMs, repliedAtMs: openedAtMs + 3 * 3600_000, openedAtMs }],
+      })
+    }
+    const kpi = await runKpi(fakeDb({ rollups }).db, { window: 'digest' })
+    expect(kpi.unhandled).toBe(3) // 場數照算
+    expect(kpi.unhandledSamples).toEqual([{ userId: 'U0002', displayName: '小華' }, { userId: 'U0001', displayName: '小明' }])
+    expect(kpi.handoffWaitExceeded).toBe(3)
+    expect(kpi.handoffWaitSamples).toEqual([{ userId: 'U0001', displayName: '小明' }])
+  })
 })

@@ -9,12 +9,13 @@ import {
   DIGEST_COVER_MAX_DAYS,
   coverPhrase,
   coverTitle,
+  digestCompareRange,
   digestCoverDays,
-  isFirstDigestDayOfWeek,
-  mdw,
+  isDigestDayOff,
   mondayOf,
+  weeklyInsightMondays,
 } from './digest-window'
-import { addDays, isServiceDayOff, type ServiceHoursLike } from './time'
+import { addDays, daysBetween, isServiceDayOff, mdw, type ServiceHoursLike } from './time'
 
 /** MYFEEL 的真實設定（舊資料沒有 holidayOff ＝ 跟週末一樣） */
 const MYFEEL: ServiceHoursLike = { enabled: true, start: '10:00', end: '19:00', weekendOff: true }
@@ -91,30 +92,78 @@ describe('講給人聽的日期', () => {
   })
 })
 
-describe('isFirstDigestDayOfWeek：本週顧客觀察哪天附', () => {
+describe('weeklyInsightMondays：本週顧客觀察哪天附、附哪幾週', () => {
   it('週一就是週一', () => {
     expect(mondayOf('2026-10-19')).toBe('2026-10-19')
     expect(mondayOf('2026-10-25')).toBe('2026-10-19')
-    expect(isFirstDigestDayOfWeek(MYFEEL, '2026-10-19')).toBe(true)
+    expect(weeklyInsightMondays(MYFEEL, '2026-10-19')).toEqual(['2026-10-19'])
   })
 
   it('平常的週二不附（週一附過了）', () => {
-    expect(isFirstDigestDayOfWeek(MYFEEL, '2026-10-20')).toBe(false)
+    expect(weeklyInsightMondays(MYFEEL, '2026-10-20')).toEqual([])
   })
 
-  it('週一放假（10/26 光復節補假）→ 週二附；週三不再附', () => {
-    expect(isFirstDigestDayOfWeek(MYFEEL, '2026-10-27')).toBe(true)
-    expect(isFirstDigestDayOfWeek(MYFEEL, '2026-10-28')).toBe(false)
+  it('週一放假（10/26 光復節補假）→ 週二附、窗口照樣錨週一；週三不再附', () => {
+    expect(weeklyInsightMondays(MYFEEL, '2026-10-27')).toEqual(['2026-10-26'])
+    expect(weeklyInsightMondays(MYFEEL, '2026-10-28')).toEqual([])
     // 國定假日照常上班的店：週一照常附
-    expect(isFirstDigestDayOfWeek(WEEKEND_ONLY, '2026-10-27')).toBe(false)
+    expect(weeklyInsightMondays(WEEKEND_ONLY, '2026-10-27')).toEqual([])
   })
 
   it('2027 春節週一到週三都放（2/8～2/10）→ 週四附', () => {
-    expect(isFirstDigestDayOfWeek(MYFEEL, '2027-02-11')).toBe(true)
+    expect(weeklyInsightMondays(MYFEEL, '2027-02-11')).toEqual(['2027-02-08'])
+  })
+
+  it('2026 春節整週放（2/16～2/20）→ 那週一則都沒傳，下週一兩週一起附（原本那週整份沒了）', () => {
+    expect(weeklyInsightMondays(MYFEEL, '2026-02-23')).toEqual(['2026-02-16', '2026-02-23'])
   })
 
   it('沒開服務時間 → 只有週一', () => {
-    expect(isFirstDigestDayOfWeek(OFF, '2026-10-27')).toBe(false)
-    expect(isFirstDigestDayOfWeek(OFF, '2026-10-26')).toBe(true)
+    expect(weeklyInsightMondays(OFF, '2026-10-27')).toEqual([])
+    expect(weeklyInsightMondays(OFF, '2026-10-26')).toEqual(['2026-10-26'])
+  })
+
+  /** 整年模擬：每個週一都剛好被某一則附到一次（漏＝那週沒了、重複＝同一週講兩次） */
+  for (const [name, sh] of [['週末＋國定假日都休', MYFEEL], ['只休週末', WEEKEND_ONLY], ['只休國定假日', HOLIDAY_ONLY], ['沒開服務時間', OFF]] as const) {
+    it(`整年模擬（${name}）：每個週一剛好附一次`, () => {
+      const seen = new Map<string, number>()
+      let lastSendDay = ''
+      for (let d = '2026-01-05'; d <= '2027-12-31'; d = addDays(d, 1)) {
+        if (isDigestDayOff(sh, d)) continue
+        for (const m of weeklyInsightMondays(sh, d)) seen.set(m, (seen.get(m) ?? 0) + 1)
+        lastSendDay = d
+      }
+      for (let m = '2026-01-12'; m <= lastSendDay; m = addDays(m, 7)) {
+        expect(seen.get(m) ?? 0, m).toBe(1)
+      }
+    })
+  }
+})
+
+describe('digestCompareRange：後台卡「比較」那一格', () => {
+  it('單日 → 前天', () => {
+    expect(digestCompareRange('2026-10-20', '2026-10-20'))
+      .toEqual({ startDate: '2026-10-19', endDate: '2026-10-19', label: '前天' })
+  })
+
+  it('週五～週日 → 上週五～週日', () => {
+    expect(digestCompareRange('2026-10-16', '2026-10-18'))
+      .toEqual({ startDate: '2026-10-09', endDate: '2026-10-11', label: '上週同期' })
+  })
+
+  it('2027 春節後 8 天（2/3～2/10）→ 退兩週，⛔ 只退 7 天會跟這段重疊在 2/3', () => {
+    expect(digestCompareRange('2027-02-03', '2027-02-10'))
+      .toEqual({ startDate: '2027-01-20', endDate: '2027-01-27', label: '兩週前同期' })
+  })
+
+  it('最長 14 天也不重疊、星期對得上', () => {
+    for (let n = 2; n <= DIGEST_COVER_MAX_DAYS; n++) {
+      const start = '2027-02-01'
+      const end = addDays(start, n - 1)
+      const r = digestCompareRange(start, end)
+      expect(r.endDate < start, `${n} 天`).toBe(true)
+      expect(daysBetween(r.startDate, start) % 7, `${n} 天`).toBe(0)
+      expect(daysBetween(r.startDate, r.endDate) + 1, `${n} 天`).toBe(n)
+    }
   })
 })

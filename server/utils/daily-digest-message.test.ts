@@ -201,20 +201,19 @@ describe('三段結構（有事的一天）', () => {
 })
 
 describe('查不到就要講（⛔不可以當成 0）', () => {
-  it('昨天的數字查不到 → 照實講，其他段落照常', () => {
+  it('昨天的數字查不到 → 照實講、指去統計頁，⛔ 不說「明天會再看一次」（明天那則只講今天）', () => {
     const out = text({
       yesterday: null,
       todo: { ...base.todo, failedSources: 1 },
-      unknownNotes: ['昨天的數字'],
     })
-    expect(out).toContain('昨天的數字這次查不到。')
-    expect(out).toContain('（昨天的數字這次查不到，明天會再看一次。）')
+    expect(out).toContain('昨天的數字這次查不到，後台「對話統計」看得到。')
+    expect(out).not.toContain('明天會再看一次')
     expect(out).toContain('1 份資料同步失敗')
   })
 
   it('兩類都查不到 → 併成一句講', () => {
-    expect(text({ unknownNotes: ['昨天的數字', '知識庫與標籤的部分'] }))
-      .toContain('（昨天的數字與知識庫與標籤的部分這次查不到，明天會再看一次。）')
+    expect(text({ unknownNotes: ['正在等真人的名單', '知識庫與標籤的部分'] }))
+      .toContain('（正在等真人的名單與知識庫與標籤的部分這次查不到，明天會再看一次。）')
   })
 
   it('連昨天都查不到、也沒有任何事可講 → 回 null（不發一則空話）', () => {
@@ -291,8 +290,19 @@ describe('休假日之後的第一則：講上一則之後的每一天', () => {
     expect(text({ ...weekend, yesterday: { ...weekend.yesterday!, total: 0, selfServed: 0, humanServed: 0, unhandled: 0, unhandledNames: [] } }))
       .toContain('10/16（五）到 10/18（日）這 3 天沒有客人對話。')
     const unknown = text({ ...weekend, yesterday: null })
-    expect(unknown).toContain('這 3 天的數字這次查不到。')
+    expect(unknown).toContain('這 3 天的數字這次查不到，後台「對話統計」看得到。')
+    expect(unknown).not.toContain('明天會再看一次')
     expect(unknown).not.toContain('0 場')
+  })
+
+  it('沒人回的點名數人不數場：同一位週五週六各一場 → 不說成 2 位', () => {
+    const y = { ...weekend.yesterday!, unhandled: 3, unhandledNames: ['小美', '阿明'] }
+    // 兩位、三場：名字都點到了，不再接「等 N 位」
+    expect(text({ ...weekend, yesterday: { ...y, unhandledPeople: 2 } })).toContain('沒人回的是小美與阿明。')
+    // 五位：點到兩位，後面講的是人數
+    expect(text({ ...weekend, yesterday: { ...y, unhandled: 6, unhandledPeople: 5 } })).toContain('沒人回的是小美與阿明等 5 位。')
+    // 算不出幾位（某天沒人回超過 3 場、名單沒存全）→ 不硬給數字
+    expect(text({ ...weekend, yesterday: { ...y, unhandledPeople: null } })).toContain('沒人回的是小美與阿明等人。')
   })
 
   it('只講一天時跟原本一模一樣（帶了 coverDays 也一樣）', () => {

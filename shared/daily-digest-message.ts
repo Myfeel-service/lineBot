@@ -23,7 +23,8 @@
  *   兩項時剛好對、三項就變成「A 與 B 與 C」。
  * - **操作步驟不寫進 LINE**：這則只回答「是什麼、幾件、去哪」，怎麼按是進了後台的事。
  * - **查不到要講**：任何一類查失敗都不可以當成 0（那是「沒有」的另一種意思），
- *   統一收在一句括號裡講出來。
+ *   統一收在一句括號裡講出來（「明天會再看一次」）。成績例外：開頭那句自己講查不到、指去統計頁——
+ *   明天那則不會再講這幾天，括號那句話對它是假承諾（`C-362`）。
  * - **回來那天講好幾天**（2026-10-21 `D-137`①）：休假日不傳，下一則把上一則之後的每一天一次講完
  *   （「10/16（五）到 10/18（日）這 3 天共 84 場對話…」）。⛔ 不逐天列——一天一行就是一張表，手機上掃不完。
  * - **指路帶連結**（2026-09-27 `C-270`）：有短網址時「→ 後台…」換成「👉 後台…」＋下一行網址，
@@ -36,6 +37,9 @@
 import { HUMAN_STALE_HOURS } from './types/conversation-stats'
 import { coverPhrase } from './digest-window'
 
+/** 「2026-09-17」→「9/17（四）」：實作在 `time.ts` 的 `mdw`，這裡沿用舊名讓既有呼叫端不用改 */
+export { mdw as taipeiDateLabel } from './time'
+
 /** 昨天的成績。數字口徑與統計頁／後台那張卡同源（日結 `foldSessionIntoDay`） */
 export interface DigestYesterday {
   /** 客人對話總場數（已排除客人沒開口的場） */
@@ -46,8 +50,13 @@ export interface DigestYesterday {
   humanServed: number
   /** 一整天都沒有人回的場數 */
   unhandled: number
-  /** 沒人回的客人名字（最多 3 位，點名用） */
+  /** 沒人回的客人名字（最多 3 位、同一位只出現一次，點名用） */
   unhandledNames: string[]
+  /**
+   * 沒人回的是幾位客人（同一位好幾場只算一位）。`null`＝只知道場數、算不出幾位；沒帶＝跟場數一樣。
+   * 為什麼要分開：講好幾天時同一位客人週五、週六各問一次，場數是 2、人是 1——「等 5 位」照場數講就是多講了人。
+   */
+  unhandledPeople?: number | null
   /** 新朋友人數；`null`＝查不到（不可以當成 0） */
   newFriends: number | null
 }
@@ -119,28 +128,18 @@ export function waitPhrase(minutes: number): string {
   return `等 ${Math.max(1, Math.round(m / 60))} 小時`
 }
 
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
-
-/**
- * 「2026-09-17」→「9/17（三）」。
- * 日期字串不含時區 → 當 UTC 午夜解析，`getUTCDay` 就是那個日曆日的星期幾
- * （與 `isTaipeiMonday` 同一個做法，不要換成本機時區）。
- */
-export function taipeiDateLabel(dateKey: string): string {
-  const d = new Date(`${dateKey}T00:00:00Z`)
-  if (Number.isNaN(d.getTime())) return dateKey
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}（${WEEKDAY[d.getUTCDay()]}）`
-}
-
 /**
  * 昨天（或回來那天講的那幾天）那句的主幹（不含句號，句號由呼叫端補——短版要接「，沒有人在等」）。
  *
  * ⚠️ 三個數字互斥、相加等於總場數，這是這句話唯一的規矩——好幾天加總也一樣成立。
  * 好幾天時「一整天沒人回」改講「沒人回」：那幾場不一定落在同一天。
+ *
+ * 查不到時指去統計頁、⛔ 不說「明天會再看一次」：明天那則只講今天，這幾天的成績之後不會再有一則講
+ * （回來那天講 4 天、其中一天讀不到，那 4 天就永遠沒講了）。統計頁跟這則同一支算式，晚點打開就查得到。
  */
 function yesterdayCore(y: DigestYesterday | null, coverDays?: readonly string[]): string {
   const multi = coverDays && coverDays.length > 1 ? coverDays : null
-  if (!y) return multi ? `這 ${multi.length} 天的數字這次查不到` : '昨天的數字這次查不到'
+  if (!y) return `${multi ? `這 ${multi.length} 天` : '昨天'}的數字這次查不到，後台「對話統計」看得到`
   if (!y.total) return multi ? `${coverPhrase(multi)}沒有客人對話` : '昨天沒有客人對話'
   const head = multi ? `${coverPhrase(multi)}共 ${y.total} 場對話` : `昨天 ${y.total} 場對話`
   // 全部自己搞定＝這則訊息最值得講的好消息，給它一句專屬說法
@@ -219,7 +218,9 @@ export function buildDigestLines(input: DigestInput): string[] | null {
     lines.push(`☀️ ${input.dateLabel}早安`, '')
     lines.push(`${core}。`)
     if (y?.unhandledNames.length) {
-      const more = y.unhandled > y.unhandledNames.length ? `等 ${y.unhandled} 位` : ''
+      // 講「位」就要數人不數場（同一位好幾場只算一位）；只知道場數時不硬給數字
+      const people = y.unhandledPeople === undefined ? y.unhandled : y.unhandledPeople
+      const more = people === null ? '等人' : people > y.unhandledNames.length ? `等 ${people} 位` : ''
       lines.push(`沒人回的是${joinZh(y.unhandledNames)}${more}。`)
     }
     if (friendsLine) lines.push(friendsLine)

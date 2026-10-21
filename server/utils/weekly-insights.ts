@@ -2,7 +2,7 @@
  * 洞察週報——「本週顧客觀察」（D-25 第二階，CRM-EVAL-20260822 發想二）。
  *
  * 每週一搭在每日客服摘要**同一則** LINE 訊息裡（同節慶提醒的掛法，不另發一則；週一放假就換
- * 那週第一個上班日，見 `shared/digest-window.ts` 的 `isFirstDigestDayOfWeek`），
+ * 那週第一個上班日、整週放假就跟下週一起附，見 `shared/digest-window.ts` 的 `weeklyInsightMondays`），
  * 講店家聽得懂、而且立刻有下一步的觀察：
  *   1. 這週被貼最多的標籤（tagLogs 聚合）——「大家最近在問什麼」的代理指標
  *   2. 上月有來訊、最近兩週安靜下來的客人數——沉睡前的最後窗口
@@ -39,12 +39,6 @@ const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
 /** 「被貼最多」列前幾名 */
 const TOP_TAGS = 3
-
-/** 今天（台北日期字串 YYYY-MM-DD）是不是週一——週報只在週一附上 */
-export function isTaipeiMonday(taipeiDateStr: string): boolean {
-  // 日期字串不含時區 → Date 當 UTC 午夜解析，getUTCDay 恰好就是那個「日曆日」的星期幾
-  return new Date(`${taipeiDateStr}T00:00:00Z`).getUTCDay() === 1
-}
 
 /**
  * 統計窗口＝**台北日曆週**（上週一 00:00 ～ 本週一 00:00），不是「發送當下往回 7×24 小時」。
@@ -83,11 +77,13 @@ function taipeiMd(ms: number): string {
  *
  * @param taipeiToday 那一週的週一（台北日期字串）；窗口錨定在它的 00:00，同一週怎麼重算都一樣。
  *   ⛔ 週一放假改在週二發時也要傳週一，傳週二會整個窗口往後錯一天
+ * @param opts.profileRefresh 附不附每月一次的輪廓兩題（會寫資料）。一則附好幾週時只有最新那週附
  */
 export async function buildWeeklyInsights(
   db: Firestore,
   workspaceId: string,
   taipeiToday: string,
+  opts: { profileRefresh?: boolean } = {},
 ): Promise<string[] | null> {
   const { startMs, endMs, rangeText } = weeklyWindow(taipeiToday)
   const [logSnap, quietDown] = await Promise.all([
@@ -154,6 +150,7 @@ export async function buildWeeklyInsights(
    *    為了兩題輪廓問題硬生一整段標題，等於為了加值把「沒事就不發」那條規則破壞掉。
    */
   if (!base) return null
+  if (opts.profileRefresh === false) return base
   try {
     const extra = await buildProfileRefreshLines(db, workspaceId, topTags)
     return extra.length ? [...base, ...extra] : base

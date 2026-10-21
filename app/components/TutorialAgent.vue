@@ -365,16 +365,18 @@
                     @click="goConversation(u.userId)"
                   >{{ u.displayName }}</button>
                   <!-- 只點名 3 位，剩下的要有出口，否則「看到 8 場只能點 3 個」＝死路。
-                       goStats 會帶上這一天的日期，所以進去看到的就是同一批（見 goStats 註解） -->
+                       goStats 會帶上這一天的日期，所以進去看到的就是同一批（見 goStats 註解）。
+                       講「場」不講「位」：名單一位只列一次，好幾天時同一位可能有好幾場（`C-362`） -->
                   <button
                     v-if="briefY.unhandled > briefY.unhandledSamples.length"
                     type="button"
                     class="ta-brief__warnlink"
                     @click="goStats"
-                  >…等 {{ briefY.unhandled }} 位</button>
+                  >…全部 {{ briefY.unhandled }} 場</button>
                 </template>
                 <template v-else>
-                  有客人一整天沒收到回覆{{ unhandledSpike ? '，比平常多' : '' }}，建議去看一下。
+                  <!-- 好幾天時不說「一整天」：那幾場不一定落在同一天（跟 LINE 那則同一個講法） -->
+                  有客人{{ briefDays > 1 ? '' : '一整天' }}沒收到回覆{{ unhandledSpike ? '，比平常多' : '' }}，建議去看一下。
                 </template>
               </p>
 
@@ -396,7 +398,7 @@
                     type="button"
                     class="ta-brief__warnlink"
                     @click="goStats"
-                  >…等 {{ briefY.handoffWaitExceeded }} 位</button>
+                  >…全部 {{ briefY.handoffWaitExceeded }} 場</button>
                 </template>
               </p>
               <p v-if="trendLine" class="ta-brief__warn">{{ trendLine }}</p>
@@ -831,8 +833,8 @@ const briefTitle = computed(() => {
 })
 /** 句子裡的主詞：「昨天」／「這 3 天」 */
 const briefPeriod = computed(() => briefDays.value > 1 ? `這 ${briefDays.value} 天` : '昨天')
-/** 比較那格：單日比前天；好幾天比上週同一段（見 useDailyBrief） */
-const briefCompareLabel = computed(() => briefDays.value > 1 ? '上週同期' : '前天')
+/** 比較那格：單日比前天；好幾天比往前整數週的同一段（區間與標籤一起由 digestCompareRange 給） */
+const briefCompareLabel = computed(() => brief.value?.compareLabel ?? '前天')
 const briefD = computed(() => brief.value?.dayBefore ?? null)
 
 /**

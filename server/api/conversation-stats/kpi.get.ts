@@ -24,7 +24,11 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
    * `window=digest`：照每日摘要的規則推區間（`D-137`①）——後台小幫手那張卡用。
    * 平常就是昨天；休假日（週末、國定假日）之後的第一個上班日＝上一則之後的每一天。
    * ⛔ 區間一定要跟 LINE 那則同一支 `digestCoverDays` 推，不然一邊 84 場、一邊 27 場。
+   * ⛔ 設定讀不到就整個回錯、不退回「只講昨天」（`C-362`）：退回去的卡週一會寫「昨日摘要 27 場」，
+   *    LINE 卻說 3 天 84 場——卡片缺席（前端靜默不畫）比講一個對不上的數字無害。
    */
+  if (query.window === 'digest' && !settings)
+    throw createError({ statusCode: 503, statusMessage: '服務時間設定讀不到，這次推不出摘要講哪幾天' })
   const digestDays = query.window === 'digest'
     ? digestCoverDays(settings?.serviceHours, taipeiDateKey(new Date()))
     : null
@@ -43,15 +47,24 @@ export default defineEventHandler(async (event): Promise<KpiResult> => {
    */
   const dayKeys = taipeiDayKeysBetween(startDate, endDate)
   const { days } = await loadDayStats(db, workspaceId, dayKeys)
-  const agg = mergeDays('range', dayKeys.map(k => days.get(k)!).filter(Boolean))
+  // 每一天都要在（loadDayStats 沒有日結就現場算、沒對話也給一筆空的）。缺了就回錯，
+  // ⛔ 不可以默默少加一天：少一天的總數比「查不到」更會騙人（`C-362`）
+  const missing = dayKeys.filter(k => !days.has(k))
+  if (missing.length) {
+    console.error('[conversation-stats] 有幾天的統計沒拿到:', workspaceId, missing.join(','))
+    throw createError({ statusCode: 503, statusMessage: '有幾天的統計這次查不到' })
+  }
+  const agg = mergeDays('range', dayKeys.map(k => days.get(k)!))
 
   // 新朋友查不到時回 -1（前端顯示「查不到」，不裝 0）
   const newFriends = agg.newFriends ?? -1
 
-  // 名單樣本：補客人名字，讓昨日摘要卡能點名開單場對話。每組只補 3 筆（3 次 doc 讀取）。
+  // 名單樣本：補客人名字，讓昨日摘要卡能點名開單場對話。每組只補 3 位（3 次 doc 讀取）。
   // 查名字失敗回空陣列，數字照常。
+  // 同一位客人只點一次：好幾天併在一起時同一位會有好幾場（卡片拿 userId 當 key，重複會畫錯按鈕；`C-362`）
   const sampleNames = (list: { userId: string }[]) => Promise.all(
     list
+      .filter((s, i) => list.findIndex(o => o.userId === s.userId) === i)
       .slice(0, 3)
       .map(async (s) => {
         const uid = String(s.userId || '')

@@ -358,7 +358,8 @@ import {
 } from '~~/shared/line-notify-messages'
 import { buildDigestLines, taipeiDateLabel } from '~~/shared/daily-digest-message'
 import { taipeiDateKey } from '~~/shared/taipei-day'
-import { addDays, daysBetween } from '~~/shared/time'
+import { addDays, daysBetween, type ServiceHoursLike } from '~~/shared/time'
+import { DIGEST_COVER_MAX_DAYS, digestCoverDays, isDigestDayOff, mondayOf } from '~~/shared/digest-window'
 import { TAIWAN_FESTIVALS, festivalReminderText, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 import { formatWeeklyInsightLines } from '~~/shared/weekly-insight-lines'
 
@@ -792,23 +793,32 @@ function md(day: string) {
   return `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`
 }
 /**
- * 摘要預覽的範例日：下一個「節日前 7 天、又是平日」的那一天——節日那一段才對得上真的句子。
- * 節日表用完了就用明天、不放節日那一段。`lastWeekText`＝那一週的週一往前一週（週報的統計區間）。
+ * 摘要預覽的範例日：下一個「節日前 7 天、又是平日、而且這家那天會傳摘要」的那一天——節日那一段才對得上真的句子。
+ * 節日表用完了就用明天以後第一個會傳的日子、不放節日那一段。`lastWeekText`＝那一週的週一往前一週（週報的統計區間）。
+ * ⛔ 範例日要照排程同一套休假規則挑（`C-362`）：挑到國定假日＝畫一則那天根本不會傳的摘要；
+ *    休假日之後的那天要畫「這 3 天共…」，不然預覽跟真的送出去的不一樣。
  */
-function digestSample(nowMs: number): { day: string, festival: TaiwanFestival | null, lastWeekText: string } {
+function digestSample(nowMs: number, serviceHours: ServiceHoursLike | null | undefined): { day: string, coverDays: string[], festival: TaiwanFestival | null, lastWeekText: string } {
   const tomorrow = taipeiDateKey(new Date(nowMs + 86_400_000))
   const weekday = (day: string) => new Date(`${day}T00:00:00Z`).getUTCDay()
+  const sendsOn = (day: string) => weekday(day) !== 0 && weekday(day) !== 6 && !isDigestDayOff(serviceHours, day)
   let day = tomorrow
+  for (let i = 0; i < DIGEST_COVER_MAX_DAYS && isDigestDayOff(serviceHours, day); i++) day = addDays(day, 1)
   let festival: TaiwanFestival | null = null
   for (const f of TAIWAN_FESTIVALS) {
     const d = addDays(f.date, -7)
-    if (daysBetween(tomorrow, d) < 0 || weekday(d) === 0 || weekday(d) === 6) continue
+    if (daysBetween(tomorrow, d) < 0 || !sendsOn(d)) continue
     day = d
     festival = f
     break
   }
-  const monday = addDays(day, -((weekday(day) + 6) % 7))
-  return { day, festival, lastWeekText: `${md(addDays(monday, -7))}–${md(addDays(monday, -1))}` }
+  const monday = mondayOf(day)
+  return {
+    day,
+    coverDays: digestCoverDays(serviceHours, day),
+    festival,
+    lastWeekText: `${md(addDays(monday, -7))}–${md(addDays(monday, -1))}`,
+  }
 }
 
 const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(() => {
@@ -842,9 +852,10 @@ const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(
     return out
   }
   if (previewTab.value === 'digest') {
-    const sample = digestSample(Date.now())
+    const sample = digestSample(Date.now(), data.value?.serviceHours)
     const lines = buildDigestLines({
       dateLabel: taipeiDateLabel(sample.day),
+      coverDays: sample.coverDays,
       yesterday: { total: 18, selfServed: 14, humanServed: 3, unhandled: 1, unhandledNames: ['小美'], newFriends: 2 },
       waiting: { count: 2, offHoursCount: 0, samples: [{ name: '阿明', waitedMinutes: 25 }, { name: 'Lulu', waitedMinutes: 120 }], truncated: false, staleHumanCount: 0 },
       todo: { outdatedSources: 0, failedSources: 0, expiredCards: 0, suggestions: 3, tagSuggestUsers: 0, warnings: 0, topWarningLabel: '' },
@@ -885,14 +896,14 @@ useAgentOpRefresh('line-notify', async (evt, { mode }) => {
   return (await flashAgentTarget(evt.section, mode === 'arrived' ? 8000 : 3000)) ? 'shown' : 'missing'
 })
 
-/**
- * 「節日前的行銷提醒」底下那行（`C-357`）：照送出端實際會講的寫——免費方案（推播等級 none）的提醒
- * 不叫他排推播（`festivalReminderText` 的 canBroadcast），這行也不寫「再排推播」。讀不到等級＝照舊。
- */
 /** 摘要哪些日子不傳（「週末與國定假日」），跟排程同一套休假規則；都沒勾就不出那行 */
 const digestDaysOff = computed(() => digestDaysOffPhrase(data.value?.serviceHours))
 
 const { tier: broadcastTier, load: loadBroadcastTier } = useBroadcastTier()
+/**
+ * 「節日前的行銷提醒」底下那行（`C-357`）：照送出端實際會講的寫——免費方案（推播等級 none）的提醒
+ * 不叫他排推播（`festivalReminderText` 的 canBroadcast），這行也不寫「再排推播」。讀不到等級＝照舊。
+ */
 const festivalTipsHint = computed(() => broadcastTier.value === 'none'
   ? '節日前 7／3／1 天各講一次：先備素材、再確認庫存和出貨、最後確認客服有沒有人顧。'
   : '節日前 7／3／1 天各講一次：先備素材、再排推播、最後確認出貨與客服。')

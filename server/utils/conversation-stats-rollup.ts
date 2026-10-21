@@ -55,7 +55,10 @@ export interface DayStats {
   closedHandled: number
   /** 這天加入的新朋友；`null`＝當時查不到（不可以當成 0，見 kpi 的 -1 語意） */
   newFriends: number | null
-  /** 這天最早的 3 場「沒人回」——點名用（範圍內取最早 3 場＝各天最早 3 場裡再取最早 3 場） */
+  /**
+   * 這天最早的 3 場「沒人回」——點名用（範圍內取最早 3 位＝各天最早 3 場裡、每位客人留最早一場再取 3 位）。
+   * 單日存的是場（同一位兩場會出現兩次）；`mergeDays` 之後才是一位一筆。
+   */
   unhandledSamples: { userId: string, openedAtMs: number }[]
   /** 這天每一筆轉真人的等待原料（門檻與服務時間在讀取端才套，見檔頭原則③） */
   handoffWaits: { userId: string, requestedAtMs: number, repliedAtMs: number | null, openedAtMs: number }[]
@@ -117,7 +120,8 @@ export function foldSessionIntoDay(day: DayStats, s: Record<string, any>): void 
 
   if (s.initialHandler === 'unhandled') {
     day.unhandledSamples.push({ userId, openedAtMs })
-    // 只留最早 3 筆：範圍再大也不會讓這個陣列長大
+    // 只留最早 3 筆：範圍再大也不會讓這個陣列長大。
+    // ⚠️ 這裡按場留、不按人併：每日摘要靠「那天沒人回 ≤ 3 場＝名單存全了」數出是幾位（併人在 mergeDays）
     day.unhandledSamples.sort((a, b) => a.openedAtMs - b.openedAtMs)
     if (day.unhandledSamples.length > 3) day.unhandledSamples.length = 3
   }
@@ -131,6 +135,19 @@ export function foldSessionIntoDay(day: DayStats, s: Record<string, any>): void 
       openedAtMs,
     })
   }
+}
+
+/**
+ * 點名用的樣本：每位客人只留最早那一場，再取最早 3 位。
+ * ⛔ 不可以只按場取：好幾天併在一起時同一位客人週五、週六各一場沒人回，會被點名兩次
+ *    （LINE 摘要「小美、小美、阿明」、後台卡兩顆一樣的按鈕；`C-362`）。
+ */
+export function earliestPerUser<T extends { userId: string, openedAtMs: number }>(list: T[], limit = 3): T[] {
+  const byUser = new Map<string, T>()
+  for (const s of [...list].sort((a, b) => a.openedAtMs - b.openedAtMs)) {
+    if (!byUser.has(s.userId)) byUser.set(s.userId, s)
+  }
+  return [...byUser.values()].slice(0, limit)
 }
 
 /** 把一批對話場依台北日曆日折成各天的統計（現場算與日結都走這支） */
@@ -173,8 +190,7 @@ export function mergeDays(date: string, list: DayStats[]): DayStats {
     out.handoffWaits.push(...d.handoffWaits)
   }
   out.newFriends = friendsUnavailable ? null : friends
-  out.unhandledSamples.sort((a, b) => a.openedAtMs - b.openedAtMs)
-  if (out.unhandledSamples.length > 3) out.unhandledSamples.length = 3
+  out.unhandledSamples = earliestPerUser(out.unhandledSamples)
   return out
 }
 

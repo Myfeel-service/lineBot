@@ -725,9 +725,8 @@ import {
   INBOUND_TIME_TRACKING_SINCE,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
-import { serviceHoursSentence, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
+import { mdw, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
 import { nextTaiwanHoliday } from '~~/shared/taiwan-holidays'
-import { mdw } from '~~/shared/digest-window'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
 import { AI_TONE_TEMPLATES, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
 

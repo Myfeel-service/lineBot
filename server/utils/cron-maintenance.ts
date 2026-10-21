@@ -37,8 +37,8 @@ import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { daysBetween, isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
-import { loadDayStats, mergeDays } from './conversation-stats-rollup'
-import { digestCoverDays, isFirstDigestDayOfWeek, mondayOf } from '~~/shared/digest-window'
+import { loadDayStats, mergeDays, type DayStats } from './conversation-stats-rollup'
+import { digestCoverDays, weeklyInsightMondays } from '~~/shared/digest-window'
 import { buildDigestLines, digestPlaces, taipeiDateLabel } from './daily-digest-message'
 import type { DigestWaiting, DigestYesterday } from './daily-digest-message'
 import {
@@ -1116,16 +1116,17 @@ async function digestDisplayNames(db: Firestore, ws: string, userIds: string[]):
  * 好幾天裡缺任何一天也算查不到——少加一天的總數比「查不到」更會騙人。
  */
 async function loadDigestYesterday(db: Firestore, ws: string, dayKeys: readonly string[]): Promise<DigestYesterday | null> {
-  const day = await loadDayStats(db, ws, [...dayKeys])
+  const list = await loadDayStats(db, ws, [...dayKeys])
     .then((r) => {
-      const list = dayKeys.map(k => r.days.get(k))
-      return list.every(Boolean) ? mergeDays(dayKeys[dayKeys.length - 1]!, list as NonNullable<typeof list[number]>[]) : null
+      const found = dayKeys.map(k => r.days.get(k))
+      return found.every(Boolean) ? found as DayStats[] : null
     })
     .catch((e) => {
       console.warn('[backlog-digest] 成績查不到:', ws, (e as Error)?.message)
       return null
     })
-  if (!day) return null
+  if (!list) return null
+  const day = mergeDays(dayKeys[dayKeys.length - 1]!, list)
 
   // 互斥三類，相加等於總場數（見 daily-digest-message.ts 的「加得起來才能並排」）：
   //   自己搞定＝AI／機器人首接**且沒轉真人**；你出手＝真人首接 ＋ 先機器人後轉真人
@@ -1134,12 +1135,19 @@ async function loadDigestYesterday(db: Firestore, ws: string, dayKeys: readonly 
     db, ws,
     day.unhandledSamples.slice(0, DIGEST_SAMPLE_LIMIT).map(s => String(s.userId || '')).filter(Boolean),
   )
+  // 沒人回的是幾位（講「等 N 位」用，`C-362`）：好幾天時同一位客人可能每天都有一場沒人回，場數≠人數。
+  // 每一天的名單都存全了（那天沒人回 ≤ 3 場）才數得出人；只講一天時照舊用場數（同一天同一位兩場很少見）。
+  const complete = list.every(d => d.unhandledSamples.length >= d.unhandled)
+  const unhandledPeople = complete
+    ? new Set(list.flatMap(d => d.unhandledSamples.map(s => s.userId))).size
+    : list.length === 1 ? day.unhandled : null
   return {
     total: day.total,
     selfServed: Math.max(0, day.ai + day.bot - escalated),
     humanServed: day.human + escalated,
     unhandled: day.unhandled,
     unhandledNames: names,
+    unhandledPeople,
     newFriends: day.newFriends,
   }
 }
@@ -1314,7 +1322,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       loadDigestWaiting(db, ws, nowMs, settings.serviceHours),
       loadDigestCounts(db, ws, nowMs, coverDays.length),
     ])
-    if (!yesterday) unknownNotes.push(coverDays.length > 1 ? '這幾天的數字' : '昨天的數字')
+    // 成績查不到不進這裡：開頭那句自己講、指去統計頁（括號那句的「明天會再看一次」對成績是假承諾，`C-362`）
     if (!waiting) unknownNotes.push('正在等真人的名單')
     if (counts.unknown) unknownNotes.push('知識庫與標籤的部分')
 
@@ -1322,14 +1330,20 @@ export async function dailyBacklogDigest(db: Firestore) {
     // 但要排在認領**之前**——週一「只有週報可講」的帳號得先知道有沒有東西，
     // 先認領再發現是空的會把今天記成發過，當天真正的摘要就再也出不去了。
     // 週報壞了只記 log，不准拖垮摘要本體。
-    // 這週第一則摘要才附（D-25 洞察週報；同節慶的掛法：搭同一則，不另發）。平常就是週一；
-    // 週一放假時換那週第一個上班日，統計窗口照樣錨在週一（`D-137`②）——不然那一週就沒了。
-    const insights = isFirstDigestDayOfWeek(settings.serviceHours, today) && cfg.weeklyInsights !== false
-      ? await buildWeeklyInsights(db, ws, mondayOf(today)).catch((e) => {
-          console.warn('[weekly-insights] build failed:', ws, e)
+    // 上一則摘要之後經過的每個週一各附一段（D-25 洞察週報；同節慶的掛法：搭同一則，不另發）。
+    // 平常就是週一一段；週一放假換那週第一個上班日、窗口照樣錨在週一；整週放假（春節）那週
+    // 跟下週一起附在回來那則（`D-137`②、`C-362`）——不然那一週就沒了。
+    // 一段一段照順序查：每月一次的輪廓兩題會寫資料，只跟最新那週附一次。
+    const insightMondays = cfg.weeklyInsights !== false ? weeklyInsightMondays(settings.serviceHours, today) : []
+    const insights: string[] = []
+    for (const [i, monday] of insightMondays.entries()) {
+      const section = await buildWeeklyInsights(db, ws, monday, { profileRefresh: i === insightMondays.length - 1 })
+        .catch((e) => {
+          console.warn('[weekly-insights] build failed:', ws, monday, e)
           return null
         })
-      : null
+      if (section) insights.push(...(insights.length ? [''] : []), ...section)
+    }
 
     // 認領排在所有「發不發」的判斷之後、推播之前:提早認領會讓「時段還沒到」也被
     // 記成今天發過(整天就沒摘要了),延後認領則擋不住重複。
@@ -1430,7 +1444,7 @@ export async function dailyBacklogDigest(db: Firestore) {
       waiting: digestWaiting,
       todo: digestTodo,
       festivalText: festival ? festivalReminderText(festival, tailoredAngle, festivalPlan, { canBroadcast }) : '',
-      weeklyLines: insights ?? [],
+      weeklyLines: insights,
       unknownNotes,
       link: digestLink,
     })

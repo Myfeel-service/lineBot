@@ -1,7 +1,7 @@
 /**
  * 洞察週報（weekly-insights.ts）。
  * 釘的行為：
- *   1. 只有週一附段（台北日曆日判定，別被時區弄歪）。
+ *   1. 哪幾天附段由 `shared/digest-window.ts` 的 `weeklyInsightMondays` 決定（測試在 digest-window.test.ts）。
  *   2. 「全部觀察為零 → 整段不出現」——D-25 的信任靠「講的都有料」，空話會教店家忽略它。
  *   3. 「沒互動」系統標不進「被貼最多」排行（它會蓋掉真正的主題訊號），單獨一行講。
  *   4. 取樣撞上限要講明，別讓「+1,000」被當精確值。
@@ -14,15 +14,7 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 
-import { isTaipeiMonday, aggregateTagAdds, formatWeeklyInsightLines, weeklyWindow } from './weekly-insights'
-
-describe('isTaipeiMonday', () => {
-  it('2026-08-24 是週一 → true；前後兩天 false', () => {
-    expect(isTaipeiMonday('2026-08-24')).toBe(true)
-    expect(isTaipeiMonday('2026-08-23')).toBe(false) // 週日
-    expect(isTaipeiMonday('2026-08-25')).toBe(false) // 週二
-  })
-})
+import { aggregateTagAdds, formatWeeklyInsightLines, weeklyWindow } from './weekly-insights'
 
 describe('weeklyWindow：台北日曆週，不是發送時刻往回 7×24h（G-22①）', () => {
   it('週一 8/24 發 → 窗口＝8/17 00:00～8/24 00:00（台北），標題 8/17–8/23', () => {

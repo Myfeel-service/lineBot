@@ -13,16 +13,14 @@
  * ⛔ 用日曆推（照休假日規則），不看那天實際有沒有送出去：後台卡讀不到送出紀錄，
  *    兩邊要算得出同一段日子。某天送失敗的那段不補（很少見，當天會一直重試）。
  */
-import { addDays, daysBetween, isServiceDayOff, type ServiceHoursLike } from './time'
+import { addDays, daysBetween, isServiceDayOff, mdw, type ServiceHoursLike } from './time'
 
 /** 一次最多回看幾天（春節 9 天加前後週末也夠） */
 export const DIGEST_COVER_MAX_DAYS = 14
 
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
-
-/** 那一天的台北中午（拿來問「這天休不休」，避開日界線） */
-function noonOf(dateKey: string): Date {
-  return new Date(`${dateKey}T12:00:00+08:00`)
+/** 這一天整天不傳摘要（勾了休息的週末／國定假日）。用那天的台北中午問，避開日界線 */
+export function isDigestDayOff(serviceHours: ServiceHoursLike | null | undefined, dateKey: string): boolean {
+  return isServiceDayOff(serviceHours, new Date(`${dateKey}T12:00:00+08:00`))
 }
 
 /**
@@ -34,16 +32,25 @@ export function digestCoverDays(serviceHours: ServiceHoursLike | null | undefine
   for (let i = 1; i <= DIGEST_COVER_MAX_DAYS; i++) {
     const key = addDays(todayKey, -i)
     days.unshift(key)
-    if (!isServiceDayOff(serviceHours, noonOf(key))) break
+    if (!isDigestDayOff(serviceHours, key)) break
   }
   return days
 }
 
-/** 「2026-10-16」→「10/16（五）」 */
-export function mdw(dateKey: string): string {
-  const d = new Date(`${dateKey}T00:00:00Z`)
-  if (Number.isNaN(d.getTime())) return dateKey
-  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}（${WEEKDAY[d.getUTCDay()]}）`
+/**
+ * 「比較」那一段（後台卡）：單日比前天；好幾天比**往前整數週**的同一段——週五～週日比上週五～週日，
+ * 平日跟週末不混著比。⛔ 超過 7 天（春節）不可以只退 7 天：比較的那段會跟這段重疊、同一天兩邊都算到，
+ * 所以退到不重疊為止（8～14 天退兩週），標籤跟著講「兩週前」。
+ */
+export function digestCompareRange(startKey: string, endKey: string): { startDate: string, endDate: string, label: string } {
+  const days = daysBetween(startKey, endKey) + 1
+  if (days <= 1) return { startDate: addDays(startKey, -1), endDate: addDays(startKey, -1), label: '前天' }
+  const weeks = Math.ceil(days / 7)
+  return {
+    startDate: addDays(startKey, -7 * weeks),
+    endDate: addDays(endKey, -7 * weeks),
+    label: weeks === 1 ? '上週同期' : weeks === 2 ? '兩週前同期' : `${weeks} 週前同期`,
+  }
 }
 
 /** LINE 那句的主詞：「10/16（五）到 10/18（日）這 3 天」 */
@@ -63,13 +70,16 @@ export function mondayOf(dateKey: string): string {
 }
 
 /**
- * 「本週顧客觀察」今天附不附：今天是這週**第一個會傳摘要的日子**。
- * 平常就是週一；週一放假（例如 2026-10-26 光復節補假）就換週二附，不然那一週就沒了。
- * 呼叫端已經擋掉「今天休假」，這裡只看這週一到昨天是不是全都休。
+ * 今天這則要附哪幾週的「本週顧客觀察」（每一週用它的週一當錨，由舊到新；空陣列＝今天不附）。
+ *
+ * 規則＝上一則摘要之後、到今天為止經過的每一個週一。平常就是週一附一份；週一放假（2026-10-26 光復節補假）
+ * 就換週二附；**整週都放假**（春節）那一週的週一也在這段裡，下一則一起附——只看「這週」的話，
+ * 整週沒傳過摘要的那一週就整份沒了。呼叫端已經擋掉「今天休假」。
  */
-export function isFirstDigestDayOfWeek(serviceHours: ServiceHoursLike | null | undefined, todayKey: string): boolean {
-  const monday = mondayOf(todayKey)
-  if (todayKey === monday) return true
-  // 上一個會傳的日子在這週一之前＝這週一到昨天全都休
-  return digestCoverDays(serviceHours, todayKey)[0]! < monday
+export function weeklyInsightMondays(serviceHours: ServiceHoursLike | null | undefined, todayKey: string): string[] {
+  // 這段的第一天＝上一則摘要傳出的那天（見 digestCoverDays），它那天經過的週一它自己已經附過
+  const lastSent = digestCoverDays(serviceHours, todayKey)[0]!
+  const mondays: string[] = []
+  for (let m = mondayOf(todayKey); m > lastSent; m = addDays(m, -7)) mondays.unshift(m)
+  return mondays
 }

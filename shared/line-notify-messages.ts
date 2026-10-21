@@ -11,7 +11,7 @@
  * - 連結一律是短網址（`/c/xxxx`，見 `server/routes/c/[code].get.ts`），在 LINE 裡點會轉去手機的
  *   Safari／Chrome：後台是 Google 登入，LINE 內建瀏覽器登不進去。
  */
-import { holidayOffOf, isServiceDayOff, type ServiceHoursLike } from './time'
+import { holidayOffOf, isServiceDayOff, mdw, taipeiDate, WEEKDAY_ZH, type ServiceHoursLike } from './time'
 import { waitPhrase } from './daily-digest-message'
 
 /** 「什麼時候通知」那幾格（跟 `AiSettingsDoc['handoffNotify']` 同名，只取文案要用的） */
@@ -25,7 +25,6 @@ export interface NotifyTimingLike {
 export type NotifyServiceHoursLike = ServiceHoursLike
 
 const TAIPEI_OFFSET_MS = 8 * 3600_000
-const WEEKDAY = ['日', '一', '二', '三', '四', '五', '六']
 
 function hh(hour: number): string {
   const h = Math.max(0, Math.min(23, Math.round(hour)))
@@ -55,9 +54,9 @@ export function nextDigestPhrase(nowMs: number, digestHour: number, serviceHours
   }
   if (offset === 0) return `今天${label}`
   if (offset === 1) return `明天${label}`
-  const t = new Date(nowMs + offset * 86_400_000 + TAIPEI_OFFSET_MS)
-  if (offset >= 7) return `${t.getUTCMonth() + 1}/${t.getUTCDate()}（${WEEKDAY[t.getUTCDay()]}）${label}`
-  return `週${WEEKDAY[t.getUTCDay()]}${label}`
+  const day = taipeiDate(new Date(nowMs + offset * 86_400_000))
+  if (offset >= 7) return `${mdw(day)}${label}`
+  return `週${WEEKDAY_ZH[new Date(`${day}T00:00:00Z`).getUTCDay()]}${label}`
 }
 
 /** 摘要哪些日子不傳：「週末與國定假日」；都沒勾＝空字串 */

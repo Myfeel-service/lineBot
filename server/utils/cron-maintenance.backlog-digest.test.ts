@@ -555,7 +555,7 @@ describe('dailyBacklogDigest 休假日之後的第一則', () => {
     const { db } = makeDb([])
     await dailyBacklogDigest(db)
 
-    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-19')
+    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-19', { profileRefresh: true })
   })
 
   it('國定假日（10/26 一）整天不發，也不吃掉當天名額', async () => {
@@ -576,7 +576,68 @@ describe('dailyBacklogDigest 休假日之後的第一則', () => {
 
     expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, ['2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26'])
     expect(sentText()).toContain('10/23（五）到 10/26（一）這 4 天共 32 場對話')
-    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-26')
+    expect(buildWeeklyInsights).toHaveBeenCalledWith(expect.anything(), WS, '2026-10-26', { profileRefresh: true })
+  })
+
+  it('整週放假（2026 春節 2/16～2/20）→ 回來那天兩週的週報都附、由舊到新；輪廓兩題只跟最新那週（`C-362`）', async () => {
+    vi.setSystemTime(Date.UTC(2026, 1, 23, 3, 0, 0)) // 台北 2026-02-23(一) 11:00
+    getAiSettings.mockResolvedValue(myfeel())
+    buildWeeklyInsights.mockImplementation(async (_db: any, _ws: string, monday: string) => [`📈 本週顧客觀察（${monday}）`])
+    const { db } = makeDb([])
+    await dailyBacklogDigest(db)
+
+    expect(buildWeeklyInsights.mock.calls.map(c => [c[2], c[3]])).toEqual([
+      ['2026-02-16', { profileRefresh: false }],
+      ['2026-02-23', { profileRefresh: true }],
+    ])
+    const lines = sentText().split('\n')
+    const a = lines.indexOf('📈 本週顧客觀察（2026-02-16）')
+    const b = lines.indexOf('📈 本週顧客觀察（2026-02-23）')
+    expect(a).toBeGreaterThan(0)
+    expect(b).toBe(a + 2) // 兩段之間空一行
+    expect(lines[a + 1]).toBe('')
+  })
+
+  it('好幾天的沒人回：同一位客人週五、週六各一場 → 只點名一次，「位」數人不數場（`C-362`）', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const sample = (userId: string, day: number) => ({ userId, openedAtMs: Date.UTC(2026, 9, day, 3) })
+    loadDayStats.mockResolvedValue({
+      days: new Map([
+        ['2026-10-16', dayStats({ ai: 7, unhandled: 1, unhandledSamples: [sample('U1', 16)] })],
+        ['2026-10-17', dayStats({ ai: 7, unhandled: 1, unhandledSamples: [sample('U1', 17)] })],
+        ['2026-10-18', dayStats({ ai: 7, unhandled: 1, unhandledSamples: [sample('U2', 18)] })],
+      ]),
+      liveDays: [], rollupDays: [],
+    })
+    const { db } = makeDb(['U9'])
+    const collection = db.collection.bind(db)
+    db.collection = (name: string) => name === 'users'
+      ? { doc: (id: string) => ({ get: async () => ({ data: () => ({ displayName: `客人${id.split('_')[1]}` }) }) }) }
+      : collection(name)
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('3 場沒人回。')
+    expect(sentText()).toContain('沒人回的是客人U1與客人U2。')
+  })
+
+  it('某天沒人回超過 3 場（名單沒存全）→ 數不出幾位就不硬給數字', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const sample = (userId: string) => ({ userId, openedAtMs: Date.UTC(2026, 9, 16, 3) })
+    loadDayStats.mockImplementation(async (_db: any, _ws: string, keys: string[]) => ({
+      days: new Map(keys.map(k => [k, k === '2026-10-16'
+        ? dayStats({ date: k, ai: 3, unhandled: 5, unhandledSamples: [sample('U1'), sample('U2'), sample('U3')] })
+        : dayStats({ date: k })])),
+      liveDays: [], rollupDays: [],
+    }))
+    // 有一位在等才是完整版（順利的一天那一行版不點名）
+    const { db } = makeDb(['U9'])
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('5 場沒人回。')
+    expect(sentText()).toMatch(/沒人回的是.+等人。/)
+    expect(sentText()).not.toContain('等 5 位')
   })
 
   it('國定假日照常上班的店 → 10/27 只講 10/26，週報週一就附過了', async () => {
@@ -601,7 +662,9 @@ describe('dailyBacklogDigest 休假日之後的第一則', () => {
     const { db } = makeDb(['U1'])
     await dailyBacklogDigest(db)
 
-    expect(sentText()).toContain('這 3 天的數字這次查不到')
+    expect(sentText()).toContain('這 3 天的數字這次查不到，後台「對話統計」看得到')
     expect(sentText()).not.toContain('16 場')
+    // 明天那則只講今天，這 3 天之後不會再有一則講——⛔ 不可以說「明天會再看一次」（`C-362`）
+    expect(sentText()).not.toContain('明天會再看一次')
   })
 })
