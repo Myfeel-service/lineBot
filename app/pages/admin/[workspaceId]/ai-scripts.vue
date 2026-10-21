@@ -338,6 +338,7 @@
                     class="scripts-q"
                     :class="{
                       'is-focused': highlightStep === item.id,
+                      'is-try-current': tryStateOf(item.id) === 'current',
                       'is-dragging': qDragFrom === i,
                       'is-drag-over': qDragOver === i && qDragFrom !== null && qDragFrom !== i,
                     }"
@@ -376,6 +377,9 @@
                       </template>
                       <b v-else class="scripts-q__kind">給客人按鈕選</b>
                       <span v-if="item.type === 'collect' && isCodeFormat(item)" class="scripts-q__tag" title="客人傳訂單截圖也算回答了這一題">截圖也收</span>
+                      <!-- `D-142`①：右邊試試看走到哪、這裡跟著標（同 n8n 跑完的節點變綠） -->
+                      <span v-if="tryStateOf(item.id) === 'current'" class="scripts-q__try is-current">試的客人在這一題</span>
+                      <span v-else-if="tryStateOf(item.id) === 'walked'" class="scripts-q__try">✓ 試的時候走過</span>
                       <span class="scripts-q__head-end">
                         <el-checkbox
                           v-if="item.type === 'collect' && item.fieldName.trim()"
@@ -919,18 +923,30 @@
           </el-form>
         </div>
 
-        <!-- 換一條（或新開一條）就整個重來：試到一半的對話不該帶到另一條去 -->
-        <AdminScriptTryPanel
-          :key="tryKey"
-          class="scripts-side"
-          :script-id="selectedId"
-          :name="form.name"
-          :enabled="form.enabled"
-          :priority="form.priority"
-          :nodes="form.nodes"
-          :root-node-id="form.rootNodeId"
-          :module-options="moduleOptions"
-        />
+        <div class="scripts-side">
+          <!-- `D-142` 路線：有岔路才畫（直線流程的清單本身就是那張圖）；點一站捲到左邊那一題 -->
+          <AdminScriptRouteMap
+            v-if="qList && routeMapShown"
+            :view="qList"
+            :item-label="routeStationLabel"
+            :visited="tryProgress.visited"
+            :current="tryProgress.current"
+            :flagged="flaggedNodeIds"
+            @jump="focusStep"
+          />
+          <!-- 換一條（或新開一條）就整個重來：試到一半的對話不該帶到另一條去 -->
+          <AdminScriptTryPanel
+            :key="tryKey"
+            :script-id="selectedId"
+            :name="form.name"
+            :enabled="form.enabled"
+            :priority="form.priority"
+            :nodes="form.nodes"
+            :root-node-id="form.rootNodeId"
+            :module-options="moduleOptions"
+            @progress="tryProgress = $event"
+          />
+        </div>
       </div>
     </template>
   </AdminSplitLayout>
@@ -968,6 +984,7 @@ import {
   toQuestionList,
   type QuestionItem,
 } from '~~/shared/script-question-list'
+import { buildRouteMap } from '~~/shared/script-route-map'
 import type {
   BranchOp,
   CollectFormat,
@@ -1807,6 +1824,25 @@ const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quic
 ]
 
 // 試跑（「試試看」）搬到右邊的 AdminScriptTryPanel（`D-138`）：換一條時靠 :key 整個重來。
+
+/**
+ * 試到哪了（`D-142`①，同 n8n 跑完的節點變綠）：左邊那張卡標「試的客人在這一題」、走過的標「試的時候走過」，
+ * 右邊路線圖同一站亮起來。換一條（tryKey 變了）試試看整個重來，這裡跟著清空。
+ */
+const tryProgress = ref<{ visited: string[]; current: string | null }>({ visited: [], current: null })
+watch(tryKey, () => { tryProgress.value = { visited: [], current: null } })
+function tryStateOf(id: string): 'current' | 'walked' | null {
+  if (tryProgress.value.current === id) return 'current'
+  return tryProgress.value.visited.includes(id) ? 'walked' : null
+}
+
+/** 路線圖上一站的名字：比清單短（小卡只有一百多 px 寬），按鈕題不帶問句 */
+function routeStationLabel(item: QuestionItem): string {
+  return item.type === 'collect' ? (fieldLabel(item.fieldName) || '（還沒選）') : '給按鈕選'
+}
+
+/** 路線圖只在有岔路時畫（跳題、客人說沒有去別題、按鈕去不同題）——直線流程的清單本身就是那張圖 */
+const routeMapShown = computed(() => Boolean(qList.value && buildRouteMap(qList.value).brackets.length))
 
 /**
  * 右邊試試看拉滿編輯區（2026-10-22 老闆：「高度拉滿然後 fixed，參考其他頁面」＝推播頁 `C-251`）。

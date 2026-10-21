@@ -897,10 +897,24 @@
       padding: 16px 16px calc(1.5rem + 58px + 10px);
     }
 
+    /* 右邊那一欄已經是面板了（上面路線、下面試試看）：試試看自己的卡片外框拿掉，撐滿剩下的高度 */
+    .scripts-try {
+      flex: 1;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
     .scripts-try__chat {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+    }
+
+    .scripts-route {
+      flex: none;
     }
   }
 }
@@ -915,9 +929,237 @@
   }
 }
 
+/* 右邊那一欄：上面路線（有岔路才有）、下面試試看 */
 .scripts-side {
   flex: 1 1 300px;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 右邊：路線（`D-142`，示意畫布第⑥張 v9）──
+   一題一站由上往下；照順序的是左邊那條直線，跳題／客人說沒有／按鈕去別題是右邊的圓角括號，一條一圈。
+   座標由 ScriptRouteMap 算（站高 30、站距 44、第一圈離站 36、圈距 30），這裡只管長相。 */
+.scripts-route {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: var(--el-text-color-placeholder);
+  }
+
+  &__toggle {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--brand-green-text);
+    cursor: pointer;
+  }
+
+  &__box {
+    position: relative;
+    border: 1px solid var(--el-border-color-extra-light);
+    border-radius: 12px;
+    background: var(--el-bg-color);
+    overflow: hidden;
+  }
+
+  /* 線的顏色：平常淡灰；試試看走過的那幾段亮綠；往回跳的淡紅 */
+  &__rail {
+    position: absolute;
+    width: 2px;
+    border-radius: 1px;
+    background: #d9dee5;
+
+    &.is-walked {
+      background: var(--el-color-primary);
+    }
+  }
+
+  &__bracket {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px solid #cfd6df;
+    border-left: 0;
+
+    &.is-walked {
+      border-color: var(--el-color-primary);
+    }
+
+    &.is-backward {
+      border-color: var(--el-color-danger-light-5);
+    }
+  }
+
+  /* 箭頭：指進要去的那一站（往左的小三角形） */
+  &__arrow {
+    position: absolute;
+    z-index: 90;
+    width: 0;
+    height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    border-right: 6px solid #b8c1cc;
+
+    &.is-walked {
+      border-right-color: var(--el-color-primary);
+    }
+
+    &.is-backward {
+      border-right-color: var(--el-color-danger-light-5);
+    }
+  }
+
+  /* 跨線：底色蓋住內圈那條直線的一小段，外圈的橫線從上面過 */
+  &__hop {
+    position: absolute;
+    width: 8px;
+    height: 12px;
+    background: var(--el-bg-color);
+  }
+
+  &__chip {
+    position: absolute;
+    z-index: 100;
+    transform: translate(-50%, -50%);
+    height: 18px;
+    padding: 0 7px;
+    box-sizing: border-box;
+    border: 1px solid #dfe4ea;
+    border-radius: 9px;
+    background: var(--el-bg-color);
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--el-text-color-regular);
+    white-space: nowrap;
+
+    &.is-walked {
+      border-color: var(--el-color-primary-light-5);
+      color: var(--brand-green-text);
+    }
+
+    &.is-backward {
+      border-color: var(--el-color-danger-light-5);
+      color: var(--el-color-danger);
+    }
+  }
+
+  /* 一站＝圓角小卡：編號＋題名；點了捲到左邊那一題 */
+  &__station {
+    position: absolute;
+    z-index: 200;
+    height: 30px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 10px 0 5px;
+    border: 1px solid #e3e8ee;
+    border-radius: 15px;
+    background: var(--el-bg-color);
+    font: inherit;
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    &:hover {
+      border-color: var(--el-color-primary-light-5);
+    }
+
+    &.is-end {
+      background: var(--el-fill-color-lighter);
+    }
+
+    /* 試試看現在停在這一題（跟左邊那張卡同一個綠框） */
+    &.is-current {
+      border: 1.5px solid var(--el-color-primary);
+      background: var(--brand-green-wash);
+      box-shadow: 0 0 0 3px var(--el-color-primary-light-9);
+      color: var(--brand-green-text);
+      font-weight: 700;
+    }
+  }
+
+  &__badge {
+    flex: 0 0 22px;
+    height: 22px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: #eef2f6;
+    color: var(--el-text-color-regular);
+    font-size: 12px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    .is-walked & {
+      background: var(--el-color-primary);
+      color: #ffffff;
+    }
+
+    .is-current & {
+      background: var(--el-bg-color);
+      border: 2px solid var(--el-color-primary);
+      color: var(--brand-green-text);
+    }
+
+    .is-end & {
+      background: #374151;
+    }
+  }
+
+  &__end-mark {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: #ffffff;
+  }
+
+  &__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__sub {
+    margin-left: auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--el-text-color-placeholder);
+  }
+
+  &__done {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--el-color-primary);
+  }
+
+  /* 這一題有要處理的問題（跟上面那條提醒同一份）：黃點 */
+  &__flag {
+    margin-left: auto;
+    flex: 0 0 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--el-color-warning);
+  }
 }
 
 /* 標題列的開關（從「基本設定」卡搬上來） */
@@ -1034,11 +1276,19 @@
     color: var(--el-text-color-secondary);
   }
 
+  /* 輸入那一列永遠一行：右邊那欄只有 300 寬時，「傳圖片」一出現就會把「送出」擠到第二行（2026-10-22 截圖看到），
+     改成輸入框讓位、兩顆按鈕不縮 */
   .scripts-sim-input {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 
     .el-input {
-      flex: 1 1 160px;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    .el-button {
+      flex: none;
+      margin-left: 0;
     }
   }
 }
@@ -1056,6 +1306,27 @@
   &.is-focused {
     border-color: var(--el-color-primary);
     box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
+  }
+
+  /* 試試看現在停在這一題（`D-142`①）：跟右邊路線圖那一站同一個綠框 */
+  &.is-try-current {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 3px var(--el-color-primary-light-9);
+  }
+
+  &__try {
+    padding: 0 8px;
+    border-radius: 10px;
+    background: var(--brand-green-wash);
+    color: var(--brand-green-text);
+    font-size: 12px;
+    line-height: 20px;
+    white-space: nowrap;
+
+    &.is-current {
+      background: var(--el-color-primary);
+      color: #ffffff;
+    }
   }
 
   /* 拖曳（`D-140`，同機器人模組訊息卡 `.message-card.dragging / .drag-over`） */

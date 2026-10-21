@@ -89,6 +89,11 @@ const props = defineProps<{
   moduleOptions: Array<{ id: string; name: string; isActive?: boolean; messageCount?: number }>
 }>()
 
+const emit = defineEmits<{
+  /** 試到哪了（`D-142`）：走過的步驟（照順序）＋現在停在哪一題等客人回——左邊那張卡與路線圖跟著亮 */
+  progress: [p: { visited: string[]; current: string | null }]
+}>()
+
 const { apiFetch, can } = useWorkspace()
 
 interface SimMsg {
@@ -114,6 +119,14 @@ const prefilled = ref<string[]>([])
 const done = ref(false)
 /** 判斷失敗時記住那一句，按「當作會走這一條」就拿它開始 */
 let pendingFirst = ''
+/** 這一輪走過的步驟（題目、存進客人資料、結尾…），照走的順序 */
+const visited = ref<string[]>([])
+function visit(id: string) {
+  if (visited.value.at(-1) !== id) visited.value = [...visited.value, id]
+}
+watch([visited, nodeId, waiting], () => {
+  emit('progress', { visited: visited.value, current: waiting.value ? nodeId.value : null })
+})
 
 const trigger = computed(() => {
   const t = props.nodes.find(n => n.id === props.rootNodeId)
@@ -138,6 +151,7 @@ function reset() {
   prefilled.value = []
   done.value = false
   pendingFirst = ''
+  visited.value = []
 }
 
 function moduleLabel(id: string): string {
@@ -161,6 +175,7 @@ function run(startId: string) {
     const node = props.nodes.find(n => n.id === cursor)
     if (!node) return end('（接到不存在的步驟，流程結束）')
     if (node.type === 'trigger') { cursor = node.next; continue }
+    visit(node.id)
     if (node.type === 'branch') { cursor = resolveBranchNext(node, collected.value); continue }
     if (node.type === 'tag') { push({ who: 'sys', text: `（貼標：${node.addTagIds.length} 個標籤）` }); cursor = node.next; continue }
     if (node.type === 'saveLead') {
