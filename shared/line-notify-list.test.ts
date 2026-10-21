@@ -2,7 +2,7 @@
  * 通知名單比對（`C-271`⑭：原本同一行比對抄了四份）。
  */
 import { describe, expect, it } from 'vitest'
-import { normalizeLineUserId, notifyListHas } from './line-notify-list'
+import { normalizeLineUserId, normalizeNotifyOptOut, notifyKindsFor, notifyListHas, notifyRecipients } from './line-notify-list'
 
 const U1 = `U${'a'.repeat(32)}`
 
@@ -25,5 +25,28 @@ describe('notifyListHas', () => {
   })
   it('空字串不算在名單上', () => {
     expect(notifyListHas([''], '')).toBe(false)
+  })
+})
+
+const U2 = `U${'b'.repeat(32)}`
+
+describe('每個人收哪幾種（`D-143`）', () => {
+  it('沒記＝三種都收（舊資料不用回填，上線那天沒有人少收）', () => {
+    expect(normalizeNotifyOptOut(undefined, [U1])).toEqual({})
+    expect(notifyKindsFor({}, U1)).toEqual(['handoff', 'digest', 'crit'])
+  })
+  it('只留名單上的人、只留認得的種類；舊格式的 key 收成純 userId', () => {
+    const out = normalizeNotifyOptOut({ [`ws_${U1}`]: ['digest', 'bogus'], [U2]: ['crit'], Ugone: ['crit'] }, [U1])
+    expect(out).toEqual({ [U1]: ['digest'] })
+  })
+  it('🔴 舊的全帳號「出大事」開關關著＝每個人都不收出大事（⛔ 上線後不可以突然開始傳）', () => {
+    const out = normalizeNotifyOptOut({ [U1]: ['digest'] }, [U1, U2], { critOffForAll: true })
+    expect(out).toEqual({ [U1]: ['digest', 'crit'], [U2]: ['crit'] })
+  })
+  it('某一種只傳給名單上、沒取消這一種的人（回傳名單上原本的字串）', () => {
+    const cfg = { lineUserIds: [`ws_${U1}`, U2], optOut: { [U1]: ['handoff' as const] } }
+    expect(notifyRecipients(cfg, 'handoff')).toEqual([U2])
+    expect(notifyRecipients(cfg, 'digest')).toEqual([`ws_${U1}`, U2])
+    expect(notifyRecipients({ lineUserIds: [] }, 'crit')).toEqual([])
   })
 })

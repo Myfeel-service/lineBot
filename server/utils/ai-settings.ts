@@ -63,7 +63,7 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 // 名單比對（純函式）住在 shared（`C-271`⑭），這裡轉出給既有的 import。
 // ⚠️ 用相對路徑：Nitro 自動匯入掃 server/utils 時解析不了 `~~` 的轉出（會警告 skip scanning）
-import { normalizeLineUserId } from '../../shared/line-notify-list'
+import { normalizeLineUserId, normalizeNotifyOptOut } from '../../shared/line-notify-list'
 
 export { normalizeLineUserId, notifyListHas } from '../../shared/line-notify-list'
 
@@ -165,8 +165,13 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
         festivalTips: raw?.handoffNotify?.festivalTips !== false,
         // 同 festivalTips 口徑：週一的「本週顧客觀察」段落，舊工作區視為開
         weeklyInsights: raw?.handoffNotify?.weeklyInsights !== false,
-        // 同 festivalTips：沒存過這個欄位的舊工作區一律視為「開」，前後端同口徑
+        // 同 festivalTips：沒存過這個欄位的舊工作區一律視為「開」，前後端同口徑。
+        // ⚠️ `D-143` 起是舊欄位：關著＝每個人的「出大事」都沒勾，已經收進下面的 optOut
         criticalAlertPush: raw?.handoffNotify?.criticalAlertPush !== false,
+        // 每個人不收哪幾種（`D-143`）：只留名單上的人；舊的全帳號「出大事」開關關著＝每個人都不收出大事
+        optOut: normalizeNotifyOptOut(raw?.handoffNotify?.optOut, lineUserIds, {
+          critOffForAll: raw?.handoffNotify?.criticalAlertPush === false,
+        }),
       }
     })(),
     handbackIdleMinutes: Math.round(clampNumber(raw?.handbackIdleMinutes, 0, 1440, DEFAULT_HANDBACK_IDLE_MINUTES)),
@@ -257,6 +262,8 @@ export async function readAiSettingsFresh(workspaceId: string, db: Firestore = g
  *   名單只經 `member-line-bind` 的交易進出（掃 QR 綁定是 webhook 在另一台機器寫的）。
  *   原本整份 set，管理員剛好在另一台按「儲存 AI 設定」（或小幫手改提醒分鐘、操作紀錄「還原」），
  *   就把剛綁好的人洗掉，而他手機已經收到「好了 ✓」。
+ *   `D-143` 的「每個人不收哪幾種」（optOut）與舊的「出大事」開關（criticalAlertPush）同一個道理：
+ *   那個交易會把 criticalAlertPush 改回 true，這裡拿讀到的舊值寫回去就把剛勾的人又全部關掉。
  */
 export async function setAiSettings(
   workspaceId: string,
@@ -277,7 +284,14 @@ export async function setAiSettings(
     inactiveTag: { ...current.inactiveTag, ...(partial.inactiveTag ?? {}) },
     autoTagSuggest: { ...current.autoTagSuggest, ...(partial.autoTagSuggest ?? {}) },
   })
-  const { lineUserIds: _ids, displayNames: _names, enabled: _enabled, ...notifyTiming } = merged.handoffNotify
+  const {
+    lineUserIds: _ids,
+    displayNames: _names,
+    enabled: _enabled,
+    optOut: _optOut,
+    criticalAlertPush: _crit,
+    ...notifyTiming
+  } = merged.handoffNotify
   await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).set({
     ...merged,
     handoffNotify: notifyTiming,

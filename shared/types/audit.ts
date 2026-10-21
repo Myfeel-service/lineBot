@@ -313,6 +313,9 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   festivalTips: '節慶行銷提醒',
   weeklyInsights: '每週顧客觀察',
   criticalAlertPush: '重大異常推播',
+  // `D-143`：「設定 → LINE 通知」每個人勾收哪幾種（存的是「客人找真人」這種白話，不是代號）
+  notifyKinds: '收哪幾種通知',
+  optOut: '每個人不收哪幾種',
   start: '服務時段起',
   end: '服務時段迄',
   weekendOff: '週末整天不打擾',

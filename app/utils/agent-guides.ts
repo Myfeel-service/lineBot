@@ -384,7 +384,8 @@ const handoffNotifyGuide: AgentGuideDef = {
         await r.say('現在客人要找真人時，<b>沒有人的手機會收到通知</b>——客人可能等很久都沒人理，每天早上的摘要也傳不到任何人。')
         if (s?.bound) {
           // 綁好了但沒在收（自己關掉、或當時名單滿了）：打開那一列的開關就好，⛔ 不用再掃一次
-          await r.say('你的 LINE 已經綁好了，只是通知關著。到你那一列把「收通知」打開就好。')
+          // `D-143`：「收通知」開關換成三格勾選（三格都沒勾＝不在名單上）
+          await r.say('你的 LINE 已經綁好了，只是一種都沒勾。到你那一列勾要收的那幾種就好。')
           r.card({ kind: 'link', internal: true, label: '打開我的通知', href: page })
           return
         }

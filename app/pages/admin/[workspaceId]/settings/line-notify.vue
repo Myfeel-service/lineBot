@@ -51,12 +51,16 @@
             <p v-else-if="!receivingCount && !adding" class="ln-banner">
               現在沒有人會收到。客人要找真人時，不會有人知道。
             </p>
+            <!-- `D-143`：名單上有人，但有一種沒有人勾（示意頁 v4 第三張） -->
+            <p v-else-if="zeroKinds.length" class="ln-banner">
+              {{ zeroKindsBanner }}
+            </p>
             <p v-else-if="undeliverableCount" class="ln-banner">
               有 {{ undeliverableCount }} 位收不到通知，原因和怎麼辦寫在他那一列的 LINE 名字下面。
             </p>
 
             <!-- 跟「成員管理」同一種表格（老闆對一致性很敏感）：寬螢幕上名字跟開關不再隔半個畫面沒有欄可以對 -->
-            <el-table :data="tableRows" size="small" row-key="key" :row-class-name="rowClass" class="ln-table">
+            <el-table :data="tableRows" size="small" row-key="key" :row-class-name="rowClass" :span-method="kindSpan" class="ln-table">
               <el-table-column label="成員" min-width="220">
                 <template #default="{ row }">
                   <template v-if="row.kind === 'member'">
@@ -69,8 +73,9 @@
                 </template>
               </el-table-column>
               <!-- `D-117`：「LINE」「狀態」併成一格。原本沒加進來的人一列講三次（LINE「—」、狀態「還沒加進來」、按鈕「傳連結給他」），
-                   加進來的人「會收到」又跟右邊開關重複。有加的：名字＋下面一行（上次送達／收不到的原因）；沒加的：只講一次 -->
-              <el-table-column label="LINE 手機" min-width="300">
+                   加進來的人「會收到」又跟右邊開關重複。有加的：名字＋下面一行（上次送達／收不到的原因）；沒加的：只講一次。
+                   `D-143`：右邊多了三格勾選，這一欄從 300 讓到 240 -->
+              <el-table-column label="LINE 手機" min-width="240">
                 <template #default="{ row }">
                   <div v-if="row.line" class="ln-phone-cell">
                     <span class="ln-line">
@@ -86,41 +91,96 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="收通知" width="160" align="right">
-                <template #default="{ row }">
-                  <template v-if="row.kind === 'member'">
-                    <!-- 綁好的：開關（自己那一列、或管理員）。觀察者不收通知（`C-271`⑬）：舊資料裡已經在收的只給關、不給開 -->
-                    <el-switch
-                      v-if="row.m.line && (row.m.isSelf || data.canManage) && (row.m.role !== 'viewer' || row.m.receiving)"
-                      :model-value="row.m.receiving"
-                      :loading="savingUid === row.m.uid"
-                      @change="setReceiving(row.m, $event === true)"
-                    />
-                    <el-button
-                      v-else-if="!row.m.line && row.m.isSelf && !adding"
-                      type="primary"
-                      size="small"
-                      data-tour="ln-add"
-                      :disabled="!data.lineConnected"
-                      @click="startAdd"
-                    >
-                      把我的手機加進來
-                    </el-button>
-                    <el-button
-                      v-else-if="!row.m.line && !row.m.isSelf && data.canManage"
-                      size="small"
-                      plain
-                      :disabled="!data.lineConnected"
-                      :loading="linkLoadingUid === row.m.uid"
-                      data-tour="ln-send-link"
-                      @click="sendLink(row.m)"
-                    >
-                      傳連結給他
-                    </el-button>
+              <!-- `D-143`：「收通知」一個開關拆成三格，每個人勾自己收哪幾種（名稱跟右邊手機的三個分頁一樣）。
+                   還沒加進來的那一列，三格併成一格放按鈕（`kindSpan`）。
+                   ⛔ 三格不要改回 v-for：插槽一用到迴圈變數，Vue 就把那幾個子欄位標成「動態插槽」，
+                   Element（2.13）收子欄位時剛好把這種跳過——整組只剩一格「收通知」、每列畫成「拿掉」（實機抓到的） -->
+              <el-table-column label="收通知" align="center">
+                <el-table-column width="96" align="center">
+                  <template #header>
+                    <!-- 名單上有人、這一種卻沒有人勾：跟上面那條黃字同一件事，欄名也變黃 -->
+                    <span class="ln-kind-head" :class="{ 'is-zero': zeroKinds.includes('handoff') }">
+                      {{ NOTIFY_KIND_LABELS.handoff }}
+                      <span v-if="zeroKinds.includes('handoff')" class="ln-kind-head__zero">沒人收</span>
+                    </span>
                   </template>
-                  <!-- 舊資料：名單上、卻不是任何一位成員的 LINE 帳號（名單現在只收綁好的成員，只能拿掉） -->
-                  <el-button v-else-if="data.canManage" size="small" plain @click="removeOther(row.o.lineUserId)">拿掉</el-button>
-                </template>
+                  <template #default="{ row }">
+                    <!-- 綁好的：三格勾選。能改的是自己那一列、或管理員；別人看得到但不能動。
+                         觀察者不收通知（`C-271`⑬）：舊資料裡已經在收的只給取消、不給勾新的 -->
+                    <el-checkbox
+                      v-if="hasKindChecks(row)"
+                      :model-value="row.m.kinds.includes('handoff')"
+                      :disabled="kindDisabled(row.m, 'handoff')"
+                      :aria-label="kindAria(row.m, 'handoff')"
+                      class="ln-kind-check"
+                      @change="setKind(row.m, 'handoff', $event === true)"
+                    />
+                    <!-- 還沒加進來、或不是成員的舊帳號：三格併成一格（`kindSpan`），按鈕畫在第一格 -->
+                    <template v-else>
+                      <template v-if="row.kind === 'member'">
+                        <el-button
+                          v-if="!row.m.line && row.m.isSelf && !adding"
+                          type="primary"
+                          size="small"
+                          data-tour="ln-add"
+                          :disabled="!data.lineConnected"
+                          @click="startAdd"
+                        >
+                          把我的手機加進來
+                        </el-button>
+                        <el-button
+                          v-else-if="!row.m.line && !row.m.isSelf && data.canManage"
+                          size="small"
+                          plain
+                          :disabled="!data.lineConnected"
+                          :loading="linkLoadingUid === row.m.uid"
+                          data-tour="ln-send-link"
+                          @click="sendLink(row.m)"
+                        >
+                          傳連結給他
+                        </el-button>
+                      </template>
+                      <!-- 舊資料：名單上、卻不是任何一位成員的 LINE 帳號（名單現在只收綁好的成員，只能拿掉） -->
+                      <el-button v-else-if="row.kind === 'other' && data.canManage" size="small" plain @click="removeOther(row.o.lineUserId)">拿掉</el-button>
+                    </template>
+                  </template>
+                </el-table-column>
+                <el-table-column width="96" align="center">
+                  <template #header>
+                    <span class="ln-kind-head" :class="{ 'is-zero': zeroKinds.includes('digest') }">
+                      {{ NOTIFY_KIND_LABELS.digest }}
+                      <span v-if="zeroKinds.includes('digest')" class="ln-kind-head__zero">沒人收</span>
+                    </span>
+                  </template>
+                  <template #default="{ row }">
+                    <el-checkbox
+                      v-if="hasKindChecks(row)"
+                      :model-value="row.m.kinds.includes('digest')"
+                      :disabled="kindDisabled(row.m, 'digest')"
+                      :aria-label="kindAria(row.m, 'digest')"
+                      class="ln-kind-check"
+                      @change="setKind(row.m, 'digest', $event === true)"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column width="96" align="center">
+                  <template #header>
+                    <span class="ln-kind-head" :class="{ 'is-zero': zeroKinds.includes('crit') }">
+                      {{ NOTIFY_KIND_LABELS.crit }}
+                      <span v-if="zeroKinds.includes('crit')" class="ln-kind-head__zero">沒人收</span>
+                    </span>
+                  </template>
+                  <template #default="{ row }">
+                    <el-checkbox
+                      v-if="hasKindChecks(row)"
+                      :model-value="row.m.kinds.includes('crit')"
+                      :disabled="kindDisabled(row.m, 'crit')"
+                      :aria-label="kindAria(row.m, 'crit')"
+                      class="ln-kind-check"
+                      @change="setKind(row.m, 'crit', $event === true)"
+                    />
+                  </template>
+                </el-table-column>
               </el-table-column>
               <!-- 不常用、會讓人緊張的動作（移除這支手機）收進「⋯」：原本紅字擠在開關旁邊，分不清哪個才是「不收」 -->
               <el-table-column width="52" align="center">
@@ -148,10 +208,10 @@
                     你的手機剛收到一則確認，寫著之後會收到什麼。{{ firstDigestPhrase }} 會收到第一則摘要。
                   </template>
                   <template v-else-if="justAdded.full">
-                    名單滿了（最多 10 位）。請管理員關掉一位，再把你那一列的「收通知」打開。
+                    名單滿了（最多 10 位）。請管理員把一位的三格都取消，再勾你那一列。
                   </template>
                   <template v-else>
-                    剛剛沒存進通知名單。把你那一列的「收通知」打開就好。
+                    剛剛沒存進通知名單。在你那一列勾要收的那幾種就好。
                   </template>
                 </p>
               </div>
@@ -175,7 +235,8 @@
               <div class="card-header-main">
                 <span class="section-title">什麼時候通知</span>
               </div>
-              <span class="ln-card__meta">上面每個人收到的都一樣</span>
+              <!-- `D-143`：誰收哪幾種改成在上面每個人自己勾，這裡的時間還是大家一樣 -->
+              <span class="ln-card__meta">時間大家一樣</span>
             </div>
             <div class="card-section-stack">
               <!-- `D-107`：三段各一塊，跟右邊手機的三個分頁一一對應；點哪一段、改哪一段，手機就換到那一則
@@ -279,7 +340,8 @@
                     <AdminFieldLabel text="出大事時" tag="span" tight />
                     <span v-if="groupOn('crit')" class="ln-grp__peek">右邊就是這一則</span>
                   </div>
-                  <el-checkbox v-model="timing.criticalAlertPush" @change="saveTiming">不等摘要，馬上通知</el-checkbox>
+                  <!-- `D-143`：全帳號那個開關拿掉，改成上面那張表「出大事」那一欄有勾的人才收（同一件事不留兩個開關） -->
+                  <p class="ln-when__line">不等摘要，馬上傳給上面「出大事」那一欄有勾的人。</p>
                   <p class="ln-when__hint">機器人收不到客人訊息、回覆額度用完這類正在影響客人的事。只在 9:00–21:00 傳。</p>
                 </section>
               </div>
@@ -362,6 +424,7 @@ import { addDays, daysBetween, type ServiceHoursLike } from '~~/shared/time'
 import { DIGEST_COVER_MAX_DAYS, digestCoverDays, isDigestDayOff, mondayOf } from '~~/shared/digest-window'
 import { TAIWAN_FESTIVALS, festivalReminderText, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 import { formatWeeklyInsightLines } from '~~/shared/weekly-insight-lines'
+import { NOTIFY_KIND_LABELS, NOTIFY_KINDS, type NotifyKind } from '~~/shared/line-notify-list'
 
 definePageMeta({ middleware: ['auth', 'workspace-notify'], layout: 'default' })
 useHead({ title: useAdminTitle('LINE 通知') })
@@ -380,7 +443,10 @@ interface Row {
   role: string
   isSelf: boolean
   line: { userId: string, displayName: string, pictureUrl: string } | null
+  /** 在名單上（＝至少勾了一種） */
   receiving: boolean
+  /** 勾了哪幾種（`D-143`）；不在名單上＝空 */
+  kinds: NotifyKind[]
   pendingCodeExpiresAt: number | null
   /** 那組碼什麼時候產的（只在剛產的 15 分鐘內頻繁重抓） */
   pendingCodeIssuedAt: number | null
@@ -390,7 +456,7 @@ interface Row {
   inviteSeenAt: number | null
   delivery: RecipientState | null
 }
-interface Other { lineUserId: string, displayName: string, delivery: RecipientState }
+interface Other { lineUserId: string, displayName: string, delivery: RecipientState, kinds: NotifyKind[] }
 interface Status { text: string, sub?: string, cls: string }
 /** 表格的一列：成員，或名單上對不上任何成員的舊資料 */
 type TableRow =
@@ -402,7 +468,6 @@ interface Timing {
   digestHour: number
   festivalTips: boolean
   weeklyInsights: boolean
-  criticalAlertPush: boolean
 }
 interface PageData {
   canManage: boolean
@@ -431,20 +496,64 @@ const loadError = ref(false)
 const adding = ref(false)
 const justAdded = ref<{ name: string, receiving: boolean, full: boolean } | null>(null)
 const flashUid = ref('')
-const savingUid = ref('')
+/** 正在存的那一格：`${uid}:${種類}` */
+const savingKey = ref('')
 const linkLoadingUid = ref('')
 const linkDialog = reactive({ open: false, email: '', url: '', message: '', expiresAt: 0, copied: false })
 const previewTab = ref<PreviewTab>('handoff')
 
 /** 分鐘數上限：跟後端 normalizeAiSettings 的夾值同一個數字（24 小時） */
 const SLA_MAX = 1440
-const timing = ref<Timing>({ mode: 'always', slaRemindMinutes: 30, digestHour: 9, festivalTips: true, weeklyInsights: true, criticalAlertPush: true })
+const timing = ref<Timing>({ mode: 'always', slaRemindMinutes: 30, digestHour: 9, festivalTips: true, weeklyInsights: true })
 /** 兩個模式各記一個分鐘數：切模式時不會把另一邊的數字帶過去（missed_only 最少 5 分鐘） */
 const slaAlways = ref(30)
 const slaMissed = ref(30)
 
 const receivingCount = computed(() =>
-  (data.value?.rows.filter(r => r.receiving).length ?? 0) + (data.value?.others.length ?? 0))
+  (data.value?.rows.filter(r => r.receiving && r.kinds.length).length ?? 0)
+  + (data.value?.others.filter(o => o.kinds.length).length ?? 0))
+
+/**
+ * 名單上有人、但這一種沒有人勾（`D-143`）：欄名變黃、表格上面一條黃字。
+ * 一個人都沒有時不算（上面那條「現在沒有人會收到」已經講了，⛔ 不兩條一起講）。
+ */
+const zeroKinds = computed<NotifyKind[]>(() => {
+  const d = data.value
+  if (!d || !receivingCount.value) return []
+  return NOTIFY_KINDS.filter(k =>
+    !d.rows.some(r => r.receiving && r.kinds.includes(k)) && !d.others.some(o => o.kinds.includes(k)))
+})
+const zeroKindsBanner = computed(() => {
+  const z = zeroKinds.value
+  const names = z.map(k => `「${NOTIFY_KIND_LABELS[k]}」`).join('')
+  const after = z.includes('handoff') ? '客人要找真人時，不會有人知道。' : z.includes('crit') ? '出大事時，不會有人知道。' : ''
+  return `沒有人會收到${names}。${after}`
+})
+
+/**
+ * 這一列畫不畫三格勾選：綁好 LINE 的成員（觀察者只有舊資料裡還在收的才畫，只給取消）。
+ * ⚠️ Element 會拿空物件 `{}` 當 row 先跑一次插槽（找子欄位用），所以一律先判 `row.kind`，⛔ 不可以直接讀 `row.m`
+ */
+function hasKindChecks(row: TableRow): row is Extract<TableRow, { kind: 'member' }> {
+  return row.kind === 'member' && Boolean(row.m?.line) && (row.m.role !== 'viewer' || row.m.receiving)
+}
+/** 能改的是自己那一列、或管理員（別人看得到但不能動）；觀察者不能勾新的（`C-271`⑬）；存的時候那一格先鎖住 */
+function kindDisabled(m: Row, kind: NotifyKind): boolean {
+  return !(m.isSelf || data.value?.canManage)
+    || (m.role === 'viewer' && !m.kinds.includes(kind))
+    || savingKey.value === `${m.uid}:${kind}`
+}
+function kindAria(m: Row, kind: NotifyKind): string {
+  return `${m.email || '這位成員'} 收「${NOTIFY_KIND_LABELS[kind]}」`
+}
+
+/** 還沒加進來、或不是成員的舊帳號：「收通知」那三格併成一格放按鈕（欄的順序：成員、LINE 手機、三格、⋯） */
+const KIND_COL_FIRST = 2
+function kindSpan({ row, columnIndex }: { row: TableRow, columnIndex: number }): [number, number] {
+  const merged = row.kind === 'other' || !row.m?.line
+  if (!merged || columnIndex < KIND_COL_FIRST || columnIndex >= KIND_COL_FIRST + NOTIFY_KINDS.length) return [1, 1]
+  return columnIndex === KIND_COL_FIRST ? [1, NOTIFY_KINDS.length] : [0, 0]
+}
 
 const ROLE_LABELS: Record<string, string> = { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '觀察者' }
 function roleLabel(role: string) { return ROLE_LABELS[role] ?? role }
@@ -527,7 +636,8 @@ function statusOf(row: Row): Status {
     }
     return { text: '會收到', cls: 'is-ok' }
   }
-  if (row.line) return { text: '通知關著', cls: 'is-off' }
+  // 綁了但不在名單上：`D-143` 起就是右邊三格都沒勾
+  if (row.line) return { text: '三種都沒勾，不會收到', cls: 'is-off' }
   if (row.pendingCodeExpiresAt) return { text: '還沒加進來', sub: `等對方點連結（${untilText(row.pendingCodeExpiresAt)} 前有效）`, cls: 'is-off' }
   // 「打開首頁會被問」寫在表格上面那一句；按過「先不用」的就不會再被問，⛔ 那一句對他不成立要另外講
   if (!row.isSelf && row.inviteDismissed) return { text: '還沒加進來', sub: '對方在首頁按了「先不用」，不會再被問', cls: 'is-off' }
@@ -545,9 +655,9 @@ function statusOf(row: Row): Status {
 
 /**
  * 「LINE 手機」那一格名字下面那一行（`D-117`，「LINE」「狀態」併成一格之後）：
- * - 收得到：只講上次送達（「會收到」三個字右邊開關已經講了，⛔ 不再寫一次）
+ * - 收得到：只講上次送達（「會收到」三個字右邊勾選已經講了，⛔ 不再寫一次）
  * - 收不到：結論＋原因，變黃
- * - 綁了但沒在收：「通知關著」（看的人沒有開關可按時，這是唯一講這件事的地方）
+ * - 綁了但沒在收：「三種都沒勾，不會收到」
  */
 function lineSub(row: TableRow): string {
   const s = row.status
@@ -681,18 +791,30 @@ function flash(uid: string) {
 }
 
 // ── 那一列的動作 ──
-async function setReceiving(row: Row, on: boolean) {
-  savingUid.value = row.uid
+/** 勾／取消一格（`D-143`）。三格都取消＝從名單拿掉，要照實講「不會再收到通知」 */
+async function setKind(row: Row, kind: NotifyKind, on: boolean) {
+  savingKey.value = `${row.uid}:${kind}`
+  const label = NOTIFY_KIND_LABELS[kind]
   try {
-    await apiFetch(`/api/admin/workspaces/${workspaceId.value}/line-notify/receiving`, { method: 'PUT', body: { uid: row.uid, on } })
+    const res = await apiFetch<{ result: string }>(`/api/admin/workspaces/${workspaceId.value}/line-notify/receiving`, {
+      method: 'PUT',
+      body: { uid: row.uid, kind, on },
+    })
     await load()
-    showToast(on ? '打開了，之後會收到通知' : '關掉了，這支手機不會再收到通知', 'success')
+    // 幫別人改的時候講是誰（管理員連改幾位時，只寫「不會再收到…」分不出是哪一列）
+    const who = row.isSelf ? '' : `${row.line?.displayName || row.email} `
+    showToast(
+      res.result === 'removed'
+        ? `${who}三種都取消了，${row.isSelf ? '這支手機' : ''}不會再收到通知`
+        : on ? `${who}之後會收到「${label}」` : `${who}不會再收到「${label}」`,
+      'success',
+    )
   }
   catch (e: any) {
     showToast(e?.data?.statusMessage || '存不進去', 'error')
   }
   finally {
-    savingUid.value = ''
+    savingKey.value = ''
   }
 }
 
@@ -728,7 +850,7 @@ async function unbind(row: Row) {
   try {
     await ElMessageBox.confirm(
       `移除之後，${row.email || '這位成員'} 的手機不會再收到任何 LINE 通知；要再收，得重新把手機加進來。`
-      + '（只想暫停的話，把「收通知」關掉就好，手機不用重加。）',
+      + '（只想暫停的話，把那一列三格都取消就好，手機不用重加。）',
       '移除這支手機',
       { confirmButtonText: '移除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger', type: 'warning' },
     )
@@ -826,9 +948,20 @@ const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(
   const link = sampleLink.value
   // 剛加好：他剛收到的那一則確認（跟後端回覆同一支函式、同一份設定）
   if (confirmSent.value && data.value) {
+    // 他這支手機勾了哪幾種（`D-143`）：跟後端回覆一樣只講那幾種
+    const selfKinds = data.value.rows.find(r => r.isSelf)?.kinds
     return [
       { when: '剛剛', text: confirmSent.value, me: true },
-      { when: '', text: buildNotifyConfirmText({ result: 'added', cfg: t, serviceHours: data.value.serviceHours, nowMs: Date.now() }) },
+      {
+        when: '',
+        text: buildNotifyConfirmText({
+          result: 'added',
+          cfg: t,
+          kinds: selfKinds?.length ? selfKinds : undefined,
+          serviceHours: data.value.serviceHours,
+          nowMs: Date.now(),
+        }),
+      },
     ]
   }
   if (previewTab.value === 'handoff') {
@@ -881,8 +1014,7 @@ const previewBubbles = computed<{ when: string, text: string, me?: boolean }[]>(
     }
     return out
   }
-  if (!t.criticalAlertPush)
-    return [{ when: '這一類關著', text: '出大事時不會另外傳，隔天的摘要裡會寫。' }]
+  // `D-143`：全帳號開關拿掉了，誰收看上面那張表——這裡永遠畫「勾了的人會收到的樣子」
   return [{
     when: '範例 · 週四 14:20',
     text: buildCriticalAlertText({ count: 1, lines: ['・機器人收不到客人訊息'], more: 0, link }),

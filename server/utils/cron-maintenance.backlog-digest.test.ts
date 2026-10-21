@@ -271,8 +271,9 @@ describe('dailyBacklogDigest 一天一則', () => {
     expect(tally).toMatchObject({ workspacesNotified: 0 })
   })
 
-  it('通知關閉 / 名單為空 → 不發也不吃名額', async () => {
-    getAiSettings.mockResolvedValue(settings(10, { enabled: false }))
+  it('沒有人勾「早上的摘要」/ 名單為空 → 不發也不吃名額', async () => {
+    // `D-143`：名單上有人，但兩位都把摘要取消了（讀出來的設定已經過 normalize，enabled 不會跟名單打架）
+    getAiSettings.mockResolvedValue(settings(10, { optOut: { Sa: ['digest'], Sb: ['digest', 'crit'] } }))
     const { db, state } = makeDb(['U1'])
     await dailyBacklogDigest(db)
     expect(pushMessage).not.toHaveBeenCalled()
@@ -283,6 +284,14 @@ describe('dailyBacklogDigest 一天一則', () => {
     await dailyBacklogDigest(b.db)
     expect(pushMessage).not.toHaveBeenCalled()
     expect(b.state[WS]).toBeUndefined()
+  })
+
+  it('`D-143`：只傳給勾了「早上的摘要」的人', async () => {
+    getAiSettings.mockResolvedValue(settings(10, { optOut: { Sb: ['digest'] } }))
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+    expect(pushMessage).toHaveBeenCalledTimes(1)
+    expect(pushMessage.mock.calls[0]![0]).toBe('Sa')
   })
 
   it('推播丟例外 → 拆掉今天的名額，下一輪重來', async () => {

@@ -30,7 +30,7 @@ import { derivePlanState, deriveUsageState, type PlanUsageState } from '~~/share
 import { monthDayText, plainChargeError } from '~~/shared/billing/dunning'
 import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
-import { normalizeLineUserId } from '~~/shared/line-notify-list'
+import { normalizeLineUserId, notifyRecipients } from '~~/shared/line-notify-list'
 import { isAutoRetryExhausted } from '~~/shared/knowledge-relearn'
 
 /**
@@ -734,6 +734,15 @@ export async function collectWorkspaceAlerts(
           return allDown
             ? { active: true, detail: '名單上的人都收不到（封鎖了官方帳號、還沒加好友，或通知一直被 LINE 退回）' }
             : { active: true }
+        }),
+        probe('handoffNobodyChecked', async () => {
+          const aiSettings = await aiSettingsPromise!
+          if (!aiSettings) throw new Error('ai settings unavailable')
+          const cfg = aiSettings.handoffNotify
+          // `D-143`：名單上有人、卻沒有人勾「客人找真人」＝客人要找真人時一樣沒有人的手機會響。
+          // 名單是空的歸上面那顆（⛔ 不兩顆一起亮）
+          if (!cfg?.lineUserIds?.length) return { active: false }
+          return notifyRecipients(cfg, 'handoff').length ? { active: false } : { active: true }
         }),
         probe('lineNotifyUndeliverable', async () => {
           const aiSettings = await aiSettingsPromise!

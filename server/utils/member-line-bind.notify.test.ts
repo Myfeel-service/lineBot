@@ -54,7 +54,14 @@ vi.mock('./ai-settings', () => ({ AI_SETTINGS_COLLECTION: 'aiSettings', invalida
 vi.mock('./line', () => ({ getUserProfile: vi.fn(), replyMessage: vi.fn() }))
 vi.mock('./line-oa-basic-id', () => ({ resolveLineOaBasicId: vi.fn() }))
 
-import { addToHandoffNotify, bindMemberLineUser, HANDOFF_NOTIFY_MAX, removeFromHandoffNotify, setMemberNotifyReceiving } from './member-line-bind'
+import {
+  addToHandoffNotify,
+  bindMemberLineUser,
+  HANDOFF_NOTIFY_MAX,
+  removeFromHandoffNotify,
+  setMemberNotifyKind,
+  setMemberNotifyReceiving,
+} from './member-line-bind'
 
 beforeEach(() => {
   store.doc = null
@@ -172,5 +179,91 @@ describe('bindMemberLineUser：換一支手機綁定', () => {
     store.doc = { handoffNotify: { enabled: true, lineUserIds: ['Usame'] } }
     await bindMemberLineUser('w', 'u1', { lineUserId: 'Usame', displayName: '', pictureUrl: '' })
     expect(store.writes).toHaveLength(0)
+  })
+})
+
+describe('每個人勾自己收哪幾種（`D-143`）', () => {
+  const lastPatch = () => store.writes.at(-1)?.p as Record<string, any>
+
+  it('在名單上的人取消一種：名單不變，只記他不收那一種', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1', 'U2'] } }
+    const r = await setMemberNotifyKind('w', 'u1', 'handoff', false)
+    expect(r).toEqual({ ok: true, result: 'changed', before: ['handoff', 'digest', 'crit'], after: ['digest', 'crit'] })
+    expect(store.txUsed).toBe(true)
+    expect(lastPatch()['handoffNotify.lineUserIds']).toEqual(['U1', 'U2'])
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({ U1: ['handoff'] })
+  })
+
+  it('三種都取消＝從名單拿掉，他勾過什麼一起清掉（⛔ 不留一個在名單上卻什麼都收不到的人）', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1', 'U2'], displayNames: { U1: '小明' }, optOut: { U1: ['handoff', 'digest'] } } }
+    const r = await setMemberNotifyKind('w', 'u1', 'crit', false)
+    expect(r).toMatchObject({ ok: true, result: 'removed', after: [] })
+    expect(lastPatch()['handoffNotify.lineUserIds']).toEqual(['U2'])
+    expect(lastPatch()['handoffNotify.displayNames']).toEqual({})
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({})
+  })
+
+  it('不在名單上的人勾一種：加進來、只收那一種', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent', lineDisplayName: '小明' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U2'] } }
+    const r = await setMemberNotifyKind('w', 'u1', 'digest', true)
+    expect(r).toMatchObject({ ok: true, result: 'added', after: ['digest'] })
+    expect(lastPatch()['handoffNotify.lineUserIds']).toEqual(['U2', 'U1'])
+    expect(lastPatch()['handoffNotify.displayNames']).toEqual({ U1: '小明' })
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({ U1: ['handoff', 'crit'] })
+    expect(lastPatch()['handoffNotify.enabled']).toBe(true)
+  })
+
+  it('名單滿了：照實回 full、什麼都不寫', async () => {
+    store.members['u1_w'] = { lineUserId: 'Unew', role: 'agent' }
+    const ids = Array.from({ length: HANDOFF_NOTIFY_MAX }, (_, i) => `U${i}`)
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ids } }
+    expect(await setMemberNotifyKind('w', 'u1', 'handoff', true)).toMatchObject({ ok: true, result: 'full' })
+    expect(store.writes).toHaveLength(0)
+  })
+
+  it('🔴 舊的「出大事」全帳號開關關著：第一次有人改勾選就攤平——其他人照舊不收出大事、開關改回 true', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1', 'U2'], criticalAlertPush: false } }
+    const r = await setMemberNotifyKind('w', 'u1', 'crit', true)
+    expect(r).toMatchObject({ ok: true, result: 'changed', before: ['handoff', 'digest'], after: ['handoff', 'digest', 'crit'] })
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({ U2: ['crit'] })
+    expect(lastPatch()['handoffNotify.criticalAlertPush']).toBe(true)
+  })
+
+  it('本來就是這樣＝already，什麼都不寫', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1'] } }
+    expect(await setMemberNotifyKind('w', 'u1', 'digest', true)).toMatchObject({ ok: true, result: 'already' })
+    expect(store.writes).toHaveLength(0)
+  })
+
+  it('觀察者勾不了新的；沒綁的要先加手機', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'viewer' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: [] } }
+    expect(await setMemberNotifyKind('w', 'u1', 'handoff', true)).toEqual({ ok: false, reason: 'viewer' })
+    store.members['u2_w'] = { role: 'agent' }
+    expect(await setMemberNotifyKind('w', 'u2', 'handoff', true)).toEqual({ ok: false, reason: 'not-bound' })
+  })
+
+  it('寫不進去＝failed（端點才不會說「勾好了」）', async () => {
+    store.members['u1_w'] = { lineUserId: 'U1', role: 'agent' }
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1'] } }
+    store.txFail = true
+    expect(await setMemberNotifyKind('w', 'u1', 'digest', false)).toMatchObject({ ok: true, result: 'failed' })
+  })
+
+  it('重新加進名單＝三種都收：以前取消過的 ⛔ 不跟著回來', async () => {
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U2'], optOut: { U1: ['handoff'], U2: ['digest'] } } }
+    expect(await addToHandoffNotify('w', 'U1', '小明')).toBe('added')
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({ U2: ['digest'] })
+  })
+
+  it('從名單拿掉時，他勾過什麼一起清掉', async () => {
+    store.doc = { handoffNotify: { enabled: true, lineUserIds: ['U1', 'U2'], optOut: { U1: ['handoff'], U2: ['digest'] } } }
+    expect(await removeFromHandoffNotify('w', 'U1')).toBe('removed')
+    expect(lastPatch()['handoffNotify.optOut']).toEqual({ U2: ['digest'] })
   })
 })

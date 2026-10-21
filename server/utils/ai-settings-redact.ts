@@ -29,8 +29,8 @@ export type AiSettingsView =
   & Partial<Pick<AiSettingsDoc, PlatformOnlyKey>>
   & {
     quota: Omit<AiSettingsDoc['quota'], 'monthlyTokenCap'> & { monthlyTokenCap?: number }
-    handoffNotify: Omit<AiSettingsDoc['handoffNotify'], 'lineUserIds' | 'displayNames'>
-      & Partial<Pick<AiSettingsDoc['handoffNotify'], 'lineUserIds' | 'displayNames'>>
+    handoffNotify: Omit<AiSettingsDoc['handoffNotify'], 'lineUserIds' | 'displayNames' | 'optOut'>
+      & Partial<Pick<AiSettingsDoc['handoffNotify'], 'lineUserIds' | 'displayNames' | 'optOut'>>
       & {
         /** 名單上有幾個人：每個角色都有，看不到名單的人也知道「有沒有人在收」 */
         recipientCount: number
@@ -43,7 +43,8 @@ export function redactAiSettingsForRole(
 ): AiSettingsView {
   const { role, isSuperAdmin } = viewer
   const { answerModel, embeddingModel, replyMaxLen, quota, handoffNotify, ...rest } = settings
-  const { lineUserIds, displayNames, ...notifyRest } = handoffNotify ?? ({} as AiSettingsDoc['handoffNotify'])
+  // optOut（`D-143` 每個人不收哪幾種）的 key 就是名單上的 LINE userId，跟名單一起藏
+  const { lineUserIds, displayNames, optOut, ...notifyRest } = handoffNotify ?? ({} as AiSettingsDoc['handoffNotify'])
   const { monthlyTokenCap, ...quotaRest } = quota ?? ({} as AiSettingsDoc['quota'])
 
   const seeNotifyList = isSuperAdmin || can(role, 'notify.self')
@@ -57,7 +58,11 @@ export function redactAiSettingsForRole(
       ...notifyRest,
       recipientCount: (lineUserIds ?? []).length,
       ...(seeNotifyList
-        ? { lineUserIds: [...(lineUserIds ?? [])], ...(displayNames ? { displayNames: { ...displayNames } } : {}) }
+        ? {
+            lineUserIds: [...(lineUserIds ?? [])],
+            ...(displayNames ? { displayNames: { ...displayNames } } : {}),
+            ...(optOut ? { optOut: { ...optOut } } : {}),
+          }
         : {}),
     },
   }

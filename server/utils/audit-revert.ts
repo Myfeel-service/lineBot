@@ -129,6 +129,12 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
       && ['lineUserIds', 'displayNames', 'enabled'].some(k => k in notifyBefore)) {
       return { ok: false, reason: '這筆動到「誰會收到 LINE 通知」，名單不給一鍵還原——請到「設定 → LINE 通知」直接開關那幾位。' }
     }
+    // `D-143`：「出大事」從全帳號一個開關改成每個人自己勾，這個開關已經不從設定寫了（寫回去也不會生效），
+    // ⛔ 不可以回「還原了」卻什麼都沒變
+    if (notifyBefore && typeof notifyBefore === 'object'
+      && ['criticalAlertPush', 'optOut'].some(k => k in notifyBefore)) {
+      return { ok: false, reason: '「出大事」現在改成每個人自己勾，這筆沒辦法一鍵還原——請到「設定 → LINE 通知」那張表的「出大事」那一欄勾回來。' }
+    }
     return { ok: true, capability: 'ai.settings.write', what: '把這幾項設定改回原本的值' }
   }
 

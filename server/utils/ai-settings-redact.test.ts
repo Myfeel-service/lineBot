@@ -25,6 +25,8 @@ function sample(): AiSettingsDoc {
       enabled: true,
       lineUserIds: ['Uaaa', 'Ubbb'],
       displayNames: { Uaaa: '小美', Ubbb: '阿明' },
+      // `D-143`：key 就是名單上的 LINE userId——觀察者那條「整份不出現 Uaaa」一起守住它
+      optOut: { Uaaa: ['digest'] },
       slaRemindMinutes: 15,
     },
   }
@@ -54,6 +56,7 @@ describe('redactAiSettingsForRole', () => {
     expect(v.quota).toEqual({ monthlyTokenCap: 3_000_000, onExceed: 'handoff_all' })
     expect(v.handoffNotify.lineUserIds).toEqual(['Uaaa', 'Ubbb'])
     expect(v.handoffNotify.displayNames).toEqual({ Uaaa: '小美', Ubbb: '阿明' })
+    expect(v.handoffNotify.optOut).toEqual({ Uaaa: ['digest'] })
   })
 
   it('客服：看得到通知名單（他自己也在收），token 上限不給（畫面本來就不顯示、也改不了）', () => {

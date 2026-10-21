@@ -5,7 +5,7 @@
 import type { Firestore } from 'firebase-admin/firestore'
 import { getDb, getFirebaseAuth } from './firebase'
 import { readAiSettingsFresh } from './ai-settings'
-import { normalizeLineUserId, notifyListHas } from '~~/shared/line-notify-list'
+import { normalizeLineUserId, notifyKindsFor, notifyListHas, type NotifyKind } from '~~/shared/line-notify-list'
 import { compareMembersForList } from '~~/shared/member-order'
 import { HANDOFF_NOTIFY_MAX, memberDocId } from './member-line-bind'
 import { readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery, type RecipientState } from './line-notify-delivery'
@@ -14,8 +14,12 @@ import { notifyLinksEnabled } from './notify-links'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
-/** 「什麼時候通知」那幾格（跟 AiSettingsDoc['handoffNotify'] 同名） */
-export const NOTIFY_TIMING_KEYS = ['mode', 'slaRemindMinutes', 'digestHour', 'festivalTips', 'weeklyInsights', 'criticalAlertPush'] as const
+/**
+ * 「什麼時候通知」那幾格（跟 AiSettingsDoc['handoffNotify'] 同名）。
+ * ⛔ 沒有 criticalAlertPush（`D-143`）：「出大事」收不收改成每個人在表格上自己勾，全帳號那個開關拿掉了——
+ *    留在這裡的話，舊畫面或小幫手還能把它關成 false＝每個人的「出大事」都被默默取消。
+ */
+export const NOTIFY_TIMING_KEYS = ['mode', 'slaRemindMinutes', 'digestHour', 'festivalTips', 'weeklyInsights'] as const
 export type NotifyTiming = Pick<AiSettingsDoc['handoffNotify'], typeof NOTIFY_TIMING_KEYS[number]>
 
 export function pickNotifyTiming(h: AiSettingsDoc['handoffNotify']): NotifyTiming {
@@ -25,7 +29,6 @@ export function pickNotifyTiming(h: AiSettingsDoc['handoffNotify']): NotifyTimin
     digestHour: h.digestHour,
     festivalTips: h.festivalTips,
     weeklyInsights: h.weeklyInsights,
-    criticalAlertPush: h.criticalAlertPush,
   }
 }
 
@@ -35,7 +38,10 @@ export interface LineNotifyRow {
   role: WorkspaceMemberRole
   isSelf: boolean
   line: { userId: string, displayName: string, pictureUrl: string } | null
+  /** 在名單上（＝至少勾了一種） */
   receiving: boolean
+  /** 勾了哪幾種（`D-143`）；不在名單上＝空陣列 */
+  kinds: NotifyKind[]
   /** 有一組還沒用掉的綁定碼（「傳連結給他」之後在等對方點）：到期時間 */
   pendingCodeExpiresAt: number | null
   /** 那組碼什麼時候產的：畫面只在剛產的 15 分鐘內頻繁重抓（連結改 24 小時之後不能整天每 15 秒抓一次） */
@@ -64,7 +70,7 @@ export interface LineNotifyPageData {
   full: boolean
   rows: LineNotifyRow[]
   /** 名單上、卻對不上任何成員的 LINE 帳號（`D-103` 拍板後不會再新增，舊資料才有）：只能拿掉 */
-  others: { lineUserId: string, displayName: string, delivery: RecipientState }[]
+  others: { lineUserId: string, displayName: string, delivery: RecipientState, kinds: NotifyKind[] }[]
   /** 送達紀錄這次讀不到（⛔ 讀不到不等於都送到了，畫面要講） */
   deliveryKnown: boolean
   timing: NotifyTiming
@@ -132,6 +138,7 @@ export async function buildLineNotifyPageData(input: {
         ? { userId: lineUserId, displayName: String(m.lineDisplayName ?? ''), pictureUrl: String(m.linePictureUrl ?? '') }
         : null,
       receiving,
+      kinds: receiving ? notifyKindsFor(settings.handoffNotify.optOut, lineUserId) : [],
       pendingCodeExpiresAt: !lineUserId && m.lineBindCode && codeExp > now ? codeExp : null,
       pendingCodeIssuedAt: !lineUserId && m.lineBindCode && codeExp > now ? (Number(m.lineBindCodeIssuedAt ?? 0) || null) : null,
       inviteSeenAt: Number(m.lineNotifyInviteFirstSeenAt ?? 0) || null,
@@ -149,6 +156,7 @@ export async function buildLineNotifyPageData(input: {
       lineUserId: id,
       displayName: String(settings.handoffNotify.displayNames?.[id] ?? '').trim(),
       delivery: recipientDeliveryState(delivery.d[id]),
+      kinds: notifyKindsFor(settings.handoffNotify.optOut, id),
     }))
 
   return {

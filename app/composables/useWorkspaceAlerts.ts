@@ -362,6 +362,17 @@ const ALERTS: AlertDefinition[] = [
     guideId: 'handoff-notify',
   },
   {
+    // `D-143`：每個人自己勾收哪幾種之後，名單上有人卻沒有人勾「客人找真人」
+    id: 'handoffNobodyChecked',
+    icon: Bell,
+    impact: '客人要找真人時，沒有人的手機會響——客人可能等很久都沒人接手。',
+    cta: '去勾一位',
+    // 勾別人那一列＝`notify.manage`（同上一顆）
+    requires: 'notify.manage',
+    route: wid => `/admin/${wid}/settings/line-notify`,
+    anchor: { selector: '[data-tour="ln-who"]', note: '在「客人找真人」那一欄，幫負責回客人的人勾起來。' },
+  },
+  {
     id: 'lineNotifyUndeliverable',
     icon: Bell,
     impact: '名單上有人封鎖了官方帳號、或通知被 LINE 退回，那幾位的手機收不到找真人與每天的摘要。',

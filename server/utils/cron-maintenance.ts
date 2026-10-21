@@ -35,6 +35,7 @@ import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { pushToNotifyList } from './line-notify-delivery'
 import { adminHomePath, createNotifyLink } from './notify-links'
 import { buildCriticalAlertText } from '~~/shared/line-notify-messages'
+import { notifyRecipients } from '~~/shared/line-notify-list'
 import type { messagingApi } from '@line/bot-sdk'
 import { WEBHOOK_EVENT_LOCKS_COLLECTION } from './webhook-dedup'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -936,7 +937,8 @@ export async function remindOverdueHandoffs(db: Firestore) {
       // getAiSettings 有 60 秒 in-memory cache；分組後每個 workspace 只讀一次
       const settings = await getAiSettings(workspaceId, db)
       const sla = settings.handoffNotify.slaRemindMinutes
-      if (!settings.handoffNotify.enabled || !sla) {
+      // 沒有人勾「客人找真人」（`D-143`）＝跟沒有名單一樣：這一批不用掃（通知函式也會直接不發）
+      if (!notifyRecipients(settings.handoffNotify, 'handoff').length || !sla) {
         skipped += candidates.length
         continue
       }
@@ -1380,7 +1382,9 @@ export async function dailyBacklogDigest(db: Firestore) {
     if (state[ws] === today) continue // 今天發過（便宜早退；真正的判斷在 claimDailyDigest）
     const settings = await getAiSettings(ws, db)
     const cfg = settings.handoffNotify
-    if (!cfg.enabled || !cfg.lineUserIds.length) continue
+    // 只傳給勾了「早上的摘要」的人（`D-143`）；沒有人勾就整則不做（連數字都不用查）
+    const to = notifyRecipients(cfg, 'digest')
+    if (!to.length) continue
     // 休假日整天不發（服務時間有開 + 勾了休息的週末／國定假日）。待辦是照著資料上的標記
     // 每天重喊一次，今天跳過不會漏；成績則由上班日那則把上一則之後的每一天加起來講（coverDays）。
     // 這裡刻意只看「休假日」不看整個勿擾時段:digestHour 是商家自己挑的,設在服務時間
@@ -1536,12 +1540,12 @@ export async function dailyBacklogDigest(db: Firestore) {
     const msg: messagingApi.TextMessage = { type: 'text', text: lines.join('\n') }
     try {
       // 每一位的成敗都記下來（`D-103`⑥）：天天「發」卻一則都沒送到的那一位，「LINE 通知」頁會變黃
-      const results = await pushToNotifyList(ws, cfg.lineUserIds, [msg], db)
+      const results = await pushToNotifyList(ws, to, [msg], db)
       results.forEach((r, i) => {
         if (r.status === 'rejected') {
           // 最常見原因：該人員不是此官方帳號好友。名單全掛也不重試（設定問題，
           // 重試只會每輪重打 LINE API），所以這裡只記 log、不拆章。
-          console.warn('[backlog-digest] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+          console.warn('[backlog-digest] push failed for', to[i], (r.reason as any)?.message ?? r.reason)
         }
       })
     }
@@ -1660,6 +1664,7 @@ export async function purgeRecycledKnowledge(db: Firestore) {
 // ⛔ 只推 critical。warning／suggestion 推了就是狼來了，久了連真的紅燈都會被忽略。
 // ⛔ 名單沿用「轉真人通知」那一份（handoffNotify.lineUserIds），不另設第二份——
 //    第二份名單＝第二個要維護的東西、第二個會忘記填的欄位，而收通知的本來就是同一批人。
+//    `D-143`（2026-10-22）起同一份名單上每個人自己勾收不收「出大事」，只傳給勾了的人。
 
 /** 一件事最多多久提醒一次：同一個紅燈天天講一次（會煩但不至於淹沒），不是每輪都講 */
 const CRITICAL_PUSH_REPEAT_MS = 24 * 3600_000
@@ -1705,8 +1710,10 @@ export async function pushCriticalAlerts(db: Firestore) {
 
     const settings = await getAiSettings(wid, db)
     const cfg = settings.handoffNotify
-    // 沒開通知、沒有人收、或商家把這顆關掉 → 不查也不推（省掉整套彙總查詢）
-    if (!cfg.enabled || !cfg.lineUserIds.length || !cfg.criticalAlertPush) continue
+    // 沒有人勾「出大事」→ 不查也不推（省掉整套彙總查詢）。`D-143` 起每個人自己勾；
+    // 舊的全帳號開關（criticalAlertPush）關著的帳號，讀出來就是每個人都沒勾，⛔ 這裡不要再看那一格
+    const to = notifyRecipients(cfg, 'crit')
+    if (!to.length) continue
 
     let items: WorkspaceAlertItem[]
     try {
@@ -1766,10 +1773,10 @@ export async function pushCriticalAlerts(db: Firestore) {
     }
     let anyDelivered = false
     try {
-      const results = await pushToNotifyList(wid, cfg.lineUserIds, [msg], db)
+      const results = await pushToNotifyList(wid, to, [msg], db)
       results.forEach((r, i) => {
         if (r.status === 'fulfilled') anyDelivered = true
-        else console.warn('[critical-alert-push] push failed for', cfg.lineUserIds[i], (r.reason as Error)?.message ?? r.reason)
+        else console.warn('[critical-alert-push] push failed for', to[i], (r.reason as Error)?.message ?? r.reason)
       })
     }
     catch (err) {

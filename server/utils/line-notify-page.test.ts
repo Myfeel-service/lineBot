@@ -88,7 +88,12 @@ describe('buildLineNotifyPageData', () => {
   it('🔴 名單上對不上任何成員的 LINE 帳號要列出來（⛔ 不可以靜靜藏起來——它一直在收客人的訊息）', async () => {
     setup()
     const d = await buildLineNotifyPageData({ workspaceId: 'W', uid: 'agent1', canManage: true })
-    expect(d.others).toEqual([{ lineUserId: 'Ustranger', displayName: '不知道是誰', delivery: { state: 'never' } }])
+    expect(d.others).toEqual([{
+      lineUserId: 'Ustranger',
+      displayName: '不知道是誰',
+      delivery: { state: 'never' },
+      kinds: ['handoff', 'digest', 'crit'],
+    }])
   })
 
   it('舊資料「名單有人但總開關關著」＝沒有人在收（⛔ 不顯示成有人收）', async () => {

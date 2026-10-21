@@ -433,3 +433,57 @@ describe('送到了沒要記下來（C-270⑥）', () => {
     expect(typeof patch.recipients.Sb.blockedAt).toBe('number')
   })
 })
+
+describe('每個人勾自己收哪幾種（`D-143`）', () => {
+  const withOptOut = (mode: 'always' | 'missed_only', optOut: Record<string, string[]>) => {
+    const s = settingsWith(mode)
+    return { ...s, handoffNotify: { ...s.handoffNotify, optOut } }
+  }
+
+  it('客人找真人只傳給勾了「客人找真人」的人', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('always', { Sb: ['handoff'] }))
+    await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-kind-1', customerName: '小明', customerMessage: '我要找人', reason: 'user_request',
+    })
+    expect(pushMessage.mock.calls.map(c => c[0])).toEqual(['Sa'])
+  })
+
+  it('沒有人勾「客人找真人」＝跟名單空的一樣：不推、missed_only 也不存檔，回 false', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('missed_only', { Sa: ['handoff'], Sb: ['handoff', 'digest'] }))
+    const sent = await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-kind-2', customerName: '小明', customerMessage: '我要找人', reason: 'user_request',
+    })
+    expect(sent).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(convSet).not.toHaveBeenCalled()
+  })
+
+  it('逾時提醒合併那則也只傳給勾了「客人找真人」的人', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('missed_only', { Sa: ['handoff'] }))
+    await notifyOverdueHandoffBatch({
+      workspaceId: 'WS',
+      slaReminderMinutes: 30,
+      items: [{ customerLineUserId: 'U-kind-3', customerName: '阿明', waitedMs: 3_600_000, reason: null }],
+    })
+    expect(pushMessage.mock.calls.map(c => c[0])).toEqual(['Sb'])
+  })
+
+  it('額度用完跟「出大事」那一欄（第 2 題）：只取消找真人的人照收，取消出大事的不收', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('always', { Sa: ['handoff'], Sb: ['crit'] }))
+    const { db } = makeAlertsDb(undefined)
+    await maybeNotifyQuotaExhausted({
+      workspaceId: 'WS', periodKey: 'p_kind', usageText: '本期 AI 回覆則數 1000/1000', action: 'handoff', db,
+    })
+    expect(pushMessage.mock.calls.map(c => c[0])).toEqual(['Sa'])
+  })
+
+  it('額度快用完同一欄；沒有人勾出大事就不發、也不記「嘗試過」', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('always', { Sa: ['crit'], Sb: ['crit'] }))
+    const { db, set } = makeAlertsDb(undefined)
+    await maybeWarnQuotaThreshold({
+      workspaceId: 'WS', ratio: 0.85, periodKey: 'p_kind', usageText: '本期 AI 回覆則數 850/1000', onExhausted: 'handoff', db,
+    })
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(set).not.toHaveBeenCalled()
+  })
+})

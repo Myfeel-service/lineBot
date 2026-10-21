@@ -19,7 +19,7 @@ const taipei = (y: number, m: number, d: number, h: number, min = 0) => Date.UTC
 const OFF = { enabled: false, start: '09:00', end: '18:00', weekendOff: false }
 const WEEKEND_OFF = { enabled: true, start: '09:00', end: '18:00', weekendOff: true }
 const cfg = (over: Partial<Parameters<typeof notifyWhatYouGetLines>[0]> = {}) => ({
-  mode: 'always' as const, slaRemindMinutes: 30, digestHour: 10, criticalAlertPush: true, ...over,
+  mode: 'always' as const, slaRemindMinutes: 30, digestHour: 10, ...over,
 })
 
 describe('digestTimeLabel', () => {
@@ -58,13 +58,17 @@ describe('notifyWhatYouGetLines：這支手機之後會收到什麼', () => {
     expect(notifyWhatYouGetLines(cfg({ mode: 'missed_only', slaRemindMinutes: 60 }), OFF)[0])
       .toBe('・客人要找真人、等超過 60 分鐘沒人接手時')
   })
-  it('週末休息才講「週末不傳」；出大事關掉就不列', () => {
+  it('週末休息才講「週末不傳」；沒勾出大事就不列', () => {
     // 國定假日沒設過（舊資料）＝跟週末一樣休（`D-137`②）
     expect(notifyWhatYouGetLines(cfg(), WEEKEND_OFF)).toContain('・每天早上 10:00 的摘要（週末與國定假日不傳）')
     expect(notifyWhatYouGetLines(cfg(), { ...WEEKEND_OFF, holidayOff: false })).toContain('・每天早上 10:00 的摘要（週末不傳）')
     expect(notifyWhatYouGetLines(cfg(), { ...WEEKEND_OFF, weekendOff: false, holidayOff: true })).toContain('・每天早上 10:00 的摘要（國定假日不傳）')
     expect(notifyWhatYouGetLines(cfg(), OFF)).toContain('・每天早上 10:00 的摘要')
-    expect(notifyWhatYouGetLines(cfg({ criticalAlertPush: false }), OFF)).not.toContain('・出大事的時候')
+    expect(notifyWhatYouGetLines(cfg(), OFF, ['handoff', 'digest'])).not.toContain('・出大事的時候')
+  })
+  it('`D-143`：只講這支手機勾了的那幾種；指派那則一律講（有勾任何一種就傳）', () => {
+    const lines = notifyWhatYouGetLines(cfg(), OFF, ['digest'])
+    expect(lines).toEqual(['・每天早上 10:00 的摘要', '・同事把客人交給你的時候'])
   })
   it('同事把客人指派給你也會收到（`H-16`）——綁好時的確認與「LINE 通知」頁都講得到', () => {
     expect(notifyWhatYouGetLines(cfg(), OFF)).toContain('・同事把客人交給你的時候')
@@ -98,6 +102,13 @@ describe('buildNotifyConfirmText：綁好之後回給手機的那一則', () => 
     expect(t).not.toContain('上班後再傳')
     const off = buildNotifyConfirmText({ result: 'added', cfg: cfg(), serviceHours: OFF, nowMs: now })
     expect(off).not.toContain('下班時段')
+  })
+  it('`D-143`：只講他勾了的那幾種——沒勾找真人就不講「下班時段不傳」，沒勾摘要就不講第一則幾點', () => {
+    const t = buildNotifyConfirmText({ result: 'already', cfg: cfg(), kinds: ['crit'], serviceHours: WEEKEND_OFF, nowMs: now })
+    expect(t).toContain('・出大事的時候')
+    expect(t).not.toContain('客人要找真人')
+    expect(t).not.toContain('下班時段不傳')
+    expect(t).not.toContain('會收到第一則')
   })
   it('🔴 名單滿了 → 照實講沒加進去，⛔ 不列「會收到什麼」', () => {
     const t = buildNotifyConfirmText({ result: 'full', cfg: cfg(), serviceHours: OFF, nowMs: now })

@@ -13,13 +13,13 @@
  */
 import { holidayOffOf, isServiceDayOff, mdw, taipeiDate, WEEKDAY_ZH, type ServiceHoursLike } from './time'
 import { waitPhrase } from './daily-digest-message'
+import { NOTIFY_KINDS, type NotifyKind } from './line-notify-list'
 
 /** 「什麼時候通知」那幾格（跟 `AiSettingsDoc['handoffNotify']` 同名，只取文案要用的） */
 export interface NotifyTimingLike {
   mode: 'always' | 'missed_only'
   slaRemindMinutes: number
   digestHour: number
-  criticalAlertPush: boolean
 }
 
 export type NotifyServiceHoursLike = ServiceHoursLike
@@ -74,13 +74,21 @@ function digestDaysOffNote(serviceHours: NotifyServiceHoursLike | null | undefin
 /**
  * 「這支手機之後會收到什麼」——綁定成功的回覆與後台的「好了」都講這幾行。
  * ⚠️ 跟真的會發生的事同一套：「只通知沒人接手的」模式下，當下不傳、等 N 分鐘沒人接才傳。
+ * `kinds`：這個人勾了哪幾種（`D-143`），只講那幾種。
  */
-export function notifyWhatYouGetLines(cfg: NotifyTimingLike, serviceHours: NotifyServiceHoursLike | null | undefined): string[] {
-  const lines = [cfg.mode === 'missed_only'
-    ? `・客人要找真人、等超過 ${cfg.slaRemindMinutes} 分鐘沒人接手時`
-    : '・客人要找真人時（馬上）']
-  lines.push(`・每天${digestTimeLabel(cfg.digestHour)} 的摘要${digestDaysOffNote(serviceHours)}`)
-  if (cfg.criticalAlertPush) lines.push('・出大事的時候')
+export function notifyWhatYouGetLines(
+  cfg: NotifyTimingLike,
+  serviceHours: NotifyServiceHoursLike | null | undefined,
+  kinds: readonly NotifyKind[] = NOTIFY_KINDS,
+): string[] {
+  const lines: string[] = []
+  if (kinds.includes('handoff')) {
+    lines.push(cfg.mode === 'missed_only'
+      ? `・客人要找真人、等超過 ${cfg.slaRemindMinutes} 分鐘沒人接手時`
+      : '・客人要找真人時（馬上）')
+  }
+  if (kinds.includes('digest')) lines.push(`・每天${digestTimeLabel(cfg.digestHour)} 的摘要${digestDaysOffNote(serviceHours)}`)
+  if (kinds.includes('crit')) lines.push('・出大事的時候')
   // `H-16`：同事在對話頁把客人指派給你（你自己按「我接手」的不傳）
   lines.push('・同事把客人交給你的時候')
   return lines
@@ -96,6 +104,8 @@ export type NotifyConfirmResult = 'added' | 'already' | 'full' | 'failed'
 export function buildNotifyConfirmText(input: {
   result: NotifyConfirmResult
   cfg: NotifyTimingLike
+  /** 這支手機勾了哪幾種（`D-143`）；沒給＝三種都收（新加進來的人） */
+  kinds?: readonly NotifyKind[]
   serviceHours: NotifyServiceHoursLike | null | undefined
   nowMs: number
   friendUnknown?: boolean
@@ -112,12 +122,15 @@ export function buildNotifyConfirmText(input: {
   }
   else {
     out.push('好了 ✓ 這支手機之後會收到：')
-    out.push(...notifyWhatYouGetLines(input.cfg, input.serviceHours))
+    const kinds = input.kinds ?? NOTIFY_KINDS
+    out.push(...notifyWhatYouGetLines(input.cfg, input.serviceHours, kinds))
     // ⚠️ 只講找真人那一則（`C-271`⑩）：勿擾時段擋的是找真人的推播；每日摘要照設定的整點發（只跳休假日）、
     //    出大事另有 9:00–21:00——原本寫「下班時段不吵你，上班後再傳」，摘要設在晚上 8 點的人每天都會被打臉。
     //    也 ⛔ 不承諾「上班後再傳」：「每次都通知」模式下班時段那一則是直接不送的
-    if (input.serviceHours?.enabled) out.push('（客人找真人的通知，下班時段不傳）')
-    out.push('', `${nextDigestPhrase(input.nowMs, input.cfg.digestHour, input.serviceHours)} 會收到第一則。`)
+    if (input.serviceHours?.enabled && kinds.includes('handoff')) out.push('（客人找真人的通知，下班時段不傳）')
+    // 沒勾摘要的人，第一則什麼時候來說不準（看客人什麼時候找真人），⛔ 不講一個不會發生的時間
+    if (kinds.includes('digest'))
+      out.push('', `${nextDigestPhrase(input.nowMs, input.cfg.digestHour, input.serviceHours)} 會收到第一則。`)
   }
   if (input.friendUnknown && input.addFriendUrl) {
     out.push('', `⚠️ 如果還沒加這個官方帳號好友，請先加好友，不然收不到通知：\n${input.addFriendUrl}`)

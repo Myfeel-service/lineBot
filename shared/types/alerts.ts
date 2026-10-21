@@ -82,6 +82,11 @@ export type WorkspaceAlertId =
    * 全部都收不到歸上一顆，⛔ 不兩顆一起亮。
    */
   | 'lineNotifyUndeliverable'
+  /**
+   * 名單上有人，但**沒有人勾「客人找真人」**（`D-143`，2026-10-22 每個人自己勾收哪幾種之後才有這種情況）。
+   * 客人要找真人時一樣沒有人的手機會響。名單是空的歸 `handoffNotifyMissing`，⛔ 不兩顆一起亮。
+   */
+  | 'handoffNobodyChecked'
   /** 客人要求找真人之後，等太久還沒有人接手 */
   | 'humanBacklog'
   /**
@@ -180,6 +185,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   // 2026-09-27 `C-270`：名單改叫「LINE 通知」（頁面在「設定 → LINE 通知」），管的不只轉真人
   handoffNotifyMissing: '沒有人會收到 LINE 通知',
   lineNotifyUndeliverable: '有人收不到 LINE 通知',
+  handoffNobodyChecked: '沒有人收「客人找真人」',
   humanBacklog: '有客人在等真人回覆',
   humanStale: '有對話接手後沒按結束',
   firstReplyBacklog: '有客人的訊息一直沒人回',
@@ -247,6 +253,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   handoffNotifyMissing: 'warning',
   // 同一份名單的「一部分」：其他人照樣收得到，客人的找真人仍然有人知道 → 跟上一顆同級
   lineNotifyUndeliverable: 'warning',
+  // 後果跟「名單上沒有人」一樣（客人找真人沒人知道）→ 同級
+  handoffNobodyChecked: 'warning',
   brokenModuleButton: 'critical',
   scriptDeadEnd: 'critical',
   scriptUnreachable: 'warning',

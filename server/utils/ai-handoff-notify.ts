@@ -1,7 +1,9 @@
 /**
  * Handoff 通知：AI / 腳本把對話轉真人時，用官方帳號推播提醒指定客服人員。
  *
- * 設定來源：aiSettings.handoffNotify（enabled + lineUserIds），畫面在「設定 → LINE 通知」（`C-270`）。
+ * 設定來源：aiSettings.handoffNotify（名單 lineUserIds＋每個人不收哪幾種 optOut），畫面在「設定 → LINE 通知」（`C-270`）。
+ * 收件人一律走 `notifyRecipients(cfg, 種類)`（`D-143`）：找真人那兩則只傳給勾了「客人找真人」的人，
+ * 額度快用完／用完跟「出大事」那一欄（`D-143` 第 2 題）。
  * 限制：收通知的人必須是此官方帳號的好友（LINE push 的先天限制）；推不出去的那一位會記下來
  * （`line-notify-delivery.ts`），那一頁那一列會變黃。文案在 `shared/line-notify-messages.ts`。
  * 同一位客人 10 分鐘內只通知一次（per-instance in-memory 節流；多實例下最壞情況
@@ -21,6 +23,7 @@ import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { capMapSize } from './bounded-cache'
+import { notifyRecipients } from '~~/shared/line-notify-list'
 
 const NOTIFY_THROTTLE_MS = 10 * 60 * 1000
 const NOTIFY_MAP_MAX_ENTRIES = 5000
@@ -62,7 +65,9 @@ export interface HandoffNotifyParams {
 export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise<boolean> {
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return false
+  // 沒有人勾「客人找真人」＝跟名單是空的一樣（`D-143`）：連 missed_only 的存檔都不必做，反正沒有人會收到
+  const to = cfg ? notifyRecipients(cfg, 'handoff') : []
+  if (!cfg || !to.length) return false
 
   // missed_only 模式：轉真人當下不推播,把通知內容存到 conversations doc;
   // 超時仍沒人接手時 remindOverdueHandoffs 會撈回來,發成一則完整的請求通知。
@@ -109,11 +114,11 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
   }
 
   // 每一位的成敗都記下來（`D-103`⑥）：封鎖／不是好友的那一位，「LINE 通知」頁那一列會變黃
-  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg])
+  const results = await pushToNotifyList(params.workspaceId, to, [msg])
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
       // 最常見原因：該人員不是此官方帳號好友
-      console.warn('[handoff-notify] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+      console.warn('[handoff-notify] push failed for', to[i], (r.reason as any)?.message ?? r.reason)
     }
   })
   // 名單上全部推播失敗（例如都不是好友）仍算「已發」：那是設定問題，
@@ -167,7 +172,8 @@ export async function notifyOverdueHandoffBatch(params: {
 
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return false
+  const to = cfg ? notifyRecipients(cfg, 'handoff') : []
+  if (!to.length) return false
   if (isServiceHoursDnd(settings?.serviceHours)) return false
 
   // 等最久的排前面：真的要先救的在第一行，被 LIST_MAX 砍掉的是最不急的那些
@@ -192,10 +198,10 @@ export async function notifyOverdueHandoffBatch(params: {
     }),
   }
 
-  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg])
+  const results = await pushToNotifyList(params.workspaceId, to, [msg])
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn('[handoff-notify] batch push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+      console.warn('[handoff-notify] batch push failed for', to[i], (r.reason as any)?.message ?? r.reason)
     }
   })
 
@@ -231,7 +237,9 @@ export async function maybeWarnQuotaThreshold(params: {
   if (params.ratio < 0.8) return
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+  // 跟「出大事」那一欄（`D-143` 第 2 題）
+  const to = cfg ? notifyRecipients(cfg, 'crit') : []
+  if (!to.length) return
 
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
@@ -250,10 +258,10 @@ export async function maybeWarnQuotaThreshold(params: {
       ? '用完後,需要 AI 回答的客人訊息會改轉真人客服(自動回應不受影響)。'
       : '用完後會改用較精簡的模型繼續回覆,品質可能略降。'}請留意用量或調整方案。`,
   }
-  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
+  const results = await pushToNotifyList(params.workspaceId, to, [msg], params.db)
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn('[quota-warn] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+      console.warn('[quota-warn] push failed for', to[i], (r.reason as any)?.message ?? r.reason)
     }
   })
   // 「這期已警告」只在至少送達一人時才記(C-89):每期一次的警報若在推播全滅的
@@ -304,7 +312,9 @@ export async function maybeNotifyQuotaExhausted(params: {
   const f = STOP_NOTICE_FIELDS[cause]
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  if (!cfg?.enabled || !cfg.lineUserIds.length) return
+  // 跟「出大事」那一欄（`D-143` 第 2 題）
+  const to = cfg ? notifyRecipients(cfg, 'crit') : []
+  if (!to.length) return
 
   const ref = params.db.collection('aiQuotaAlerts').doc(params.workspaceId)
   const snap = await ref.get()
@@ -324,10 +334,10 @@ export async function maybeNotifyQuotaExhausted(params: {
     ? `🚫 AI 先停下來了\n${params.usageText}。\n${consequence}\n${AI_CALL_CEILING_REMEDY.replace(/，/g, ',').replace(/；/g, ';')}`
     : `🚫 AI 額度已用完\n${params.usageText}。\n${consequence}\n要恢復請至後台調整方案,或等下期額度重置。`
   const msg: messagingApi.TextMessage = { type: 'text', text }
-  const results = await pushToNotifyList(params.workspaceId, cfg.lineUserIds, [msg], params.db)
+  const results = await pushToNotifyList(params.workspaceId, to, [msg], params.db)
   results.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.warn('[quota-exhausted] push failed for', cfg.lineUserIds[i], (r.reason as any)?.message ?? r.reason)
+      console.warn('[quota-exhausted] push failed for', to[i], (r.reason as any)?.message ?? r.reason)
     }
   })
   if (results.some(r => r.status === 'fulfilled')) {

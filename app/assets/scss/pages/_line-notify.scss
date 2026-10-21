@@ -88,6 +88,55 @@
   color: var(--text-muted);
 }
 
+// 「收通知」那三格的欄名（`D-143`）：名單上有人、這一種卻沒有人勾 → 欄名跟上面那條黃字同色，下面一行「沒人收」
+.ln-kind-head {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.35;
+
+  &.is-zero {
+    color: var(--el-color-warning-dark-2);
+    font-weight: 700;
+  }
+}
+
+.ln-kind-head__zero {
+  font-size: 11px;
+}
+
+// 「收通知」底下分三格之後，Element 一看到兩層欄名就**強制**加外框、每格直線、欄名灰底（`el-table--border`＋`thead.is-group`），
+// 整張表跟「成員管理」那種只有橫線的表不一樣了。蓋回原樣：只留橫線、欄名白底；「收通知」那一行底下不畫線（它只是三格的總稱）。
+// ⚠️ 要夾 `.ln-table.el-table…`：Element 的樣式載入順序在後，同權重會被蓋回去
+.ln-table.el-table--border {
+  &::before,
+  &::after,
+  .el-table__inner-wrapper::after,
+  .el-table__border-left-patch,
+  .el-table__border-right-patch {
+    display: none;
+  }
+
+  .el-table__cell {
+    border-right: none;
+  }
+
+  thead.is-group th.el-table__cell {
+    background: var(--el-table-header-bg-color);
+  }
+
+  th.el-table__cell:not(.is-leaf) {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+}
+
+// 勾選框在格子正中央：Element 的 el-checkbox 右邊預設留 30px 給文字，沒有文字時會把框擠偏
+.ln-table .ln-kind-check {
+  margin-right: 0;
+  height: auto;
+}
+
 // 每一列最右邊的「⋯」與裡面紅字的「移除這支手機」：共用 `AdminMoreMenu variant="row"`（樣式在 admin/_shared.scss）
 
 // 「LINE 手機」那一格（`D-117`：原本「LINE」「狀態」兩格併成一格）：名字＋下面一行
@@ -468,6 +517,18 @@
 .ln-when__tail {
   font-size: 13px;
   color: var(--text-primary);
+}
+
+// 「出大事時」那一段（`D-143`）：全帳號開關拿掉後只剩一行字，前面沒有方框——說明跟它一起靠左，⛔ 不再空 22px
+.ln-when__line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+
+  + .ln-when__hint {
+    margin-left: 0;
+  }
 }
 
 // 手機預覽：自己一張卡（外框、標題列跟左邊那張同一套 `.message-card`）

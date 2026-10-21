@@ -241,8 +241,9 @@ describe('嚴重異常推播', () => {
     expect(pushMessage).not.toHaveBeenCalled()
   })
 
-  it('關掉開關／沒有人收通知時，連查都不查（省掉整套彙總查詢）', async () => {
-    for (const patch of [{ criticalAlertPush: false }, { lineUserIds: [] }, { enabled: false }]) {
+  it('沒有人勾「出大事」／沒有人收通知時，連查都不查（省掉整套彙總查詢）', async () => {
+    // `D-143`：全帳號開關改成每個人自己勾；舊開關關著的帳號讀出來就是每個人都不收（normalize 已攤平成 optOut）
+    for (const patch of [{ optOut: { 'U-staff': ['crit'] } }, { lineUserIds: [] }]) {
       vi.clearAllMocks()
       stateDoc = {}
       getAiSettings.mockResolvedValue(notify(patch))
@@ -250,6 +251,14 @@ describe('嚴重異常推播', () => {
       expect(collectWorkspaceAlerts).not.toHaveBeenCalled()
       expect(pushMessage).not.toHaveBeenCalled()
     }
+  })
+
+  it('`D-143`：只傳給勾了「出大事」的人', async () => {
+    getAiSettings.mockResolvedValue(notify({ lineUserIds: ['U-a', 'U-b'], optOut: { 'U-b': ['crit'] } }))
+    collectWorkspaceAlerts.mockResolvedValue([alert('lineWebhookBroken')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushMessage).toHaveBeenCalledTimes(1)
+    expect((pushMessage.mock.calls[0] as unknown[] | undefined)?.[0]).toBe('U-a')
   })
 
   it('一小時內不重複檢查（節流擋在彙總查詢之前）', async () => {

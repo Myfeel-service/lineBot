@@ -1,19 +1,21 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { removeFromHandoffNotify, setMemberNotifyReceiving } from '~~/server/utils/member-line-bind'
+import { removeFromHandoffNotify, setMemberNotifyKind, setMemberNotifyReceiving } from '~~/server/utils/member-line-bind'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { can } from '~~/shared/permissions'
+import { isNotifyKind, NOTIFY_KIND_LABELS } from '~~/shared/line-notify-list'
 
 /**
  * PUT /api/admin/workspaces/:workspaceId/line-notify/receiving
- * body: { uid, on } —— 那一列的「收通知」開關（`C-270`）
+ * body: { uid, kind, on } —— 那一列的三格勾選之一（`D-143`：kind＝handoff／digest／crit）
+ *       { uid, on } —— 整列一起開關（`C-270` 原本的「收通知」開關；打開＝三種都收）
  *       { lineUserId, on: false } —— 拿掉名單上對不上成員的舊帳號（管理員）
  *
  * 第 3 題拍板：客服可以開關**自己**那一列；動別人要管理員（notify.manage）。
- * 關掉＝從名單拿掉、LINE 還綁著，之後打開不用再掃一次。
+ * 關掉（三種都取消）＝從名單拿掉、LINE 還綁著，之後再勾不用再掃一次。
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid: callerUid, role } = await requireCapability(event, 'notify.self')
-  const body = await readBody<{ uid?: unknown, lineUserId?: unknown, on?: unknown }>(event)
+  const body = await readBody<{ uid?: unknown, lineUserId?: unknown, on?: unknown, kind?: unknown }>(event)
   const on = body?.on === true
   const canManage = can(role, 'notify.manage')
 
@@ -43,6 +45,41 @@ export default defineEventHandler(async (event) => {
   if (!target) throw createError({ statusCode: 400, statusMessage: 'uid is required' })
   if (target !== callerUid && !canManage)
     throw createError({ statusCode: 403, statusMessage: '只能開關自己的通知；要改別人的請找管理員' })
+
+  if (body?.kind !== undefined) {
+    if (!isNotifyKind(body.kind)) throw createError({ statusCode: 400, statusMessage: '不認得這一種通知' })
+    const kind = body.kind
+    const k = await setMemberNotifyKind(workspaceId, target, kind, on)
+    if (!k.ok) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: k.reason === 'not-bound'
+          ? '這位還沒綁 LINE，要先把手機加進來'
+          : k.reason === 'viewer'
+            ? '觀察者不收 LINE 通知；要收的話先到「成員管理」把角色改成客服'
+            : '找不到這位成員',
+      })
+    }
+    if (k.result === 'full')
+      throw createError({ statusCode: 409, statusMessage: '名單滿了（最多 10 位），先把一位的三格都取消再勾' })
+    if (k.result === 'failed')
+      throw createError({ statusCode: 500, statusMessage: '存不進去，請再試一次' })
+    // 本來就是這樣＝什麼都沒變，⛔ 不寫一筆假變更（同下面整列開關的 `C-271`⑬）
+    if (k.result === 'already') return { ok: true, result: k.result, kinds: k.after }
+
+    const label = NOTIFY_KIND_LABELS[kind]
+    await writeAuditLog({
+      workspaceId,
+      uid: callerUid,
+      actor: 'human',
+      action: 'lineNotify.receiving',
+      targetId: target,
+      before: { notifyKinds: k.before.map(x => NOTIFY_KIND_LABELS[x]) },
+      after: { notifyKinds: k.after.map(x => NOTIFY_KIND_LABELS[x]) },
+      note: `${target === callerUid ? '自己' : ''}${on ? '勾了' : '取消了'}「${label}」${k.result === 'removed' ? '（三種都取消，這支手機不會再收到通知）' : ''}`,
+    })
+    return { ok: true, result: k.result, kinds: k.after }
+  }
 
   const r = await setMemberNotifyReceiving(workspaceId, target, on)
   if (!r.ok) {

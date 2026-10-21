@@ -1,5 +1,6 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 import type { KnowledgeRelearnState } from '../knowledge-relearn'
+import type { NotifyOptOut } from '../line-notify-list'
 
 /** Firestore Vector Search 的向量欄位型別（768 dim） */
 export type EmbeddingVector = FirebaseFirestore.VectorValue
@@ -421,8 +422,17 @@ export interface AiSettingsDoc {
      *
      * ⛔ 不要把 warning／suggestion 也推進來：那兩級是「建議處理」與「可以更好」，
      *    推到 LINE 就是狼來了，久了連真的紅燈也會被忽略。
+     *
+     * ⚠️ 2026-10-22 `D-143` 起這是**舊欄位**：要不要收出大事改成每個人自己勾（`optOut`），畫面上這個全帳號開關拿掉了。
+     *    存著 false 的帳號讀出來＝每個人的「出大事」都沒勾（`normalizeNotifyOptOut` 的 critOffForAll）；
+     *    第一次有人改勾選時攤平進 `optOut` 並改回 true。⛔ 送出端不要再看這一格，一律走 `notifyRecipients(cfg, 'crit')`。
      */
     criticalAlertPush: boolean
+    /**
+     * 每個人**不收**哪幾種（`D-143`）：key＝純 LINE userId，值＝`NOTIFY_KINDS` 的子集。沒記＝三種都收。
+     * ⛔ 跟名單三格同一個規矩：`setAiSettings` 不寫這一格，只經 `member-line-bind.ts` 的交易寫。
+     */
+    optOut?: NotifyOptOut
   }
   /**
    * 真人處理中、且真人最後回覆超過此分鐘數沒有後續回覆 → 自動把會話交還機器人。

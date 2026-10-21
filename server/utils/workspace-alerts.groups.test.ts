@@ -235,6 +235,31 @@ describe('handoffNotifyMissing 判定（D-36③ 放寬）', () => {
   })
 })
 
+describe('沒有人勾「客人找真人」（`D-143`）', () => {
+  async function states(handoffNotify: Record<string, unknown>) {
+    getAiSettings.mockResolvedValue(baseSettings({ handoffNotify }))
+    getLineWorkspaceCredentials.mockResolvedValue({ channelAccessToken: 'tok', channelSecret: '', defaultLiffId: '', lineBotUserId: '' })
+    const items = await collectWorkspaceAlerts(stubDb(), 'WS', { canSettings: false, canOperate: true })
+    return {
+      nobody: items.find(i => i.id === 'handoffNobodyChecked')?.state,
+      missing: items.find(i => i.id === 'handoffNotifyMissing')?.state,
+    }
+  }
+
+  it('🔴 名單上有人、卻都取消了「客人找真人」→ 亮（⛔ 不可以因為名單不是空的就說沒事）', async () => {
+    expect(await states({ enabled: true, lineUserIds: ['U1', 'U2'], optOut: { U1: ['handoff'], U2: ['handoff', 'crit'] } }))
+      .toEqual({ nobody: 'active', missing: 'clear' })
+  })
+
+  it('至少一位勾著 → 沒事', async () => {
+    expect((await states({ enabled: true, lineUserIds: ['U1', 'U2'], optOut: { U1: ['handoff'] } })).nobody).toBe('clear')
+  })
+
+  it('名單是空的 → 歸「沒有人會收到 LINE 通知」那顆，⛔ 不兩顆一起亮', async () => {
+    expect(await states({ enabled: false, lineUserIds: [] })).toEqual({ nobody: 'clear', missing: 'active' })
+  })
+})
+
 /**
  * 送不到也要講（`C-270`⑥，2026-09-27）：原本只看名單是不是空的，名單上的人都封鎖了官方帳號，
  * 小幫手也不會亮——天天照樣「發」，一則都沒送到。

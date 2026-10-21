@@ -11,7 +11,7 @@
       <h4 class="ln-invite__title">綁好了，但你的手機還沒收通知</h4>
       <p class="ln-invite__text">
         {{ notAddedFull ? '通知名單滿了（最多 10 位），請管理員關掉一位。' : '剛剛沒存進通知名單。' }}
-        到<NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="admin-inline-link">「設定 → LINE 通知」</NuxtLink>把你那一列的「收通知」打開就好。
+        到<NuxtLink :to="`/admin/${workspaceId}/settings/line-notify`" class="admin-inline-link">「設定 → LINE 通知」</NuxtLink>在你那一列勾要收的那幾種就好。
       </p>
     </template>
     <template v-else>

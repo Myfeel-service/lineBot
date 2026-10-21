@@ -87,3 +87,18 @@ describe('normalizeAiSettings：舊資料「名單有人但關著」一處收掉
     expect(normalizeAiSettings({ handoffNotify: { enabled: true, lineUserIds: [] } }).handoffNotify.enabled).toBe(false)
   })
 })
+
+describe('每個人收哪幾種（`D-143`）', () => {
+  it('🔴 舊的「出大事」全帳號開關關著 → 讀出來每個人都不收出大事（上線那天照舊）', () => {
+    const s = normalizeAiSettings({ handoffNotify: { enabled: true, lineUserIds: [U1, U2], criticalAlertPush: false, optOut: { [U1]: ['digest'] } } })
+    expect(s.handoffNotify.optOut).toEqual({ [U1]: ['digest', 'crit'], [U2]: ['crit'] })
+  })
+
+  it('🔴 存 AI 設定 ⛔ 不寫勾選、也不寫舊的出大事開關（另一台剛勾好的不會被洗回去）', async () => {
+    store.doc = { ...store.doc, handoffNotify: { ...store.doc.handoffNotify, criticalAlertPush: false, optOut: { [U1]: ['handoff'] } } }
+    await setAiSettings('W', { replyMode: 'draft' } as never)
+    const { data } = store.sets[0]!
+    expect(data.handoffNotify).not.toHaveProperty('optOut')
+    expect(data.handoffNotify).not.toHaveProperty('criticalAlertPush')
+  })
+})

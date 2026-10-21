@@ -22,7 +22,14 @@ import { createRateLimiter } from './rate-limit'
 import { getUserProfile, replyMessage } from './line'
 import { resolveLineOaBasicId } from './line-oa-basic-id'
 import { AI_SETTINGS_COLLECTION, getAiSettings, invalidateAiSettingsCache } from './ai-settings'
-import { normalizeLineUserId, notifyListHas } from '~~/shared/line-notify-list'
+import {
+  NOTIFY_KINDS,
+  normalizeLineUserId,
+  normalizeNotifyOptOut,
+  notifyKindsFor,
+  notifyListHas,
+  type NotifyKind,
+} from '~~/shared/line-notify-list'
 import { recordNotifyDelivery } from './line-notify-delivery'
 import { buildNotifyConfirmText, type NotifyConfirmResult } from '~~/shared/line-notify-messages'
 
@@ -257,6 +264,8 @@ export async function tryConsumeMemberLineBindCode(params: {
       ? buildNotifyConfirmText({
           result,
           cfg: settings.handoffNotify,
+          // 只講他真的會收到的那幾種（`D-143`：本來就在名單上的人可能取消過幾種）
+          kinds: notifyKindsFor(settings.handoffNotify.optOut, params.lineUserId),
           serviceHours: settings.serviceHours,
           nowMs: Date.now(),
           friendUnknown: !profile,
@@ -361,6 +370,8 @@ export async function addToHandoffNotify(workspaceId: string, lineUserId: string
           'handoffNotify.lineUserIds': nextIds,
           'handoffNotify.displayNames': displayNames,
           'handoffNotify.enabled': true,
+          // 新加進來＝三種都收（`D-143` 第 1 題）：他以前在名單上時取消過的，⛔ 不跟著回來（只留原本那些人的）
+          'handoffNotify.optOut': normalizeNotifyOptOut(raw?.optOut, ids),
         })
       }
       else {
@@ -447,6 +458,102 @@ export async function setMemberNotifyReceiving(workspaceId: string, uid: string,
 }
 
 /**
+ * - `changed`：還在名單上，收的種類變了；`added`：本來不在名單上，勾了一種就加進來
+ * - `removed`：三種都不勾了＝從名單拿掉；`already`：本來就是這樣（什麼都沒寫）
+ * - `full`：名單滿了沒加；`failed`：寫不進去
+ */
+export type NotifyKindResult = 'changed' | 'added' | 'removed' | 'already' | 'full' | 'failed'
+
+export type MemberNotifyKindResult =
+  | { ok: true, result: NotifyKindResult, before: NotifyKind[], after: NotifyKind[] }
+  | { ok: false, reason: 'not-member' | 'not-bound' | 'viewer' }
+
+/**
+ * 「LINE 通知」頁那一列的三格勾選（`D-143`，2026-10-22）：勾／取消一種。
+ * 權限（只能動自己／管理員動別人）由端點判斷，這裡只做事。
+ *
+ * - 名單還是同一份：三種都不勾＝從名單拿掉（LINE 還綁著，之後勾回來不用再掃一次）；
+ *   不在名單上的人勾了一種＝加進來（其他兩種先不收），滿 10 位就回 `full`。
+ * - ⚠️ 舊的全帳號「出大事」開關（criticalAlertPush）關著的帳號：這一次寫入順手**攤平**——每個人的「出大事」
+ *   寫成不收、開關改回 true。⛔ 只動這一位就好的話，他勾了出大事也收不到（舊開關還關著）。
+ * - 觀察者打不開任何一種（同 `setMemberNotifyReceiving`），舊資料裡在收的照樣可以取消。
+ */
+export async function setMemberNotifyKind(workspaceId: string, uid: string, kind: NotifyKind, on: boolean): Promise<MemberNotifyKindResult> {
+  const memberSnap = await getDb().collection('workspaceMembers').doc(memberDocId(uid, workspaceId)).get()
+  if (!memberSnap.exists) return { ok: false, reason: 'not-member' }
+  const lineUserId = normalizeLineUserId(memberSnap.data()?.lineUserId)
+  if (!lineUserId) return { ok: false, reason: 'not-bound' }
+  if (on && memberSnap.data()?.role === 'viewer') return { ok: false, reason: 'viewer' }
+  const lineDisplayName = String(memberSnap.data()?.lineDisplayName ?? '').slice(0, 40)
+
+  try {
+    const db = getDb()
+    const ref = db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId)
+    // 交易：跟加人／拿人同一份名單，同時有人掃 QR 加進來時不可以互相蓋掉
+    const out = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      const raw = snap.exists ? snap.data()?.handoffNotify : undefined
+      const ids = effectiveNotifyIds(raw)
+      const inList = notifyListHas(ids, lineUserId)
+      // 舊開關關著的帳號，讀出來就是每個人都不收出大事；下面寫回去的是這一份（＝攤平）
+      const optOut = normalizeNotifyOptOut(raw?.optOut, ids, { critOffForAll: raw?.criticalAlertPush === false })
+      const before = inList ? notifyKindsFor(optOut, lineUserId) : []
+      const after = NOTIFY_KINDS.filter(k => k === kind ? on : before.includes(k))
+      if (after.length === before.length && after.every(k => before.includes(k)))
+        return { result: 'already' as const, before, after }
+
+      const hit = (v: unknown) => normalizeLineUserId(v) === lineUserId
+      let nextIds = ids
+      const prevNames: Record<string, string> = raw?.displayNames ?? {}
+      let result: NotifyKindResult
+      if (!after.length) {
+        nextIds = ids.filter(v => !hit(v))
+        result = 'removed'
+      }
+      else if (!inList) {
+        if (ids.length >= HANDOFF_NOTIFY_MAX) return { result: 'full' as const, before, after: before }
+        nextIds = [...ids, lineUserId]
+        result = 'added'
+      }
+      else {
+        result = 'changed'
+      }
+      const displayNames: Record<string, string> = {}
+      for (const k of nextIds) if (prevNames[k]) displayNames[k] = prevNames[k]
+      if (result === 'added' && lineDisplayName) displayNames[lineUserId] = lineDisplayName
+
+      const nextOptOut = normalizeNotifyOptOut(optOut, nextIds)
+      delete nextOptOut[lineUserId]
+      const off = NOTIFY_KINDS.filter(k => !after.includes(k))
+      if (after.length && off.length) nextOptOut[lineUserId] = off
+
+      const patch = {
+        lineUserIds: nextIds,
+        displayNames,
+        optOut: nextOptOut,
+        // 攤平過了：舊的全帳號開關不再擋任何人（見上面）
+        criticalAlertPush: true,
+        ...(nextIds.length ? { enabled: true } : {}),
+      }
+      if (snap.exists) {
+        tx.update(ref, Object.fromEntries(Object.entries(patch).map(([k, v]) => [`handoffNotify.${k}`, v])))
+      }
+      else {
+        // 還沒有 AI 設定文件（新帳號）：只寫通知這幾格，其餘由 normalizeAiSettings 讀的時候補預設
+        tx.set(ref, { workspaceId, handoffNotify: patch }, { merge: true })
+      }
+      return { result, before, after }
+    })
+    if (out.result !== 'already' && out.result !== 'full') invalidateAiSettingsCache(workspaceId)
+    return { ok: true, ...out }
+  }
+  catch (e) {
+    console.error('[member-bind] set notify kind failed:', e)
+    return { ok: true, result: 'failed', before: [], after: [] }
+  }
+}
+
+/**
  * - `removed`：拿掉了；`absent`：本來就不在名單上（什麼都沒寫）
  * - `failed`：寫不進去——⛔ 呼叫端一定要看（`C-271`⑥：原本吞掉錯誤回 void，
  *   端點照樣回「拿掉了」、寫操作紀錄，那個人其實還在收別的客人的名字與原話）
@@ -475,7 +582,12 @@ export async function removeFromHandoffNotify(workspaceId: string, lineUserId: s
       for (const key of Object.keys(displayNames)) {
         if (hit(key)) delete displayNames[key]
       }
-      tx.update(ref, { 'handoffNotify.lineUserIds': next, 'handoffNotify.displayNames': displayNames })
+      tx.update(ref, {
+        'handoffNotify.lineUserIds': next,
+        'handoffNotify.displayNames': displayNames,
+        // 他勾過哪幾種一起清掉：之後再加進來是三種都收（`D-143` 第 1 題）
+        'handoffNotify.optOut': normalizeNotifyOptOut(raw?.optOut, next),
+      })
       return true
     })
     if (changed) invalidateAiSettingsCache(workspaceId)

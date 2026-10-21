@@ -61,6 +61,17 @@ describe('能不能還原', () => {
     if (!plan.ok) expect(plan.reason).toContain('舊紀錄')
   })
 
+  it('🔴 舊紀錄改的是「出大事」全帳號開關（`D-143` 拿掉了）：不給還原、講去哪勾（⛔ 寫回去不生效卻說還原了）', () => {
+    const plan = planRevert({
+      id: 'a8',
+      action: 'lineNotify.settings',
+      before: { handoffNotify: { criticalAlertPush: true } },
+      after: { handoffNotify: { criticalAlertPush: false } },
+    })
+    expect(plan.ok).toBe(false)
+    if (!plan.ok) expect(plan.reason).toContain('「出大事」那一欄')
+  })
+
   it('🔴 本質上不可逆的動作（重試學習之類）直接說做不到', () => {
     const plan = planRevert({ id: 'a3', action: 'alert-fix/knowledge-retry-index', before: null, after: null })
     expect(plan.ok).toBe(false)

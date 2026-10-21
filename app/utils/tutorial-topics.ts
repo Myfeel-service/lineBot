@@ -1758,7 +1758,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="ln-who"]',
         title: '誰會收到',
         description:
-          '客人要找真人、每天早上的摘要，會用 LINE 傳到這裡每一列的手機。'
+          // `D-143`：每個人勾自己收哪幾種（原本一個「收通知」開關、開了就全收）
+          '客人要找真人、每天早上的摘要、出大事，會用 LINE 傳到這裡每一列的手機，<strong>每個人勾自己要收哪幾種</strong>。'
           + '還沒加進來的，按「<strong>把我的手機加進來</strong>」<strong>用手機掃一下</strong>就好；'
           // `D-117`：「狀態」那一欄併進「LINE 手機」，收不到的原因寫在名字下面那一行
           + '收不到的人，LINE 名字下面那一行會變黃、寫原因。',
