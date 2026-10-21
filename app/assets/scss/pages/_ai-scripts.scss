@@ -858,3 +858,505 @@
     line-height: 1.4;
   }
 }
+
+/* ═══ `D-138`④ 改版：左邊設定、右邊試試看、問答清單、起點選擇、成效卡 ═══ */
+
+/* 左右兩欄：編輯區不夠寬時試試看自己換到下面（flex-wrap，不看視窗寬度——
+   會擠到的是編輯區，受側欄寬度、拖曳分隔線影響，同 08-09 @container 那次的教訓）。
+   ⛔ 右邊不吸頂、不自己捲：一頁只留一條捲軸。 */
+.scripts-workspace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.scripts-main {
+  flex: 999 1 480px;
+  min-width: 0;
+
+  /* 卡片之間的距離交給 admin-panel-stack，這裡的卡不用再多一層下邊距 */
+  .scripts-section-card {
+    margin-bottom: 0;
+  }
+}
+
+.scripts-side {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+
+/* 標題列的開關（從「基本設定」卡搬上來） */
+.scripts-header-switch {
+  margin-right: 8px;
+}
+
+.scripts-header-state {
+  align-self: center;
+  margin-right: 8px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 「什麼時候開始」三選一：字比較長，窄的時候整排換行而不是擠成一團 */
+.scripts-trigger-modes {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* ── 右邊：試試看 ── */
+.scripts-try {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 10px;
+  background: var(--el-bg-color);
+
+  &__head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  /* 「重來」放標題列右邊：輸入那一列只留打字＋送出，窄的時候不會擠到第二行 */
+  &__reset {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--brand-green-text);
+    cursor: pointer;
+  }
+
+  &__chat {
+    min-height: 220px;
+  }
+
+  /* 第一句的判斷結果：會不會走這一條、不會的話走去哪 */
+  &__verdict {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    align-items: center;
+
+    &.is-hit {
+      background: var(--el-color-success-light-9);
+      color: var(--el-color-success-dark-2);
+    }
+    &.is-miss {
+      background: var(--el-fill-color);
+      color: var(--el-text-color-regular);
+    }
+    &.is-warn {
+      background: var(--el-color-warning-light-9);
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  &__assume {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--brand-green-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  /* 客人傳的圖片（試跑裡用一塊灰框代表） */
+  &__image {
+    width: 88px;
+    height: 110px;
+    border-radius: 10px;
+    border: 1px solid var(--el-border-color);
+    background: var(--el-fill-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  .scripts-sim-input {
+    flex-wrap: wrap;
+
+    .el-input {
+      flex: 1 1 160px;
+    }
+  }
+}
+
+/* ── 問答清單：一題一列 ── */
+.scripts-q {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+
+  &.is-focused {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
+  }
+
+  &__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__num {
+    flex: 0 0 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--brand-green-wash);
+    color: var(--brand-green-text);
+    font-size: 13px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__field {
+    flex: 0 1 200px;
+  }
+
+  &__format {
+    flex: 0 1 240px;
+  }
+
+  &__kind {
+    font-size: 14px;
+  }
+
+  &__remove {
+    margin-left: auto;
+  }
+
+  &__routes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  /* 一條路一列：「答了 →」「客人說沒有 →」「按鈕 →」。窄的時候整組換行，箭頭跟著字走不落單 */
+  &__route {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+  }
+
+  &__route-label {
+    font-size: 13px;
+    color: var(--el-text-color-regular);
+    white-space: nowrap;
+  }
+
+  /* 「客人說沒有 →」那一列要塞得下：標籤＋按鈕字＋前往＋✕（編輯區約 560px 時 ✕ 不掉到下一行） */
+  &__target {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  &__button-label {
+    flex: 0 1 170px;
+    min-width: 120px;
+  }
+
+  &__tags {
+    flex: 1 1 260px;
+    min-width: 0;
+  }
+
+  &__note {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 卡片底下那排「＋ 再問一題」等等 */
+  &__add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+
+    .scripts-skip-add {
+      width: auto;
+    }
+  }
+}
+
+/* ── 成效卡 ── */
+.scripts-insight {
+  &__empty,
+  &__note {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.6;
+  }
+
+  &__total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 10px;
+    font-size: 14px;
+    color: var(--el-text-color-regular);
+
+    &.is-warn .scripts-insight__num {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  &__num {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--el-text-color-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__detail {
+    margin-left: auto;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__stops {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__stops-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-regular);
+  }
+
+  /* 一題一列：題名｜停下來幾位｜為什麼｜看是誰 */
+  &__row {
+    display: grid;
+    grid-template-columns: minmax(120px, 1.2fr) 56px minmax(0, 2fr) auto;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+
+    &.is-hot {
+      background: var(--el-color-warning-light-9);
+      color: var(--el-text-color-regular);
+    }
+  }
+
+  &__count {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+
+    .is-hot & {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  &__toggle {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--brand-green-text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  &__who {
+    grid-column: 1 / -1;
+    margin: 4px 0 0;
+    padding: 0 0 0 4px;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    li {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      align-items: baseline;
+    }
+  }
+}
+
+/* ── 「新增」的起點選擇（放在空狀態裡：空狀態本身是置中排版，這一塊要靠左、有寬度上限） ── */
+/* 起點那一頁比空狀態高：從上面排、捲得到（置中的話矮螢幕上半截會被切掉） */
+.split-empty-state:has(.scripts-starter) {
+  justify-content: flex-start;
+  overflow-y: auto;
+}
+
+.scripts-starter {
+  width: 100%;
+  max-width: 880px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  text-align: left;
+  color: var(--el-text-color-regular);
+
+  &__title {
+    margin: 0;
+    font-size: 18px;
+    color: var(--el-text-color-primary);
+  }
+
+  &__lede {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+
+  &__card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 180px;
+    padding: 16px;
+    border: 1px solid var(--el-border-color);
+    border-radius: 10px;
+    background: var(--el-bg-color);
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+
+    b {
+      font-size: 15px;
+      color: var(--el-text-color-primary);
+    }
+
+    &:hover {
+      border-color: var(--el-color-primary);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    &.is-main {
+      border: 2px solid var(--el-color-primary);
+    }
+  }
+
+  &__badge {
+    align-self: flex-start;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: var(--brand-green-wash);
+    color: var(--brand-green-text);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  &__desc {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  &__eg {
+    margin-top: auto;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+
+    &.is-unset {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  &__kb {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color-lighter);
+    font-size: 13px;
+    line-height: 1.6;
+
+    a {
+      color: var(--brand-green-text);
+      white-space: nowrap;
+    }
+  }
+
+  &__ai {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__ai-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  &__ai-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .el-input {
+      flex: 1 1 320px;
+    }
+  }
+
+  &__more {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    font-size: 13px;
+  }
+
+  &__tpl {
+    border: 0;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: var(--brand-green-text);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  &__sep {
+    color: var(--el-border-color);
+  }
+}

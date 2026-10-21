@@ -63,3 +63,29 @@ describe('客人資料變數：存的格式 ↔ 輸入框裡的膠囊（`D-128`�
     expect(variableTokenRanges(undefined as unknown as string)).toEqual([])
   })
 })
+
+describe('自動回應的常用欄位：膠囊上講中文、存的照舊（`D-138`④）', () => {
+  const ORDER = `${VAR_TOKEN_EDGE}訂單編號${VAR_TOKEN_EDGE}`
+
+  it('{{order_id}} 顯示成「訂單編號」，換回來是原樣（不露出 order_id）', () => {
+    const stored = '已收到您的訂單 {{order_id}}，電話 {{phone}}'
+    const display = toDisplayText(stored, 'script')
+    expect(display).toBe(`已收到您的訂單 ${ORDER}，電話 ${VAR_TOKEN_EDGE}電話${VAR_TOKEN_EDGE}`)
+    expect(display).not.toContain('order_id')
+    expect(toStoredText(display, 'script', ['order_id', 'phone'])).toBe(stored)
+  })
+
+  it('自己打［訂單編號］也算（這一頁收得到 order_id 時）', () => {
+    expect(toStoredText('編號是［訂單編號］', 'script', ['order_id'])).toBe('編號是{{order_id}}')
+  })
+
+  it('⛔ 店家自己把欄位取名叫「訂單編號」（中文名）→ 換回它自己，不被當成 order_id', () => {
+    const stored = '已收到 {{訂單編號}}'
+    const display = toDisplayText(stored, 'script')
+    expect(toStoredText(display, 'script', ['訂單編號'])).toBe(stored)
+  })
+
+  it('⛔ 模組／推播（send 模式）不換：那邊送出端只認英文 key，照舊顯示欄位名', () => {
+    expect(toDisplayText('{{order_id}}')).toBe(`${VAR_TOKEN_EDGE}order_id${VAR_TOKEN_EDGE}`)
+  })
+})

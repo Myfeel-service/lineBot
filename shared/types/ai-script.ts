@@ -310,6 +310,16 @@ export interface ScriptRun {
   expiresAtMs: number
 }
 
+/**
+ * 自動回應頁「試試看」問後端「這句會走哪一條」的答案（`D-138`，server/utils/script-try.ts）。
+ * isDraft＝走的就是編輯中的這一條；keyword＝因為含哪個字直接接（AI 判斷的是空字串）。
+ */
+export type ScriptTryResult =
+  | { kind: 'script'; scriptId: string; name: string; via: 'keyword' | 'meaning'; keyword: string; isDraft: boolean }
+  | { kind: 'sensitive'; topic: string }
+  | { kind: 'orderInfoAsk' }
+  | { kind: 'ai'; reason: 'ship' | 'none'; aiReplies: boolean }
+
 // ═══════════════════════════════════════════════════════════════════
 //  Defaults & validators
 // ═══════════════════════════════════════════════════════════════════

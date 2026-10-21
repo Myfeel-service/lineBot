@@ -18,13 +18,7 @@ import { shipTimingGoesToAi } from './handler'
 import { messageScripts, pickScriptByKeyword, routeCandidates } from './script-match'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
 import { isOrderInfoOnly } from '~~/shared/order-info-only'
-import type { ScriptDoc } from '~~/shared/types/ai-script'
-
-export type ScriptTryResult =
-  | { kind: 'script'; scriptId: string; name: string; via: 'keyword' | 'meaning'; keyword: string; isDraft: boolean }
-  | { kind: 'sensitive'; topic: string }
-  | { kind: 'orderInfoAsk' }
-  | { kind: 'ai'; reason: 'ship' | 'none'; aiReplies: boolean }
+import type { ScriptDoc, ScriptTryResult } from '~~/shared/types/ai-script'
 
 type ScriptRow = ScriptDoc & { id: string }
 

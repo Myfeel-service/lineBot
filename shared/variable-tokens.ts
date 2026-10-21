@@ -43,14 +43,27 @@ const BUILTIN_LABELS: Record<string, string> = {
 /** 名稱比對用：不換行空白當成一般空白、去掉空白 */
 const normLabel = (s: string) => s.replace(/[\s  ]+/g, '').toLowerCase()
 
+/**
+ * 自動回應「這一題問的是」常用欄位的中文名（`D-138`④）：膠囊、選單、流程圖都講「訂單編號」，不露出 order_id。
+ * 存的格式不變（`{{order_id}}`），只有顯示換字。
+ * ⛔ 只在 script 模式：模組／推播的變數送出端只認英文 key，那邊照舊。
+ */
+export const SCRIPT_PRESET_FIELD_LABELS: Readonly<Record<string, string>> = {
+  order_id: '訂單編號',
+  name: '姓名',
+  phone: '電話',
+  email: 'Email',
+  address: '地址',
+}
+
 /** 這個變數在膠囊上顯示的字 */
-export function variableLabel(key: string): string {
-  return BUILTIN_LABELS[key] ?? key
+export function variableLabel(key: string, mode: VariableKeyMode = 'send'): string {
+  return BUILTIN_LABELS[key] ?? (mode === 'script' ? SCRIPT_PRESET_FIELD_LABELS[key] : undefined) ?? key
 }
 
 /** 一顆膠囊的顯示用字（插入按鈕插進輸入框的就是這一段） */
-export function displayTokenFor(key: string): string {
-  return `${VAR_TOKEN_EDGE}${variableLabel(key)}${VAR_TOKEN_EDGE}`
+export function displayTokenFor(key: string, mode: VariableKeyMode = 'send'): string {
+  return `${VAR_TOKEN_EDGE}${variableLabel(key, mode)}${VAR_TOKEN_EDGE}`
 }
 
 /**
@@ -64,18 +77,28 @@ export const DISPLAY_NAME_VARIABLE_OPTION = {
   token: displayTokenFor('displayName'),
 } as const
 
-/** 膠囊上的字 → 變數名（不認得＝null） */
-function keyForLabel(label: string, mode: VariableKeyMode): string | null {
+/**
+ * 膠囊上的字 → 變數名（不認得＝null）。
+ * known＝這一頁收集得到的欄位：店家自己把欄位取名叫「訂單編號」（中文名）時換回它自己，
+ * 不要被當成常用欄位的 order_id（同一份流程兩種都有的話分不出來，實務上沒有人這樣設）。
+ */
+function keyForLabel(label: string, mode: VariableKeyMode, known?: readonly string[]): string | null {
   const n = normLabel(label)
   for (const [key, l] of Object.entries(BUILTIN_LABELS)) if (normLabel(l) === n) return key
   const raw = label.replace(/[  ]/g, ' ').trim()
+  if (mode === 'script') {
+    if (known?.includes(raw)) return raw
+    // 只有這一頁真的收得到那個常用欄位才換回英文 key；不知道收得到什麼（沒給 known）就照字面
+    const preset = Object.entries(SCRIPT_PRESET_FIELD_LABELS).find(([, l]) => normLabel(l) === n)?.[0]
+    if (preset && known?.includes(preset)) return preset
+  }
   return new RegExp(`^${keyPattern(mode)}$`).test(raw) ? raw : null
 }
 
 /** 存的格式 → 顯示用的字（`{{displayName}}` → 膠囊）。不是字串的照原樣回（表單初始值可能是 undefined） */
 export function toDisplayText(stored: string, mode: VariableKeyMode = 'send'): string {
   if (typeof stored !== 'string' || !stored.includes('{{')) return stored
-  return stored.replace(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'), (_m, key: string) => displayTokenFor(key))
+  return stored.replace(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'), (_m, key: string) => displayTokenFor(key, mode))
 }
 
 /**
@@ -88,7 +111,7 @@ export function toStoredText(display: string, mode: VariableKeyMode = 'send', ex
   // ① 膠囊（插入按鈕插的、或從別的框貼過來的）
   if (out.includes(VAR_TOKEN_EDGE)) {
     out = out.replace(/ ([^ \n]{1,60}) /g, (m, label: string) => {
-      const key = keyForLabel(label, mode)
+      const key = keyForLabel(label, mode, extraKeys)
       return key ? `{{${key}}}` : m
     })
     // 刪掉一半的膠囊（選一段字剪掉）留下的邊界字元：拿掉，剩下的字當一般文字
@@ -98,7 +121,7 @@ export function toStoredText(display: string, mode: VariableKeyMode = 'send', ex
   if (/[［\[]/.test(out)) {
     const known = new Set([...Object.keys(BUILTIN_LABELS), ...extraKeys])
     out = out.replace(/[［\[]([^［］\[\]\n]{1,60})[］\]]/g, (m, label: string) => {
-      const key = keyForLabel(label, mode)
+      const key = keyForLabel(label, mode, extraKeys)
       return key && known.has(key) ? `{{${key}}}` : m
     })
   }

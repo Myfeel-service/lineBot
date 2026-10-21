@@ -3,7 +3,8 @@
     <!-- ── Sidebar Header ── -->
     <template #sidebar-header>
       <span class="split-sidebar-title">自動回應<AdminPageHelpButton :topics="['ai-scripts']" /></span>
-      <el-button v-if="canEditScripts" :icon="Plus" type="primary" size="small" data-tour="scr-new" @click="openCreate">新增</el-button>
+      <!-- `D-138`④：「新增」先挑起點（三種＋一句話描述＋範本），不再直接給一張空白表單 -->
+      <el-button v-if="canEditScripts" :icon="Plus" type="primary" size="small" data-tour="scr-new" @click="openStarter">新增</el-button>
     </template>
 
     <!-- ── Sidebar List ── -->
@@ -40,7 +41,7 @@
         <div v-if="!messageScripts.length" class="split-sidebar-empty">
           <span>還沒有別的自動回應</span>
           <p class="text-xs text-muted">建一條：客人說了某句話，就自動回一段，或一步步問他資料</p>
-          <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openCreate">立即新增</el-button>
+          <el-button v-if="canEditScripts" size="small" type="primary" plain @click="openStarter">立即新增</el-button>
         </div>
         <AdminSplitListItem
           v-for="script in messageScripts"
@@ -51,7 +52,7 @@
           title-row-chip
           :chip-text="script.enabled ? '啟用' : '停用'"
           :chip-tone="script.enabled ? 'success' : 'neutral'"
-          :meta-text="triggerSummary(script)"
+          :meta-text="listMeta(script)"
           :meta-truncate="true"
           :data-agent-target="script.id"
           @select="selectScript(script)"
@@ -64,65 +65,49 @@
 
     <!-- ── Empty State ── -->
     <template #editor-empty>
-      <el-icon class="empty-icon"><Operation /></el-icon>
-      <h3>選擇一條自動回應開始{{ canEditScripts ? '編輯' : '檢視' }}</h3>
-      <template v-if="canEditScripts">
-        <div class="scripts-ai-generate" data-tour="scr-ai-gen">
-          <span class="scripts-ai-generate-label">
-            <el-icon><MagicStick /></el-icon> 用一句話描述，AI 幫你搭草稿
-          </span>
-          <el-input
-            v-model="aiGenDesc"
-            type="textarea"
-            :rows="2"
-            maxlength="500"
-            placeholder="例：客人要退貨時，先問訂單編號和退貨原因，再請專員處理"
-            @keydown.enter.exact.prevent="generateFromAi"
-          />
-          <div class="scripts-ai-generate-actions">
-            <span class="text-xs text-muted">生成後會先進編輯器讓你檢查，按「建立自動回應」才會存檔</span>
-            <el-button type="primary" :loading="aiGenerating" :disabled="!aiGenDesc.trim()" @click="generateFromAi">
-              {{ aiGenerating ? 'AI 生成中…' : 'AI 生成草稿' }}
-            </el-button>
-          </div>
-        </div>
-        <p>從範本快速建立，或點「從空白開始」自己組</p>
-        <div class="scripts-template-gallery" data-tour="scr-templates">
-          <button
-            v-for="tpl in scriptTemplates"
-            :key="tpl.key"
-            type="button"
-            class="scripts-template-card"
-            @click="createFromTemplate(tpl)"
-          >
-            <span class="scripts-template-card__title">{{ tpl.label }}</span>
-            <span class="scripts-template-card__desc">{{ tpl.description }}</span>
-          </button>
-        </div>
-        <el-button text @click="openCreate">從空白開始</el-button>
+      <!-- 什麼都沒選＝新增的起點：範本與「AI 搭草稿」不再只在這裡（以前點過任何一條就要「新增 → 取消」才找得到） -->
+      <AdminScriptStarter
+        v-if="canEditScripts"
+        ref="starterEl"
+        heading="新增自動回應：先挑一個起點"
+        :follow-set="Boolean(followScript)"
+        :templates="starterTemplates"
+        :generating="aiGenerating"
+        @start="startFrom"
+        @follow="onFollowRowSelect"
+        @template="createFromTemplate"
+        @generate="generateFromAi"
+      />
+      <template v-else>
+        <el-icon class="empty-icon"><Operation /></el-icon>
+        <h3>選擇一條自動回應開始檢視</h3>
       </template>
     </template>
 
     <!-- ── Editor Header ── -->
     <template #editor-header>
+      <!-- `D-138`④：名稱選填——沒填就用客人會講的第一句（以前必填、擋存檔，一句話的設定也要先想名字） -->
       <AdminEditorHeaderTitle
         v-if="canEditScripts"
         v-model="form.name"
-        field-label="流程名稱"
+        field-label="名稱"
         create-prefix="新增自動回應："
-        placeholder="例：訂單查詢、退換貨流程"
-        caption="為這條情境流程取個名"
+        :placeholder="namePlaceholder"
+        caption="選填，沒填就用客人會講的第一句"
         :is-creating="isCreating"
         @enter="submitForm"
       />
       <!-- `G-107`：存不了的人名稱只給看（同知識庫頁資料名稱的做法） -->
       <div v-else class="admin-flex-1">
-        <AdminFieldLabel text="流程名稱" tight />
+        <AdminFieldLabel text="名稱" tight />
         <div class="admin-title-row">
           <span class="split-editor-title">{{ form.name || '(未命名)' }}</span>
         </div>
       </div>
       <div class="flex gap-2 admin-header-actions">
+        <!-- 開關搬到標題列（`D-138`④）：以前在「基本設定」卡裡、排在內容上面 -->
+        <el-switch v-if="canEditScripts" v-model="form.enabled" class="scripts-header-switch" active-text="啟用" inactive-text="停用" />
+        <span v-else class="scripts-header-state">{{ form.enabled ? '啟用中' : '停用' }}</span>
         <el-button @click="cancelEdit">{{ canEditScripts ? '取消' : '關閉' }}</el-button>
         <el-button v-if="canEditScripts" type="primary" :loading="saving" data-tour="scr-save" @click="submitForm">
           {{ isCreating ? '建立自動回應' : '儲存變更' }}
@@ -143,19 +128,19 @@
 
     <!-- ── Editor Body ── -->
     <template #editor-body>
-      <div class="ai-scripts-body admin-panel-stack">
-        <!--
-          健康狀態 + 流程圖：吸頂常駐。刻意不放進 .message-card——那個共用卡為了裁切圓角
-          設了 overflow:hidden，裡面的 sticky 會直接失效。
-          這兩件事都是「編到第 5 個步驟時才真的需要」，捲走了等於在需要它的時候看不到。
-        -->
-        <div class="scripts-overview">
+      <!--
+        `D-138`④：左邊設定、右邊「試試看」常駐（編輯區不夠寬時試試看排到下面，用 container query 不用 @media）。
+        ⛔ 一頁只留一條捲軸：右邊不吸頂、不自己捲（08-09 老闆回報過「上面一塊自己捲、下面又捲一次」）。
+      -->
+      <div class="ai-scripts-body scripts-workspace">
+        <div class="scripts-main admin-panel-stack">
           <!--
             即時檢查：三件事疊在同一條線上才敢亮綠燈——
             ① 接線合法（擋存檔，沿用後端同一套 validateScriptDoc）
             ② 每一題走得完（findStuckCollects：問代碼類資料又沒退路＝客人被無限重問）
-            ③ 這條腳本輪得到（findUnreachableScripts：撞到敏感情境詞或被別條腳本包住會無聲失效）
+            ③ 這條輪得到（findUnreachableScripts：撞到敏感情境詞或被別條包住會無聲失效）
             只驗①的綠燈會保證它沒檢查過的事——正式站的「查詢訂單」接線全對，客人卻走不出去。
+            清單模式沒問題時不亮綠燈那一列：照順序問的設定沒有接線可以錯，那一句只是多一行字。
           -->
           <div v-if="flowIssue" class="scripts-flow-status is-error">
             <el-icon><CircleCloseFilled /></el-icon>
@@ -166,14 +151,382 @@
             <span>{{ w.text }}</span>
             <el-button v-if="w.nodeId" size="small" text type="primary" class="scripts-flow-status-action" @click="focusStep(w.nodeId)">去看這一題</el-button>
           </div>
-          <div v-if="!flowIssue && !flowWarnings.length" class="scripts-flow-status is-ok">
+          <div v-if="!flowIssue && !flowWarnings.length && !qList" class="scripts-flow-status is-ok">
             <el-icon><CircleCheckFilled /></el-icon>
             <span>{{ allClearText }}</span>
           </div>
 
-          <!-- 流程圖：即時把整條流程畫出來，分支往內縮一層、一眼看懂走向。
-               一步就結束的設定沒有「流向」可看，畫出來只是兩個框，不顯示。 -->
-          <div v-if="flowRows.length && !isSimpleMode" class="scripts-flow-map">
+          <!-- 成效：打開就先看到它有沒有在幫忙、沒走完的停在哪一題（`D-138`） -->
+          <AdminScriptInsightCard
+            v-if="selectedScript && !isCreating"
+            :key="selectedScript.id"
+            :script-id="selectedScript.id"
+            :starts="selectedScript.stats?.starts ?? 0"
+            :completions="selectedScript.stats?.completions ?? 0"
+            :asks-questions="asksQuestions"
+            :question-labels="questionLabels"
+          />
+
+          <!--
+            `G-107`：沒有 scripts.write 的人（觀察者）以前每一格都改得動、底下卻沒有儲存鈕，切走還會跳「未儲存」。
+            編輯區包進 el-form 用 disabled 當唯讀（同 AI 設定頁）；純動作的鈕另外用 v-if 拿掉。
+            ⛔ 右邊「試試看」刻意不包：那是純預覽、不存任何東西，觀察者也該能用。
+          -->
+          <el-form :disabled="!canEditScripts" class="admin-panel-stack" @submit.prevent>
+            <!-- ── 什麼時候開始（兩種編法共用）── -->
+            <section
+              v-if="triggerNode"
+              class="message-card scripts-section-card"
+              :class="{ 'is-focused': highlightStep === triggerNode.id }"
+              :data-node-id="triggerNode.id"
+            >
+              <div class="message-card-header">
+                <div class="card-header-main">
+                  <span class="section-title">什麼時候開始</span>
+                </div>
+              </div>
+              <div class="card-section-stack">
+                <!-- scr-trigger-mode：導覽用這一格當「編輯器已經開著」的判斷，開著就不再幫他點「新增」 -->
+                <div class="admin-field-group" data-tour="scr-trigger-mode">
+                  <el-radio-group :model-value="triggerUiMode(triggerNode)" class="scripts-trigger-modes" @change="setTriggerMode(triggerNode, $event)">
+                    <el-radio-button value="semantic">客人在問這類事（AI 判斷）</el-radio-button>
+                    <el-radio-button value="keyword">客人打特定的字</el-radio-button>
+                    <el-radio-button value="follow">客人加好友時</el-radio-button>
+                  </el-radio-group>
+                </div>
+
+                <template v-if="triggerUiMode(triggerNode) === 'follow'">
+                  <p class="scripts-section-hint">
+                    客人把這個官方帳號加為好友（含封鎖後再解除）的那一刻就會走這一條，不用打任何字。一個帳號只能有一條這樣設定的。
+                  </p>
+                  <!-- 與 LINE 內建歡迎訊息打對台：兩邊都開＝客人一加好友連收兩份 -->
+                  <el-alert
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    title="LINE 內建的「加入好友的歡迎訊息」記得關掉"
+                    description="LINE 官方帳號後台（LINE Official Account Manager）本身也有一則內建的歡迎訊息，兩邊都開的話，客人一加好友會連收兩份。請到那個後台把「加入好友的歡迎訊息」關閉，只留這一條。"
+                  />
+                </template>
+
+                <template v-else-if="triggerUiMode(triggerNode) === 'semantic'">
+                  <div class="admin-field-group" data-tour="scr-meaning">
+                    <AdminFieldLabel text="客人會這樣講（一行一句）" tight />
+                    <el-input
+                      :model-value="(triggerNode.examples ?? []).join('\n')"
+                      type="textarea"
+                      :rows="3"
+                      placeholder="例：&#10;我想查訂單&#10;我的訂單到哪了"
+                      @update:model-value="updateExamples(triggerNode, $event)"
+                    />
+                    <p class="scripts-section-hint">意思相近 AI 就會接，不用列出所有講法；3～5 句不同說法就夠（最多 {{ MAX_TRIGGER_EXAMPLES }} 句）。</p>
+                  </div>
+                  <!--
+                    `C-363`⑩：「看意思」的也可以有關鍵字（含那個字就直接接、不等 AI），以前畫面上看不到——
+                    MYFEEL「查詢訂單」藏著「訂單／查詢／進度」，「請幫我保留訂單」就被接走。現在攤開來、刪得掉。
+                  -->
+                  <div v-if="semanticKeywordsOpen(triggerNode)" class="admin-field-group">
+                    <AdminFieldLabel text="含這些字就直接接，不等 AI 判斷" tight />
+                    <el-input
+                      :model-value="triggerNode.keywords.join('，')"
+                      placeholder="例：查訂單，訂單進度（用逗號或空白分隔）"
+                      @update:model-value="updateKeywords(triggerNode, $event)"
+                    />
+                    <p class="scripts-section-hint">訊息裡只要有其中一個字就接走。接到不相干的訊息（例：「請幫我保留訂單」含「訂單」）就把那個字刪掉，交給 AI 看意思。</p>
+                    <el-alert
+                      v-if="riskyKeywordsOf(triggerNode).length"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                      :title="`「${riskyKeywordsOf(triggerNode).join('、')}」太常見了，會攔到很多不相關的訊息`"
+                      description="建議改成這一條專屬的具體詞（兩個字以上），或整格清空、全部交給 AI 看意思。"
+                    />
+                  </div>
+                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="openSemanticKeywords">
+                    ＋ 含某些字就直接接（不等 AI 判斷）
+                  </button>
+
+                  <div v-if="excludesOpen(triggerNode)" class="admin-field-group">
+                    <AdminFieldLabel text="這些交給 AI 回答，不要接（一行一句）" tight />
+                    <el-input
+                      :model-value="(triggerNode.excludes ?? []).join('\n')"
+                      type="textarea"
+                      :rows="2"
+                      placeholder="例：&#10;什麼時候出貨&#10;何時會收到貨"
+                      @update:model-value="updateExcludes(triggerNode, $event)"
+                    />
+                    <p class="scripts-section-hint">意思一樣的不走這一條、交給 AI 回答。設了之後，就算含上面的字，也會先讓 AI 看過意思再決定。</p>
+                  </div>
+                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="openExcludes">
+                    ＋ 有些講法不要接（交給 AI 回答）
+                  </button>
+                </template>
+
+                <template v-else>
+                  <div class="admin-field-group" data-tour="scr-match">
+                    <AdminFieldLabel text="怎麼比對" tight />
+                    <el-select :model-value="triggerNode.keywordMatch ?? 'any'" class="control-full" @change="triggerNode.keywordMatch = $event">
+                      <el-option v-for="m in KEYWORD_MATCH_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
+                    </el-select>
+                    <!-- 這種設定排在 AI 前面，開著等於把 AI 整個關掉 -->
+                    <el-alert
+                      v-if="triggerNode.keywordMatch === 'anyText'"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                      title="這條啟用後，會攔截「所有」文字訊息"
+                      description="客人不管打什麼都會走進這一條，AI 客服和其他自動回應都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
+                    />
+                  </div>
+                  <div v-if="triggerNode.keywordMatch !== 'anyText'" class="admin-field-group">
+                    <AdminFieldLabel text="關鍵字" tight />
+                    <el-input
+                      :model-value="triggerNode.keywords.join('，')"
+                      :placeholder="keywordPlaceholder(triggerNode)"
+                      @update:model-value="updateKeywords(triggerNode, $event)"
+                    />
+                    <p class="scripts-section-hint">只看字、不經過 AI：沒打到這幾個字的不會走這一條。</p>
+                    <!--
+                      打字當下就講（D-33 P1）：太短或太常見的關鍵字會攔到一大堆不相關的訊息
+                      （`C-25` 那場「觸發詞劫持」就是人手設的）。⛔只提醒不阻擋——既有設定可能刻意這樣設。
+                    -->
+                    <el-alert
+                      v-if="riskyKeywordsOf(triggerNode).length"
+                      type="warning"
+                      :closable="false"
+                      show-icon
+                      :title="`「${riskyKeywordsOf(triggerNode).join('、')}」太常見了，會攔到很多不相關的訊息`"
+                      description="關鍵字是「訊息裡有這幾個字就攔走」，例如設「問題」，客人打「我的訂單有問題」也會被這一條接走、AI 就答不到了。建議改成這一條專屬的具體詞（兩個字以上）。"
+                    />
+                  </div>
+                </template>
+
+                <!-- 防重複觸發（＝自動回覆的冷卻）。多數用不到，沒設時只留一顆鈕 -->
+                <div v-if="triggerNode.cooldownMs !== undefined" class="admin-field-group">
+                  <AdminFieldLabel text="防重複觸發（選填）" tight />
+                  <div class="scripts-branch-case scripts-branch-case--route">
+                    <span class="text-xs text-muted">間隔</span>
+                    <el-select :model-value="triggerNode.cooldownMs" class="scripts-branch-field" @change="triggerNode.cooldownMs = $event">
+                      <el-option v-for="o in COOLDOWN_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+                    </el-select>
+                    <span class="text-xs text-muted">內不再接</span>
+                    <span />
+                    <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="取消防重複觸發" @click="clearCooldown(triggerNode)">✕</el-button>
+                  </div>
+                  <p class="scripts-section-hint">
+                    {{ triggerUiMode(triggerNode) === 'follow'
+                      ? '同一位客人在這段時間內封鎖又解除、再次加好友，也不會再收到一次。'
+                      : '同一位客人在這段時間內又說了一次，也不會再走一次這一條（會改由 AI 回答）。' }}
+                  </p>
+                </div>
+                <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="enableCooldown(triggerNode)">
+                  ＋ 設定防重複觸發（同一位客人隔多久才能再走一次）
+                </button>
+              </div>
+            </section>
+
+            <!-- ── 照順序問的：問答清單（`D-138`④）── -->
+            <template v-if="qList">
+              <section class="message-card scripts-section-card" data-tour="scr-questions">
+                <div class="message-card-header">
+                  <div class="card-header-main">
+                    <span class="section-title">先問客人（照順序）</span>
+                  </div>
+                </div>
+                <div class="card-section-stack">
+                  <p v-if="!qList.items.length" class="scripts-section-hint">不用問，客人一說就直接回「最後」那一段。</p>
+                  <div
+                    v-for="(item, i) in qList.items"
+                    :key="item.id"
+                    class="scripts-q"
+                    :class="{ 'is-focused': highlightStep === item.id }"
+                    :data-node-id="item.id"
+                  >
+                    <div class="scripts-q__head">
+                      <span class="scripts-q__num">{{ i + 1 }}</span>
+                      <template v-if="item.type === 'collect'">
+                        <el-select :model-value="presetKeyOf(item)" placeholder="這一題問的是…" class="scripts-q__field" @change="applyFieldPreset(item, $event)">
+                          <el-option v-for="p in COMMON_COLLECT_FIELDS" :key="p.key" :label="p.label" :value="p.key" />
+                          <el-option label="其他（自己命名）" value="__custom" />
+                        </el-select>
+                        <el-input
+                          v-if="presetKeyOf(item) === '__custom'"
+                          v-model="item.fieldName"
+                          placeholder="這一題叫什麼，例：退貨原因"
+                          class="scripts-q__field"
+                          @focus="fieldRenameFrom = item.fieldName"
+                          @change="renameCollectField(item, fieldRenameFrom)"
+                        />
+                        <el-select v-if="presetKeyOf(item) === '__custom'" :model-value="item.format ?? 'any'" class="scripts-q__format" @change="item.format = $event">
+                          <el-option v-for="f in COLLECT_FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
+                        </el-select>
+                      </template>
+                      <b v-else class="scripts-q__kind">給客人按鈕選</b>
+                      <el-button v-if="canEditScripts" text type="danger" class="scripts-q__remove" @click="removeListItem(item.id)">移除</el-button>
+                    </div>
+                    <VariableTextField
+                      v-model="item.question"
+                      mode="script"
+                      :known-keys="scriptVariableKeys"
+                      :placeholder="item.type === 'collect' ? '例：請問您的訂單編號是？' : '例：請問需要哪項服務？'"
+                    />
+                    <el-input v-if="item.type === 'collect' && item.format === 'custom'" v-model="item.pattern" placeholder="進階比對規則，例：[A-Za-z]\d{3,}（訂單編號 A123）" />
+
+                    <div v-if="item.type === 'collect'" class="scripts-q__routes">
+                      <div class="scripts-q__route">
+                        <span class="scripts-q__route-label">答了 →</span>
+                        <el-select :model-value="item.next" class="scripts-q__target" @change="item.next = $event">
+                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                        </el-select>
+                        <span v-if="isCodeFormat(item)" class="scripts-q__note">傳截圖也算回答</span>
+                      </div>
+                      <div v-if="isSkipOpen(item)" class="scripts-q__route">
+                        <span class="scripts-q__route-label">客人說沒有 →</span>
+                        <el-input v-model="item.skipLabel" maxlength="20" placeholder="按鈕字，例：我沒有訂單編號" class="scripts-q__button-label" />
+                        <el-select :model-value="item.skipNext ?? ''" placeholder="前往…" class="scripts-q__target" @change="item.skipNext = $event">
+                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                        </el-select>
+                        <el-button v-if="canEditScripts" text type="danger" title="拿掉這條路" @click="clearCollectSkip(item)">✕</el-button>
+                      </div>
+                      <button
+                        v-else-if="canEditScripts"
+                        type="button"
+                        class="scripts-skip-add"
+                        :class="{ 'is-suggested': isStuckCollect(item) }"
+                        @click="openCollectSkip(item)"
+                      >
+                        <template v-if="isStuckCollect(item)">
+                          ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
+                        </template>
+                        <template v-else>＋ 客人可能沒有這個資料</template>
+                      </button>
+                    </div>
+                    <div v-else class="scripts-q__routes">
+                      <div v-for="(o, oi) in item.options" :key="oi" class="scripts-q__route">
+                        <el-input v-model="o.label" maxlength="20" placeholder="按鈕字" class="scripts-q__button-label" />
+                        <span class="scripts-q__route-label">→</span>
+                        <el-select :model-value="o.next" class="scripts-q__target" @change="o.next = $event">
+                          <el-option v-for="t in listTargets(item.id, i)" :key="t.value" :label="t.label" :value="t.value" />
+                        </el-select>
+                        <el-button v-if="canEditScripts" text type="danger" title="拿掉這顆按鈕" @click="removeQuickReplyOption(item, oi)">✕</el-button>
+                      </div>
+                      <div v-if="canEditScripts"><el-button size="small" plain @click="addQuickReplyOption(item, qList.endId)">＋ 新增按鈕</el-button></div>
+                    </div>
+                  </div>
+
+                  <div v-if="canEditScripts" class="scripts-q__add" data-tour="scr-grow">
+                    <el-button plain @click="addListQuestion('collect')">＋ 再問一題</el-button>
+                    <el-button plain @click="addListQuestion('quickReply')">＋ 給客人按鈕選</el-button>
+                    <button type="button" class="scripts-inline-toggle" data-tour="scr-advanced" @click="switchToFlow">依答案走不同路…</button>
+                  </div>
+                </div>
+              </section>
+
+              <!-- ── 最後 ── -->
+              <section
+                class="message-card scripts-section-card"
+                :class="{ 'is-focused': highlightStep === qList.terminal.id }"
+                :data-node-id="qList.terminal.id"
+              >
+                <div class="message-card-header">
+                  <div class="card-header-main">
+                    <span class="section-title">最後</span>
+                  </div>
+                </div>
+                <div class="card-section-stack">
+                  <template v-if="listReply">
+                    <div class="admin-field-group" data-tour="scr-reply">
+                      <AdminFieldLabel text="回客人" tight />
+                      <VariableTextField
+                        v-model="listReply.text"
+                        type="textarea"
+                        mode="script"
+                        :known-keys="scriptVariableKeys"
+                        :rows="3"
+                        placeholder="例：已收到您的資訊，我們會盡快為您處理 🙇"
+                      />
+                      <el-dropdown v-if="canEditScripts" size="small" trigger="click" class="scripts-var-insert" @command="insertListReplyVar">
+                        <el-button size="small" plain>＋ 插入客人資料 ▾</el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item v-for="f in BUILTIN_SCRIPT_VARIABLES" :key="f.key" :command="f.key">
+                              <span class="flow-var-inset__item">
+                                <span class="flow-var-inset__item-label">{{ f.key === 'displayName' ? DISPLAY_NAME_VARIABLE_OPTION.label : f.label }}</span>
+                                <span v-if="f.key === 'displayName'" class="flow-var-inset__item-hint">{{ DISPLAY_NAME_VARIABLE_OPTION.hint }}</span>
+                              </span>
+                            </el-dropdown-item>
+                            <el-dropdown-item v-for="(f, fi) in collectFieldOptions" :key="f.value" :command="f.value" :divided="fi === 0">
+                              <span class="flow-var-inset__item">
+                                <span class="flow-var-inset__item-label">{{ f.label }}</span>
+                                <span class="flow-var-inset__item-hint">客人回答的</span>
+                              </span>
+                            </el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                    </div>
+                    <div v-if="listReply.linkUrl !== undefined" class="admin-field-group">
+                      <AdminFieldLabel text="附一顆連結按鈕（選填）" tight />
+                      <div class="scripts-branch-case scripts-branch-case--map">
+                        <span class="text-xs text-muted">網址</span>
+                        <el-input v-model="listReply.linkUrl" placeholder="https://…（可插入客人回答的）" class="scripts-branch-field" />
+                        <span class="text-xs text-muted">按鈕字</span>
+                        <el-input v-model="listReply.linkLabel" maxlength="20" :placeholder="DEFAULT_REPLY_LINK_LABEL" class="scripts-branch-field" />
+                        <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(listReply)">✕</el-button>
+                      </div>
+                      <p class="scripts-section-hint">會在回覆下面多送一則帶按鈕的訊息。網址要以 https:// 開頭。</p>
+                    </div>
+                    <el-checkbox v-model="listReply.thenHandoff">回完交給真人</el-checkbox>
+                    <p v-if="listReply.thenHandoff" class="scripts-section-hint">下班時間會在同一則補上幾點起回覆，不會另外再送一則。</p>
+                  </template>
+                  <div v-else-if="listModule" class="admin-field-group">
+                    <AdminFieldLabel text="送出哪個模組" tight />
+                    <div v-if="modulesLoading" class="text-xs text-muted">載入中…</div>
+                    <AdminFlowPicker v-else :model-value="listModule.moduleId" :options="moduleOptions" placeholder="選擇模組（可打字搜尋）" @update:model-value="listModule.moduleId = $event" />
+                    <p class="scripts-section-hint">送出你在「機器人模組」做好的那一組訊息。若那是「真人客服」模組，會照常轉真人。</p>
+                  </div>
+
+                  <div v-if="listFields.length" class="admin-field-group">
+                    <AdminFieldLabel text="存進客人資料（後台客人資料看得到，之後回覆也能帶入）" tight />
+                    <el-checkbox-group :model-value="savedFields" @change="setSavedFields">
+                      <el-checkbox v-for="f in listFields" :key="f.value" :value="f.value">{{ f.label }}</el-checkbox>
+                    </el-checkbox-group>
+                  </div>
+
+                  <div v-if="qList.tag" class="admin-field-group">
+                    <AdminFieldLabel text="替客人貼上標籤" tight />
+                    <div class="scripts-q__route">
+                      <AdminTagPicker
+                        :model-value="qList.tag.addTagIds"
+                        :options="tagList"
+                        placeholder="選擇標籤（可多選、可打字搜尋）"
+                        class="scripts-q__tags"
+                        @update:model-value="setListTags"
+                      />
+                      <el-button v-if="canEditScripts" text type="danger" title="不貼標籤了" @click="removeListTag">✕</el-button>
+                    </div>
+                  </div>
+
+                  <div v-if="canEditScripts" class="scripts-q__add">
+                    <button v-if="listReply && listReply.linkUrl === undefined" type="button" class="scripts-skip-add" @click="listReply.linkUrl = ''">＋ 附一顆連結按鈕</button>
+                    <button v-if="!qList.tag" type="button" class="scripts-skip-add" @click="addListTag">＋ 貼標籤</button>
+                    <button type="button" class="scripts-skip-add" @click="toggleTerminalKind">{{ listReply ? '＋ 改送一個模組' : '改回一段文字' }}</button>
+                  </div>
+                </div>
+              </section>
+            </template>
+
+            <!-- ── 有依答案分路、好幾個結尾的：流程圖編法（跟以前一樣）── -->
+            <section v-else class="message-card scripts-section-card">
+              <div class="message-card-header">
+                <div class="card-header-main">
+                  <span class="section-title">流程步驟</span>
+                  <span class="text-xs text-muted">有依答案分路或好幾個結尾，用流程圖編</span>
+                </div>
+              </div>
+              <div class="card-section-stack">
+          <!-- 流程圖：即時把整條流程畫出來，分支往內縮一層、一眼看懂走向。 -->
+          <div v-if="flowRows.length" class="scripts-flow-map">
             <div class="scripts-flow-map-head">
               <span class="scripts-flow-map-title">流程圖</span>
               <span class="text-xs text-muted">即時預覽・點步驟可跳到下面編輯</span>
@@ -206,82 +559,17 @@
               </div>
             </div>
           </div>
-        </div>
 
-        <!--
-          `G-107`：沒有 scripts.write 的人（觀察者）以前每一格都改得動、底下卻沒有儲存鈕，切走還會跳「未儲存」。
-          兩張編輯卡包進 el-form 用 disabled 當唯讀（同 AI 設定頁）；純動作的鈕（＋／✕／移除／插入變數）
-          另外用 v-if 拿掉。⛔ 最下面「試跑這條流程」刻意不包：那是純預覽、不存任何東西，觀察者也該能用。
-        -->
-        <el-form :disabled="!canEditScripts" class="admin-panel-stack" @submit.prevent>
-        <!-- 啟用 + 優先度 -->
-        <div class="message-card scripts-section-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">基本設定</span>
-            </div>
-          </div>
-          <div class="card-section-stack">
-            <!-- 成效：完成率是這頁最重要的數字，獨立成一列並在偏低時把「代表什麼」講出來 -->
-            <div v-if="stats" class="scripts-stats" :class="{ 'is-warn': stats.rate < LOW_COMPLETION_RATE }">
-              <div class="scripts-stats-figure">
-                <span class="scripts-stats-value">{{ stats.rate }}%</span>
-                <span class="scripts-stats-caption">的客人走完整條流程</span>
-              </div>
-              <p class="scripts-stats-detail">
-                {{ stats.starts }} 個客人走進這條流程，{{ stats.completions }} 個走到最後一步。
-                <template v-if="stats.dropped">
-                  另外 {{ stats.dropped }} 個中途離開<template v-if="stats.rate < LOW_COMPLETION_RATE">——多半是卡在某一題答不出來，看看下面有沒有需要加退路的步驟</template>。
-                </template>
-              </p>
-            </div>
-
-            <div class="admin-field-group">
-              <AdminFieldLabel text="啟用這條流程" tight />
-              <el-switch
-                v-model="form.enabled"
-                active-text="啟用"
-                inactive-text="停用"
-              />
-              <p class="scripts-section-hint">關掉後這條流程就不會啟動；就算關掉，AI 客服還是會照常回答客人。</p>
-            </div>
-
-            <!-- 優先度：說明本身就寫「通常不用動」，預設收起來不佔版面 -->
-            <div class="scripts-advanced">
-              <button type="button" class="scripts-inline-toggle" @click="showAdvanced = !showAdvanced">
-                {{ showAdvanced ? '收起進階設定' : `進階設定（觸發優先度 ${form.priority}）` }}
-              </button>
-              <div v-if="showAdvanced" class="admin-field-group">
-                <AdminFieldLabel :text="`觸發優先度（${form.priority}）`" tight />
-                <el-slider v-model="form.priority" :min="1" :max="100" :step="1" />
-                <p class="scripts-section-hint">如果同一句話同時命中好幾條流程，數字越大的會先跑。預設 50，通常不用動。</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 節點清單。
-             一步就結束的設定（＝舊的「自動回覆」）走簡單模式：不出現流程圖、步驟徽章、
-             接線提示與積木選單——那些是「多步驟」才需要的東西，擺在一句話的設定上只是噪音。
-             加了第三步之後同一筆設定就地長成完整編輯器，不用換地方重做。 -->
-        <div class="message-card scripts-section-card">
-          <div class="message-card-header">
-            <div class="card-header-main">
-              <span class="section-title">{{ isSimpleMode ? '內容' : '流程步驟' }}</span>
-              <span class="text-xs text-muted">{{ isSimpleMode ? '客人說什麼 → 你回什麼' : '流程：觸發 → 收集（可多個）→ 回覆' }}</span>
-            </div>
-          </div>
-          <div class="card-section-stack">
+            <!-- 開始那一步在上面「什麼時候開始」編，這裡只列後面的步驟 -->
             <div class="scripts-node-list">
-              <div v-for="node in form.nodes" :key="node.id" class="scripts-node-card" :class="{ 'is-focused': highlightStep === node.id, 'is-plain': isSimpleMode }" :data-node-id="node.id">
-                <div v-if="isSimpleMode" class="scripts-simple-heading">{{ simpleSectionTitle(node) }}</div>
-                <div v-else class="scripts-node-header">
+              <div v-for="node in flowNodes" :key="node.id" class="scripts-node-card" :class="{ 'is-focused': highlightStep === node.id }" :data-node-id="node.id">
+                <div class="scripts-node-header">
                   <span class="scripts-node-badge" :class="nodeBadgeClass(node.type)">
                     <el-icon><component :is="nodeIcon(node.type)" /></el-icon> {{ nodeTypeLabel(node.type) }}
                   </span>
                   <span v-if="nodeHeaderHint(node)" class="text-xs text-muted">{{ nodeHeaderHint(node) }}</span>
                   <el-button
-                    v-if="canEditScripts && node.type !== 'trigger'"
+                    v-if="canEditScripts"
                     size="small"
                     type="danger"
                     plain
@@ -291,130 +579,10 @@
                     移除
                   </el-button>
                 </div>
-                <p v-if="!isSimpleMode" class="scripts-node-purpose">{{ nodePurpose(node.type) }}</p>
-
-                <!-- Trigger -->
-                <template v-if="node.type === 'trigger'">
-                  <!-- scr-trigger-mode：導覽用這一格當「編輯器已經開著」的判斷（每條流程都有觸發節點），
-                       開著就不要再幫他按一次「新增」把手上的東西切掉（見 tutorial-topics 的 clickBeforeUnless） -->
-                  <div class="admin-field-group" data-tour="scr-trigger-mode">
-                    <AdminFieldLabel text="觸發方式" tight />
-                    <el-radio-group
-                      :model-value="triggerUiMode(node)"
-                      size="small"
-                      @change="setTriggerMode(node, $event)"
-                    >
-                      <el-radio-button value="keyword">關鍵字</el-radio-button>
-                      <el-radio-button value="semantic">看意思</el-radio-button>
-                      <el-radio-button value="follow">客人加好友時</el-radio-button>
-                    </el-radio-group>
-                  </div>
-
-                  <template v-if="triggerUiMode(node) === 'follow'">
-                    <p class="scripts-section-hint">
-                      客人把這個官方帳號加為好友（含封鎖後再解除）的那一刻就會走這條流程，不用打任何字。一個帳號只能有一條這樣設定的流程。
-                    </p>
-                    <!-- 與 LINE 內建歡迎訊息打對台：兩邊都開＝客人一加好友連收兩份 -->
-                    <el-alert
-                      type="info"
-                      :closable="false"
-                      show-icon
-                      title="LINE 內建的「加入好友的歡迎訊息」記得關掉"
-                      description="LINE 官方帳號後台（LINE Official Account Manager）本身也有一則內建的歡迎訊息，兩邊都開的話，客人一加好友會連收兩份。請到那個後台把「加入好友的歡迎訊息」關閉，只留這一條。"
-                    />
-                  </template>
-
-                  <template v-else-if="triggerUiMode(node) === 'keyword'">
-                    <div class="admin-field-group" data-tour="scr-match">
-                      <AdminFieldLabel text="怎麼比對" tight />
-                      <el-select :model-value="node.keywordMatch ?? 'any'" class="control-full" @change="node.keywordMatch = $event">
-                        <el-option v-for="m in KEYWORD_MATCH_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
-                      </el-select>
-                      <!-- 和自動回覆同一個陷阱：這種設定排在 AI 前面，開著等於把 AI 整個關掉 -->
-                      <el-alert
-                        v-if="node.keywordMatch === 'anyText'"
-                        type="warning"
-                        :closable="false"
-                        show-icon
-                        title="這條啟用後，會攔截「所有」文字訊息"
-                        description="客人不管打什麼都會走進這條流程，AI 客服和其他自動回應都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
-                      />
-                    </div>
-                    <div v-if="node.keywordMatch !== 'anyText'" class="admin-field-group">
-                      <AdminFieldLabel text="關鍵字" tight />
-                      <el-input
-                        :model-value="node.keywords.join('，')"
-                        :placeholder="keywordPlaceholder(node)"
-                        @update:model-value="updateKeywords(node, $event)"
-                      />
-                      <!--
-                        打字當下就講（D-33 P1）：太短或太常見的關鍵字會攔到一大堆不相關的訊息
-                        （`C-25` 那場「觸發詞劫持」就是人手設的）。⛔只提醒不阻擋——
-                        既有腳本可能刻意這樣設，回頭報錯會擋住本來好好在跑的東西。
-                      -->
-                      <el-alert
-                        v-if="riskyKeywordsOf(node).length"
-                        type="warning"
-                        :closable="false"
-                        show-icon
-                        :title="`「${riskyKeywordsOf(node).join('、')}」太常見了，會攔到很多不相關的訊息`"
-                        description="關鍵字是「訊息裡有這幾個字就攔走」，例如設「問題」，客人打「我的訂單有問題」也會被這條接走、AI 就答不到了。建議改成這條流程專屬的具體詞（兩個字以上）。"
-                      />
-                    </div>
-                  </template>
-
-                  <template v-else>
-                    <div class="admin-field-group">
-                      <AdminFieldLabel text="範例句（一行一句；比對的是「意思」，就算客人用字不一樣也算命中）" tight />
-                      <el-input
-                        :model-value="(node.examples ?? []).join('\n')"
-                        type="textarea"
-                        :rows="4"
-                        placeholder="例：&#10;我要退貨&#10;不想要了想退&#10;能不能取消訂單"
-                        @update:model-value="updateExamples(node, $event)"
-                      />
-                    </div>
-                    <p class="scripts-section-hint">
-                      不用列出所有講法——填 3～5 句不同說法即可，客人用相近意思的話也會觸發（最多 {{ MAX_TRIGGER_EXAMPLES }} 句）。
-                    </p>
-                  </template>
-
-                  <!-- 防重複觸發（＝自動回覆的冷卻）。多數流程用不到，沒設時只留一顆鈕 -->
-                  <div v-if="node.cooldownMs !== undefined" class="admin-field-group">
-                    <AdminFieldLabel text="防重複觸發（選填）" tight />
-                    <div class="scripts-branch-case scripts-branch-case--route">
-                      <span class="text-xs text-muted">間隔</span>
-                      <el-select :model-value="node.cooldownMs" class="scripts-branch-field" @change="node.cooldownMs = $event">
-                        <el-option v-for="o in COOLDOWN_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-                      </el-select>
-                      <span class="text-xs text-muted">內不再接</span>
-                      <span />
-                      <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="取消防重複觸發" @click="clearCooldown(node)">✕</el-button>
-                    </div>
-                    <p class="scripts-section-hint">
-                      {{ triggerUiMode(node) === 'follow'
-                        ? '同一位客人在這段時間內封鎖又解除、再次加好友，也不會再收到一次這條流程。'
-                        : '同一位客人在這段時間內又打中觸發詞，也不會再走一次這條流程（會改由 AI 回答）。' }}
-                    </p>
-                  </div>
-                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="enableCooldown(node)">
-                    ＋ 設定防重複觸發（同一位客人隔多久才能再走一次）
-                  </button>
-
-                  <!-- `G-107`：「測試觸發」只在瀏覽器裡比對、不存任何東西，觀察者也要能打字。
-                       外層 el-form 的 disabled 會一路傳下來，這裡用一層自己的 el-form 把它擋回來
-                       （admin 整區是 SPA、不走 SSR，巢狀 form 不會被 HTML 解析器吃掉；AreaEditorSection 也這樣巢）。 -->
-                  <el-form v-if="triggerUiMode(node) !== 'follow'" class="admin-field-group scripts-trigger-test-group" data-tour="scr-test" @submit.prevent>
-                    <AdminFieldLabel text="測試觸發（打一句話，看會不會啟動這條流程）" tight />
-                    <el-input :model-value="triggerTest" placeholder="例：東西壞了想退" clearable @update:model-value="triggerTest = $event" />
-                    <p v-if="triggerTestResult(node).state !== 'idle'" class="scripts-trigger-test" :class="`is-${triggerTestResult(node).state}`">
-                      {{ triggerTestResult(node).state === 'hit' ? '✓ ' : triggerTestResult(node).state === 'maybe' ? '≈ ' : '✗ ' }}{{ triggerTestResult(node).text }}
-                    </p>
-                  </el-form>
-                </template>
+                <p class="scripts-node-purpose">{{ nodePurpose(node.type) }}</p>
 
                 <!-- Collect -->
-                <template v-else-if="node.type === 'collect'">
+                <template v-if="node.type === 'collect'">
                   <div class="admin-field-group">
                     <AdminFieldLabel text="問題（要問使用者的話）" tight />
                     <!-- `D-128`：問句裡的 {{displayName}} 也會換（renderScriptTemplate），顯示成膠囊 -->
@@ -694,20 +862,14 @@
                 </template>
 
                 <!-- 下一步摘要：把自動接線/結束這種看不見的去向講出來（一步的設定沒有「下一步」可講） -->
-                <p v-if="!isSimpleMode && autoNextLabel(node)" class="scripts-next-hint" :class="{ 'is-unwired': isNodeUnwired(node) }">
+                <p v-if="autoNextLabel(node)" class="scripts-next-hint" :class="{ 'is-unwired': isNodeUnwired(node) }">
                   ↳ 下一步：<strong>{{ autoNextLabel(node) }}</strong>
                 </p>
               </div>
             </div>
 
-            <!-- 簡單模式的成長入口：點了才出現積木選單，加完第一塊就自動變成完整編輯器 -->
-            <!-- `scr-grow`／`scr-palette`／`scr-sim*`：「多步驟接待」那支導覽用（`D-109`） -->
-            <button v-if="canEditScripts && isSimpleMode && !showPalette" type="button" class="scripts-grow" data-tour="scr-grow" @click="showPalette = true">
-              ＋ 還要多做一步…
-              <small>問客人資料、給按鈕選、依答案分路、轉真人</small>
-            </button>
-
-            <div v-if="canEditScripts && (!isSimpleMode || showPalette)" class="scripts-add-palette" data-tour="scr-palette">
+            <!-- `scr-palette`：「多步驟接待」那支導覽用（`D-109`） -->
+            <div v-if="canEditScripts" class="scripts-add-palette" data-tour="scr-palette">
               <div v-for="grp in nodePalette" :key="grp.group" class="scripts-add-group">
                 <span class="scripts-add-group-title">{{ grp.group }}</span>
                 <div class="scripts-add-cards">
@@ -730,74 +892,26 @@
               </div>
             </div>
 
-            <p v-if="!isSimpleMode && canEditScripts" class="scripts-section-hint">
+            <p v-if="canEditScripts" class="scripts-section-hint">
               一般步驟會由上到下自動接下去；只有「依答案分路」和「快速回覆」要自己用「前往…」下拉，指定每條路各接到哪一步。
             </p>
-          </div>
-        </div>
-        </el-form>
-
-        <!-- 試跑：假裝自己是客人打字，即時模擬這條腳本（純預覽，無副作用）。
-             擺在最後——新建腳本時第一眼不該是一個沒東西可跑的模擬器。 -->
-        <div class="message-card scripts-section-card scripts-sim-card" data-tour="scr-sim">
-          <div class="message-card-header scripts-sim-head" data-tour="scr-sim-head" role="button" tabindex="0" @click="showSim = !showSim" @keydown.enter="showSim = !showSim">
-            <div class="card-header-main">
-              <span class="section-title">試跑這條流程</span>
-              <span class="text-xs text-muted">假裝客人打字，看機器人怎麼回（純預覽，不會真的發送）</span>
-            </div>
-            <el-icon class="scripts-sim-caret" :class="{ 'is-open': showSim }"><ArrowRight /></el-icon>
-          </div>
-          <div v-if="showSim" class="card-section-stack scripts-sim-panel" data-tour="scr-sim-panel">
-            <div class="scripts-sim-chat">
-              <p v-if="!simLog.length" class="scripts-sim-empty">
-                {{ editingFollowScript ? '按「模擬客人加好友」開始' : '輸入客人會打的第一句話開始（假設已經觸發這條流程）' }}
-              </p>
-              <template v-for="(m, i) in simLog" :key="i">
-                <!--
-                  `C-232`：送出整個模組這一步，以前只印一行「（送出機器人模組「X」的訊息）」。
-                  那是這條流程裡客人視覺上最重的一則，卻是唯一看不到的一則——現在把它真的畫出來。
-                  ⛔ 抓不到模組時由 `AdminActionPreview` 自己講，**不可以畫成空白**
-                     （那等於告訴他「這個模組是空的」）。
-                -->
-                <AdminActionPreview
-                  v-if="m.moduleId"
-                  class="scripts-sim-module"
-                  :action="{ type: 'module', moduleId: m.moduleId, text: '', uri: '' }"
-                  :module-options="moduleOptions"
-                  title=""
-                />
-                <div v-else-if="m.who === 'sys'" class="scripts-sim-sys">{{ m.text }}</div>
-                <div v-else class="scripts-sim-line" :class="`is-${m.who}`">
-                  <!-- ⛔ 純連結卡那一則沒有文字，不要畫出「（空白訊息）」——那是給真的漏填文字的人看的 -->
-                  <div v-if="!m.linkCard || m.text" class="scripts-sim-bubble">{{ m.text || '（空白訊息）' }}</div>
-                  <div v-if="m.buttons?.length" class="scripts-sim-qr">
-                    <button v-for="(b, bi) in m.buttons" :key="bi" type="button" @click="simSend(b)">{{ b || '（空白按鈕）' }}</button>
-                  </div>
-                  <!--
-                    `C-232`：回覆帶連結時**另外送一則按鈕卡**（引擎就是這樣送的，見 handler.ts）。
-                    以前只印一行字，看不出那是獨立的一則、也看不出卡片上那句話不是店家寫的。
-                    ⛔ 按鈕不可點：它在真的 LINE 裡是開網址，在試跑裡按下去什麼都不該發生。
-                  -->
-                  <div v-if="m.linkCard" class="scripts-sim-linkcard">
-                    <p class="scripts-sim-linkcard__text">{{ m.linkCard.text }}</p>
-                    <span class="scripts-sim-linkcard__btn">{{ m.linkCard.label }}</span>
-                    <span class="scripts-sim-linkcard__url">{{ m.linkCard.url }}</span>
-                  </div>
-                </div>
-              </template>
-            </div>
-            <div class="scripts-sim-input">
-              <!-- 加好友腳本沒有「第一句話」——第一步由加好友事件觸發，之後才輪到打字 -->
-              <el-button v-if="editingFollowScript && !simLog.length" type="primary" @click="simFollowStart">模擬客人加好友</el-button>
-              <template v-else>
-                <el-input v-model="simInput" placeholder="輸入客人會打的話…" @keyup.enter="simSend()" />
-                <el-button type="primary" @click="simSend()">送出</el-button>
-              </template>
-              <el-button @click="simReset">重來</el-button>
-            </div>
-          </div>
+              </div>
+            </section>
+          </el-form>
         </div>
 
+        <!-- 換一條（或新開一條）就整個重來：試到一半的對話不該帶到另一條去 -->
+        <AdminScriptTryPanel
+          :key="tryKey"
+          class="scripts-side"
+          :script-id="selectedId"
+          :name="form.name"
+          :enabled="form.enabled"
+          :priority="form.priority"
+          :nodes="form.nodes"
+          :root-node-id="form.rootNodeId"
+          :module-options="moduleOptions"
+        />
       </div>
     </template>
   </AdminSplitLayout>
@@ -812,7 +926,7 @@
 
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { ArrowRight, ChatDotRound, CircleCheckFilled, CircleCloseFilled, Collection, Connection, CopyDocument, Delete, MagicStick, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheckFilled, CircleCloseFilled, Collection, Connection, CopyDocument, Delete, Notebook, Operation, Plus, Pointer, Position, PriceTag, Share, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { v4 as uuidv4 } from 'uuid'
@@ -822,7 +936,16 @@ import {
   FOLLOW_WELCOME_LABEL,
   followWelcomeRow,
 } from '~~/shared/follow-welcome'
-import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
+import { DISPLAY_NAME_VARIABLE_OPTION, SCRIPT_PRESET_FIELD_LABELS } from '~~/shared/variable-tokens'
+import {
+  appendQuestion,
+  insertEndStep,
+  removeEndStep,
+  removeQuestion,
+  replaceTerminal,
+  toQuestionList,
+  type QuestionItem,
+} from '~~/shared/script-question-list'
 import type {
   BranchOp,
   CollectFormat,
@@ -839,12 +962,11 @@ import type {
   TriggerKeywordMatch,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, consumePrefilledCollect, extractCollectValue, findPlaceholderTexts, findStuckCollects, isHumanRequestText, prefillCollectFields, renderScriptTemplate, resolveBranchNext, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, MAX_TRIGGER_EXCLUDES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, findPlaceholderTexts, findStuckCollects, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptForReachability } from '~~/shared/types/ai-script-reachability'
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
 import { AUTO_REPLY_COOLDOWN_OPTIONS } from '~~/shared/auto-reply-rule'
-import { LINE_CARD_BODY_DEFAULT } from '~~/shared/line-card-copy'
 import { riskyTriggerKeywords } from '~~/shared/script-trigger-keywords'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -872,7 +994,11 @@ const duplicating = ref(false)
 const selectedId = ref<string | null>(null)
 const isCreating = ref(false)
 
-const scriptTemplates = SCRIPT_TEMPLATES
+/**
+ * 「新增」底下那排範本（`D-138`④）：加好友歡迎有自己那張卡、找真人系統本來就認得（找真人／轉接專員…），
+ * 這兩個不再列——找真人快速通道建出來只會跟內建的逃生門搶同一句話。
+ */
+const starterTemplates = SCRIPT_TEMPLATES.filter(t => t.key !== 'follow-welcome' && t.key !== 'to-human')
 
 // 貼標節點用的工作區標籤清單
 const { tags: tagList, loadTags } = useAdminTagList()
@@ -955,29 +1081,192 @@ const { markClean, markDirty, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsa
 
 const selectedScript = computed(() => scripts.value.find(s => s.id === selectedId.value) ?? null)
 
-/**
- * 一步就結束的設定（觸發 → 回覆，等同舊的「自動回覆」）走簡單模式。
- *
- * 為什麼用「節點數」而不是讓使用者先選種類：**複雜度是答案的屬性，不是使用者要先做的分類**。
- * 他心裡想的是「客人問運費就回一句」或「要先問訂單編號」，不是「我需要一個狀態機」。
- * 新增時 blankForm() 本來就是觸發＋回覆兩顆，所以預設就落在簡單模式；
- * 一旦加了第三步，同一筆設定就地長成完整編輯器，不用換地方重做。
- */
-const isSimpleMode = computed(() => {
-  const nodes = form.value.nodes
-  return nodes.length === 2
-    && nodes.some(n => n.type === 'trigger')
-    && nodes.some(n => n.type === 'reply')
+/** 開始那一步（「什麼時候開始」那一段編它） */
+const triggerNode = computed(() => {
+  const t = form.value.nodes.find(n => n.id === form.value.rootNodeId)
+  return t?.type === 'trigger' ? t : null
 })
 
-/** 簡單模式下按了「還要多做一步…」才展開積木選單 */
-const showPalette = ref(false)
-
-/** 簡單模式的區塊標題：用「這一格在問什麼」講，不用步驟類型的名字 */
-function simpleSectionTitle(node: ScriptNode): string {
-  if (node.type !== 'trigger') return '你回什麼'
-  return node.triggerEvent === 'follow' ? '客人加好友時' : '客人說什麼'
+/**
+ * 兩種編法（`D-138`④）：照順序問的用**問答清單**（一題一列、不用接線），
+ * 有「依答案分路」或好幾個結尾的用**流程圖**（跟以前一樣）。同一份資料、只是看法不同。
+ *
+ * ⛔ 編法在「打開一條」的那一刻決定、之後只跟著使用者的按鈕走（「依答案走不同路…」切到流程圖）——
+ *    不從資料即時推導：在流程圖裡改一個「前往…」剛好變成能用清單看，整個畫面在他手底下翻掉
+ *    （同 `presetKeyOf` 那次「打到一半輸入框消失」的教訓）。
+ */
+const editorMode = ref<'list' | 'flow'>('list')
+function syncEditorMode() {
+  editorMode.value = toQuestionList(form.value.nodes, form.value.rootNodeId) ? 'list' : 'flow'
 }
+/** 清單看法；流程圖模式、或改到清單看不懂時是 null（模板就退回流程圖編法，不會什麼都不畫） */
+const qList = computed(() => (editorMode.value === 'list' ? toQuestionList(form.value.nodes, form.value.rootNodeId) : null))
+const listReply = computed(() => (qList.value?.terminal.type === 'reply' ? qList.value.terminal : null))
+const listModule = computed(() => (qList.value?.terminal.type === 'module' ? qList.value.terminal : null))
+
+/** 流程圖編法裡列的步驟：開始那一步在上面「什麼時候開始」編 */
+const flowNodes = computed(() => form.value.nodes.filter(n => n.type !== 'trigger'))
+
+function switchToFlow() {
+  editorMode.value = 'flow'
+  nextTick(() => document.querySelector('[data-tour="scr-palette"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }))
+}
+
+/** 這一題的名字：常用欄位講中文（不露出 order_id），自己命名的照他取的名字 */
+function fieldLabel(fieldName: string): string {
+  return SCRIPT_PRESET_FIELD_LABELS[fieldName] ?? fieldName
+}
+function listItemLabel(item: QuestionItem): string {
+  if (item.type === 'collect') return fieldLabel(item.fieldName) || item.question.slice(0, 12) || '（還沒選）'
+  return `給按鈕選「${item.question.slice(0, 8) || '…'}」`
+}
+
+/** 「答了 →」「客人說沒有 →」「按鈕 →」可以去哪：別一題，或直接到最後 */
+function listTargets(selfId: string, index: number): Array<{ value: string; label: string }> {
+  const view = qList.value
+  if (!view) return []
+  const out = view.items
+    .map((it, i) => ({ it, i }))
+    .filter(({ it }) => it.id !== selfId)
+    .map(({ it, i }) => ({ value: it.id, label: `第 ${i + 1} 題・${listItemLabel(it)}${i === index + 1 ? '（下一題）' : ''}` }))
+  out.push({ value: view.endId, label: '直接到最後' })
+  return out
+}
+
+/** 客人可能拿截圖回答的那種（編號、序號）：旁邊講一句「傳截圖也算回答」（`D-138`②） */
+function isCodeFormat(item: ScriptCollectNode): boolean {
+  return ['alphanumeric', 'alphanumericSymbol', 'number', 'custom'].includes(item.format ?? 'any')
+}
+
+/** 答案格式（自己命名的那題才給選；常用欄位挑了就帶好） */
+const COLLECT_FORMAT_OPTIONS: Array<{ value: CollectFormat; label: string }> = [
+  { value: 'any', label: '不限制（整句存）' },
+  { value: 'phone', label: '電話' },
+  { value: 'email', label: 'Email' },
+  { value: 'number', label: '純數字' },
+  { value: 'alphanumeric', label: '英文＋數字（例：A123456）' },
+  { value: 'alphanumericSymbol', label: '英文＋數字＋符號（例：OD-2024/001）' },
+  { value: 'custom', label: '自訂（進階比對規則）' },
+]
+
+function addListQuestion(kind: 'collect' | 'quickReply') {
+  const view = qList.value
+  if (!view) return
+  const item = kind === 'collect' ? defaultCollectNode('') : defaultQuickReplyNode('')
+  appendQuestion(form.value.nodes, view, item)
+  focusStep(item.id)
+}
+
+function removeListItem(itemId: string) {
+  const view = qList.value
+  if (!view) return
+  removeQuestion(form.value.nodes, view, itemId)
+}
+
+/** 有哪幾題可以存進客人資料（有名字的「問一題」） */
+const listFields = computed(() =>
+  (qList.value?.items ?? [])
+    .filter((it): it is ScriptCollectNode => it.type === 'collect' && Boolean(it.fieldName.trim()))
+    .map(it => ({ value: it.fieldName, label: fieldLabel(it.fieldName) })),
+)
+const savedFields = computed(() => (qList.value?.saveLead?.fieldMap ?? []).map(m => m.fromField).filter(Boolean))
+
+/**
+ * 勾選要存的題目 ↔「存進客人資料」那一步：勾第一個時掛上去、全部取消就拿掉。
+ * 已經存在的對應保留原本的名字（MYFEEL 的「訂單編號」「電話」），新勾的用這一題的中文名。
+ */
+function setSavedFields(values: Array<string | number | boolean>) {
+  const view = qList.value
+  if (!view) return
+  const picked = values.map(String)
+  if (!view.saveLead) {
+    if (!picked.length) return
+    const node = defaultSaveLeadNode('')
+    node.fieldMap = picked.map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
+    insertEndStep(form.value.nodes, view, node)
+    return
+  }
+  const kept = view.saveLead.fieldMap.filter(m => picked.includes(m.fromField))
+  const added = picked.filter(f => !kept.some(m => m.fromField === f)).map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
+  const next = [...kept, ...added]
+  if (next.length) view.saveLead.fieldMap = next
+  else removeEndStep(form.value.nodes, view.saveLead.id)
+}
+
+function addListTag() {
+  const view = qList.value
+  if (view && !view.tag) insertEndStep(form.value.nodes, view, defaultTagNode(''))
+}
+function removeListTag() {
+  const tag = qList.value?.tag
+  if (tag) removeEndStep(form.value.nodes, tag.id)
+}
+function setListTags(ids: string[]) {
+  const tag = qList.value?.tag
+  if (tag) tag.addTagIds = ids
+}
+
+/** 結尾換成送一個模組／改回一段文字。回覆已經寫了字的先問一聲（換過去那段字就沒了） */
+async function toggleTerminalKind() {
+  const view = qList.value
+  if (!view) return
+  if (view.terminal.type === 'reply') {
+    if (view.terminal.text.trim()) {
+      const ok = await ElMessageBox.confirm('改送一個模組的話，「回客人」那段字會清掉。', '改送模組', { confirmButtonText: '改送模組', cancelButtonText: '先不要', type: 'warning' })
+        .then(() => true).catch(() => false)
+      if (!ok) return
+    }
+    replaceTerminal(form.value.nodes, view, defaultModuleNode())
+  }
+  else {
+    replaceTerminal(form.value.nodes, view, defaultReplyNode())
+  }
+}
+
+function insertListReplyVar(field: string) {
+  if (listReply.value) insertReplyVar(listReply.value, field)
+}
+
+/** 這條有沒有要客人回答的題目（成效卡：一句話回一件事的只講次數） */
+const asksQuestions = computed(() => form.value.nodes.some(n => n.type === 'collect' || n.type === 'quickReply'))
+/** 成效卡每一列的題名：清單編法照順序編號，流程圖編法照節點順序 */
+const questionLabels = computed(() => {
+  const items = qList.value?.items ?? form.value.nodes.filter((n): n is QuestionItem => n.type === 'collect' || n.type === 'quickReply')
+  return items.map((it, i) => ({ nodeId: it.id, label: qList.value ? `${i + 1}　${listItemLabel(it)}` : listItemLabel(it) }))
+})
+
+/** 「看意思」的「含這些字就直接接」與「不要接」：有資料就攤開，沒有的話按了才出現 */
+const openedSemanticKeywords = ref(false)
+const openedExcludes = ref(false)
+function semanticKeywordsOpen(node: ScriptTriggerNode) {
+  return openedSemanticKeywords.value || (node.keywords ?? []).length > 0
+}
+function openSemanticKeywords() { openedSemanticKeywords.value = true }
+function excludesOpen(node: ScriptTriggerNode) {
+  return openedExcludes.value || (node.excludes ?? []).length > 0
+}
+function openExcludes() { openedExcludes.value = true }
+
+function updateExcludes(node: ScriptTriggerNode, value: string) {
+  const list = String(value || '').split(/\n+/g).map(e => e.trim()).filter(Boolean).slice(0, MAX_TRIGGER_EXCLUDES)
+  if (list.length) node.excludes = list
+  else delete node.excludes
+}
+
+/** 名稱沒填就用這個（`D-138`④）：客人會講的第一句／第一個字 */
+function autoName(): string {
+  const t = triggerNode.value
+  if (!t) return ''
+  if (t.triggerEvent === 'follow') return '客人加好友時'
+  if ((t.matchMode ?? 'keyword') === 'semantic') return (t.examples?.[0] || t.keywords?.[0] || '').slice(0, 30)
+  if (t.keywordMatch === 'anyText') return '客人輸入任何內容'
+  return (t.keywords?.[0] || '').slice(0, 30)
+}
+const namePlaceholder = computed(() => `例：${autoName() || '訂單查詢、退換貨'}`)
+
+/** 右邊「試試看」換一條就整個重來（新開的每一條也算新的一條） */
+const createSeq = ref(0)
+const tryKey = computed(() => selectedId.value ?? `new-${createSeq.value}`)
 
 /** 關鍵字比對方式；文案與自動回覆的「比對方式」對齊，兩邊講的是同一件事 */
 const KEYWORD_MATCH_OPTIONS: Array<{ value: TriggerKeywordMatch; label: string }> = [
@@ -1020,23 +1309,6 @@ function keywordPlaceholder(node: ScriptTriggerNode): string {
   if (mode === 'exact') return '例：查訂單（客人要一字不差地打這句）'
   return '例：退換貨，退費，要退（用逗號或空白分隔，任一命中即觸發）'
 }
-
-/** 低於這個完成率就把「代表什麼」講出來（多數客人沒走完＝流程某一題卡住） */
-const LOW_COMPLETION_RATE = 60
-
-const stats = computed(() => {
-  if (isCreating.value) return null
-  const s = selectedScript.value?.stats
-  const starts = s?.starts ?? 0
-  if (!starts) return null
-  const completions = s?.completions ?? 0
-  return {
-    starts,
-    completions,
-    dropped: Math.max(0, starts - completions),
-    rate: Math.round((completions / starts) * 100),
-  }
-})
 
 /**
  * 即時流程檢查：沿用「後端存檔時同一套」validateScriptDoc，設定當下就知道還差什麼、
@@ -1111,7 +1383,7 @@ const duplicateFieldWarnings = computed<FlowWarning[]>(() => {
     if (seen.has(name)) {
       out.push({
         key: `dup:${n.id}`,
-        text: `有兩個步驟都用「${name}」當代號，後面這題的答案會蓋掉前面那題，請改成不同的代號`,
+        text: `有兩題都叫「${fieldLabel(name)}」，後面這題的答案會蓋掉前面那題，請把其中一題改成別的`,
         nodeId: n.id,
       })
     }
@@ -1123,7 +1395,7 @@ const duplicateFieldWarnings = computed<FlowWarning[]>(() => {
 const flowWarnings = computed<FlowWarning[]>(() => {
   const out: FlowWarning[] = []
   for (const s of findStuckCollects(form.value.nodes)) {
-    const what = s.fieldName || s.question || '這一題'
+    const what = fieldLabel(s.fieldName) || s.question || '這一題'
     out.push({
       key: `stuck:${s.nodeId}`,
       text: `客人答不出「${what}」就出不去——這種編號他手上可能根本沒有，會被一直重問。建議加一條退路。`,
@@ -1178,15 +1450,30 @@ const allClearText = computed(() => {
 // ── List helpers ───────────────────────────────────────────────────
 function triggerSummary(script: ScriptRow): string {
   const trig = script.nodes?.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
-  if (!trig) return '無觸發條件'
+  if (!trig) return '還沒設什麼時候開始'
   if (trig.triggerEvent === 'follow') return '客人加好友時'
   if ((trig.matchMode ?? 'keyword') === 'semantic') {
     const ex = (trig.examples ?? []).filter(Boolean)
-    if (!ex.length) return '無範例'
-    return `${ex.slice(0, 3).join('、')}${ex.length > 3 ? '⋯' : ''}`
+    if (!ex.length) return '還沒填客人會怎麼講'
+    return ex.length > 1 ? `「${ex[0]}」等 ${ex.length} 句` : `「${ex[0]}」`
   }
-  if (!trig.keywords?.length) return '無關鍵字'
-  return `${trig.keywords.slice(0, 3).join('、')}${trig.keywords.length > 3 ? '⋯' : ''}`
+  if (trig.keywordMatch === 'anyText') return '客人輸入任何內容'
+  const kw = (trig.keywords ?? []).filter(Boolean)
+  if (!kw.length) return '還沒填關鍵字'
+  return kw.length > 1 ? `打了「${kw[0]}」等 ${kw.length} 個字` : `打了「${kw[0]}」`
+}
+
+/**
+ * 清單每一列：什麼時候開始＋有沒有在幫忙（`D-138`④：以前只寫觸發詞，172 次、74% 要點進去才看得到）。
+ * 只回一句話的那種沒有「走完」可講，只講次數。
+ */
+function listMeta(script: ScriptRow): string {
+  const when = triggerSummary(script)
+  const starts = script.stats?.starts ?? 0
+  if (!starts) return `${when}・還沒有人走過`
+  const asks = (script.nodes ?? []).some(n => n.type === 'collect' || n.type === 'quickReply')
+  if (!asks) return `${when}・${starts} 次`
+  return `${when}・${starts} 次，走完 ${Math.round(((script.stats?.completions ?? 0) / starts) * 100)}%`
 }
 
 function nodeIcon(type: string): Component {
@@ -1215,7 +1502,7 @@ function nodeBadgeClass(type: string) {
 
 /** 給「下一步」下拉用的節點選項標籤（trigger 不能當目標） */
 function nodeOptionLabel(n: ScriptNode): string {
-  if (n.type === 'collect') return `收集 ${n.fieldName || '(未命名)'}`
+  if (n.type === 'collect') return `問：${fieldLabel(n.fieldName) || '(還沒選)'}`
   if (n.type === 'quickReply') return `快速回覆${n.question ? `「${n.question.slice(0, 8)}」` : ''}`
   if (n.type === 'reply') return `回覆「${(n.text || '').slice(0, 8) || '空白'}」`
   if (n.type === 'module') return `機器人模組「${moduleLabel(n.moduleId)}」`
@@ -1270,7 +1557,7 @@ function flowTruncate(s: string, n = 16): string {
   return t.length > n ? `${t.slice(0, n)}…` : t
 }
 function flowNodeTitle(node: ScriptNode): string {
-  if (node.type === 'collect') return `收集：${node.fieldName || '未命名'}`
+  if (node.type === 'collect') return `問：${fieldLabel(node.fieldName) || '還沒選'}`
   return nodeTypeLabel(node.type)
 }
 function flowNodeSub(node: ScriptNode): string {
@@ -1418,239 +1705,35 @@ const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quic
   ] },
 ]
 
-// ── 試跑對話：在後台假裝自己是客人，用「目前編輯中」的腳本即時模擬 ──────────
-// 直接重用後端執行時同一套純函式（renderScriptTemplate / extractCollectValue /
-// resolveBranchNext），行為與真的跑腳本一致；純預覽，不寫任何資料、無副作用。
-interface SimMsg {
-  who: 'bot' | 'me' | 'sys'
-  text: string
-  buttons?: string[]
-  /** `C-232`：這一步送出的是整個模組，內容由 `AdminActionPreview` 自己去抓來畫 */
-  moduleId?: string
-  /** `C-232`：回覆另外附的那一則連結按鈕卡（本文是系統帶的、按鈕文字是店家寫的） */
-  linkCard?: { text: string; label: string; url: string }
-}
-const showSim = ref(false)
-const simLog = ref<SimMsg[]>([])
-const simInput = ref('')
-const simWaiting = ref<'collect' | 'quickReply' | null>(null)
-const simNodeId = ref<string | null>(null)
-const simCollected = ref<Record<string, string>>({})
-/** 客人前面已經講過、走到那一題要跳過的欄位（與引擎同一套 prefillCollectFields，`C-343`） */
-const simPrefilled = ref<string[]>([])
-const simDone = ref(false)
-
-// 觸發測試框：打一句話，即時判斷會不會命中這條腳本
-const triggerTest = ref('')
-
-/** 「進階設定」（優先度）預設收起：它的說明本身就寫「通常不用動」 */
-const showAdvanced = ref(false)
+// 試跑（「試試看」）搬到右邊的 AdminScriptTryPanel（`D-138`）：換一條時靠 :key 整個重來。
 
 /**
- * 換一份腳本進編輯器時，把「展開了什麼」歸零並依內容重推欄位模式。
- * ⛔ 這件事不可以塞進 simReset()：那支也掛在試跑面板的「重來」按鈕上，
- * 重置一個預覽不該把使用者剛展開的退路欄位、進階設定收回去。
+ * 換一份進編輯器時，把「展開了什麼」歸零、依內容重推欄位模式與編法（清單／流程圖）。
+ * ⛔ 試試看的「重來」不碰這些：重置一個預覽不該把使用者剛展開的欄位收回去。
  */
 function resetEditorDisclosure(nodes: ScriptNode[]) {
   openedSkips.value = new Set()
-  showAdvanced.value = false
-  showPalette.value = false
+  openedSemanticKeywords.value = false
+  openedExcludes.value = false
   syncFieldModes(nodes)
+  syncEditorMode()
 }
 
-function simReset() {
-  simLog.value = []
-  simInput.value = ''
-  simWaiting.value = null
-  simNodeId.value = null
-  simCollected.value = {}
-  simPrefilled.value = []
-  simDone.value = false
-  triggerTest.value = ''
-}
-function simPush(m: SimMsg) { simLog.value.push(m) }
-
-/** 與引擎一致：客人這句話裡已經有的訂單編號／電話／Email 先撿起來，走到那一題就不問（`C-343`） */
-function simPrefill(text: string) {
-  const found = prefillCollectFields(form.value.nodes, text, simCollected.value)
-  const fields = Object.keys(found)
-  if (!fields.length) return
-  simCollected.value = { ...simCollected.value, ...found }
-  simPrefilled.value = [...new Set([...simPrefilled.value, ...fields])]
-}
-
-/** 從某節點往前推非互動步驟：遇到 collect/quickReply 停下等輸入、遇到 reply 結束 */
-function simRun(startId: string) {
-  let cursor = startId
-  for (let i = 0; i < 50; i++) {
-    if (!cursor) { simPush({ who: 'sys', text: '（這條路沒有接下一步，流程結束）' }); simDone.value = true; simWaiting.value = null; return }
-    const node = form.value.nodes.find(n => n.id === cursor)
-    if (!node) { simPush({ who: 'sys', text: '（接到不存在的步驟，流程結束）' }); simDone.value = true; simWaiting.value = null; return }
-    if (node.type === 'trigger') { cursor = node.next; continue }
-    if (node.type === 'branch') { cursor = resolveBranchNext(node, simCollected.value); continue }
-    if (node.type === 'tag') { simPush({ who: 'sys', text: `（貼標：${node.addTagIds.length} 個標籤）` }); cursor = node.next; continue }
-    if (node.type === 'saveLead') { simPush({ who: 'sys', text: '（已把答案存進客人資料）' }); cursor = node.next; continue }
-    if (node.type === 'collect') {
-      // 與引擎一致:客人前面已經講過這一項 → 不問、往下走（試跑要講出來，不然店家會以為那一題壞了）
-      const remaining = consumePrefilledCollect(node.fieldName, { collected: simCollected.value, prefilled: simPrefilled.value })
-      if (remaining) {
-        simPrefilled.value = remaining
-        simPush({ who: 'sys', text: `（客人前面已經給過：${simCollected.value[node.fieldName]}，這一題不再問）` })
-        cursor = node.next
-        continue
-      }
-      // 與引擎一致:有跳過出口 → 問句附跳過按鈕
-      const skip = collectSkipLabel(node)
-      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), ...(skip ? { buttons: [skip] } : {}) })
-      simNodeId.value = node.id; simWaiting.value = 'collect'; return
-    }
-    if (node.type === 'quickReply') {
-      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), buttons: node.options.map(o => o.label) })
-      simNodeId.value = node.id; simWaiting.value = 'quickReply'; return
-    }
-    if (node.type === 'module') {
-      /*
-       * `C-232`：這一步以前只印一行「（送出機器人模組「X」的訊息）」——
-       * 它是整條流程裡客人視覺上最重的一則（正式庫 71 個模組有 68 個含圖片／輪播／快速回覆），
-       * 卻是唯一看不到的一則。改成把那個模組真的抓回來畫（`moduleId` 交給樣板上的預覽元件）。
-       * ⛔ 保留一行說明：光有圖不講「流程到這裡結束」的話，看的人不知道後面還有沒有。
-       */
-      /*
-       * ⛔ **還沒選模組時不可以走預覽那條路**：`moduleId` 是空字串時樣板上的預覽不會渲染，
-       * 於是那一則掉回一般氣泡、畫成「（空白訊息）」——看起來像客人會收到一則空訊息，
-       * 但真正的問題是「這一步還沒設定完」。實機守門員第一次跑就是在這裡抓到的。
-       */
-      if (!node.moduleId) {
-        simPush({ who: 'sys', text: '（這一步還沒選要送哪一個機器人模組，客人什麼都收不到）' })
-        simDone.value = true; simWaiting.value = null; return
-      }
-      simPush({ who: 'bot', text: '', moduleId: node.moduleId })
-      simPush({ who: 'sys', text: `（以上是機器人模組「${moduleLabel(node.moduleId)}」的內容，流程結束）` })
-      simDone.value = true; simWaiting.value = null; return
-    }
-    if (node.type === 'reply') {
-      simPush({ who: 'bot', text: renderScriptTemplate(node.text, { collected: simCollected.value }) })
-      // 與引擎一致：有連結按鈕就多送一則帶按鈕的訊息（試跑要跟客人看到的一樣）
-      const linkUrl = renderScriptTemplate(String(node.linkUrl ?? '').trim(), { collected: simCollected.value })
-      if (linkUrl) {
-        /*
-         * `C-232`：以前只印一行字，看不出那是**獨立的一則**，也看不出卡片上那句話不是店家寫的。
-         * 畫成卡片，本文取送出端同一個常數（`handler.ts` 就是拿它當 buttons template 的 text）。
-         */
-        simPush({
-          who: 'bot',
-          text: '',
-          linkCard: {
-            text: LINE_CARD_BODY_DEFAULT,
-            label: String(node.linkLabel ?? '').trim() || DEFAULT_REPLY_LINK_LABEL,
-            url: linkUrl,
-          },
-        })
-      }
-      if (node.thenHandoff) simPush({ who: 'sys', text: '↳ 轉真人客服' })
-      simDone.value = true; simWaiting.value = null; return
-    }
-    return
-  }
-}
-
-/** 編輯中的這條是不是「加好友時」腳本（試跑起點與重複警告共用） */
-const editingFollowScript = computed(() => {
-  const trig = form.value.nodes.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
-  return trig?.triggerEvent === 'follow'
-})
-
-/** 加好友腳本的試跑起點：沒有「第一句話」，用一顆按鈕模擬 follow 事件 */
-function simFollowStart() {
-  if (simLog.value.length) return
-  simPush({ who: 'sys', text: '（客人把你的官方帳號加為好友）' })
-  const trig = form.value.nodes.find(n => n.type === 'trigger')
-  if (!trig || trig.type !== 'trigger') {
-    simPush({ who: 'sys', text: '（這條流程沒有觸發步驟）' })
-    return
-  }
-  simRun(trig.next)
-}
-
-/** 送出一句「客人的話」；第一句視為觸發訊息，之後照 collect / quickReply 推進 */
-function simSend(text?: string) {
-  const msg = String(text ?? simInput.value).trim()
-  if (!msg) return
-  simInput.value = ''
-  simPush({ who: 'me', text: msg })
-  if (simDone.value) { simPush({ who: 'sys', text: '（流程已結束，按「重來」再試一次）' }); return }
-
-  // 逃生門(與正式引擎同一份判斷詞):流程進行中喊「找真人」→ 放棄腳本、轉真人
-  if (simWaiting.value && isHumanRequestText(msg)) {
-    simPush({ who: 'sys', text: '↳ 逃生門：放棄流程，轉真人客服（會回覆客人並通知值班同仁）' })
-    simDone.value = true
-    simWaiting.value = null
-    return
-  }
-
-  if (!simWaiting.value) {
-    const trig = form.value.nodes.find(n => n.type === 'trigger')
-    if (!trig || trig.type !== 'trigger') { simPush({ who: 'sys', text: '（這條流程沒有觸發步驟）' }); return }
-    simPrefill(msg)
-    simRun(trig.next)
-    return
-  }
-  const node = form.value.nodes.find(n => n.id === simNodeId.value)
-  if (node?.type === 'collect') {
-    // 與引擎一致:先看是不是點了跳過按鈕(先於格式驗證,否則「不限格式」會把跳過語存成髒值)
-    const skip = collectSkipLabel(node)
-    if (skip && msg.toLowerCase() === skip.toLowerCase()) {
-      simRun(node.skipNext!)
-      return
-    }
-    const res = extractCollectValue(node, msg)
-    if (!res.ok) {
-      // 與引擎一致:答錯格式=挫折點,重問時亮出退路——跳過按鈕(有設的話)+「找真人」逃生按鈕
-      simPush({ who: 'bot', text: node.reaskText || '格式好像不太對，可以再輸入一次嗎？', buttons: [...(skip ? [skip] : []), '找真人'] })
-      return
-    }
-    simCollected.value[node.fieldName] = res.value
-    simPrefill(msg)
-    simRun(node.next)
-  }
-  else if (node?.type === 'quickReply') {
-    const opt = node.options.find(o => o.label.trim() === msg)
-    if (!opt) {
-      // 與引擎一致:沒對到選項 → 重新出題,按鈕多一顆「找真人」(已有同義按鈕就不重複)
-      const labels = node.options.map(o => o.label)
-      if (!labels.some(l => isHumanRequestText(l.trim()))) labels.push('找真人')
-      simPush({ who: 'bot', text: renderScriptTemplate(node.question, { collected: simCollected.value }), buttons: labels })
-      return
-    }
-    simRun(opt.next)
-  }
-  else { simPush({ who: 'sys', text: '（狀態異常，請按重來）' }) }
-}
+/** 編輯中的這條是不是「加好友時」那種（重複警告用） */
+const editingFollowScript = computed(() => triggerNode.value?.triggerEvent === 'follow')
 
 /**
- * 觸發測試（大概版）：關鍵字用「即時子字串比對」（與後端 keyword 快速通道同邏輯，零成本）。
- * 「看意思」模式的最終判斷是 AI 在真實對話時做的，這裡只能提示、無法百分百確定。
+ * 目前所有「問一題」的欄位（給分支／存客人資料／插入客人資料選，避免手打 typo）。
+ * label 講中文（`D-138`④：常用欄位不露出 order_id），value 照存的代號。
  */
-function triggerTestResult(node: ScriptTriggerNode): { state: 'idle' | 'hit' | 'maybe' | 'miss'; text: string } {
-  const q = triggerTest.value.trim().toLowerCase()
-  if (!q) return { state: 'idle', text: '' }
-  const kws = (node.keywords ?? []).map(k => k.trim().toLowerCase()).filter(Boolean)
-  if (kws.some(k => q.includes(k))) return { state: 'hit', text: '會觸發（命中關鍵字）' }
-  if ((node.matchMode ?? 'keyword') === 'semantic') {
-    return { state: 'maybe', text: '沒中關鍵字。「看意思」模式實際由 AI 依範例句判斷，這裡無法百分百確定；範例句越貼近客人講法越準' }
-  }
-  return { state: 'miss', text: '不會觸發（沒命中任何關鍵字）' }
-}
-
-/** 目前腳本裡所有 collect 節點的欄位名（給分支/寫名單/變數插入下拉選，避免手打 typo） */
 const collectFieldOptions = computed(() =>
   form.value.nodes
     .filter((n): n is ScriptCollectNode => n.type === 'collect' && !!n.fieldName.trim())
-    .map(n => ({ value: n.fieldName, label: n.fieldName })),
+    .map(n => ({ value: n.fieldName, label: fieldLabel(n.fieldName) })),
 )
 /** 節點標頭的用途提示（取代誤導的「節點 N」序號——分支圖裡順序≠流程） */
 function nodeHeaderHint(node: ScriptNode): string {
-  if (node.type === 'collect') return node.fieldName ? `欄位「${node.fieldName}」` : '（未命名欄位）'
+  if (node.type === 'collect') return node.fieldName ? `欄位「${fieldLabel(node.fieldName)}」` : '（未命名欄位）'
   if (node.type === 'reply') return node.thenHandoff ? '結束 → 轉真人' : '結束'
   return ''
 }
@@ -1854,8 +1937,9 @@ function clearCollectSkip(node: ScriptCollectNode) {
   openedSkips.value = next
 }
 
-function addQuickReplyOption(node: ScriptQuickReplyNode) {
-  node.options.push({ label: '', next: '' })
+/** 多一顆按鈕；清單編法帶「直接到最後」當預設去向（流程圖編法照舊留空、讓他自己接） */
+function addQuickReplyOption(node: ScriptQuickReplyNode, defaultNext = '') {
+  node.options.push({ label: '', next: defaultNext })
 }
 function removeQuickReplyOption(node: ScriptQuickReplyNode, idx: number) {
   node.options.splice(idx, 1)
@@ -1874,18 +1958,59 @@ function selectScript(script: ScriptRow, opts?: { skipDiscardConfirm?: boolean }
     nodes: deepCloneNodes(script.nodes),
   }
   markClean()
-  simReset()
   resetEditorDisclosure(form.value.nodes)
 }
 
-function openCreate() {
+/** 「新增」：回到起點選擇（＝什麼都沒選的那個畫面，`D-138`④） */
+function openStarter() {
   if (!confirmLeaveIfDirty()) return
-  isCreating.value = true
+  isCreating.value = false
   selectedId.value = null
   form.value = blankForm()
   markClean()
-  simReset()
   resetEditorDisclosure(form.value.nodes)
+}
+
+/** 把一份還沒存的草稿放進編輯器。dirty＝裡面已經有內容（範本、AI 草稿）：切走要問，不然整份消失 */
+function loadDraft(draft: ReturnType<typeof blankForm>, dirty: boolean) {
+  isCreating.value = true
+  selectedId.value = null
+  form.value = draft
+  if (dirty) markDirty()
+  else markClean()
+  createSeq.value++
+  resetEditorDisclosure(form.value.nodes)
+}
+
+/**
+ * 「先問資料，再交給真人」的起點：看意思開始、先問訂單編號（客人說沒有就直接到最後）、回完交給真人。
+ * 跟 MYFEEL 現在在用的三條同一個樣子；問句是常用欄位帶的那句，改不改都可以。
+ */
+function handoffStarter(): ReturnType<typeof blankForm> {
+  const reply: ScriptReplyNode = { ...defaultReplyNode(), text: '已收到您的資訊，我們會盡快為您處理，謝謝您 🙇', thenHandoff: true }
+  const ask: ScriptCollectNode = {
+    ...defaultCollectNode(reply.id),
+    question: '請問您的訂單編號是？',
+    fieldName: 'order_id',
+    format: 'alphanumericSymbol',
+    skipLabel: '我沒有訂單編號',
+    skipNext: reply.id,
+  }
+  const trigger: ScriptTriggerNode = { ...defaultTriggerNode(ask.id), matchMode: 'semantic', examples: [] }
+  return { name: '', enabled: true, priority: DEFAULT_SCRIPT_PRIORITY, rootNodeId: trigger.id, nodes: [trigger, ask, reply] }
+}
+
+/** 「客人打特定的字，就回固定內容」的起點：一字不差才回（LINE 內建的自動回應也是這樣，店家熟） */
+function fixedStarter(): ReturnType<typeof blankForm> {
+  const f = blankForm()
+  const trigger = f.nodes[0] as ScriptTriggerNode
+  trigger.keywordMatch = 'exact'
+  return f
+}
+
+function startFrom(kind: 'handoff' | 'fixed' | 'blank') {
+  if (!confirmLeaveIfDirty()) return
+  loadDraft(kind === 'handoff' ? handoffStarter() : kind === 'fixed' ? fixedStarter() : blankForm(), false)
 }
 
 // ── `D-23`：「客人加好友時」那一列 ────────────────────────────────────
@@ -1987,34 +2112,28 @@ async function duplicateScript() {
 }
 
 // ── AI 一句話生成草稿 ────────────────────────────────────────────────
-const aiGenDesc = ref('')
 const aiGenerating = ref(false)
+const starterEl = ref<{ clearDesc: () => void } | null>(null)
 
 /** 呼叫生成端點,把草稿載入編輯器(與範本同一條路:未存檔,人審後按「建立」才寫入) */
-async function generateFromAi() {
-  const description = aiGenDesc.value.trim()
-  if (!description || aiGenerating.value) return
+async function generateFromAi(description: string) {
+  if (!description.trim() || aiGenerating.value) return
   if (!confirmLeaveIfDirty()) return
   aiGenerating.value = true
   try {
     const draft = await apiFetch<{ name: string; nodes: ScriptNode[]; rootNodeId: string }>(
       '/api/ai/scripts/generate',
-      { method: 'POST', body: { description } },
+      { method: 'POST', body: { description: description.trim() } },
     )
-    isCreating.value = true
-    selectedId.value = null
-    form.value = {
+    starterEl.value?.clearDesc()
+    loadDraft({
       name: draft.name,
       enabled: true,
       priority: DEFAULT_SCRIPT_PRIORITY,
       rootNodeId: draft.rootNodeId,
       nodes: deepCloneNodes(draft.nodes),
-    }
-    markDirty()
-    simReset()
-    resetEditorDisclosure(form.value.nodes)
-    aiGenDesc.value = ''
-    showToast('草稿已生成——看看上面的流程圖、試跑一次，調整後按「建立自動回應」', 'success')
+    }, true)
+    showToast('草稿搭好了——看一遍、在右邊「試試看」打一句，調整後按「建立自動回應」', 'success')
   }
   catch (err: any) {
     showToast(err?.statusMessage || err?.data?.statusMessage || err?.message || 'AI 生成失敗,換個說法再試一次', 'error')
@@ -2027,18 +2146,13 @@ async function generateFromAi() {
 /** 從範本一鍵建立：載入到編輯器（尚未存檔，使用者微調後按建立才寫入） */
 function createFromTemplate(tpl: ScriptTemplate) {
   if (!confirmLeaveIfDirty()) return
-  isCreating.value = true
-  selectedId.value = null
-  form.value = {
+  loadDraft({
     name: tpl.label,
     enabled: true,
     priority: DEFAULT_SCRIPT_PRIORITY,
     rootNodeId: tpl.rootNodeId,
     nodes: deepCloneNodes(tpl.nodes),
-  }
-  markDirty()
-  simReset()
-  resetEditorDisclosure(form.value.nodes)
+  }, true)
 }
 
 function cancelEdit() {
@@ -2249,8 +2363,10 @@ async function confirmToggleImpact(scriptId: string, enabled: boolean): Promise<
 }
 
 async function submitForm() {
-  const name = form.value.name.trim()
-  if (!name) return showToast('請輸入流程名稱', 'error')
+  // 名稱選填（`D-138`④）：沒填就用客人會講的第一句，畫面上那格跟著填上，看得到存成什麼
+  const name = form.value.name.trim() || autoName()
+  if (!name) return showToast('先填客人會怎麼講（或取個名稱）再存', 'error')
+  form.value.name = name
   // trigger 同步 priority
   const trig = form.value.nodes.find(n => n.type === 'trigger') as ScriptTriggerNode | undefined
   if (trig) trig.priority = form.value.priority

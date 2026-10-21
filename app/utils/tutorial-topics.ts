@@ -619,26 +619,30 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="scr-new"]',
         title: '新增一條自動回應',
         description:
-          '客人說了某句話，系統就自動回一段——<strong>一句話回一件事</strong>（例：問營業時間）'
-          + '或<strong>多步驟的接待</strong>（例：預約、報名、領優惠）都在這裡設。點「<strong>新增</strong>」開一條。',
+          // `D-138`④：「新增」先挑起點，不再直接給一張空白表單
+          '按「<strong>新增</strong>」會先讓你挑一個起點：<strong>先問資料，再交給真人</strong>（查訂單、改地址）、'
+          + '<strong>客人打特定的字就回固定內容</strong>（活動口令），或<strong>客人加好友時</strong>。',
         placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-templates"]',
+        // 起點選擇就是「什麼都沒選」的那個畫面；手上開著一條在編輯才需要幫他按「新增」
+        clickBefore: '[data-tour="scr-new"]',
+        clickBeforeUnless: '[data-tour="scr-templates"]',
+        title: '先挑一個起點',
+        description:
+          // ⛔ 2026-09-29（`D-109`）：原本寫「建立後記得把狀態切成啟用才會生效」——反了：
+          //    起點、範本、AI 生成**一建就是啟用**（只有「複製」是停用），照原本那句理解的人
+          //    會以為還沒上線，其實客人已經收得到。
+          '三種都進同一個編輯畫面，之後要多問一題、多一條路都可以再加；下面還有幾個<strong>範本</strong>。'
+          + '⚠️ 建出來<strong>就是啟用的</strong>，存檔之後客人就會收到；還沒改好就先把右上角切成「停用」再存。',
+        placement: 'top',
       },
       {
         target: '[data-tour="scr-ai-gen"]',
         title: '用一句話讓 AI 幫你搭',
         description:
-          '不想從空白開始？在這裡<strong>用一句話描述流程</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 就會幫你搭好整條流程草稿。<strong>生成後會先進編輯器讓你檢查</strong>，按「建立自動回應」才會存檔。',
-        placement: 'top',
-      },
-      {
-        target: '[data-tour="scr-templates"]',
-        title: '從範本開始也行',
-        description:
-          // ⛔ 2026-09-29（`D-109`）：原本寫「建立後記得把狀態切成啟用才會生效」——反了：
-          //    範本、AI 生成、空白新增**一建就是啟用**（只有「複製一份」是停用），照原本那句理解的人
-          //    會以為還沒上線，其實客人已經收得到。
-          '也可以挑一個<strong>範本</strong>，系統幫你把流程骨架建好再改。'
-          + '⚠️ 範本建出來<strong>就是啟用的</strong>，存檔之後客人就會收到；還沒改好就先把狀態切成「停用」再存。',
+          '不想從頭填？在這裡<strong>用一句話描述</strong>（例：客人要退貨時，先問訂單編號和原因，再請專員處理），AI 會搭好草稿。<strong>搭好會先打開讓你看過、試過</strong>，按「建立自動回應」才會存。',
         placement: 'top',
       },
       {
@@ -661,53 +665,63 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
       //    渲染條件細一層的那幾格改用 `targetFallback`。
       {
         target: '[data-tour="scr-trigger-mode"]',
-        // 手上已經開著一條在編輯就不要按「新增」把它切掉——那顆按鈕還會跳出「未儲存」確認框
-        clickBefore: '[data-tour="scr-new"]',
+        // 手上已經開著一條在編輯就不要再點起點把它切掉；沒開著的話替他挑「先問資料，再交給真人」（最常用的那種）
+        clickBefore: '[data-tour="scr-start-handoff"]',
         clickBeforeUnless: '[data-tour="scr-trigger-mode"]',
-        title: '先決定「什麼時候會啟動」',
+        title: '先決定「什麼時候開始」',
         description:
-          '三選一：<strong>關鍵字</strong>＝客人打的字裡有你設的詞才算；'
-          + '<strong>看意思</strong>＝客人換句話說也算（你填幾句範例，AI 判斷像不像）；'
+          '三選一：<strong>客人在問這類事（AI 判斷）</strong>＝填幾句客人會怎麼講，意思相近就接；'
+          + '<strong>客人打特定的字</strong>＝只看字、不經過 AI；'
           + '<strong>客人加好友時</strong>＝一加好友就跑，不用他打任何字。',
         placement: 'right',
       },
       {
-        target: '[data-tour="scr-match"]',
-        // 「怎麼比對」只有在「關鍵字」那一邊才渲染；選了「看意思」就退去指上面那排選擇
+        target: '[data-tour="scr-meaning"]',
+        // 「客人會這樣講」只有在 AI 判斷那一邊才渲染；選了別的就退去指上面那排選擇
         targetFallback: '[data-tour="scr-trigger-mode"]',
-        title: '最容易做錯的就是這一格',
+        title: '最容易做錯的是這幾格',
         description:
-          '選了關鍵字的話，這裡決定<strong>怎麼算命中</strong>。'
+          'AI 判斷的話，填 3～5 句客人會怎麼講就夠。⚠️ 「<strong>含這些字就直接接</strong>」的字一出現就接走、不等 AI——'
+          + '太常見的字（例：訂單）會把不相干的訊息也接走；有些講法不想接，寫在「<strong>這些交給 AI 回答，不要接</strong>」。'
           // ⛔ 選項的字要照下拉選單寫（「客人輸入任何內容」），`D-109` 抓到原本寫成警告框的標題
-          + '⛔ 其中「<strong>客人輸入任何內容</strong>」要特別小心：選了之後客人不管打什麼都會走這一條，'
-          + '<strong>AI 客服和其他自動回應全部收不到訊息</strong>，而且畫面上不會有任何錯誤——'
-          + '除非你是刻意要暫停 AI，否則用「含任一關鍵字」。'
-          + '（選「看意思」時這一格會換成<strong>範例句</strong>，填 3～5 種不同說法就夠。）',
+          + '選「客人打特定的字」的話，⛔「<strong>客人輸入任何內容</strong>」要特別小心：客人不管打什麼都會走這一條，'
+          + '<strong>AI 客服和其他自動回應全部收不到訊息</strong>，而且畫面上不會有任何錯誤。',
+        placement: 'right',
+      },
+      {
+        target: '[data-tour="scr-questions"]',
+        // 一句話回一件事的那種沒有問答清單（例如手上開的是流程圖編法那種）：退去指積木選單
+        targetFallback: '[data-tour="scr-palette"]',
+        title: '要先問客人的，一題一列',
+        description:
+          '照順序問：每一題先選「<strong>這一題問的是</strong>」（訂單編號、電話…），問句會自動帶好。'
+          + '「<strong>答了 →</strong>」決定答完去哪；問訂單編號這種客人可能沒有的，加一條「<strong>客人說沒有 →</strong>」，'
+          + '不然他會被一直重問。客人傳截圖也算回答。',
         placement: 'right',
       },
       {
         target: '[data-tour="scr-test"]',
-        title: '不確定會不會中？先在這裡試',
+        title: '右邊直接試',
         description:
-          '打一句<strong>客人可能會說的話</strong>，下面立刻告訴你這條會不會被啟動。'
-          + '不用先上線、也不用拿真的客人試——<strong>設完先在這裡打兩句</strong>是最快確認自己沒設錯的方法。',
-        placement: 'right',
+          '在「<strong>試試看</strong>」打一句客人會講的話，<strong>照真的判斷</strong>告訴你會不會走這一條、不會的話會走去哪；'
+          + '會的話接著把整段對話跑一遍——<strong>不會真的送出</strong>。設完先在這裡打兩句，是最快確認自己沒設錯的方法。',
+        placement: 'left',
       },
       {
         target: '[data-tour="scr-reply"]',
-        title: '然後，要回客人什麼',
+        title: '最後：回客人什麼',
         description:
-          '這一格就是客人會收到的話。只要一句話就結束的設定，到這裡就完成了；'
-          + '要再問客人問題、收他的答案、依答案分流的話，往下有「<strong>還要多做一步…</strong>」可以加。',
+          '這一格就是客人最後收到的話。勾「<strong>回完交給真人</strong>」就會轉給同事；'
+          + '下班時間會在同一則補上幾點起回覆，不會另外再送一則。',
         placement: 'right',
       },
       {
         target: '[data-tour="scr-save"]',
         title: '按「建立」才算數',
         description:
-          '編好按右上角<strong>建立自動回應</strong>才會存檔。存之前上面那條狀態列會先幫你檢查'
-          + '（有沒有接不起來的步驟、客人會不會卡在某一題出不來），<strong>看到綠色再存</strong>。'
-          + '要問客人問題、依答案分流的話，教學清單裡還有一支「<strong>自動回應：多步驟接待</strong>」。',
+          '編好按右上角<strong>建立自動回應</strong>才會存檔。上面如果有紅色或黃色的提醒'
+          + '（接不起來的步驟、客人會卡在某一題出不來），<strong>先處理再存</strong>。'
+          + '要依答案分流的話，教學清單裡還有一支「<strong>自動回應：多步驟接待</strong>」。',
         placement: 'bottom-end',
       },
     ],
@@ -732,51 +746,49 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     route: wid => `/admin/${wid}/ai-scripts`,
     steps: [
       {
-        target: '[data-tour="scr-grow"]',
-        clickBefore: '[data-tour="scr-new"]',
+        target: '[data-tour="scr-questions"]',
+        // 手上沒開著一條就替他挑「先問資料，再交給真人」；開著的是流程圖編法那種（沒有問答清單）就退去指積木選單
+        clickBefore: '[data-tour="scr-start-handoff"]',
         clickBeforeUnless: '[data-tour="scr-trigger-mode"]',
-        // 手上開著的是已經有好幾步的流程：這顆不在，積木選單直接攤著——退去指它
         targetFallback: '[data-tour="scr-palette"]',
-        title: '要多做一步，從這裡加',
+        title: '問答清單：一題一列',
         description:
-          '一句話回一件事的話，前面那幾格就夠了。要<strong>問客人問題、給按鈕選、依答案分路、轉真人</strong>，按這顆「<strong>還要多做一步…</strong>」。',
-        placement: 'top',
-      },
-      {
-        target: '[data-tour="scr-palette"]',
-        clickBefore: '[data-tour="scr-grow"]',
-        clickBeforeUnless: '[data-tour="scr-palette"]',
-        title: '每一塊就是一個步驟',
-        description:
-          '點一塊就在流程最後加一步。<strong>一般步驟會由上往下自動接下去</strong>；'
-          + '只有「<strong>依答案分路</strong>」和「<strong>快速回覆</strong>」要自己用「<strong>前往…</strong>」下拉，指定每條路各接到哪一步——'
-          + '這是整個編輯器唯一要自己接線的地方，接錯了客人會走到錯的地方。',
+          // `D-138`④：照順序問的不用接線，以前的「還要多做一步…」＋積木選單收成這一段
+          '「<strong>先問客人</strong>」那一段，一題一列、照順序問。按「<strong>＋ 再問一題</strong>」多問一題，'
+          + '按「<strong>＋ 給客人按鈕選</strong>」給幾顆按鈕讓他點。',
         placement: 'top',
       },
       {
         target: '',
-        title: '問客人問題時，最容易漏的兩格',
+        title: '每一題的兩條路',
         description:
-          '「<strong>問客人資料</strong>」那一步：先在「<strong>這一題問的是</strong>」選一個（電話、Email、訂單編號…），格式和代號會自動帶好。'
-          + '⚠️ 問訂單編號、序號這種<strong>客人可能根本沒有</strong>的東西，一定要加「<strong>答不出來的退路</strong>」——'
-          + '沒有的話他會被一直重問、卡在那一題出不來。'
-          + '「依答案分路」是<strong>由上往下第一個符合的</strong>就走那條，都不符合走「其餘情況」。',
+          '「<strong>答了 →</strong>」：下一題，或<strong>直接到最後</strong>（答得出訂單編號就不用再問 Email）。'
+          + '「<strong>客人說沒有 →</strong>」：問訂單編號、序號這種<strong>客人可能根本沒有</strong>的，一定要給——'
+          + '沒有的話他會被一直重問、卡在那一題出不來。客人傳<strong>截圖</strong>回答也算答了。',
       },
       {
-        target: '[data-tour="scr-sim"]',
-        clickBefore: '[data-tour="scr-sim-head"]',
-        clickBeforeUnless: '[data-tour="scr-sim-panel"]',
-        title: '整條試跑一次再存',
+        target: '[data-tour="scr-advanced"]',
+        // 手上開著的已經是流程圖編法：這顆不在，退去指積木選單
+        targetFallback: '[data-tour="scr-palette"]',
+        title: '要依答案走不同路',
         description:
-          '「<strong>試跑這條流程</strong>」讓你假裝客人一句一句打，看機器人怎麼回、會不會卡住——'
-          + '<strong>純預覽，不會真的送出</strong>。上面的「測試觸發」只驗得了第一句會不會啟動，整條走不走得完要在這裡試。',
+          '例如選了退貨走這邊、選了換貨走那邊，按「<strong>依答案走不同路…</strong>」切到流程圖編法：每一塊是一個步驟，'
+          + '「依答案分路」和「快速回覆」要自己用「<strong>前往…</strong>」指定每條路接到哪一步——接錯了客人會走到錯的地方。',
         placement: 'top',
       },
       {
-        target: '[data-tour="scr-save"]',
-        title: '存檔前看一眼狀態列',
+        target: '[data-tour="scr-sim"]',
+        title: '整段試一次再存',
         description:
-          '上面那條狀態列會幫你檢查：有沒有接不起來的步驟、有沒有問了代碼卻沒給退路。<strong>看到綠色再按存檔</strong>。',
+          '右邊「<strong>試試看</strong>」打第一句，會先告訴你會不會走這一條，接著一句一句往下跑、看會不會卡住；'
+          + '點「<strong>傳圖片</strong>」可以試客人用截圖回答。<strong>不會真的送出</strong>。',
+        placement: 'left',
+      },
+      {
+        target: '[data-tour="scr-save"]',
+        title: '存檔前看一眼上面的提醒',
+        description:
+          '上面有紅色或黃色提醒（接不起來的步驟、問了編號卻沒給「客人說沒有」的路）就先處理，<strong>沒有提醒再存</strong>。',
         placement: 'bottom-end',
       },
     ],
