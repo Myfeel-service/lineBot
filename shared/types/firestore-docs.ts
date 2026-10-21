@@ -32,6 +32,11 @@ export interface UserDoc {
   /** 正在進行中的腳本狀態（見 shared/types/ai-script） */
   activeScript?: ActiveScriptState | null
   /**
+   * 最近一次「用圖片回答自動回應那一題」的時間（epoch ms，`D-138`②）：同一批照片後面幾張不再出聲。
+   * 見 handler.ts claimScriptImageAnswer。
+   */
+  scriptImageAt?: number
+  /**
    * 客人只丟訂單資料、機器人問了「想詢問什麼」（`D-133`，見 shared/order-info-only.ts）：
    * 他那句原文＋問的時間（epoch ms）。之後 2 小時內點「什麼時候出貨」直接交給 AI、
    * 啟動的流程撿得到這筆資料（不再問編號）、再丟一次資料不重問。不清除，靠時間過期；下次再問時覆寫。

@@ -7,6 +7,7 @@ import {
   DEFAULT_SCRIPT_PRIORITY,
   MAX_QUICK_REPLY_OPTIONS,
   MAX_TRIGGER_EXAMPLES,
+  MAX_TRIGGER_EXCLUDES,
   MAX_TRIGGER_KEYWORDS,
   type BranchOp,
   type CollectFormat,
@@ -105,6 +106,11 @@ function normalizeNode(raw: any): ScriptNode | null {
       node.examples = Array.isArray(raw?.examples)
         ? raw.examples.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXAMPLES)
         : []
+      // 「這些交給 AI 回答，不要接」（`D-138`）：沒填就不寫這格
+      const excludes = Array.isArray(raw?.excludes)
+        ? raw.excludes.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXCLUDES)
+        : []
+      if (excludes.length) node.excludes = excludes
     }
     return node
   }

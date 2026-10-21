@@ -3,7 +3,9 @@ import { answerWithAi, routeMessage, type AiChatTurn, type RouteResult } from '~
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { usageFromCalls, withAiCallMeter, type AiCallUsage } from '~~/server/utils/ai-usage-calls'
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
-import { matchesScriptKeywords, scriptTriggerEvent, type ScriptDoc, type ScriptTriggerNode } from '~~/shared/types/ai-script'
+import { messageScripts, pickScriptByKeyword, routeCandidates } from '~~/server/utils/script-match'
+import { tryScriptRoute } from '~~/server/utils/script-try'
+import type { ScriptDoc, ScriptTriggerNode } from '~~/shared/types/ai-script'
 
 /**
  * POST /api/ai/playground
@@ -22,6 +24,9 @@ export default defineEventHandler(async (event) => {
   const query = String(body?.query ?? '').trim()
   if (!query) throw createError({ statusCode: 400, statusMessage: '請輸入 query' })
 
+  // 自動回應頁的「試試看」（`D-138`）：只問「這句會走哪一條」，含編輯中還沒存的那條；不跑 AI 答題
+  if (body?.routeOnly === true) return tryScriptRoute(workspaceId, query, body?.draft)
+
   // history 來自前端、不可信：只收 role 合法、text 有內容的項目，並截最近 6 則
   const history: AiChatTurn[] = Array.isArray(body?.history)
     ? body.history
@@ -36,16 +41,16 @@ export default defineEventHandler(async (event) => {
   // ── 先模擬腳本觸發（與正式 LINE 同一套：關鍵字快速通道 → 統一意圖路由）──
   // 只判「會不會觸發」，不真的啟動 / 持久化 activeScript。
   // 加好友觸發的腳本與正式流程同樣排除：playground 打的是「客人的一句話」，不是 follow 事件。
-  const scripts = (await loadActiveScripts(workspaceId).catch(() => []))
-    .filter(s => scriptTriggerEvent(s) === 'message')
-  let triggered: (ScriptDoc & { id: string }) | null = scripts.find(s => matchesScriptKeywords(s, query)) ?? null
+  // 比對規則跟正式回客人同一份（server/utils/script-match.ts，`D-138`）
+  const scripts = messageScripts(await loadActiveScripts(workspaceId).catch(() => []))
+  let triggered: (ScriptDoc & { id: string }) | null = pickScriptByKeyword(scripts, query)?.script ?? null
   let route: RouteResult | null = null
-  if (!triggered && scripts.length) {
-    const hints = scripts.map(s => ({ id: s.id, name: s.name, hints: triggerHintsOf(s) }))
+  const candidates = routeCandidates(scripts)
+  if (!triggered && candidates.length) {
     // 路由也是一次 LLM 呼叫、真的花了錢 → 記帳；但這是 playground 測試，導到後台自用（不併真客人成本）。
     // 用計量器記：路由 JSON 壞掉、回 null 那次也付了錢，而且照實際模型（flash-lite）算錢
     const routeCalls: AiCallUsage[] = []
-    route = await withAiCallMeter(routeCalls, () => routeMessage(query, hints, history)).catch(() => null)
+    route = await withAiCallMeter(routeCalls, () => routeMessage(query, candidates, history)).catch(() => null)
     if (routeCalls.length) void recordAiUsage(workspaceId, usageFromCalls('test', routeCalls))
     const routedScriptId = route?.scriptId ?? null
     if (routedScriptId) triggered = scripts.find(s => s.id === routedScriptId) ?? null
@@ -82,10 +87,3 @@ export default defineEventHandler(async (event) => {
     precomputedIntent: route ?? undefined,
   })
 })
-
-/** 腳本觸發情境提示（關鍵字 + 語意範例）給意圖路由參考 */
-function triggerHintsOf(script: ScriptDoc & { id: string }): string[] {
-  const root = script.nodes.find(n => n.id === script.rootNodeId)
-  if (root?.type !== 'trigger') return []
-  return [...new Set([...(root.keywords ?? []), ...(root.examples ?? [])].map(s => String(s).trim()).filter(Boolean))]
-}

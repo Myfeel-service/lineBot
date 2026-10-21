@@ -12,6 +12,7 @@
  *   - 自動回覆是「一問一答」單步驟；腳本是多步驟有狀態
  *   - activeScript 是 user-level 的；同個使用者同時間只能在一條腳本中
  */
+import { randomUUID } from 'node:crypto'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import type {
@@ -20,12 +21,14 @@ import type {
   ScriptDoc,
   ScriptNode,
   ScriptReplyNode,
+  ScriptRun,
   ScriptStats,
   ScriptTriggerNode,
 } from '~~/shared/types/ai-script'
 import {
   DEFAULT_COLLECT_REASK,
   DEFAULT_REPLY_LINK_LABEL,
+  SCRIPT_IMAGE_ANSWER,
   collectSkipLabel,
   consumePrefilledCollect,
   extractCollectValue,
@@ -36,6 +39,7 @@ import {
   scriptTriggerEvent,
 } from '~~/shared/types/ai-script'
 import { addTagsToUser } from './tagging'
+import { summarizeScriptRuns, type ScriptRunSummary } from '~~/shared/script-runs'
 
 export const SCRIPTS_COLLECTION = 'scripts'
 
@@ -125,6 +129,99 @@ export interface ScriptStepResult {
 }
 
 const EMPTY_RESULT: ScriptStepResult = { replyText: '', thenHandoff: false, finished: true }
+
+/**
+ * 下班時間（勿擾時段）才有的兩句話（`D-138`③，由 handler 依 AI 設定組好傳進來）。
+ * 以前流程照問「請問您的訂單編號是？」，另一條路又補一則「目前非客服服務時間…」，
+ * 客人同一刻收到兩三則不同來源的訊息、不知道該回哪則；最後那則還被整句換成勿擾文字，流程自己的回覆消失。
+ */
+export interface ScriptOffHours {
+  /** 店家設定的「非客服服務時間」那句（含幾點起回覆）：流程第一次開口時併在問題前面 */
+  notice: string
+  /** 講過一次之後，最後那則只補這一句「幾點起回覆」 */
+  nextLine: string
+}
+
+export interface ScriptStepOptions {
+  offHours?: ScriptOffHours | null
+  /**
+   * 客人用圖片回答這一題（`D-138`②）。只在停在「問一題」（collect）時才算數——
+   * 呼叫端要先確認，停在「給按鈕選」時圖片不是任何一個選項。
+   */
+  image?: boolean
+}
+
+/** 這條流程最後會交給真人嗎（下班時間要不要先講「非客服服務時間」的判斷：不會轉真人的流程沒有人要等） */
+function endsWithHandoff(script: ScriptDoc): boolean {
+  return script.nodes.some(n => n.type === 'reply' && n.thenHandoff)
+}
+
+/**
+ * 下班時間把「非客服服務時間」併進流程自己的那一則（`D-138`③）：
+ * - 第一次開口問問題：那句放在問題前面，記下「講過了」
+ * - 走到最後要交給真人：保留流程自己的回覆，後面補——講過就只補「幾點起回覆」，沒講過補整句
+ * 不會轉真人的流程（預約報名、加好友打招呼）不加：沒有人要等。
+ */
+function mergeOffHours(
+  script: ScriptDoc,
+  result: ScriptStepResult,
+  alreadyNoticed: boolean,
+  offHours: ScriptOffHours | null | undefined,
+): { result: ScriptStepResult; noticedNow: boolean } {
+  if (!offHours || result.escapeToHuman || !endsWithHandoff(script)) return { result, noticedNow: false }
+  if (result.finished) {
+    if (!result.thenHandoff) return { result, noticedNow: false }
+    const body = result.replyText.trim()
+    const tail = alreadyNoticed ? offHours.nextLine : offHours.notice
+    const replyText = body ? `${body}${alreadyNoticed ? '\n' : '\n\n'}${tail}` : tail
+    return { result: { ...result, replyText }, noticedNow: false }
+  }
+  if (alreadyNoticed || !result.replyText) return { result, noticedNow: false }
+  return { result: { ...result, replyText: `${offHours.notice}\n\n${result.replyText}` }, noticedNow: true }
+}
+
+// ── 每一次走進來的紀錄（`D-138`）：停在哪一題、為什麼 ─────────────────────
+const RUNS_SUBCOLLECTION = 'runs'
+
+function runRef(db: Firestore, scriptId: string, runId: string) {
+  return db.collection(SCRIPTS_COLLECTION).doc(scriptId).collection(RUNS_SUBCOLLECTION).doc(runId)
+}
+
+/**
+ * 更新這次的紀錄。⛔ 呼叫端一律 await（跟 persistActiveScript 一起 Promise.all）：
+ * Lambda 回應後容器會凍結，沒 await 的寫入會被砍掉（推播卡「發送中」那次學到的）。
+ * 失敗只印 log——紀錄寫不進去不能讓客人收不到回覆。
+ */
+async function updateRun(db: Firestore, state: Pick<ActiveScriptState, 'scriptId' | 'runId'>, patch: Record<string, unknown>): Promise<void> {
+  if (!state.runId) return // 舊狀態（這版之前開始的）沒有紀錄可更新
+  await runRef(db, state.scriptId, state.runId)
+    .update({ ...patch, updatedAtMs: Date.now() })
+    .catch(e => console.error('[ai-scripts] updateRun failed:', e))
+}
+
+/** 成效卡最多讀最近幾次（超過就講「只算最近 N 次」） */
+const RUNS_READ_LIMIT = 500
+
+/**
+ * 一條自動回應的成效：最近 500 次走進來的紀錄算成「走完幾位、停在哪一題、為什麼」（`D-138`）。
+ * 別的帳號的一律當成找不到（不講「有這條但不是你的」）。
+ */
+export async function loadScriptRunSummary(db: Firestore, workspaceId: string, scriptId: string): Promise<ScriptRunSummary> {
+  const ref = db.collection(SCRIPTS_COLLECTION).doc(scriptId)
+  const snap = await ref.get()
+  if (!snap.exists || snap.get('workspaceId') !== workspaceId)
+    throw createError({ statusCode: 404, statusMessage: '找不到這條自動回應' })
+  const runsSnap = await ref.collection(RUNS_SUBCOLLECTION).orderBy('startedAtMs', 'desc').limit(RUNS_READ_LIMIT + 1).get()
+  const truncated = runsSnap.docs.length > RUNS_READ_LIMIT
+  return summarizeScriptRuns(runsSnap.docs.slice(0, RUNS_READ_LIMIT).map(d => d.data() as ScriptRun), Date.now(), truncated)
+}
+
+/** 推進之後，紀錄要寫什麼：還在等答案＝停在哪一題；結束＝走完或中斷 */
+function runPatchAfterStep(nextState: ActiveScriptState | null, result: ScriptStepResult, image = false): Record<string, unknown> {
+  const extra = image ? { imageAnswers: FieldValue.increment(1) } : {}
+  if (nextState) return { ...extra, nodeId: nextState.currentNodeId, expiresAtMs: nextState.expiresAt, status: 'active' }
+  return { ...extra, nodeId: '', status: result.completed ? 'completed' : 'stopped' }
+}
 
 /**
  * 執行流程走訪累積的副作用（貼標 / 寫名單）。逐一 await、各自 try/catch，
@@ -246,7 +343,8 @@ function runNonInteractiveSteps(
       const attrs: Record<string, string> = {}
       for (const m of node.fieldMap) {
         const v = nextState!.collected[m.fromField]
-        if (v != null && v !== '') attrs[m.attrKey] = v
+        // 用截圖回答的那題不寫進客人資料：「（圖片）」不是訂單編號，圖在對話裡給真人看（`D-138`②）
+        if (v != null && v !== '' && v !== SCRIPT_IMAGE_ANSWER) attrs[m.attrKey] = v
       }
       if (Object.keys(attrs).length) actions.push({ type: 'saveAttributes', attributes: attrs })
       cursor = node.next
@@ -347,19 +445,47 @@ export async function startScript(
   attributes: Record<string, string>,
   db: Firestore = getDb(),
   triggerText = '',
+  opts: ScriptStepOptions = {},
 ): Promise<ScriptStepResult> {
   const trigger = script.nodes.find(n => n.id === script.rootNodeId) as ScriptTriggerNode | undefined
   if (!trigger) return EMPTY_RESULT
 
+  const now = Date.now()
+  const runId = randomUUID()
   const state: ActiveScriptState = prefillFromText(script, {
     scriptId: script.id,
     currentNodeId: script.rootNodeId,
     collected: {},
-    startedAt: Date.now(),
-    expiresAt: Date.now() + 60 * 60 * 1000, // 預設一小時 TTL
+    startedAt: now,
+    expiresAt: now + 60 * 60 * 1000, // 預設一小時 TTL
+    runId,
   }, triggerText)
-  const { nextState, result, actions } = runNonInteractiveSteps(script, trigger.next, state, attributes)
-  await persistActiveScript(db, userDocId, nextState)
+  const walked = runNonInteractiveSteps(script, trigger.next, state, attributes)
+  const { actions } = walked
+  const merged = mergeOffHours(script, walked.result, false, opts.offHours)
+  const result = merged.result
+  const nextState = walked.nextState && merged.noticedNow ? { ...walked.nextState, offHoursNoticed: true as const } : walked.nextState
+
+  // 一步就回完的（「客人打特定的字就回一句」那種）不記紀錄：沒有「停在哪一題」可講，記了只是多一筆寫入
+  const run: ScriptRun | null = nextState
+    ? {
+        userDocId,
+        displayName: String(attributes.displayName || ''),
+        startedAtMs: now,
+        updatedAtMs: now,
+        nodeId: nextState.currentNodeId,
+        status: 'active',
+        reasks: 0,
+        imageAnswers: 0,
+        expiresAtMs: nextState.expiresAt,
+      }
+    : null
+  await Promise.all([
+    persistActiveScript(db, userDocId, nextState ? nextState : null),
+    run
+      ? runRef(db, script.id, runId).set(run).catch(e => console.error('[ai-scripts] create run failed:', e))
+      : Promise.resolve(),
+  ])
   await executeScriptActions(db, userDocId, script.workspaceId, script.id, actions)
   // 成效統計：命中觸發即記一次啟動；若一步就跑到 reply（trigger→reply）也記完成
   recordScriptStat(db, script.id, 'starts')
@@ -376,17 +502,18 @@ export async function advanceScript(
   attributes: Record<string, string>,
   userDocId: string,
   db: Firestore = getDb(),
+  opts: ScriptStepOptions = {},
 ): Promise<ScriptStepResult> {
   // 逃生門(最優先,先於「當答案處理」):腳本進行中喊「找真人」→ 放棄流程、交給 caller 走標準轉真人。
   // 沒有這道門,求救會被 collect 存成欄位值(「已收到您的訂單 找真人」)或被格式驗證打回重問。
-  if (isHumanRequestText(userMessage)) {
-    await persistActiveScript(db, userDocId, null)
+  if (!opts.image && isHumanRequestText(userMessage)) {
+    await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'escaped' })])
     return { replyText: '', thenHandoff: false, finished: true, escapeToHuman: true }
   }
 
   // 過期 → 直接清掉、丟回讓主流程走 rule / AI fallback
   if (state.expiresAt && state.expiresAt < Date.now()) {
-    await persistActiveScript(db, userDocId, null)
+    await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'expired' })])
     return EMPTY_RESULT
   }
 
@@ -395,13 +522,21 @@ export async function advanceScript(
     await persistActiveScript(db, userDocId, null)
     return EMPTY_RESULT
   }
+  // 停用了就停：畫面寫「關掉後這條就不會再接客人」，走到一半的也一樣（`D-138`，`C-363`⑥）。
+  // 這句話交回主流程（AI 或別條），不會沒人回。
+  if (script.enabled === false) {
+    await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'stopped' })])
+    return EMPTY_RESULT
+  }
 
   const current = findNode(script, state.currentNodeId)
   if (!current || (current.type !== 'collect' && current.type !== 'quickReply')) {
     // 狀態壞了（停在非互動節點），清掉
-    await persistActiveScript(db, userDocId, null)
+    await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'stopped' })])
     return EMPTY_RESULT
   }
+
+  const alreadyNoticed = state.offHoursNoticed === true
 
   // 推進到下一個節點的共用收尾
   const advanceFrom = async (
@@ -411,11 +546,38 @@ export async function advanceScript(
     answerText = '',
   ): Promise<ScriptStepResult> => {
     const newState = prefillFromText(script, { ...state, collected, currentNodeId: current.id }, answerText)
-    const { nextState, result, actions } = runNonInteractiveSteps(script, fromNodeId, newState, attributes)
-    await persistActiveScript(db, userDocId, nextState)
-    await executeScriptActions(db, userDocId, script.workspaceId, state.scriptId, actions)
-    if (result.completed) recordScriptStat(db, state.scriptId, 'completions')
-    return result
+    const walked = runNonInteractiveSteps(script, fromNodeId, newState, attributes)
+    const merged = mergeOffHours(script, walked.result, alreadyNoticed, opts.offHours)
+    const nextState = walked.nextState && merged.noticedNow ? { ...walked.nextState, offHoursNoticed: true as const } : walked.nextState
+    await Promise.all([
+      persistActiveScript(db, userDocId, nextState),
+      updateRun(db, state, runPatchAfterStep(nextState, merged.result, opts.image === true)),
+    ])
+    await executeScriptActions(db, userDocId, script.workspaceId, state.scriptId, walked.actions)
+    if (merged.result.completed) recordScriptStat(db, state.scriptId, 'completions')
+    return merged.result
+  }
+
+  /** 同一題重問（答錯格式／沒點到選項）：停在原地、刷新逾時、記一次重問 */
+  const reask = async (result: ScriptStepResult, expireMs: number): Promise<ScriptStepResult> => {
+    const merged = mergeOffHours(script, result, alreadyNoticed, opts.offHours)
+    const reaskState: ActiveScriptState = {
+      ...state,
+      currentNodeId: current.id,
+      expiresAt: Date.now() + (expireMs || 600_000),
+      ...(merged.noticedNow ? { offHoursNoticed: true as const } : {}),
+    }
+    await Promise.all([
+      persistActiveScript(db, userDocId, reaskState),
+      updateRun(db, state, { reasks: FieldValue.increment(1), nodeId: current.id, expiresAtMs: reaskState.expiresAt }),
+    ])
+    return merged.result
+  }
+
+  // ── 客人傳圖片回答這一題（`D-138`②）：收下、往下走。圖片本身在對話裡給真人看 ──
+  if (opts.image) {
+    if (current.type !== 'collect') return { replyText: '', thenHandoff: false, finished: false }
+    return advanceFrom({ ...state.collected, [current.fieldName]: SCRIPT_IMAGE_ANSWER }, current.next)
   }
 
   // ── quickReply：比對客人送出的文字 = 哪個選項 label，照該選項的 next 走 ──
@@ -426,20 +588,14 @@ export async function advanceScript(
     if (!picked) {
       // 沒對到任何選項 → 重新出題、停在同一節點（刷新逾時）。
       // 客人已經卡住一次,重問時補一顆「找真人」逃生按鈕(選項裡已有同義按鈕就不重複)。
-      const reaskState: ActiveScriptState = {
-        ...state,
-        currentNodeId: current.id,
-        expiresAt: Date.now() + (current.expireMs || 600_000),
-      }
-      await persistActiveScript(db, userDocId, reaskState)
       const labels = current.options.map(o => o.label)
       if (!labels.some(l => isHumanRequestText(l))) labels.push('找真人')
-      return {
+      return reask({
         replyText: renderScriptTemplate(current.question, { collected: state.collected, attributes }),
         quickReplies: labels,
         thenHandoff: false,
         finished: false,
-      }
+      }, current.expireMs)
     }
     return advanceFrom(state.collected, picked.next)
   }
@@ -457,13 +613,7 @@ export async function advanceScript(
   // 抽不到合格值 → 重問、停在同一節點（刷新逾時），不寫入髒值也不前進
   const extracted = extractCollectValue(collectNode, userMessage)
   if (!extracted.ok) {
-    const reaskState: ActiveScriptState = {
-      ...state,
-      currentNodeId: collectNode.id,
-      expiresAt: Date.now() + (collectNode.expireMs || 600_000),
-    }
-    await persistActiveScript(db, userDocId, reaskState)
-    return {
+    return reask({
       replyText: renderScriptTemplate(collectNode.reaskText?.trim() || DEFAULT_COLLECT_REASK, {
         collected: state.collected,
         attributes,
@@ -472,7 +622,7 @@ export async function advanceScript(
       quickReplies: [...(skipLabel ? [skipLabel] : []), '找真人'],
       thenHandoff: false,
       finished: false,
-    }
+    }, collectNode.expireMs)
   }
 
   const collected = {

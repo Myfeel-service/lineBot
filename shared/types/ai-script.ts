@@ -60,6 +60,12 @@ export interface ScriptTriggerNode {
   /** semantic 模式：意圖範例句（使用者填，例「我要退貨」「想退」「能不能取消訂單」） */
   examples?: string[]
   /**
+   * semantic 模式：「這些交給 AI 回答，不要接」的講法（`D-138`，例「什麼時候出貨」）。
+   * 交給意圖路由當反例；**有設的話，關鍵字快速通道對這條也先停一下、讓路由看過意思再決定**
+   * （不然「我的訂單什麼時候出貨」含「訂單」就直接被接走，反例永遠用不上）。見 server/utils/script-match.ts。
+   */
+  excludes?: string[]
+  /**
    * semantic 模式：examples 對應的 embedding（768 維，順序與 examples 對齊）。
    * 由 server 在存檔時計算，**不接受前端傳入、也不回傳給前端編輯器**。
    *
@@ -276,6 +282,32 @@ export interface ActiveScriptState {
    * 沒有先撿到任何東西時不寫這一格（firebase-admin 沒開 ignoreUndefinedProperties）。
    */
   prefilled?: string[]
+  /** 這一次走進來的紀錄（`scripts/{scriptId}/runs/{runId}`，`D-138`）；舊狀態沒有這格＝不記 */
+  runId?: string
+  /** 下班時間「非客服服務時間」那句已經併進流程的第一個問題講過了（`D-138`③），後面不再整句重講 */
+  offHoursNoticed?: true
+}
+
+/**
+ * 一次「客人走進這條自動回應」的紀錄（`D-138`）：停在哪一題、為什麼。
+ * 存在 `scripts/{scriptId}/runs/{runId}`（子集合＝依時間排序只用自動索引，不用另建複合索引）。
+ *
+ * ⛔ 「沒再回」是**讀的時候**才判斷的：流程逾時是下一則訊息進來才清（lazy），客人不再傳訊息的話
+ *    status 會一直停在 active——所以 active 且 expiresAt 已過＝客人沒再回這一題。
+ */
+export interface ScriptRun {
+  userDocId: string
+  displayName: string
+  startedAtMs: number
+  updatedAtMs: number
+  /** 目前（或最後）停在哪一步 */
+  nodeId: string
+  status: 'active' | 'completed' | 'escaped' | 'expired' | 'stopped'
+  /** 這一題格式不對被重問了幾次（沒走完時用來分「答不出來」跟「沒再回」） */
+  reasks: number
+  /** 用截圖回答了幾題 */
+  imageAnswers: number
+  expiresAtMs: number
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -286,8 +318,21 @@ export interface ActiveScriptState {
  * 客人「明確要求真人」的說法(整句精確比對,trim 後)。
  * AI 層攔截、腳本逃生門、試跑面板共用同一份——要加詞改這裡,全系統生效。
  * 用精確比對(非子字串)避免誤傷:客人的答案(訂單編號、姓名…)不可能整句剛好等於這些詞。
+ * `D-138`：補上客人真的打過的講法（10/13「轉接專員」沒被認出、被當成答案）。
  */
-export const HUMAN_REQUEST_TEXTS = new Set(['找真人', '🙋 找真人', '轉真人', '真人客服'])
+export const HUMAN_REQUEST_TEXTS = new Set([
+  '找真人', '🙋 找真人', '轉真人', '真人客服',
+  '真人', '我要找真人', '我要真人', '轉接真人',
+  '專員', '找專員', '轉接專員', '轉專員',
+  '人工客服', '轉人工', '找客服', '客服人員', '找客服人員',
+])
+
+/**
+ * 客人在流程等答案時傳了圖片（多半是訂單截圖）＝這一題用圖片回答了（`D-138`②）。
+ * 存進 collected 的就是這個字，回覆文字帶得到（「已收到您的訂單（圖片）」）；
+ * ⛔ 不寫進客人資料（存進客人資料那一步會跳過它）——那不是訂單編號，圖本身在對話裡給真人看。
+ */
+export const SCRIPT_IMAGE_ANSWER = '（圖片）'
 
 /** 這句話是不是在喊找真人(腳本進行中優先於「當答案處理」) */
 export function isHumanRequestText(text: string): boolean {
@@ -305,6 +350,8 @@ export const MAX_SCRIPT_NODES = 20
 export const MAX_TRIGGER_KEYWORDS = 20
 /** semantic 觸發每個步驟最多幾句範例 */
 export const MAX_TRIGGER_EXAMPLES = 10
+/** semantic 觸發「不要接」最多幾句（`D-138`） */
+export const MAX_TRIGGER_EXCLUDES = 10
 /** 快速回覆每個步驟最多幾個選項（LINE Quick Reply 上限 13，這裡留保守值） */
 export const MAX_QUICK_REPLY_OPTIONS = 10
 /**
@@ -860,25 +907,38 @@ export function consumePrefilledCollect(
  * 留著只會讓下一個人改到錯的那支、然後兩把尺開始分岔。
  */
 export function matchesScriptKeywords(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId' | 'enabled'>, inputText: string): boolean {
-  if (!script.enabled) return false
+  return hitScriptKeyword(script, inputText) !== null
+}
+
+/**
+ * 同 {@link matchesScriptKeywords}，但講得出**是哪個字**打中的（`D-138` 試試看要講「因為含『訂單』」）。
+ * 沒中回 null；anyText 回 ''（有字就中，沒有「哪個字」）；all 回全部關鍵字用「＋」接起來。
+ */
+export function hitScriptKeyword(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId' | 'enabled'>, inputText: string): string | null {
+  if (!script.enabled) return null
   const text = String(inputText || '').trim().toLowerCase()
-  if (!text) return false
+  if (!text) return null
   const root = script.nodes.find(n => n.id === script.rootNodeId)
-  if (!root || root.type !== 'trigger') return false
+  if (!root || root.type !== 'trigger') return null
 
   // 加好友觸發的腳本只由 follow 事件啟動，任何文字都不命中。
   // ⛔ 這行不能省：舊資料若殘留 keywordMatch='anyText'，少了這道守衛它會攔截所有訊息。
-  if (root.triggerEvent === 'follow') return false
+  if (root.triggerEvent === 'follow') return null
 
   // anyText：有文字就命中，不看關鍵字（和自動回覆的同名選項一樣，會蓋掉 AI，編輯器要跳警告）
   const mode = root.keywordMatch ?? 'any'
-  if (mode === 'anyText') return true
+  if (mode === 'anyText') return ''
 
-  const keywords = (root.keywords ?? []).map(k => String(k).trim().toLowerCase()).filter(Boolean)
-  if (!keywords.length) return false
-  if (mode === 'exact') return keywords.includes(text)
-  if (mode === 'all') return keywords.every(k => text.includes(k))
-  return keywords.some(k => text.includes(k))
+  const raw = (root.keywords ?? []).map(k => String(k).trim()).filter(Boolean)
+  const keywords = raw.map(k => k.toLowerCase())
+  if (!keywords.length) return null
+  if (mode === 'exact') {
+    const i = keywords.indexOf(text)
+    return i >= 0 ? raw[i]! : null
+  }
+  if (mode === 'all') return keywords.every(k => text.includes(k)) ? raw.join('＋') : null
+  const i = keywords.findIndex(k => text.includes(k))
+  return i >= 0 ? raw[i]! : null
 }
 
 /** 餘弦相似度（gemini 768 維截斷向量未必正規化，須完整計算 dot/|a||b|） */

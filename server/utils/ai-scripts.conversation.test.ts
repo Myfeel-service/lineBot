@@ -35,20 +35,26 @@ function deepMerge(target: any, src: any) {
 function applyUpdate(doc: any, data: any) {
   for (const [k, v] of Object.entries(data)) {
     if (v && (v as any).__op === 'delete') { delete doc[k]; continue }
-    if (k.includes('.') || (v && (v as any).__op === 'increment')) continue // stats.* 不在斷言範圍
+    if (k.includes('.')) continue // stats.* 不在斷言範圍
+    // 走進來的紀錄（runs）要斷言重問幾次、截圖幾張：頂層欄位的 increment 照加
+    if (v && (v as any).__op === 'increment') { doc[k] = Number(doc[k] ?? 0) + (v as any).n; continue }
     doc[k] = v
   }
 }
-interface Store { users: Map<string, any>; scripts: Map<string, any> }
+/** runs：`scripts/{id}/runs/{runId}` 子集合，鍵是「scriptId/runId」（`D-138`） */
+interface Store { users: Map<string, any>; scripts: Map<string, any>; runs: Map<string, any> }
 function makeDb() {
-  const store: Store = { users: new Map(), scripts: new Map() }
-  const col = (name: keyof Store) => store[name]
+  const store: Store = { users: new Map(), scripts: new Map(), runs: new Map() }
+  const docOf = (m: Map<string, any>, id: string, sub?: (name: string) => any) => ({
+    async get() { const d = m.get(id); return { exists: !!d, data: () => d, id } },
+    async update(data: any) { const d = m.get(id) ?? {}; applyUpdate(d, data); m.set(id, d) },
+    async set(data: any, opts?: any) { const d = opts?.merge ? (m.get(id) ?? {}) : {}; deepMerge(d, data); m.set(id, d) },
+    collection: sub,
+  })
   const collection = (name: string) => ({
-    doc: (id: string) => ({
-      async get() { const d = col(name as keyof Store).get(id); return { exists: !!d, data: () => d, id } },
-      async update(data: any) { const m = col(name as keyof Store); const d = m.get(id) ?? {}; applyUpdate(d, data); m.set(id, d) },
-      async set(data: any, opts?: any) { const m = col(name as keyof Store); const d = opts?.merge ? (m.get(id) ?? {}) : {}; deepMerge(d, data); m.set(id, d) },
-    }),
+    doc: (id: string) => docOf(store[name as 'users' | 'scripts'], id, (subName: string) => ({
+      doc: (subId: string) => docOf(subName === 'runs' ? store.runs : new Map(), `${id}/${subId}`),
+    })),
   })
   return { db: { collection } as any, store }
 }
@@ -507,5 +513,136 @@ describe('腳本引擎：客人前面講過的資料不再問', () => {
     expect(r1.replyText).toBe('電話是 0912345678 對嗎？')
     const r2 = await advanceScript(activeScriptOf(store)!, '不對', {}, UID, db)
     expect(r2.replyText).toBe('請留電話')
+  })
+})
+
+// ── `D-138`：走進來的紀錄、截圖當答案、停用即停、下班時間合成一則 ─────────────
+describe('D-138 自動回應：客人那一端', () => {
+  const order = script([
+    { id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['訂單'], examples: ['我想查訂單'], priority: 50, next: 'c_id' },
+    { id: 'c_id', type: 'collect', question: '請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'c_phone' },
+    { id: 'c_phone', type: 'collect', question: '請留電話', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'save' },
+    { id: 'save', type: 'saveLead', fieldMap: [{ fromField: 'order_id', attrKey: '訂單編號' }, { fromField: 'phone', attrKey: '電話' }], next: 'r' },
+    { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，謝謝您！', thenHandoff: true },
+  ])
+  const runsOf = (store: Store) => [...store.runs.values()]
+  const OFF = { notice: '目前非客服服務時間，我們會在服務時間盡快回覆您 🙏', nextLine: '專員 10/22（四）10:00 起回覆您 🙏' }
+
+  it('走進來記一筆：停在哪一題、重問幾次；走完標完成', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', order)
+    await startScript(order, UID, { displayName: '王小明' }, db)
+    expect(runsOf(store)).toHaveLength(1)
+    expect(runsOf(store)[0]).toMatchObject({ userDocId: UID, displayName: '王小明', nodeId: 'c_id', status: 'active', reasks: 0 })
+    expect(activeScriptOf(store)?.runId).toBeTruthy()
+
+    await advanceScript(activeScriptOf(store)!, '找不到耶', {}, UID, db) // 格式不對 → 重問
+    expect(runsOf(store)[0]).toMatchObject({ nodeId: 'c_id', reasks: 1, status: 'active' })
+    await advanceScript(activeScriptOf(store)!, 'M20261004145559BRUE', {}, UID, db)
+    expect(runsOf(store)[0]).toMatchObject({ nodeId: 'c_phone', status: 'active' })
+    await advanceScript(activeScriptOf(store)!, '0912345678', {}, UID, db)
+    expect(runsOf(store)[0]).toMatchObject({ status: 'completed' })
+  })
+
+  it('一步就回完的（打特定的字就回一句）不記紀錄', async () => {
+    const { db, store } = makeDb()
+    const oneLiner = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywordMatch: 'exact', keywords: ['抽獎'], examples: [], priority: 50, next: 'r' },
+      { id: 'r', type: 'reply', text: '活動說明在這裡', thenHandoff: false },
+    ])
+    const r = await startScript(oneLiner, UID, {}, db)
+    expect(r.completed).toBe(true)
+    expect(runsOf(store)).toHaveLength(0)
+  })
+
+  it('喊找真人 → 紀錄標「按了找真人」；過期後下一則進來 → 標過期', async () => {
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', order)
+      await startScript(order, UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, '轉接專員', {}, UID, db)
+      expect(r.escapeToHuman).toBe(true) // `D-138`：10/13 客人打的就是這句
+      expect(runsOf(store)[0]!.status).toBe('escaped')
+    }
+    {
+      const { db, store } = makeDb()
+      store.scripts.set('s1', order)
+      await startScript(order, UID, {}, db)
+      const stale = { ...activeScriptOf(store)!, expiresAt: Date.now() - 1 }
+      await advanceScript(stale, 'M123456', {}, UID, db)
+      expect(runsOf(store)[0]!.status).toBe('expired')
+    }
+  })
+
+  it('停用之後，走到一半的客人下一句不再被流程接（交回主流程）', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', order)
+    await startScript(order, UID, {}, db)
+    store.scripts.set('s1', { ...order, enabled: false })
+    const r = await advanceScript(activeScriptOf(store)!, 'M20261004145559BRUE', {}, UID, db)
+    expect(r.finished).toBe(true)
+    expect(r.replyText).toBe('')
+    expect(activeScriptOf(store)).toBeUndefined()
+    expect(runsOf(store)[0]!.status).toBe('stopped')
+  })
+
+  it('用截圖回答訂單編號 → 收下、往下一題；回覆帶「（圖片）」但不寫進客人資料', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', order)
+    await startScript(order, UID, {}, db)
+    const r1 = await advanceScript(activeScriptOf(store)!, '', {}, UID, db, { image: true })
+    expect(r1.replyText).toBe('請留電話')
+    expect(runsOf(store)[0]).toMatchObject({ nodeId: 'c_phone', imageAnswers: 1 })
+    const r2 = await advanceScript(activeScriptOf(store)!, '0912345678', {}, UID, db)
+    expect(r2.replyText).toBe('已收到您的訂單 （圖片），謝謝您！')
+    expect(attrsOf(store)['電話']).toBe('0912345678')
+    expect(attrsOf(store)['訂單編號']).toBeUndefined()
+  })
+
+  it('停在「給按鈕選」時傳圖不算回答（不前進、不清狀態）', async () => {
+    const { db, store } = makeDb()
+    const menu = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['選單'], examples: [], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '需要什麼服務？', expireMs: 600000, options: [{ label: '查訂單', next: 'r' }] },
+      { id: 'r', type: 'reply', text: '好的', thenHandoff: false },
+    ])
+    store.scripts.set('s1', menu)
+    await startScript(menu, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '', {}, UID, db, { image: true })
+    expect(r.finished).toBe(false)
+    expect(activeScriptOf(store)?.currentNodeId).toBe('q')
+  })
+
+  it('下班時間：第一題前面併「非客服服務時間」，最後那則保留自己的回覆、只補幾點起回覆', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', order)
+    const r1 = await startScript(order, UID, {}, db, '', { offHours: OFF })
+    expect(r1.replyText).toBe(`${OFF.notice}\n\n請問您的訂單編號是？`)
+    expect(activeScriptOf(store)?.offHoursNoticed).toBe(true)
+    const r2 = await advanceScript(activeScriptOf(store)!, 'M20261004145559BRUE', {}, UID, db, { offHours: OFF })
+    expect(r2.replyText).toBe('請留電話') // 講過了，第二題不再講
+    const r3 = await advanceScript(activeScriptOf(store)!, '0912345678', {}, UID, db, { offHours: OFF })
+    expect(r3.replyText).toBe(`已收到您的訂單 M20261004145559BRUE，謝謝您！\n${OFF.nextLine}`)
+    expect(r3.thenHandoff).toBe(true)
+  })
+
+  it('下班時間：上班時開始、走到最後才下班 → 最後那則補整句', async () => {
+    const { db, store } = makeDb()
+    store.scripts.set('s1', order)
+    await startScript(order, UID, {}, db) // 上班時間
+    await advanceScript(activeScriptOf(store)!, 'M20261004145559BRUE', {}, UID, db)
+    const r = await advanceScript(activeScriptOf(store)!, '0912345678', {}, UID, db, { offHours: OFF })
+    expect(r.replyText).toBe(`已收到您的訂單 M20261004145559BRUE，謝謝您！\n\n${OFF.notice}`)
+  })
+
+  it('下班時間：不會交給真人的流程（預約報名）不加那句——沒有人要等', async () => {
+    const { db, store } = makeDb()
+    const booking = script([
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['預約'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '請問您的大名？', fieldName: 'name', expireMs: 600000, format: 'any', next: 'r' },
+      { id: 'r', type: 'reply', text: '已收到 {{name}}', thenHandoff: false },
+    ])
+    const r = await startScript(booking, UID, {}, db, '', { offHours: OFF })
+    expect(r.replyText).toBe('請問您的大名？')
   })
 })

@@ -74,10 +74,11 @@ import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { syncNotifyRecipientFollowState } from './line-notify-delivery'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
-import { appendServiceHoursLine, isServiceHoursDnd } from '~~/shared/time'
-import { HUMAN_REQUEST_TEXTS, matchesScriptKeywords, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import { appendServiceHoursLine, isServiceHoursDnd, nextServiceStartMs, taipeiMdwHm } from '~~/shared/time'
+import { HUMAN_REQUEST_TEXTS, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState } from '~~/shared/types/ai-script'
+import { pickScriptByKeyword, routeCandidates } from './script-match'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
-import { advanceScript, loadActiveScripts, startScript } from './ai-scripts'
+import { advanceScript, loadActiveScripts, startScript, type ScriptOffHours } from './ai-scripts'
 import { attributeContextForUser, renderWithAttributes } from './render-attributes'
 import {
   lineUserFirestoreDocId,
@@ -453,14 +454,10 @@ async function runFollowWelcomeScript(params: {
   }
 
   const userAttributes = buildAttributeContext(params.userData)
-  const result = await startScript(matched, fsUserDocId, userAttributes)
+  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, '', { offHours: await scriptOffHours(wid) })
   invalidateUserDocCache(fsUserDocId)
 
-  const dndReply = await dndScriptHandoffReply(result, wid)
-  if (dndReply) {
-    await sendScriptReply(dndReply, replyToken, lineUserId, wid, 'system', '')
-  }
-  else if (result.moduleId) {
+  if (result.moduleId) {
     const { channelSecret } = await getLineWorkspaceCredentials(wid)
     // enterAs：模組訊息在這裡是「客人沒問就送的」，蓋 system_notice 不記 bot 首接（口徑見上）
     await replyWithFlowModule({
@@ -2072,13 +2069,43 @@ export async function handleMessageEvent(
       console.error('[session] error:', e)
       return null
     })
-    ensureUser(userId, undefined, workspaceId).catch(e => console.error('[ensureUser] Error:', e))
+    const userDataPromise = ensureUser(userId, undefined, workspaceId).catch((e) => {
+      console.error('[ensureUser] Error:', e)
+      return null
+    })
+
+    // 自動回應正在等答案（「請問您的訂單編號是？」）時客人傳了圖＝用截圖回答這一題（`D-138`②）。
+    // 以前流程收不到圖：記號一直掛著、客人另外收到「收到照片，請問想了解什麼」或勿擾那句，同一刻好幾則。
+    // 收下的這一張不走下面的引導語／發問；同一批後面幾張（absorbed）也不出聲——圖照樣存檔、寫描述給客服看。
+    const scriptImage = event.message.type === 'image' && event.replyToken
+      ? await claimScriptImageAnswer(userId, workspaceId, sessionId, await userDataPromise).catch((e) => {
+          console.error('[script-image] claim error:', e)
+          return null
+        })
+      : null
+    if (scriptImage && scriptImage !== 'absorbed') {
+      const [userData, { channelSecret }] = await Promise.all([userDataPromise, getLineWorkspaceCredentials(workspaceId)])
+      const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
+      await runScriptAdvance(
+        scriptImage.state,
+        '',
+        buildAttributeContext(userData),
+        lineUserFirestoreDocId(lineUserId, workspaceId),
+        lineUserId,
+        event.replyToken,
+        workspaceId,
+        sessionId,
+        options.requestOrigin || '',
+        channelSecret,
+        true,
+      ).catch(e => console.error('[script-image] advance error:', e))
+    }
 
     // 「客人傳的照片」開關（aiSettings.imageAnswer）開著時，圖片不再一進來就回「我只能閱讀文字」，
     // 改成先看客人自己有沒有講要問什麼，沒講才問他一句（見 decideImageRole／askAboutImageUnlessCustomerActs）。
     // 此時**引導語不能先發**：一則進來的訊息只有一個 replyToken，被引導語用掉就沒有權杖可以發問句了。
     // 真人接手中（suppress）、草稿模式一律不啟動：機器人插話比不回更糟，草稿模式不對客人說話。
-    const imageReplyOn = event.message.type === 'image'
+    const imageReplyOn = event.message.type === 'image' && !scriptImage
       && await getAiSettings(workspaceId)
         .then(s => s?.enabled === true && s.replyMode === 'auto' && s.imageAnswer?.enabled === true)
         .catch(() => false)
@@ -2087,7 +2114,7 @@ export async function handleMessageEvent(
 
     // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
     // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
-    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken && !willReplyImage) {
+    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken && !willReplyImage && !scriptImage) {
       maybeAckNonTextMessage(sessionId, userId, event.replyToken, workspaceId)
         .catch(e => console.error('[non-text-ack] error:', e))
     }
@@ -3012,13 +3039,6 @@ async function handleIncomingText(
   }
 }
 
-/** 一條腳本的「觸發情境提示」（關鍵字 + 語意範例，去重）給統一意圖路由參考 */
-function triggerHints(script: ScriptDoc & { id: string }): string[] {
-  const root = script.nodes.find(n => n.id === script.rootNodeId)
-  if (root?.type !== 'trigger') return []
-  return [...new Set([...(root.keywords ?? []), ...(root.examples ?? [])].map(s => String(s).trim()).filter(Boolean))]
-}
-
 /**
  * 問「某個商品什麼時候出貨」、而且看得出是哪個商品 → 不進任何流程，直接交給 AI（`C-343`）。
  *
@@ -3030,7 +3050,7 @@ function triggerHints(script: ScriptDoc & { id: string }): string[] {
  * 只在 AI 會真的回客人時才繞：AI 沒開、或草稿模式（AI 不對客人講話）時繞過流程＝這句話沒人回。
  * 對話脈絡（含圖片說明、機器人剛講過的話）跟後面 AI 答題共用同一次讀取。
  */
-async function shipTimingGoesToAi(
+export async function shipTimingGoesToAi(
   textContent: string,
   workspaceId: string,
   /** 認商品用的對話（含客人點過的按鈕，`C-344`；跟 AI 答題認商品同一份） */
@@ -3144,8 +3164,9 @@ async function runScriptStart(
     return false
   })) return { handled: false, route: null }
 
-  // 1) 關鍵字快速通道：明確、零成本、確定性（不分模式；keywords 一律當明確觸發詞）
-  let matched = scripts.find(s => matchesScriptKeywords(s, textContent)) ?? null
+  // 1) 關鍵字快速通道：明確、零成本、確定性。規則（含「不要接」那條先不接）在 script-match.ts，
+  //    測試對話頁與自動回應頁的「試試看」吃同一份（`D-138`）
+  let matched = pickScriptByKeyword(scripts, textContent)?.script ?? null
   let route: RouteResult | null = null
   // 關鍵字命中要不要顯示「輸入中…」，得等冷卻確認過再決定——
   // 冷卻中卻先送了動畫，客人會看到機器人「正在打字」然後什麼都沒來。
@@ -3154,7 +3175,10 @@ async function runScriptStart(
   // 2) 沒命中 → 統一意圖路由（一次 LLM 呼叫，由 LLM 理解意圖+優先序決定走哪條腳本或交給 AI）。
   //    取代舊的「每條腳本各自比語意向量」：敏感情境(退款/法律…)不會被腳本攔截、相近意圖不會誤觸。
   //    route 會回傳給 caller：沒命中腳本時 tryAiFallback 重用這份分類，不再重複呼叫 LLM。
-  if (!matched) {
+  //    ⛔ 只有「AI 判斷」那種是候選（`D-138`①）：「客人打特定的字」那種不會被用意思挑走；
+  //       一條都沒有就不叫（tryAiFallback 自己分類，跟沒有自動回應的帳號一樣）。
+  const candidates = routeCandidates(scripts)
+  if (!matched && candidates.length) {
     // 意圖路由是一次 LLM 呼叫（1~3 秒起跳），先給「輸入中…」即時回饋。
     // 草稿模式下路由可能落到 AI（不回客人），顯示動畫反而誤導，故略過。
     // 「好的／收到」、打錯的注音也略過：AI 多半決定不回（`C-350`），點點出現又消失，客人會以為有人要回他。
@@ -3162,12 +3186,11 @@ async function runScriptStart(
     if (settings && settings.replyMode !== 'draft' && !quietReplyReasonOf(textContent)) {
       showLoadingAnimation(lineUserId, workspaceId, 20).catch(() => {})
     }
-    const hints = scripts.map(s => ({ id: s.id, name: s.name, hints: triggerHints(s) }))
     const history = getHistory ? await getHistory().catch(() => [] as AiChatTurn[]) : []
     // 路由也是一次 LLM 呼叫，要記帳（否則月用量低估）。用計量器記：路由 JSON 壞掉、回 null 的那次也付了錢（`C-338`②），
     // 而且帶著實際模型（flash-lite）算錢（`D-130`②）。⛔ 不等它寫完：這裡在客人等回覆的路上
     const routeCalls: AiCallUsage[] = []
-    route = await withAiCallMeter(routeCalls, () => routeMessage(textContent, hints, history)).catch((e) => {
+    route = await withAiCallMeter(routeCalls, () => routeMessage(textContent, candidates, history)).catch((e) => {
       console.error('[script] routeMessage error:', e)
       return null
     })
@@ -3189,11 +3212,10 @@ async function runScriptStart(
   // 觸發那句話一起帶進去：裡面已經有的訂單編號／電話／Email 流程就不再問（`C-343`）；
   // 機器人剛問過「想詢問什麼」的話，他前面丟的那筆資料也一起（`D-133`）
   const prefillText = pendingOrderInfo ? `${textContent}\n${pendingOrderInfo}` : textContent
-  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, prefillText)
+  // 下班時間：「非客服服務時間」併進流程自己的那一則（`D-138`③），不再另送、也不再整句換掉
+  const result = await startScript(matched, fsUserDocId, userAttributes, undefined, prefillText, { offHours: await scriptOffHours(workspaceId) })
   invalidateUserDocCache(fsUserDocId)
-  const dndReply = await dndScriptHandoffReply(result, workspaceId)
-  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
-  else if (result.moduleId && replyToken) {
+  if (result.moduleId && replyToken) {
     await replyWithFlowModule({
       moduleId: result.moduleId,
       replyToken,
@@ -3242,8 +3264,13 @@ async function runScriptAdvance(
   sessionId: string | null,
   requestOrigin: string,
   channelSecret: string,
+  /** 客人用圖片回答這一題（`D-138`②，見 tryAnswerScriptWithImage）；textContent 此時是空字串 */
+  image = false,
 ): Promise<boolean> {
-  const result = await advanceScript(active, textContent, userAttributes, fsUserDocId)
+  const result = await advanceScript(active, textContent, userAttributes, fsUserDocId, undefined, {
+    offHours: await scriptOffHours(workspaceId),
+    image,
+  })
   invalidateUserDocCache(fsUserDocId)
   if (result.escapeToHuman) {
     // 逃生門:腳本進行中喊「找真人」→ 流程已放棄,走標準轉真人(回覆客人+通知值班+標記 session)
@@ -3259,10 +3286,8 @@ async function runScriptAdvance(
     // 過期或狀態壞掉 → 不算處理過，讓主流程往下走（rule / AI）
     return false
   }
-  const dndReply = await dndScriptHandoffReply(result, workspaceId)
   // 推進時手上只有 scriptId，拿不到腳本名字（advanceScript 沒回傳）→ senderName 留空
-  if (dndReply) await sendScriptReply(dndReply, replyToken, lineUserId, workspaceId, 'system', '')
-  else if (result.moduleId && replyToken) {
+  if (result.moduleId && replyToken) {
     await replyWithFlowModule({
       moduleId: result.moduleId,
       replyToken,
@@ -3295,16 +3320,62 @@ async function runScriptAdvance(
   return true
 }
 
+/** 同一批照片的間隔：客人一次傳好幾張截圖，LINE 會在幾秒內分成好幾個事件送來 */
+const SCRIPT_IMAGE_BATCH_MS = 30_000
+
 /**
- * 腳本結束並要轉真人時,若處於勿擾時段,回傳要改送給客人的勿擾訊息（否則 null = 照常送腳本回覆）。
- * 靜音客服通知由 notifyHandoffToStaff 端統一處理;這裡只負責換掉「客人看到的那則訊息」。
+ * 這張圖要不要當成「回答自動回應正在問的那一題」（`D-138`②）：
+ * - `{ state }`：要，由這張圖回答（已在使用者文件蓋 `scriptImageAt`）
+ * - `'absorbed'`：同一批照片的前一張已經回答過了——這張不出聲（不再回引導語、不再問），圖照樣存檔
+ * - `null`：跟自動回應無關（沒有流程在等、等的是「給按鈕選」、真人接手中），照原本圖片那條路走
+ *
+ * ⛔ 用交易搶：同一批照片會分成好幾個 webhook 並行處理，不搶的話第二張會回答下一題（Email 那格收到一張圖）。
+ * 「前一張回答過」也看流程已經走完的情況：第一張就讓流程收尾了，後面幾張不該再被問「想了解什麼」。
  */
-async function dndScriptHandoffReply(
-  result: { finished?: boolean; thenHandoff?: boolean },
+async function claimScriptImageAnswer(
+  userId: string,
   workspaceId: string,
-): Promise<string | null> {
-  if (!(result.finished && result.thenHandoff)) return null
-  return dndHandoffReplyText(workspaceId)
+  sessionId: string | null,
+  userData: UserDoc | null,
+): Promise<{ state: ActiveScriptState } | 'absorbed' | null> {
+  // 先用手上的使用者資料擋掉幾乎所有圖片（沒在流程裡、也不是剛回答過的同一批）：後面的交易與真人接手查詢都有成本
+  const recentImageAt = Number(userData?.scriptImageAt || 0)
+  if (!userData?.activeScript && Date.now() - recentImageAt >= SCRIPT_IMAGE_BATCH_MS) return null
+  if (await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false)) return null
+  const fsUserDocId = lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, workspaceId), workspaceId)
+  const scripts = await loadActiveScripts(workspaceId).catch(() => [])
+  const db = getDb()
+  const ref = db.collection('users').doc(fsUserDocId)
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    const now = Date.now()
+    if (now - Number(snap.get('scriptImageAt') || 0) < SCRIPT_IMAGE_BATCH_MS) return 'absorbed' as const
+    const state = snap.get('activeScript') as ActiveScriptState | undefined
+    if (!state || !(state.expiresAt > now)) return null
+    // 停用的不在 loadActiveScripts 裡＝找不到＝不收（交給主流程，跟文字那條路一致）
+    const node = scripts.find(s => s.id === state.scriptId)?.nodes.find(n => n.id === state.currentNodeId)
+    if (node?.type !== 'collect') return null
+    tx.update(ref, { scriptImageAt: now })
+    return { state }
+  })
+}
+
+/**
+ * 下班時間（勿擾時段）要併進流程那一則的兩句話（`D-138`③）；上班時間回 null。
+ *
+ * 以前流程照問、另一條路再送一則勿擾，最後那則還被整句換成勿擾文字（流程自己的「已收到您的資訊」不見了）。
+ * 現在由引擎併成一則（見 ai-scripts.ts mergeOffHours）：整句＝跟「找真人」那條路同一句（dndHandoffReplyText），
+ * 講過一次之後最後那則只補「幾點起回覆」。靜音客服通知照舊由 notifyHandoffToStaff 處理。
+ */
+async function scriptOffHours(workspaceId: string): Promise<ScriptOffHours | null> {
+  const notice = await dndHandoffReplyText(workspaceId)
+  if (!notice) return null
+  const cfg = (await getAiSettings(workspaceId).catch(() => null))?.serviceHours
+  const next = nextServiceStartMs(cfg, Date.now())
+  return {
+    notice,
+    nextLine: next !== null ? `專員 ${taipeiMdwHm(next)} 起回覆您 🙏` : '專員會在服務時間盡快回覆您 🙏',
+  }
 }
 
 /**

@@ -68,6 +68,7 @@ import { answerWithAi } from './ai-answer'
 import { readInboundImage } from './media-describe'
 import { enterModule, shouldSuppressInboundBotAutomationForSession } from './conversation-session'
 import { archiveConversationMedia } from './conversation-media'
+import { advanceScript, loadActiveScripts } from './ai-scripts'
 import { notifyHandoffToStaff } from './ai-handoff-notify'
 
 const WS = 'ws-img'
@@ -151,9 +152,13 @@ function makeDb() {
     orderBy: () => ({ limit: () => ({ get: vi.fn(async () => ({ docs: [] })) }) }),
   }
 
+  /** 客人文件上額外的欄位（`D-138`：自動回應正在等答案＝activeScript、同一批照片＝scriptImageAt） */
+  let userExtra: Record<string, any> = {}
+  const userData = (): Record<string, any> => ({ workspaceId: WS, lineUserId: LINE_UID, displayName: '測試客人', isBlocked: false, ...userExtra })
   const userDoc = {
     exists: true,
-    data: () => ({ workspaceId: WS, lineUserId: LINE_UID, displayName: '測試客人', isBlocked: false }),
+    data: () => userData(),
+    get: (field: string) => (userData() as Record<string, any>)[field],
   }
   const docRef = (col: string, id?: string) => ({
     get: vi.fn(async () => {
@@ -166,7 +171,9 @@ function makeDb() {
         conversations.set(String(id), { ...(conversations.get(String(id)) ?? {}), ...data })
       }
     }),
-    update: vi.fn(async () => {}),
+    update: vi.fn(async (data: any) => {
+      if (col === 'users') userExtra = { ...userExtra, ...data }
+    }),
     collection: (name: string) => (name === 'messages' ? messagesCollection : otherCollection),
   })
 
@@ -175,6 +182,7 @@ function makeDb() {
   const tx = {
     get: (ref: ReturnType<typeof docRef>) => ref.get(),
     set: (ref: ReturnType<typeof docRef>, data: any) => { ref.set(data) },
+    update: (ref: ReturnType<typeof docRef>, data: any) => { ref.update(data) },
   }
   const db = {
     collection: (col: string) => ({
@@ -194,6 +202,8 @@ function makeDb() {
     messages,
     /** 放一則既有的對話紀錄 */
     seed: (m: Record<string, any>) => { messages.set(`seed-${++seq}`, m) },
+    setUser: (extra: Record<string, any>) => { userExtra = { ...userExtra, ...extra } },
+    user: () => userData(),
     failNextScans: (n: number) => { failScans = n },
   }
 }
@@ -811,5 +821,71 @@ describe('讀圖結果記在訊息上（超管總覽靠它）', () => {
     await handleMessageEvent(imageEvent(), { workspaceId: WS })
 
     expect(imageMessage()).not.toHaveProperty('mediaReadState')
+  })
+})
+
+/**
+ * `D-138`②：自動回應正在問「請問您的訂單編號是？」時客人傳了截圖＝用圖片回答這一題。
+ * 正式站留著「走到一半」記號的 21 位裡 9 位是這樣卡住的：流程收不到圖、客人另外收到「收到照片，請問想了解什麼」。
+ */
+describe('客人傳的照片：自動回應正在等答案', () => {
+  beforeEach(() => {
+    setSettings(true)
+    readsAs('訂單截圖', ['這筆訂單出貨了嗎？'])
+    vi.mocked(loadActiveScripts).mockResolvedValue([{
+      id: 's1', workspaceId: WS, name: '查詢訂單', enabled: true, priority: 50, rootNodeId: 't',
+      nodes: [
+        { id: 't', type: 'trigger', matchMode: 'semantic', keywords: ['訂單'], priority: 50, next: 'c' },
+        { id: 'c', type: 'collect', question: '請問您的訂單編號是？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'p' },
+        { id: 'p', type: 'collect', question: '請留電話', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'r' },
+        { id: 'r', type: 'reply', text: '已收到', thenHandoff: true },
+      ],
+    }] as any)
+    vi.mocked(advanceScript).mockResolvedValue({ replyText: '請留電話', thenHandoff: false, finished: false })
+  })
+  const waitingAt = (nodeId: string) => ({
+    activeScript: { scriptId: 's1', currentNodeId: nodeId, collected: {}, startedAt: Date.now() - 60_000, expiresAt: Date.now() + 600_000 },
+  })
+
+  it('停在「問一題」→ 這張圖交給流程回答，回下一題，不問「想了解什麼」、不回引導語', async () => {
+    ctx.setUser(waitingAt('c'))
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(vi.mocked(advanceScript)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(advanceScript).mock.calls[0]![5]).toMatchObject({ image: true })
+    expect(repliedTexts()).toEqual(['請留電話'])
+    expect(ctx.user().scriptImageAt).toBeGreaterThan(0)
+  })
+
+  it('同一批第二張（30 秒內）不出聲：不再推進流程、不問、不回引導語', async () => {
+    ctx.setUser({ ...waitingAt('p'), scriptImageAt: Date.now() - 2_000 })
+    await handleMessageEvent(imageEvent({ id: 'msg-img-2' }), { workspaceId: WS })
+
+    expect(vi.mocked(advanceScript)).not.toHaveBeenCalled()
+    expect(repliedTexts()).toEqual([])
+  })
+
+  it('停在「給按鈕選」→ 圖不是任何一個選項，照原本圖片那條路', async () => {
+    vi.mocked(loadActiveScripts).mockResolvedValue([{
+      id: 's1', workspaceId: WS, name: '服務分流', enabled: true, priority: 50, rootNodeId: 't',
+      nodes: [
+        { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['選單'], priority: 50, next: 'q' },
+        { id: 'q', type: 'quickReply', question: '需要什麼服務？', expireMs: 600000, options: [{ label: '查訂單', next: 'r' }] },
+        { id: 'r', type: 'reply', text: '好的', thenHandoff: false },
+      ],
+    }] as any)
+    ctx.setUser(waitingAt('q'))
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(vi.mocked(advanceScript)).not.toHaveBeenCalled()
+    expect(repliedTexts()).toContain(ASK_TEXT)
+  })
+
+  it('真人接手中 → 不讓流程收（跟文字那條路一樣，機器人不插話）', async () => {
+    ctx.setUser(waitingAt('c'))
+    vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(true)
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(vi.mocked(advanceScript)).not.toHaveBeenCalled()
   })
 })

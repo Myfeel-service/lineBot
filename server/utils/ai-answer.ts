@@ -559,6 +559,8 @@ export interface ScriptIntentHint {
   name: string
   /** 觸發情境提示（關鍵字 + 語意範例合起來） */
   hints: string[]
+  /** 店家寫的「這些交給 AI 回答，不要接」（`D-138`）：意思相同就不要選這條 */
+  excludes?: string[]
 }
 
 export interface RouteResult extends IntentResult {
@@ -575,7 +577,10 @@ export async function routeMessage(text: string, scripts: ScriptIntentHint[], hi
     .map(t => `${t.role === 'user' ? '客人' : '客服'}：${t.text.trim().slice(0, 120)}`)
     .join('\n')
   const scriptList = scripts.length
-    ? scripts.map(s => `- id=${s.id}　名稱「${s.name}」　情境：${s.hints.filter(Boolean).slice(0, 12).join('、') || '(未設定)'}`).join('\n')
+    ? scripts.map((s) => {
+        const no = (s.excludes ?? []).filter(Boolean).slice(0, 10)
+        return `- id=${s.id}　名稱「${s.name}」　情境：${s.hints.filter(Boolean).slice(0, 12).join('、') || '(未設定)'}${no.length ? `　不要接：${no.join('、')}` : ''}`
+      }).join('\n')
     : '（目前沒有腳本）'
   const validIds = new Set(scripts.map(s => s.id))
 
@@ -587,6 +592,7 @@ ${scriptList}
 scriptId 規則：
 - 客人這句明確屬於某腳本的情境 → 填該腳本 id（看「意思」，不必字面相同；例「東西壞了想退」屬退換貨）。
 - 不確定 / 都不符合 → 填 null，交給 AI。**寧可 null 也不要硬塞**。
+- 腳本有「不要接」：客人這句跟其中任一句是同一個意思（就算也含情境裡的字）→ 不要選那條。
 - **敏感情境優先**：涉及自殺自傷 / 法律訴訟威脅 / 消費金錢糾紛爭議 / 醫療診斷 / 投資建議 / 個資外洩 → scriptId 一律 null 且 intent=sensitive。**但退貨 / 退款 / 取消訂單 / 改地址 / 修改訂單 / 發票問題「不算」敏感**——那是一般訂單客服，有腳本就走腳本、否則 intent=question 交給 AI 查知識庫。
 
 intent 擇一：greeting（純打招呼）/ thanks（純道謝）/ farewell（純道別）/ no_need（客人說沒事了、不用了、先這樣）/ find_human（要求真人）/ sensitive（上述真正敏感情境，退貨退款改單發票除外）/ compare（比較已點名的多個產品）/ list（問某類別「有哪些」）/ order_status（問**他自己那一筆**訂單的進度／狀態，需查訂單系統）/ question（其他一般詢問）。

@@ -11,7 +11,8 @@ vi.mock('~~/server/utils/ai-answer', () => ({ answerWithAi: vi.fn(async () => ({
 vi.mock('~~/server/utils/ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
 vi.mock('~~/server/utils/ai-scripts', () => ({
   loadActiveScripts: vi.fn(async () => [
-    { id: 's1', name: '退換貨', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', keywords: ['退貨'] }] },
+    // 「AI 判斷」那種才會交給路由（`D-138`①：「客人打特定的字」那種不會被用意思挑走）
+    { id: 's1', name: '退換貨', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', matchMode: 'semantic', keywords: ['退貨'], examples: ['東西壞了想退'] }] },
   ]),
 }))
 

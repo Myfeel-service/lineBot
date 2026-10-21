@@ -259,7 +259,8 @@ describe('意圖路由的記帳（`C-338`②／`D-130`②）', () => {
     aiServiceDown()
     // 有一條（關鍵字不會中的）腳本＝這句話會先過一次意圖路由
     vi.mocked(loadActiveScripts).mockResolvedValue([
-      { id: 's1', name: '退換貨', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', keywords: ['退貨'] }] },
+      // 「AI 判斷」那種才會交給路由（`D-138`①：「客人打特定的字」那種不會被用意思挑走）
+      { id: 's1', name: '退換貨', enabled: true, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', matchMode: 'semantic', keywords: ['退貨'], examples: ['東西壞了想退'] }] },
     ] as any)
   })
 
