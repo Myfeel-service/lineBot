@@ -265,7 +265,8 @@
                       :placeholder="keywordPlaceholder(triggerNode)"
                       @update:model-value="updateKeywords(triggerNode, $event)"
                     />
-                    <p class="scripts-section-hint">只看字、不經過 AI：沒打到這幾個字的不會走這一條。</p>
+                    <!-- 介面上鼓勵用 AI 判斷（2026-10-21 老闆「好」）：講清楚這一種是給誰用的，一般講法指回 AI 判斷 -->
+                    <p class="scripts-section-hint">只看字、不經過 AI，適合活動口令、固定公告；一般講法用「客人在問這類事（AI 判斷）」比較不會漏接或接錯。</p>
                     <!--
                       打字當下就講（D-33 P1）：太短或太常見的關鍵字會攔到一大堆不相關的訊息
                       （`C-25` 那場「觸發詞劫持」就是人手設的）。⛔只提醒不阻擋——既有設定可能刻意這樣設。
@@ -1012,8 +1013,12 @@ async function loadModuleOptions() {
 // C-208：貼標節點改用共用的 AdminTagPicker（吃 {id,name,color} 原樣），
 // 原本那份 {value,label} 的轉換沒有別人用，一併移除。
 
+/**
+ * 預設「客人在問這類事（AI 判斷）」（2026-10-21 老闆「好」：介面上鼓勵用 AI 判斷）——
+ * 比較不會漏接或接錯，而且這一步不算則數。要一字不差的（活動口令）才換成「客人打特定的字」。
+ */
 function defaultTriggerNode(nextId: string): ScriptTriggerNode {
-  return { id: uuidv4(), type: 'trigger', matchMode: 'keyword', keywords: [], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: nextId }
+  return { id: uuidv4(), type: 'trigger', matchMode: 'semantic', keywords: [], examples: [], priority: DEFAULT_SCRIPT_PRIORITY, next: nextId }
 }
 function defaultReplyNode(): ScriptReplyNode {
   return { id: uuidv4(), type: 'reply', text: '', thenHandoff: false }
@@ -1978,6 +1983,7 @@ function handoffStarter(): ReturnType<typeof blankForm> {
 function fixedStarter(): ReturnType<typeof blankForm> {
   const f = blankForm()
   const trigger = f.nodes[0] as ScriptTriggerNode
+  trigger.matchMode = 'keyword' // 空白的預設是 AI 判斷，這個起點要的是「看字」
   trigger.keywordMatch = 'exact'
   return f
 }
