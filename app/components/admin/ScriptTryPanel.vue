@@ -14,7 +14,7 @@
       <span class="text-xs text-muted">{{ isFollow ? '模擬客人加好友，看他會收到什麼' : '打一句客人會講的話，照真的判斷跑一次，不會送出' }}</span>
     </div>
 
-    <div class="scripts-sim-chat scripts-try__chat" data-tour="scr-sim-panel">
+    <div ref="chatEl" class="scripts-sim-chat scripts-try__chat" data-tour="scr-sim-panel">
       <p v-if="!log.length" class="scripts-sim-empty">
         {{ isFollow ? '按下面「模擬客人加好友」開始' : '例：我的訂單到哪了' }}
       </p>
@@ -122,6 +122,12 @@ const trigger = computed(() => {
 const isFollow = computed(() => trigger.value?.triggerEvent === 'follow')
 
 function push(m: SimMsg) { log.value.push(m) }
+
+/** 面板拉滿時對話在面板裡捲（2026-10-22）：有新的一句就捲到最底，跟聊天軟體一樣。排在下面那種不會捲，設了也沒作用 */
+const chatEl = ref<HTMLElement | null>(null)
+watch(() => [log.value.length, judging.value], () => nextTick(() => {
+  if (chatEl.value) chatEl.value.scrollTop = chatEl.value.scrollHeight
+}))
 
 function reset() {
   log.value = []

@@ -649,8 +649,7 @@
   }
 }
 
-/* 試跑對話：跟著整頁捲，不自己開一個捲動區（同上，一頁只留一條捲軸）。
-   對話本來就是由上往下長，長了就把頁面撐高，不需要一個內嵌的小視窗。 */
+/* 試跑對話：排在下面時跟著整頁捲；右邊拉滿時（`.scripts-workspace.is-wide`）在面板裡捲、新的一句自動捲到底。 */
 .scripts-sim-chat {
   display: flex;
   flex-direction: column;
@@ -862,13 +861,48 @@
 /* ═══ `D-138`④ 改版：左邊設定、右邊試試看、問答清單、起點選擇、成效卡 ═══ */
 
 /* 左右兩欄：編輯區不夠寬時試試看自己換到下面（flex-wrap，不看視窗寬度——
-   會擠到的是編輯區，受側欄寬度、拖曳分隔線影響，同 08-09 @container 那次的教訓）。
-   ⛔ 右邊不吸頂、不自己捲：一頁只留一條捲軸。 */
+   會擠到的是編輯區，受側欄寬度、拖曳分隔線影響，同 08-09 @container 那次的教訓）。 */
 .scripts-workspace {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: flex-start;   /* ⛔ 不可 stretch：拉伸後 sticky 失效（同推播頁 .bc-body-row） */
   gap: 16px;
+
+  /* 寬的時候（`is-wide`，頁面量捲動區寬度給的）：右邊試試看照推播頁 `.bc-preview` 那樣
+     貼齊編輯區右緣、拉滿看得到的高度、捲左邊時不動（2026-10-22 老闆「高度拉滿然後 fixed，參考其他頁面」）。
+     高度用頁面量好的 `--scripts-view-h`，不寫死頁首高度（理由在 ai-scripts.vue 的 workspaceEl）。
+     ⚠️ 一頁還是只有一條長捲軸（左邊）；面板裡只有對話那一格會捲，同推播頁的手機框。 */
+  &.is-wide {
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0;
+
+    > .scripts-main {
+      padding: 16px;
+    }
+
+    > .scripts-side {
+      /* 300（窄筆電、老闆那台改版前就是這個寬）～360（大螢幕）；寬窄門檻在 ai-scripts.vue 的 SCRIPTS_WIDE_MIN_PX */
+      flex: 0 0 clamp(300px, 32%, 360px);
+      position: sticky;
+      top: 0;
+      height: var(--scripts-view-h, auto);
+      border: 0;
+      border-left: 1px solid var(--border);
+      border-radius: 0;
+      background: var(--bg-surface);
+      /* 底下讓出小幫手圓鈕（全站共用 `.ta-fab`：fixed、離右下各 1.5rem、58px）：
+         面板只有 300～360 寬，學對話頁往右讓的話輸入框剩不到一半，所以整列抬到圓鈕上面。
+         ⛔ 不搬那顆（理由同 _conversations.scss）；那邊改了這裡要跟著改。 */
+      padding: 16px 16px calc(1.5rem + 58px + 10px);
+    }
+
+    .scripts-try__chat {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+    }
+  }
 }
 
 .scripts-main {

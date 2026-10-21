@@ -129,10 +129,16 @@
     <!-- ── Editor Body ── -->
     <template #editor-body>
       <!--
-        `D-138`④：左邊設定、右邊「試試看」常駐（編輯區不夠寬時試試看排到下面，用 container query 不用 @media）。
-        ⛔ 一頁只留一條捲軸：右邊不吸頂、不自己捲（08-09 老闆回報過「上面一塊自己捲、下面又捲一次」）。
+        `D-138`④：左邊設定、右邊「試試看」常駐。
+        2026-10-22 老闆「高度拉滿然後 fixed，參考其他頁面」：右邊照推播頁（`C-251`）貼齊右緣、拉滿編輯區、
+        捲左邊時不動，對話在面板裡捲；編輯區不夠寬時照舊排到下面、跟著整頁捲（量法見 workspaceEl）。
       -->
-      <div class="ai-scripts-body scripts-workspace">
+      <div
+        ref="workspaceEl"
+        class="ai-scripts-body scripts-workspace"
+        :class="{ 'is-wide': workspaceWide }"
+        :style="workspaceViewH ? { '--scripts-view-h': `${workspaceViewH}px` } : undefined"
+      >
         <div class="scripts-main admin-panel-stack">
           <!--
             即時檢查：三件事疊在同一條線上才敢亮綠燈——
@@ -1686,6 +1692,33 @@ const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quic
 ]
 
 // 試跑（「試試看」）搬到右邊的 AdminScriptTryPanel（`D-138`）：換一條時靠 :key 整個重來。
+
+/**
+ * 右邊試試看拉滿編輯區（2026-10-22 老闆：「高度拉滿然後 fixed，參考其他頁面」＝推播頁 `C-251`）。
+ * 面板高度＝捲動區（`.split-editor-body`）看得到的高度，量出來交給 CSS——⛔ 不照推播頁寫死頁首高度：
+ * 這頁頁首多一行「選填，沒填就用…」、唯讀時又少一行，寫死的數字會差一截、面板底對不齊。
+ * ⛔ 也不用 container query 量：那要把捲動區設成 size container，而這頁的說明、貼標籤、挑模組小視窗
+ *    沒有掛到 body 上，會被框在編輯區裡打開。
+ * 同一個量法順便判寬窄：放不下「左邊約 450＋右邊 300＋左右留白」就照舊排到下面、跟著整頁捲。
+ * 780＝1280 寬的筆電（編輯區 800）也並排；老闆 10-22 截圖那台編輯區約 849，改版前就是並排、右邊約 300 寬。
+ */
+const SCRIPTS_WIDE_MIN_PX = 780
+const workspaceEl = ref<HTMLElement | null>(null)
+const workspaceViewH = ref(0)
+const workspaceWide = ref(true)
+let workspaceObserver: ResizeObserver | null = null
+watch(workspaceEl, (el) => {
+  workspaceObserver?.disconnect()
+  workspaceObserver = null
+  const scroller = el?.closest<HTMLElement>('.split-editor-body')
+  if (!scroller || typeof ResizeObserver === 'undefined') return
+  workspaceObserver = new ResizeObserver(() => {
+    workspaceViewH.value = scroller.clientHeight
+    workspaceWide.value = scroller.clientWidth >= SCRIPTS_WIDE_MIN_PX
+  })
+  workspaceObserver.observe(scroller)
+}, { flush: 'post' })
+onBeforeUnmount(() => workspaceObserver?.disconnect())
 
 /**
  * 換一份進編輯器時，把「展開了什麼」歸零、依內容重推欄位模式與編法（清單／流程圖）。
