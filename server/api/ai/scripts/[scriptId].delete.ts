@@ -1,6 +1,6 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
-import { invalidateScriptsCache, SCRIPTS_COLLECTION } from '~~/server/utils/ai-scripts'
+import { deleteScriptRuns, invalidateScriptsCache, SCRIPTS_COLLECTION } from '~~/server/utils/ai-scripts'
 import { invalidateScriptHealthCache } from '~~/server/utils/script-health'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 
@@ -18,6 +18,8 @@ export default defineEventHandler(async (event) => {
     return { ok: true }
   }
   const removed = snap.data() as { name?: string, enabled?: boolean, nodes?: unknown[] }
+  // 每次走進來的紀錄（帶客人名字）先刪，再刪主文件：中途失敗這條還在、可以再按一次（`C-379`）
+  await deleteScriptRuns(db, scriptId)
   await ref.delete()
   invalidateScriptsCache(workspaceId)
   // 刪掉的東西最該留紀錄：文件沒了，紀錄是唯一還說得出「本來有這條」的地方

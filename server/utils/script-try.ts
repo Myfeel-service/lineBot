@@ -15,7 +15,7 @@ import { routeMessage } from './ai-answer'
 import { recordAiUsage } from './ai-usage'
 import { usageFromCalls, withAiCallMeter, type AiCallUsage } from './ai-usage-calls'
 import { shipTimingGoesToAi } from './handler'
-import { messageScripts, pickScriptByKeyword, routeCandidates } from './script-match'
+import { messageScripts, pickScriptByKeyword, routeCandidates, sortByPriority } from './script-match'
 import { detectSensitiveTopic } from '~~/shared/types/ai-knowledge'
 import { isOrderInfoOnly } from '~~/shared/order-info-only'
 import type { ScriptDoc, ScriptTryResult } from '~~/shared/types/ai-script'
@@ -35,11 +35,12 @@ export async function tryScriptRoute(workspaceId: string, rawText: unknown, rawD
   const draftId = String(draftBody?.id ?? '').trim() || '__draft__'
   const draft = draftBody ? normalizeScriptInput(draftBody) : null
   const stored: ScriptRow[] = (await loadActiveScripts(workspaceId).catch(() => [])).filter(s => s.id !== draftId)
-  const scripts: ScriptRow[] = messageScripts([
+  // 換進編輯中的那條之後照正式的排法重排（同分時照文件編號，`C-379`）
+  const scripts: ScriptRow[] = sortByPriority(messageScripts([
     ...stored,
     // 關著的也當開著試（畫面會講「開啟之後」），不然停用中的那條永遠試不出結果
     ...(draft ? [{ ...draft, enabled: true, id: draftId, workspaceId } as unknown as ScriptRow] : []),
-  ]).sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+  ]))
   if (!scripts.length) return { kind: 'ai', reason: 'none', aiReplies }
 
   if (await shipTimingGoesToAi(text, workspaceId, async () => []).catch(() => false))

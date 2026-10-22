@@ -130,14 +130,19 @@ export function appendQuestion(nodes: ScriptNode[], view: QuestionListView, item
   nodes.splice(at, 0, item)
 }
 
-/** 拿掉一題：指到它的路改接它「答了之後」那條；存進客人資料裡這題的欄位一起拿掉 */
+/**
+ * 拿掉一題＝不問這題了：指到它的路改接清單上的下一題（最後一題就是「直接到最後」）；
+ * 存進客人資料裡這題的欄位一起拿掉。
+ * ⛔ 不接它「答了 →」的去處：MYFEEL 查詢訂單第 1 題答了直接到最後、後面四題只從「客人說沒有」走得到，
+ * 照那條接＝開頭直接跳到最後、後面整串接不到、存不了檔（`C-379`）。
+ */
 export function removeQuestion(nodes: ScriptNode[], view: QuestionListView, itemId: string): void {
-  const item = view.items.find(i => i.id === itemId)
+  const index = view.items.findIndex(i => i.id === itemId)
+  const item = view.items[index]
   if (!item) return
-  const fallback = item.type === 'collect' ? item.next : (item.options[0]?.next ?? view.endId)
   const idx = nodes.findIndex(n => n.id === itemId)
   nodes.splice(idx, 1)
-  retargetAll(nodes, itemId, fallback === itemId ? view.endId : fallback)
+  retargetAll(nodes, itemId, orderNextOf(view, index))
   if (item.type === 'collect' && view.saveLead) {
     view.saveLead.fieldMap = view.saveLead.fieldMap.filter(m => m.fromField !== item.fieldName)
     if (!view.saveLead.fieldMap.length) removeEndStep(nodes, view.saveLead.id)

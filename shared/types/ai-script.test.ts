@@ -284,9 +284,14 @@ describe('collect 跳過出口（skipLabel / skipNext）', () => {
     expect(validateScriptDoc({ ...base, nodes })).toMatch(/不存在的步驟/)
   })
 
-  it('skipLabel 撞「找真人」求助詞 → 擋（逃生門會先攔走，永遠到不了 skipNext）', () => {
+  it('skipLabel 叫「找真人」→ 擋（跟重問時系統補的「找真人」鈕撞名，客人找不到真人）', () => {
     const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '找真人', skipNext: 'r1' }), reply('r1')]
     expect(validateScriptDoc({ ...base, nodes })).toMatch(/求助詞/)
+  })
+
+  it('skipLabel 是其他求助講法（找客服）→ 存得了：按鈕優先、點了走跳過那條（`D-138` 之前存的流程不會突然存不了）', () => {
+    const nodes: ScriptNode[] = [trigger('c1'), collectWithSkip({ skipLabel: '找客服', skipNext: 'r1' }), reply('r1')]
+    expect(validateScriptDoc({ ...base, nodes })).toBeNull()
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeScriptRuns } from './script-runs'
+import { SCRIPT_RUN_SUMMARY_MEMO_MS, isRunSummaryMemoFresh, summarizeScriptRuns } from './script-runs'
 import type { ScriptRun } from './types/ai-script'
 
 const NOW = 1_800_000_000_000
@@ -63,5 +63,23 @@ describe('summarizeScriptRuns（成效卡：停在哪一題、為什麼）', () 
 
   it('沒有紀錄：全部是 0、sinceMs 是 null', () => {
     expect(summarizeScriptRuns([], NOW)).toMatchObject({ runs: 0, people: 0, sinceMs: null, stops: [] })
+  })
+})
+
+describe('成效卡記著的那份能不能直接用（切來切去不重讀 501 筆，`C-379`）', () => {
+  const memo = { starts: 40, completions: 30, atMs: NOW - 60_000, summary: summarizeScriptRuns([], NOW) }
+
+  it('次數沒變、剛讀過 → 直接用', () => {
+    expect(isRunSummaryMemoFresh(memo, 40, 30, NOW)).toBe(true)
+  })
+
+  it('有人走進來或走完（次數變了）→ 重讀', () => {
+    expect(isRunSummaryMemoFresh(memo, 41, 30, NOW)).toBe(false)
+    expect(isRunSummaryMemoFresh(memo, 40, 31, NOW)).toBe(false)
+  })
+
+  it('記太久（重問、按找真人不動次數）→ 重讀；沒讀過 → 讀', () => {
+    expect(isRunSummaryMemoFresh(memo, 40, 30, memo.atMs + SCRIPT_RUN_SUMMARY_MEMO_MS)).toBe(false)
+    expect(isRunSummaryMemoFresh(undefined, 40, 30, NOW)).toBe(false)
   })
 })

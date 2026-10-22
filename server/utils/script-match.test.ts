@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickScriptByKeyword, routeCandidates } from './script-match'
+import { pickScriptByKeyword, routeCandidates, sortByPriority } from './script-match'
 import type { ScriptDoc, ScriptTriggerNode } from '~~/shared/types/ai-script'
 
 /**
@@ -49,6 +49,19 @@ describe('pickScriptByKeyword', () => {
     const a = row('a', { matchMode: 'keyword', keywords: ['退貨'] }, 80)
     const b = row('b', { matchMode: 'keyword', keywords: ['退'] }, 50)
     expect(pickScriptByKeyword([a, b], '我要退貨')?.script.id).toBe('a')
+  })
+})
+
+describe('sortByPriority（正式與試試看共用的先後，`C-379`）', () => {
+  it('優先度高的先；一樣高照文件編號大的先（同 Firestore orderBy priority desc 的隱含排法）', () => {
+    const rows = [row('Aaa', {}, 50), row('Ccc', {}, 50), row('Bbb', {}, 80), row('Bzz', {}, 50)]
+    expect(sortByPriority(rows).map(r => r.id)).toEqual(['Bbb', 'Ccc', 'Bzz', 'Aaa'])
+  })
+
+  it('不改傳進來的那一份', () => {
+    const rows = [row('Aaa', {}, 50), row('Bbb', {}, 80)]
+    sortByPriority(rows)
+    expect(rows.map(r => r.id)).toEqual(['Aaa', 'Bbb'])
   })
 })
 

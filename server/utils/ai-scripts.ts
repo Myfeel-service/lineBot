@@ -13,7 +13,7 @@
  *   - activeScript 是 user-level 的；同個使用者同時間只能在一條腳本中
  */
 import { randomUUID } from 'node:crypto'
-import { FieldValue, type Firestore } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import type {
   ActiveScriptState,
@@ -33,12 +33,14 @@ import {
   consumePrefilledCollect,
   extractCollectValue,
   isHumanRequestText,
+  isStepButtonText,
   prefillCollectFields,
   renderScriptTemplate,
   resolveBranchNext,
   scriptTriggerEvent,
 } from '~~/shared/types/ai-script'
 import { addTagsToUser } from './tagging'
+import { sortByPriority } from './script-match'
 import { summarizeScriptRuns, type ScriptRunSummary } from '~~/shared/script-runs'
 
 export const SCRIPTS_COLLECTION = 'scripts'
@@ -61,10 +63,11 @@ export async function loadActiveScripts(workspaceId: string, db: Firestore = get
     .where('enabled', '==', true)
     .orderBy('priority', 'desc')
     .get()
-  const rows: Array<ScriptDoc & { id: string }> = snap.docs.map(d => ({
+  // Firestore 已照優先度排好；再過一次共用排序，同分時的順序寫明在程式裡、跟試試看同一支（`C-379`）
+  const rows: Array<ScriptDoc & { id: string }> = sortByPriority(snap.docs.map(d => ({
     id: d.id,
     ...(d.data() as ScriptDoc),
-  }))
+  })))
   cache.set(workspaceId, { data: rows, expires: Date.now() + CACHE_TTL_MS })
   return rows
 }
@@ -182,9 +185,34 @@ function mergeOffHours(
 
 // ── 每一次走進來的紀錄（`D-138`）：停在哪一題、為什麼 ─────────────────────
 const RUNS_SUBCOLLECTION = 'runs'
+/**
+ * 紀錄保留天數：帶客人名字，不能永遠留著（`C-379`）。寫入時帶 `expireAt`，靠 TTL policy 自動清
+ * （欄位名沿用站內慣例；跟紀錄裡的 `expiresAtMs`＝「這一題等到幾點」是兩回事）。
+ * 成效卡只看最近 500 次，半年綽綽有餘。
+ */
+const RUN_TTL_DAYS = 180
 
 function runRef(db: Firestore, scriptId: string, runId: string) {
   return db.collection(SCRIPTS_COLLECTION).doc(scriptId).collection(RUNS_SUBCOLLECTION).doc(runId)
+}
+
+/**
+ * 刪掉一條自動回應時，它的每次紀錄一起刪（`C-379`）：裡面有客人名字，主文件刪了它們就成了後台看不到、也刪不掉的孤兒。
+ * 分批刪（單一 batch 上限 500 writes，400 一批留餘裕）。呼叫端先刪這裡再刪主文件：中途失敗主文件還在、可以再按一次刪除。
+ * 還在走的那幾位之後的 updateRun 是 update，文件不在就失敗、不會長回來；
+ * 別台主機 60 秒快取裡還看得到這條、剛好有人走進來的那幾筆，靠 expireAt（TTL）收。
+ */
+export async function deleteScriptRuns(db: Firestore, scriptId: string): Promise<number> {
+  const runs = db.collection(SCRIPTS_COLLECTION).doc(scriptId).collection(RUNS_SUBCOLLECTION)
+  let deleted = 0
+  for (;;) {
+    const snap = await runs.limit(400).get()
+    if (snap.empty) return deleted
+    const batch = db.batch()
+    for (const d of snap.docs) batch.delete(d.ref)
+    await batch.commit()
+    deleted += snap.docs.length
+  }
 }
 
 /**
@@ -483,7 +511,9 @@ export async function startScript(
   await Promise.all([
     persistActiveScript(db, userDocId, nextState ? nextState : null),
     run
-      ? runRef(db, script.id, runId).set(run).catch(e => console.error('[ai-scripts] create run failed:', e))
+      ? runRef(db, script.id, runId)
+          .set({ ...run, expireAt: Timestamp.fromMillis(now + RUN_TTL_DAYS * 86_400_000) })
+          .catch(e => console.error('[ai-scripts] create run failed:', e))
       : Promise.resolve(),
   ])
   await executeScriptActions(db, userDocId, script.workspaceId, script.id, actions)
@@ -506,9 +536,16 @@ export async function advanceScript(
 ): Promise<ScriptStepResult> {
   // 逃生門(最優先,先於「當答案處理」):腳本進行中喊「找真人」→ 放棄流程、交給 caller 走標準轉真人。
   // 沒有這道門,求救會被 collect 存成欄位值(「已收到您的訂單 找真人」)或被格式驗證打回重問。
+  // 例外:這句剛好就是這一步的按鈕(店家的按鈕叫「找客服」)→ 客人點的是按鈕,照按鈕的路走(`C-379`)。
+  // 只有喊找真人時才多讀一次流程,讀到的留給下面用
+  let preloaded: ScriptDoc | null | undefined
   if (!opts.image && isHumanRequestText(userMessage)) {
-    await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'escaped' })])
-    return { replyText: '', thenHandoff: false, finished: true, escapeToHuman: true }
+    preloaded = await loadScript(db, state.scriptId)
+    const at = preloaded ? findNode(preloaded, state.currentNodeId) : undefined
+    if (!at || !isStepButtonText(at, userMessage)) {
+      await Promise.all([persistActiveScript(db, userDocId, null), updateRun(db, state, { status: 'escaped' })])
+      return { replyText: '', thenHandoff: false, finished: true, escapeToHuman: true }
+    }
   }
 
   // 過期 → 直接清掉、丟回讓主流程走 rule / AI fallback
@@ -517,7 +554,7 @@ export async function advanceScript(
     return EMPTY_RESULT
   }
 
-  const script = await loadScript(db, state.scriptId)
+  const script = preloaded ?? await loadScript(db, state.scriptId)
   if (!script) {
     await persistActiveScript(db, userDocId, null)
     return EMPTY_RESULT
@@ -587,9 +624,10 @@ export async function advanceScript(
     const picked = current.options.find(o => o.label.trim().toLowerCase() === normalized)
     if (!picked) {
       // 沒對到任何選項 → 重新出題、停在同一節點（刷新逾時）。
-      // 客人已經卡住一次,重問時補一顆「找真人」逃生按鈕(選項裡已有同義按鈕就不重複)。
+      // 客人已經卡住一次,重問時補一顆「找真人」逃生按鈕(選項裡已經叫「找真人」就不重複)。
+      // ⛔ 不看其他求助講法:選項叫「找客服」是店家的按鈕、點了照它的路走(`C-379`),不能當成已經有逃生鈕
       const labels = current.options.map(o => o.label)
-      if (!labels.some(l => isHumanRequestText(l))) labels.push('找真人')
+      if (!labels.some(l => l.trim() === '找真人')) labels.push('找真人')
       return reask({
         replyText: renderScriptTemplate(current.question, { collected: state.collected, attributes }),
         quickReplies: labels,

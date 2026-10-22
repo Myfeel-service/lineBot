@@ -3272,6 +3272,8 @@ async function runScriptAdvance(
     image,
   })
   invalidateUserDocCache(fsUserDocId)
+  // 用截圖回答的那題 textContent 是空字串：交給真人時通知與「只通知沒人接手的」存的脈絡要看得出客人傳了圖（`C-379`）
+  const customerMessage = image ? '[圖片]' : textContent
   if (result.escapeToHuman) {
     // 逃生門:腳本進行中喊「找真人」→ 流程已放棄,走標準轉真人(回覆客人+通知值班+標記 session)
     await deliverHandoffReply({
@@ -3297,7 +3299,7 @@ async function runScriptAdvance(
       userAttributes: { ...userAttributes, ...(result.collected ?? {}) },
       channelSecret,
       requestOrigin,
-      customerMessage: textContent,
+      customerMessage,
       logContext: `script=${active.scriptId}`,
     })
   }
@@ -3313,7 +3315,7 @@ async function runScriptAdvance(
     await commitHandoff({
       workspaceId, lineUserId, sessionId,
       displayName: userAttributes.displayName || '',
-      customerMessage: textContent,
+      customerMessage,
       reason: null,
     })
   }

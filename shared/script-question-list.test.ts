@@ -89,6 +89,24 @@ describe('清單上的增刪：改完一律還是合法的流程', () => {
     expect(valid(nodes)).toBeNull()
   })
 
+  it('拿掉第一題（答了直接到最後、後面只從「客人說沒有」走得到）：開頭接下一題，後面整串還接得到', () => {
+    const nodes = orderFlow()
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'c_id')
+    expect((nodes[0] as any).next).toBe('q_mail')
+    const v = toQuestionList(nodes, 't')
+    expect(v?.items.map(i => i.id)).toEqual(['q_mail', 'c_mail', 'c_name', 'c_phone'])
+    expect((nodes.find(n => n.id === 'save') as any).fieldMap.map((m: any) => m.fromField)).toEqual(['email', 'name', 'phone'])
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('拿掉最後一題：指到它的路接「直接到最後」', () => {
+    const nodes = orderFlow()
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'c_phone')
+    expect((nodes.find(n => n.id === 'c_name') as any).next).toBe('save')
+    expect(toQuestionList(nodes, 't')?.items.map(i => i.id)).toEqual(['c_id', 'q_mail', 'c_mail', 'c_name'])
+    expect(valid(nodes)).toBeNull()
+  })
+
   it('貼標籤掛在最後一段最前面、拿掉後接回原樣', () => {
     const nodes = orderFlow()
     insertEndStep(nodes, toQuestionList(nodes, 't')!, { id: 'tag', type: 'tag', addTagIds: ['vip'], next: '' })

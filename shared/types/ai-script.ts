@@ -352,6 +352,19 @@ export function isHumanRequestText(text: string): boolean {
   return HUMAN_REQUEST_TEXTS.has(String(text || '').trim())
 }
 
+/**
+ * 客人這句是不是剛好等於這一步的按鈕：「給按鈕選」的選項、「問一題」的「客人說沒有」（比對法同引擎：trim、不分大小寫）。
+ * 按鈕優先於找真人的講法（`C-379`）：`D-138` 多認了「找客服」「專員」這類，店家的按鈕本來就可能叫這些字——
+ * 客人點了要照按鈕的路走，不是被當成找真人、流程中斷。
+ */
+export function isStepButtonText(node: ScriptNode, text: string): boolean {
+  const t = String(text || '').trim().toLowerCase()
+  if (!t) return false
+  if (node.type === 'quickReply') return node.options.some(o => o.label.trim().toLowerCase() === t)
+  if (node.type === 'collect') return collectSkipLabel(node).toLowerCase() === t
+  return false
+}
+
 export const DEFAULT_SCRIPT_PRIORITY = 50
 export const DEFAULT_COLLECT_EXPIRE_MS = 10 * 60 * 1000 // 10 分鐘沒回就放棄
 export const MAX_SCRIPT_NODES = 20
@@ -491,8 +504,9 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
       if (skipLabel && !skipNext) return `收集步驟「${n.fieldName || ''}」的跳過按鈕「${skipLabel}」還沒指定要跳到哪一步`
       if (!skipLabel && skipNext) return `收集步驟「${n.fieldName || ''}」設定了跳過路線，請填寫按鈕文字（例：我沒有訂單編號）`
       if (skipNext && !ids.has(skipNext)) return `收集步驟「${n.fieldName || ''}」的跳過按鈕接到不存在的步驟`
-      // 撞名保護:跳過按鈕若剛好是「找真人」這類求助詞,逃生門會先攔走、永遠到不了 skipNext
-      if (skipLabel && isHumanRequestText(skipLabel)) return `跳過按鈕文字「${skipLabel}」是轉真人的求助詞，客人點了會直接轉真人；請換個說法（例：我沒有訂單編號）`
+      // 撞名保護:答錯重問時引擎會補一顆「找真人」,跳過按鈕也叫「找真人」＝兩顆一樣的鈕、都走跳過那條,客人找不到真人。
+      // 其他求助講法(找客服、專員…)不擋:按鈕優先於逃生門、點了照跳過那條走(`C-379`),`D-138` 之前存的流程也存得了
+      if (skipLabel === '找真人') return `跳過按鈕文字「${skipLabel}」跟系統的「找真人」按鈕撞名（求助詞），客人會找不到真人；請換個說法（例：我沒有訂單編號）`
     }
     else if (outs.length === 0 || outs.some(t => !ids.has(t))) {
       return `步驟「${nodeLabelOf(n)}」未指定下一步`
@@ -712,7 +726,7 @@ export function findStuckCollects(nodes: ScriptNode[]): ScriptStuckCollect[] {
 /**
  * 確定性補跳過出口的預設按鈕字樣。客人看得到這幾個字——AI 生成端的最後防線
  * 與異常一鍵修（`D-34`）都用這一份，改字兩邊一起變。
- * ⛔換字前先過 validateScriptDoc 的撞名保護：不能撞到「找真人」這類求助詞。
+ * ⛔換字前先過 validateScriptDoc 的撞名保護：不能叫「找真人」；也別用其他求助講法（客人打那句會走跳過、不是找真人）。
  */
 export const DEFAULT_SKIP_EXIT_LABEL = '我沒有這項資料'
 

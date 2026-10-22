@@ -72,6 +72,7 @@ import {
   consumePrefilledCollect,
   extractCollectValue,
   isHumanRequestText,
+  isStepButtonText,
   prefillCollectFields,
   renderScriptTemplate,
   resolveBranchNext,
@@ -298,14 +299,15 @@ async function send(text?: string) {
 
   if (!waiting.value) { await judgeFirst(msg); return }
 
-  // 逃生門（與正式引擎同一份判斷詞）：流程進行中喊「找真人」→ 放棄流程、轉真人
-  if (isHumanRequestText(msg)) {
+  // 逃生門（與正式引擎同一份判斷詞）：流程進行中喊「找真人」→ 放棄流程、轉真人；
+  // 剛好是這一步的按鈕（店家的按鈕叫「找客服」）就照按鈕走，同引擎（`C-379`）
+  const node = props.nodes.find(n => n.id === nodeId.value)
+  if (isHumanRequestText(msg) && !(node && isStepButtonText(node, msg))) {
     push({ who: 'sys', text: '↳ 放棄這條，轉真人客服（會回覆客人並通知值班同仁）' })
     done.value = true
     waiting.value = null
     return
   }
-  const node = props.nodes.find(n => n.id === nodeId.value)
   if (node?.type === 'collect') {
     // 與引擎一致：先看是不是點了跳過按鈕（先於格式驗證）
     const skip = collectSkipLabel(node)
@@ -323,7 +325,7 @@ async function send(text?: string) {
     const opt = node.options.find(o => o.label.trim().toLowerCase() === msg.toLowerCase())
     if (!opt) {
       const labels = node.options.map(o => o.label)
-      if (!labels.some(l => isHumanRequestText(l))) labels.push('找真人')
+      if (!labels.some(l => l.trim() === '找真人')) labels.push('找真人')
       push({ who: 'bot', text: renderScriptTemplate(node.question, { collected: collected.value }), buttons: labels })
       return
     }

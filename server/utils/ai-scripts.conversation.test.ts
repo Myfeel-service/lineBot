@@ -13,12 +13,13 @@ vi.mock('firebase-admin/firestore', () => ({
     increment: (n: number) => ({ __op: 'increment', n }),
     serverTimestamp: () => ({ __op: 'ts' }),
   },
+  Timestamp: { fromMillis: (ms: number) => ({ ms }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 const { addTagsToUser } = vi.hoisted(() => ({ addTagsToUser: vi.fn(async () => ({ added: [], skipped: [] })) }))
 vi.mock('./tagging', () => ({ addTagsToUser }))
 
-import { startScript, advanceScript } from './ai-scripts'
+import { startScript, advanceScript, deleteScriptRuns } from './ai-scripts'
 import type { ActiveScriptState, ScriptDoc, ScriptNode } from '~~/shared/types/ai-script'
 import { DEFAULT_REPLY_LINK_LABEL } from '~~/shared/types/ai-script'
 
@@ -214,6 +215,41 @@ describe('腳本逃生門：進行中喊「找真人」永遠有人聽見', () =
     }
   })
 
+  it('店家的按鈕剛好叫「找客服」（求助講法）→ 客人點了照按鈕的路走，不被當成找真人（`C-379`）', async () => {
+    const sButtons = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['服務'], examples: [], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '需要什麼服務？', expireMs: 600000, options: [{ label: '查訂單', next: 'r' }, { label: '找客服', next: 'c_phone' }] },
+      { id: 'c_phone', type: 'collect', question: '請留電話，客服會打給您', fieldName: 'phone', expireMs: 600000, format: 'phone', next: 'r' },
+      { id: 'r', type: 'reply', text: '收到', thenHandoff: true },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', sButtons)
+    await startScript(sButtons, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '找客服', {}, UID, db)
+    expect(r.escapeToHuman).toBeUndefined()
+    expect(r.replyText).toBe('請留電話，客服會打給您')
+    expect(activeScriptOf(store)?.currentNodeId).toBe('c_phone')
+
+    // 不是按鈕的那一步，同一句照舊是找真人
+    const r2 = await advanceScript(activeScriptOf(store)!, '找客服', {}, UID, db)
+    expect(r2.escapeToHuman).toBe(true)
+  })
+
+  it('「客人說沒有」的按鈕叫「找專員」→ 點了走跳過那條，不轉真人（`C-379`）', async () => {
+    const sSkip = script([
+      { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['訂單'], examples: [], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 600000, format: 'alphanumericSymbol', next: 'r', skipLabel: '找專員', skipNext: 'r_skip' },
+      { id: 'r', type: 'reply', text: '已收到 {{order_id}}', thenHandoff: true },
+      { id: 'r_skip', type: 'reply', text: '好的，專員會跟您聯繫', thenHandoff: true },
+    ])
+    const { db, store } = makeDb()
+    store.scripts.set('s1', sSkip)
+    await startScript(sSkip, UID, {}, db)
+    const r = await advanceScript(activeScriptOf(store)!, '找專員', {}, UID, db)
+    expect(r.escapeToHuman).toBeUndefined()
+    expect(r.replyText).toBe('好的，專員會跟您聯繫')
+  })
+
   it('collect 答錯格式重問時，亮「找真人」逃生按鈕', async () => {
     const sPhone = script([
       { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['預約'], examples: [], priority: 50, next: 'c' },
@@ -229,7 +265,7 @@ describe('腳本逃生門：進行中喊「找真人」永遠有人聽見', () =
     expect(r.quickReplies).toEqual(['找真人'])
   })
 
-  it('quickReply 沒對到選項重問時，按鈕多一顆「找真人」；選項已有同義按鈕則不重複', async () => {
+  it('quickReply 沒對到選項重問時，按鈕多一顆「找真人」；選項已經叫「找真人」則不重複', async () => {
     const mk = (labels: string[]) => script([
       { id: 't', type: 'trigger', matchMode: 'keyword', keywords: ['你好'], examples: [], priority: 50, next: 'q' },
       { id: 'q', type: 'quickReply', question: '需要什麼？', expireMs: 600000, options: labels.map(l => ({ label: l, next: 'r' })) },
@@ -248,6 +284,16 @@ describe('腳本逃生門：進行中喊「找真人」永遠有人聽見', () =
       await startScript(mk(['查訂單', '找真人']), UID, {}, db)
       const r = await advanceScript(activeScriptOf(store)!, '嗯？', {}, UID, db)
       expect(r.quickReplies).toEqual(['查訂單', '找真人']) // 不重複加
+    }
+    {
+      // 🔴 選項叫「找客服」是店家的按鈕、點了照它的路走（`C-379`）＝不是逃生鈕：照樣補「找真人」，點了才真的轉真人
+      const { db, store } = makeDb()
+      store.scripts.set('s1', mk(['查訂單', '找客服']))
+      await startScript(mk(['查訂單', '找客服']), UID, {}, db)
+      const r = await advanceScript(activeScriptOf(store)!, '嗯？', {}, UID, db)
+      expect(r.quickReplies).toEqual(['查訂單', '找客服', '找真人'])
+      const r2 = await advanceScript(activeScriptOf(store)!, '找真人', {}, UID, db)
+      expect(r2.escapeToHuman).toBe(true)
     }
   })
 })
@@ -534,6 +580,9 @@ describe('D-138 自動回應：客人那一端', () => {
     await startScript(order, UID, { displayName: '王小明' }, db)
     expect(runsOf(store)).toHaveLength(1)
     expect(runsOf(store)[0]).toMatchObject({ userDocId: UID, displayName: '王小明', nodeId: 'c_id', status: 'active', reasks: 0 })
+    // 帶客人名字的紀錄不能永遠留著：寫入就帶半年後的 expireAt，給 TTL policy 清（`C-379`）
+    const keepDays = (runsOf(store)[0]!.expireAt.ms - runsOf(store)[0]!.startedAtMs) / 86_400_000
+    expect(keepDays).toBe(180)
     expect(activeScriptOf(store)?.runId).toBeTruthy()
 
     await advanceScript(activeScriptOf(store)!, '找不到耶', {}, UID, db) // 格式不對 → 重問
@@ -644,5 +693,50 @@ describe('D-138 自動回應：客人那一端', () => {
     ])
     const r = await startScript(booking, UID, {}, db, '', { offHours: OFF })
     expect(r.replyText).toBe('請問您的大名？')
+  })
+})
+
+describe('刪掉自動回應時，每次走進來的紀錄（帶客人名字）一起刪（`C-379`）', () => {
+  /** 只認 scripts/{id}/runs 的 limit().get() 與 batch().delete()：一批最多刪幾筆照實記下 */
+  function runsDb(ids: string[]) {
+    const runs = new Map(ids.map(id => [id, { displayName: '王小明' }]))
+    const batchSizes: number[] = []
+    const db = {
+      collection: (name: string) => ({
+        doc: (scriptId: string) => ({
+          collection: (sub: string) => ({
+            limit: (n: number) => ({
+              get: async () => {
+                const docs = name === 'scripts' && scriptId === 's1' && sub === 'runs'
+                  ? [...runs.keys()].slice(0, n).map(id => ({ ref: { id } }))
+                  : []
+                return { empty: docs.length === 0, docs }
+              },
+            }),
+          }),
+        }),
+      }),
+      batch: () => {
+        const pending: string[] = []
+        return {
+          delete: (ref: { id: string }) => { pending.push(ref.id) },
+          commit: async () => { batchSizes.push(pending.length); for (const id of pending) runs.delete(id) },
+        }
+      },
+    }
+    return { db: db as any, runs, batchSizes }
+  }
+
+  it('超過一批（900 筆）分三批刪完、一筆不留', async () => {
+    const { db, runs, batchSizes } = runsDb(Array.from({ length: 900 }, (_, i) => `r${i}`))
+    expect(await deleteScriptRuns(db, 's1')).toBe(900)
+    expect(runs.size).toBe(0)
+    expect(batchSizes).toEqual([400, 400, 100])
+  })
+
+  it('沒有紀錄 → 不送任何一批', async () => {
+    const { db, batchSizes } = runsDb([])
+    expect(await deleteScriptRuns(db, 's1')).toBe(0)
+    expect(batchSizes).toEqual([])
   })
 })

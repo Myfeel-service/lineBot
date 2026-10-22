@@ -857,6 +857,17 @@ describe('客人傳的照片：自動回應正在等答案', () => {
     expect(ctx.user().scriptImageAt).toBeGreaterThan(0)
   })
 
+  it('用截圖回答的那一題剛好讓流程收尾、交給真人 → 通知裡看得出客人傳了圖（不是空的）', async () => {
+    ctx.setUser(waitingAt('p'))
+    vi.mocked(advanceScript).mockResolvedValue({ replyText: '已收到', thenHandoff: true, finished: true, completed: true })
+    await handleMessageEvent(imageEvent(), { workspaceId: WS })
+
+    expect(repliedTexts()).toEqual(['已收到'])
+    expect(vi.mocked(notifyHandoffToStaff)).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: WS, reason: null, customerMessage: '[圖片]',
+    }))
+  })
+
   it('同一批第二張（30 秒內）不出聲：不再推進流程、不問、不回引導語', async () => {
     ctx.setUser({ ...waitingAt('p'), scriptImageAt: Date.now() - 2_000 })
     await handleMessageEvent(imageEvent({ id: 'msg-img-2' }), { workspaceId: WS })

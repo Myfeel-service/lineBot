@@ -24,6 +24,15 @@ function isMeaningTrigger(script: ScriptDoc): boolean {
   return (rootTrigger(script)?.matchMode ?? 'keyword') === 'semantic'
 }
 
+/**
+ * 誰先比：優先度高的先；一樣高的照文件編號大的先——Firestore `orderBy('priority', 'desc')` 同分時隱含照文件編號、
+ * 跟最後一個排序同方向排，這裡照抄（`C-379`）。正式（loadActiveScripts）與試試看都過這一支：
+ * 試試看把編輯中的那條換進清單後重排，以前同分時排在存好的那條後面，挑到的跟客人實際會走的相反。
+ */
+export function sortByPriority<T extends ScriptRow>(scripts: T[]): T[] {
+  return [...scripts].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+}
+
 /** 會被「客人傳文字」接走的那幾條（加好友時那條只由加好友事件啟動） */
 export function messageScripts<T extends ScriptDoc>(scripts: T[]): T[] {
   return scripts.filter(s => scriptTriggerEvent(s) === 'message')

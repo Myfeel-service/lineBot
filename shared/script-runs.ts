@@ -47,6 +47,33 @@ export interface ScriptRunSummary {
   truncated: boolean
 }
 
+/** 成效卡讀過的那一份（畫面記著，切回來不重讀） */
+export interface ScriptRunSummaryMemo {
+  starts: number
+  completions: number
+  atMs: number
+  summary: ScriptRunSummary
+}
+
+/** 記著的成效最多用多久：重問、按找真人、逾時不動次數，最多晚這麼久看到 */
+export const SCRIPT_RUN_SUMMARY_MEMO_MS = 5 * 60_000
+
+/**
+ * 記著的那份還能不能直接用（`C-379`）：讀一次成效是最多 501 筆資料庫讀取（資料庫讀取已是每月最大一筆成本，`E-38`），
+ * 店家在幾條之間切來切去不該每次重讀。走進來／走完的次數變了、或記太久，才重讀。
+ */
+export function isRunSummaryMemoFresh(
+  memo: ScriptRunSummaryMemo | undefined,
+  starts: number,
+  completions: number,
+  nowMs: number,
+): memo is ScriptRunSummaryMemo {
+  return Boolean(memo)
+    && memo!.starts === starts
+    && memo!.completions === completions
+    && nowMs - memo!.atMs < SCRIPT_RUN_SUMMARY_MEMO_MS
+}
+
 function stopReasonOf(run: ScriptRun, nowMs: number): ScriptStopReason | null {
   if (run.status === 'completed') return null
   if (run.status === 'escaped') return 'escaped'

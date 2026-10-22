@@ -53,7 +53,13 @@
 </template>
 
 <script setup lang="ts">
-import { SCRIPT_STOP_REASON_LABELS, type ScriptRunSummary, type ScriptStopReason } from '~~/shared/script-runs'
+import {
+  SCRIPT_STOP_REASON_LABELS,
+  isRunSummaryMemoFresh,
+  type ScriptRunSummary,
+  type ScriptRunSummaryMemo,
+  type ScriptStopReason,
+} from '~~/shared/script-runs'
 
 const props = defineProps<{
   scriptId: string
@@ -76,13 +82,28 @@ const summary = ref<ScriptRunSummary | null>(null)
 const loadState = ref<'loading' | 'ready' | 'failed'>('loading')
 const openRow = ref<string | null>(null)
 
-async function load() {
+/**
+ * 讀過的成效記著（`C-379`）：每讀一次是最多 501 筆資料庫讀取，切來切去不重讀（規則見 isRunSummaryMemoFresh）。
+ * 記在 useState：切換時這張卡整個重建（頁面掛了 `:key`），記在元件裡等於沒記。
+ */
+const memo = useState<Record<string, ScriptRunSummaryMemo>>('script-insight-memo', () => ({}))
+
+async function load(force = false) {
   summary.value = null
   openRow.value = null
   if (!props.asksQuestions || !props.starts) return
+  const key = `${workspaceId.value}/${props.scriptId}`
+  const { starts, completions } = props
+  const kept = memo.value[key]
+  if (!force && isRunSummaryMemoFresh(kept, starts, completions, Date.now())) {
+    summary.value = kept.summary
+    loadState.value = 'ready'
+    return
+  }
   loadState.value = 'loading'
   try {
     summary.value = await apiFetch<ScriptRunSummary>(`/api/ai/scripts/list?runsOf=${encodeURIComponent(props.scriptId)}`)
+    memo.value[key] = { starts, completions, atMs: Date.now(), summary: summary.value }
     loadState.value = 'ready'
   }
   catch {
@@ -90,8 +111,8 @@ async function load() {
     loadState.value = 'failed'
   }
 }
-watch(() => [props.scriptId, props.starts], load, { immediate: true })
-defineExpose({ reload: load })
+watch(() => [props.scriptId, props.starts, props.completions], () => load(), { immediate: true })
+defineExpose({ reload: () => load(true) })
 
 function mdHm(ms: number): string {
   const d = new Date(ms)
