@@ -253,4 +253,40 @@ describe('先比網頁、沒衝突就自動做完（`C-368`）', () => {
     expect(homeUpdates().every(x => x.contentHash === undefined)).toBe(true)
     expect(markSourceOutdated).not.toHaveBeenCalled()
   })
+
+  it('⛔ 行都一樣、只有還在跳的數字不同（numbers_drift）→ 指紋跟上，但不推進版本記號、不存原文、不標（C-379）', async () => {
+    SOURCES = [homepage()]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'numbers_drift', usedAi: false })
+    await detectSourceUpdates(makeDb())
+    expect(homeUpdates().some(x => x.contentHash === hash)).toBe(true)
+    expect(homeUpdates().every(x => x.appliedContentHash === undefined)).toBe(true)
+    expect(saveAppliedPage).not.toHaveBeenCalled()
+    expect(markSourceOutdated).not.toHaveBeenCalled()
+  })
+
+  it('數字停下來（抹掉數字的指紋跟上次確認的一樣）才告訴它 numbersSettled', async () => {
+    const textHash = createHash('sha256').update(text).digest('hex') // 這段字沒有數字：抹不抹都一樣
+    SOURCES = [homepage({ textHash })]
+    tryAutoApplyPageChange.mockResolvedValue({ kind: 'noop', usedAi: false })
+    await detectSourceUpdates(makeDb())
+    expect(tryAutoApplyPageChange.mock.calls[0]![5]).toMatchObject({ numbersSettled: true })
+    // 文字改了（連兩輪同一份新文字）
+    SOURCES = [homepage({ textHash: 'other', observedTextHash: textHash })]
+    await detectSourceUpdates(makeDb())
+    expect(tryAutoApplyPageChange.mock.calls[1]![5]).toMatchObject({ numbersSettled: false })
+  })
+
+  it('⛔ 三個來源同一輪一起跑：請 AI 的名額照樣只有 2 個（名額在請 AI 那一刻當場扣，C-379）', async () => {
+    SOURCES = ['h1', 'h2', 'h3'].map(id => ({ ...homepage(), id }))
+    const gotSlot: string[] = []
+    tryAutoApplyPageChange.mockImplementation(async (_db: unknown, id: string, _d: unknown, _t: unknown, _h: unknown, opts: { takeAiSlot: () => boolean }) => {
+      if (!opts.takeAiSlot()) return { kind: 'needs_ai', usedAi: false }
+      gotSlot.push(id)
+      await new Promise(r => setTimeout(r, 20)) // AI 整理要一段時間：其他來源這時候也在跑
+      return { kind: 'noop', usedAi: true }
+    })
+    await detectSourceUpdates(makeDb())
+    expect(tryAutoApplyPageChange).toHaveBeenCalledTimes(3)
+    expect(gotSlot).toHaveLength(2)
+  })
 })

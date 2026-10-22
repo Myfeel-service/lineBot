@@ -283,11 +283,13 @@ export async function tryAutoApplyMinorChange(
 export interface PageAutoApplyResult {
   /**
    * legacy：沒有上一版原文，照舊路；noop：一行都沒改、或改了的都不影響知識；
-   * applied：做完了；manual：要人看（reason 講為什麼）；needs_ai：要 AI 整理但這一輪的名額用完了，下一輪再來
+   * applied：做完了；manual：要人看（reason 講為什麼）；needs_ai：要 AI 整理但這一輪的名額用完了，下一輪再來；
+   * numbers_drift：數字會跳的網址，行都一樣、只有數字跟上一版不同，而數字還在跳——不花錢、
+   * ⛔ 也不算「這批知識對到這一版」（卡上的數字可能真的舊了，留給「立即更新」照實列出來）
    */
-  kind: 'legacy' | 'noop' | 'applied' | 'manual' | 'needs_ai'
+  kind: 'legacy' | 'noop' | 'applied' | 'manual' | 'needs_ai' | 'numbers_drift'
   reason?: SourceOutdatedReason
-  /** 這一次有沒有花 AI 的錢（呼叫端扣每輪名額用） */
+  /** 這一次有沒有花 AI 的錢 */
   usedAi: boolean
   /** kind='applied'：做了什麼（資料頁那一行紀錄） */
   record?: Omit<SourceAutoUpdateRecord, 'at'>
@@ -306,23 +308,47 @@ export async function tryAutoApplyPageChange(
   source: KnowledgeSourceDoc,
   newText: string,
   newHash: string,
-  opts: { allowAi: boolean, autoApply: boolean },
+  opts: {
+    /**
+     * 要請 AI 了，跟這一輪拿一個名額：拿到回 true（已經扣掉）。⛔ 要在花錢那一刻才拿（`C-379`）——
+     * 排程是幾個來源一起跑的，先看「還有名額」、等 AI 整理完才扣，同時跑的幾個都會看到還有、一起超過上限。
+     */
+    takeAiSlot: () => boolean
+    autoApply: boolean
+    /**
+     * 數字停下來了：這一輪跟上次確認的版本抹掉數字後一字不差，只有數字換了、而且連兩輪都是這組新數字
+     * （改價、集資結束；見 decideSourceChange 的 'changed'）。不是的話＝數字還在自己跳。
+     */
+    numbersSettled?: boolean
+  },
 ): Promise<PageAutoApplyResult> {
   const manualOf = (kind: SourceOutdatedReason['kind'], count: number, usedAi: boolean): PageAutoApplyResult =>
     ({ kind: 'manual', reason: { kind, count }, usedAi })
 
   const applied = await loadAppliedPage(db, sourceId)
   if (!applied) return { kind: 'legacy', usedAi: false }
-  const lineDiff = diffPageLines(applied.text, newText, { ignoreNumbers: sourceNumbersVolatile(source) })
-  // 一行都沒改（空白、順序、會自己跳的數字）＝這批知識還是對的
-  if (!pageLinesChanged(lineDiff)) return { kind: 'noop', usedAi: false }
-  const changedLines = lineDiff.added.length + lineDiff.removed.length
+  const ignoreNumbers = sourceNumbersVolatile(source)
+  const lineDiff = diffPageLines(applied.text, newText, { ignoreNumbers })
+  let changedLines = lineDiff.added.length + lineDiff.removed.length
+  if (!pageLinesChanged(lineDiff)) {
+    /**
+     * 抹掉數字後一行都沒改（空白、順序）。數字會跳的網址要再逐字比一次（比照手動「立即更新」，`C-379`）：
+     * 數字也一樣才算這批知識還是對的。以前直接當沒改、把版本記號推到這一版——改了價錢、集資結束的數字
+     * 從此卡上是舊的，按「立即更新」又跟版本記號一模一樣、回「網頁沒有要更新的地方」，再也抓不回來。
+     */
+    const exact = ignoreNumbers ? diffPageLines(applied.text, newText, { ignoreNumbers: false }) : null
+    if (!exact || !pageLinesChanged(exact)) return { kind: 'noop', usedAi: false }
+    // 數字還在跳（這一輪是因為順序換了才走到這裡）：不花錢，但也不推進版本記號
+    if (!opts.numbersSettled) return { kind: 'numbers_drift', usedAi: false }
+    // 數字停在新的值：照樣請 AI 整理——改了的行是空的，下面只會留下卡上數字有變的那幾條（數字紅線）
+    changedLines = exact.added.length + exact.removed.length
+  }
   // 店家設定成「每次都先問我」：照樣不自動，但講得出網頁改了幾行
   if (!opts.autoApply) return manualOf('ask', changedLines, false)
   if (pageChangeIsLarge(lineDiff)) return manualOf('big_change', changedLines, false)
   // 抓到的網頁少了一大半：多半是網頁壞了或改成動態載入，不能照著刪知識
   if (newText.trim().length < applied.text.trim().length * MIN_NEW_CONTENT_RATIO) return manualOf('shrink', 0, false)
-  if (!opts.allowAi) return { kind: 'needs_ai', usedAi: false }
+  if (!opts.takeAiSlot()) return { kind: 'needs_ai', usedAi: false }
 
   try {
     const rechunked = await chunkTextWithLlm(newText, { hint: source.name })

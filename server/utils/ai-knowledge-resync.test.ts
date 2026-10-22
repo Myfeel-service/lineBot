@@ -634,4 +634,78 @@ describe('gateDiffByPageChanges（C-368）', () => {
     expect(gate.lines.map(l => l.status)).toEqual(['uncovered', 'uncovered'])
     expect(gate.uncertain).toBe(0)
   })
+
+  it('頁尾選單改名、連到同一頁（沒人寫成知識）＝同一行改了一點，照樣略過', () => {
+    const diff = computeDiff([oldChunk('a', '運費', '滿千免運。')], [newChunk('運費', '滿千免運。')])
+    const gate = gateDiffByPageChanges(diff, diffPageLines('關於我們（https://shop.example.tw/about）', '認識小舖（https://shop.example.tw/about）', { ignoreNumbers: false }))
+    expect(gate.lines.map(l => l.status)).toEqual(['uncovered', 'uncovered'])
+    expect(gate.uncertain).toBe(0)
+  })
+
+  /**
+   * `C-379`：網頁新冒出來一行、AI 沒寫進任何一條（切卡漏掉、或被當成「現在的狀態」略過）——
+   * 以前跟每一條都不像就當頁尾略過，排程照樣把基準推到這一版，之後比網頁再也看不到這一行。
+   */
+  it('⛔ 網頁新冒出來一行、AI 沒寫成任何一條（漏掉的新商品）→ 對不到、要問', () => {
+    const diff = computeDiff(
+      [oldChunk('sharp', 'SHARP 靜音無線吸塵器', card('SHARP', 'EC-SR9TW', 'SHARP靜音無線吸塵器，主打靜音和無線設計。'))],
+      [newChunk('SHARP 靜音無線吸塵器', card('SHARP', 'EC-SR9TW', 'SHARP靜音無線吸塵器，主打靜音和無線設計。'))],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(
+      line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW'),
+      [line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW'), line('Giaretti 珈樂堤 小滑手全自動義式咖啡機', 'GL-5680')].join('\n'),
+      { ignoreNumbers: true },
+    ))
+    expect(gate.lines).toEqual([expect.objectContaining({ side: 'added', status: 'uncertain' })])
+    expect(gate.uncertain).toBe(1)
+  })
+
+  it('⛔ 新商品那行跟下架那行長得一樣（同一個格式、只差名字和連結）也不算「同一行改了一點」', () => {
+    const diff = computeDiff([oldChunk('a', '運費', '滿千免運。')], [newChunk('運費', '滿千免運。')])
+    // 名字短的時候，兩行的字有七成以上一樣（全是「人數達標解鎖更多獎勵…人支持」）
+    const gate = gateDiffByPageChanges(diff, diffPageLines(
+      line('AROMIC 香氛機', 'aromic'),
+      line('NWT 除濕機', 'WDH-16EF'),
+      { ignoreNumbers: true },
+    ))
+    expect(gate.lines.map(l => [l.side, l.status])).toEqual([['removed', 'uncovered'], ['added', 'uncertain']])
+  })
+
+  /**
+   * `C-379`：連結只認「只有一條知識帶著它」的。網址的 ?id= 會被拿掉，`product?id=1` 跟 `product?id=2`
+   * 是同一條——以前改一行就把帶這條連結的全部認走，一條都收不起來，AI 重寫的版本整批套上去。
+   */
+  it('⛔ 好幾條知識共用的連結（?id= 被拿掉）不拿來認：網頁沒改的那幾條照樣收起來', () => {
+    // 列表頁一個商品一行：名字、特色、價錢、連結
+    const p = (name: string, id: number, feature: string, price: number) => `${name} ${feature} 售價 ${price} 元（https://shop.example.tw/product?id=${id}）`
+    const c = (name: string, id: number, price: number, body: string) => `重點：品名：${name}｜售價：${price} 元\n\n${body}\n連結：https://shop.example.tw/product?id=${id}`
+    const diff = computeDiff(
+      [
+        oldChunk('a', '保溫杯', c('保溫杯', 1, 590, '316 不鏽鋼保溫杯，保冷 12 小時。')),
+        oldChunk('b', '手沖壺', c('手沖壺', 2, 1280, '細口手沖壺，容量 600ml。')),
+      ],
+      [
+        newChunk('保溫杯', c('保溫杯', 1, 690, '316 不鏽鋼保溫杯，保冷 12 小時。')),
+        newChunk('手沖壺', c('手沖壺', 2, 1280, '這是一把細口設計的手沖壺，容量為 600ml。')),
+      ],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines(
+      [p('保溫杯', 1, '316 不鏽鋼保溫杯，保冷 12 小時', 590), p('手沖壺', 2, '細口手沖壺，容量 600ml', 1280)].join('\n'),
+      [p('保溫杯', 1, '316 不鏽鋼保溫杯，保冷 12 小時', 690), p('手沖壺', 2, '細口手沖壺，容量 600ml', 1280)].join('\n'),
+      { ignoreNumbers: false },
+    ))
+    expect(diff.entries.find(e => e.oldChunk?.id === 'a')!.pageUnchanged).toBeUndefined()
+    // 手沖壺那行網頁沒改：AI 換句話說的那版收起來，原本的不動
+    expect(diff.entries.find(e => e.oldChunk?.id === 'b')).toMatchObject({ kind: 'modified', pageUnchanged: true, defaultAction: 'keep_old' })
+    expect(gate.uncertain).toBe(0)
+  })
+
+  it('⛔ 共用的連結認不出是哪一條、文字也對不上 → 不當頁尾略過，要問', () => {
+    const diff = computeDiff(
+      [oldChunk('a', '門市', '台北門市在信義區。\n連結：https://shop.example.tw/'), oldChunk('b', '客服', '客服時間週一到週五。\n連結：https://shop.example.tw/')],
+      [newChunk('門市', '台北門市在信義區。\n連結：https://shop.example.tw/'), newChunk('客服', '客服時間週一到週五。\n連結：https://shop.example.tw/')],
+    )
+    const gate = gateDiffByPageChanges(diff, diffPageLines('', '雙十一全館八折（https://shop.example.tw/）', { ignoreNumbers: false }))
+    expect(gate.lines).toEqual([expect.objectContaining({ side: 'added', status: 'uncertain' })])
+  })
 })

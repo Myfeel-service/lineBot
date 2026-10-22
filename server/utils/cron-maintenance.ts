@@ -409,10 +409,21 @@ async function checkOneSource(
        * 沒有上一版原文（舊資料）→ 'legacy'，照舊走下面的小改自動套用。
        */
       const page = await runWithLlmBudget(data.workspaceId, () => tryAutoApplyPageChange(db, sourceId, data, extracted.text, newHash, {
-        allowAi: run.autoApplyRemaining > 0,
+        // 名額在真的要請 AI 那一刻才拿、當場扣（`C-379`）：同時跑的幾個來源才不會都看到「還有名額」
+        takeAiSlot: () => {
+          if (run.autoApplyRemaining <= 0) return false
+          run.autoApplyRemaining--
+          return true
+        },
         autoApply: data.urlAutoApply !== false,
+        // 抹掉數字的指紋跟上次確認的一樣＝這次「變了」只是數字停在新的值（decideSourceChange 的 'changed'）
+        numbersSettled: String(data.textHash ?? '') === newTextHash,
       }))
-      if (page.usedAi) run.autoApplyRemaining--
+      if (page.kind === 'numbers_drift') {
+        // 只有還在跳的數字跟上一版不同：指紋跟上，但「這批知識照哪一版做的」不推進（理由同上面 numeric-drift 那段）
+        await commitChange()
+        return { sourceId, outcome: 'unchanged', message: 'page-numbers-drift（行都一樣、只有數字在跳）' }
+      }
       if (page.kind === 'needs_ai') {
         // 這一輪的名額用完了（一輪最多請 AI 整理幾份）：先不收這次變動，下一輪同一份新內容會再走到這裡。
         // ⛔ 不推進 contentHash——推了下一輪就判成「沒變」，這次的變動從此沒人處理

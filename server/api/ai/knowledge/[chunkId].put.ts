@@ -150,8 +150,15 @@ export default defineEventHandler(async (event) => {
     tagsChanged && '標籤',
   ].filter(Boolean).join('、')
   const relearn = titleChanged || contentChanged || questionsChanged
+  /**
+   * ⛔ 總覽整張改（不是只改你寫的那段）也不能講「之後不會跟著網頁更新」（`C-379`）：下次資料有更新時
+   *    總覽照 `C-369` 會被拆開重做——商品清單換成最新的、AI 挑出他自己的話留著，改過的整段另外存著。
+   *    講「鎖住了」等於騙他：他以為改好的字會一直在，下次更新就被換掉了。
+   */
   const lockNote = ownerNoteEdit
     ? '；商品清單照樣跟著資料更新'
+    : existing.isOverview === true
+    ? `；總覽照樣跟著資料更新：下次更新時商品清單會換成最新的，你寫的介紹會留著${contentChanged ? '（這次改的整段另外存著，可以找回來）' : ''}`
     : sourceType === 'gsheet'
     ? '；之後不會跟著表格更新（可以在這條解除鎖定）'
     : sourceType === 'url'

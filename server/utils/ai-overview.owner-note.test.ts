@@ -26,7 +26,7 @@ vi.mock('./ai-knowledge-quota', () => ({
   invalidateKnowledgeChunkCount: vi.fn(),
 }))
 
-const { regenerateOverviewCard, composeOverviewContent } = await import('./ai-overview')
+const { regenerateOverviewCard, composeOverviewContent, ownerNoteSentenceLines } = await import('./ai-overview')
 const { pickOwnerNoteSentences, splitOwnerNoteSentences } = await import('./ai-knowledge-chunker')
 const { updateKnowledgeChunk } = await import('./ai-knowledge-chunks')
 const { writeAuditLog } = await import('./audit-log')
@@ -101,6 +101,20 @@ describe('regenerateOverviewCard 分兩段（C-369）', () => {
     await regenerateOverviewCard(dbWith([overview({ manuallyEditedAt: null, content: '舊的清單' }), child('A'), child('B')]), 'ws1', 'home')
     expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1].content).toBe('重點：家電（除濕機、咖啡機）\n\n我們主要販售各式家電。')
     expect(UPDATES.find(u => u.id === 'ov')!.payload).toMatchObject({ ownerNote: '', manuallyEditedAt: null })
+  })
+
+  it('⛔ 留下的句子原本在不同行 → 照樣換行，不黏成一串（C-379：信箱接著電話，AI 讀到壞掉的信箱）', async () => {
+    const content = `${MYFEEL_MANUAL}\n客服信箱：service@myfeel-tw.com\n客服電話：02-1234-5678\n保固一年，請保留發票。延長保固請洽客服。`
+    // 跟整段切出來的句子一模一樣、順序也一樣（AI 拿到的編號才對得上）
+    expect(ownerNoteSentenceLines(content).flat()).toEqual(splitOwnerNoteSentences(content))
+    vi.mocked(pickOwnerNoteSentences).mockResolvedValue({ keep: [0, 4, 5, 6, 7], inputTokens: 1, outputTokens: 1 })
+    await regenerateOverviewCard(dbWith([overview({ manuallyEditedAt: { t: 1 }, content }), child('A'), child('B')]), 'ws1', 'home')
+    expect(UPDATES.find(u => u.id === 'ov')!.payload.ownerNote).toBe([
+      'MYFEEL 是亞洲跨國群眾集資平台，提供群眾集資專案與產品館服務。',
+      '客服信箱：service@myfeel-tw.com',
+      '客服電話：02-1234-5678',
+      '保固一年，請保留發票。延長保固請洽客服。',
+    ].join('\n'))
   })
 
   it('子卡沒了：整張手改過、還沒拆的照舊留著（不替店家丟字）', async () => {

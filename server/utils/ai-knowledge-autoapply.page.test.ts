@@ -46,7 +46,7 @@ const NEW_CHUNKS = [
   { title: 'MYFEEL關於我們', content: '您可以透過「關於我們」頁面了解MYFEEL的相關資訊。\n連結：https://www.myfeel-tw.com/aboutUs', tags: [], questions: [], sourceId: null },
 ]
 const SOURCE = { workspaceId: 'ws1', name: 'https://www.myfeel-tw.com/', generateOverview: true, numericDriftRounds: 4 } as any
-const OPTS = { allowAi: true, autoApply: true }
+const OPTS = { takeAiSlot: () => true, autoApply: true }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -92,21 +92,68 @@ describe('tryAutoApplyPageChange（C-368）', () => {
     expect(chunkTextWithLlm).not.toHaveBeenCalled()
   })
 
-  it('一行都沒改（只有會自己跳的數字、順序）→ noop，不花 AI 的錢', async () => {
-    const shuffled = [FOOTER, line('DEAR.min 不落枕記憶枕', 'dearminpillow').replace('9,895,800', '9,999,999'), line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW')].join('\n')
+  it('一行都沒改（只有順序、空白）→ noop，不花 AI 的錢', async () => {
+    const shuffled = [FOOTER, line('DEAR.min 不落枕記憶枕', 'dearminpillow'), `  ${line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW')}`].join('\n')
     expect(await tryAutoApplyPageChange({} as any, 'home', SOURCE, shuffled, 'h-new', OPTS)).toEqual({ kind: 'noop', usedAi: false })
     expect(chunkTextWithLlm).not.toHaveBeenCalled()
   })
 
+  /**
+   * `C-379`：數字會跳的網址，行都一樣、只有數字跟上一版不同。以前一律 noop＝排程把版本記號推到這一版，
+   * 改了價錢、集資結束的數字從此卡上是舊的，「立即更新」又回「網頁沒有要更新的地方」。
+   */
+  describe('⛔ 數字會跳的網址：行都一樣、只有數字不同（C-379）', () => {
+    const shuffled = [FOOTER, line('DEAR.min 不落枕記憶枕', 'dearminpillow').replace('9,895,800', '9,999,999'), line('SHARP 靜音無線吸塵器 EC-SR9TW', 'EC-SR9TW')].join('\n')
+
+    it('數字還在跳（順序換了才走到這裡）→ numbers_drift：不花錢、⛔ 不是 noop（不推進版本記號）', async () => {
+      expect(await tryAutoApplyPageChange({} as any, 'home', SOURCE, shuffled, 'h-new', OPTS)).toEqual({ kind: 'numbers_drift', usedAi: false })
+      expect(chunkTextWithLlm).not.toHaveBeenCalled()
+    })
+
+    it('數字停在新的值（改價）→ 照樣請 AI 整理，只換卡上數字有變的那一條', async () => {
+      const base = `早鳥價 3990 元，限量 500 台\n${FOOTER}`
+      vi.mocked(loadAppliedPage).mockResolvedValue({ text: base, hash: 'h-old' })
+      vi.mocked(listChunksBySource).mockResolvedValue([
+        oldCard('price', '早鳥價', '早鳥價 3990 元，限量 500 台。'),
+        oldCard('about', '關於我們', '透過關於我們頁面了解 MYFEEL。'),
+      ] as any)
+      vi.mocked(chunkTextWithLlm).mockResolvedValue({ chunks: [
+        { title: '早鳥價', content: '早鳥價 4290 元，限量 500 台。', tags: [], questions: [], sourceId: null },
+        { title: '關於我們', content: '可以到關於我們頁面認識 MYFEEL 平台。', tags: [], questions: [], sourceId: null },
+      ], calls: [] } as any)
+      vi.mocked(applyResyncEntries).mockResolvedValue({
+        added: 0, updated: 1, deleted: 0, kept: 1, quotaSkipped: 0, errors: [], addedTitles: [], updatedTitles: ['早鳥價'], removedTitles: [],
+      })
+      const r = await tryAutoApplyPageChange({} as any, 'home', SOURCE, base.replace('3990', '4290'), 'h-new', { ...OPTS, numbersSettled: true })
+      expect(r).toMatchObject({ kind: 'applied', usedAi: true })
+      // 只換價錢那條；另一條是 AI 換句話說、網頁沒改，原本的不動
+      expect(decisionsSent()).toEqual({ 早鳥價: 'use_new' })
+    })
+
+    it('數字停在新的值、設定成「每次都先問我」→ 講得出網頁改了幾行（逐字比的行數，不是 0）', async () => {
+      const r = await tryAutoApplyPageChange({} as any, 'home', SOURCE, shuffled, 'h-new', { ...OPTS, autoApply: false, numbersSettled: true })
+      expect(r).toEqual({ kind: 'manual', reason: { kind: 'ask', count: 2 }, usedAi: false })
+    })
+  })
+
   it('設定成「每次都先問我」→ 不自動，但講得出改了幾行', async () => {
-    const r = await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { allowAi: true, autoApply: false })
+    const r = await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { ...OPTS, autoApply: false })
     expect(r).toEqual({ kind: 'manual', reason: { kind: 'ask', count: 2 }, usedAi: false })
     expect(chunkTextWithLlm).not.toHaveBeenCalled()
   })
 
   it('這一輪請 AI 的名額用完 → needs_ai（下一輪再來）', async () => {
-    expect(await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { allowAi: false, autoApply: true }))
+    expect(await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { takeAiSlot: () => false, autoApply: true }))
       .toEqual({ kind: 'needs_ai', usedAi: false })
+  })
+
+  it('⛔ 名額在真的要請 AI 那一刻才拿：一行都沒改、要人看的那幾種都不拿（C-379）', async () => {
+    const takeAiSlot = vi.fn(() => true)
+    await tryAutoApplyPageChange({} as any, 'home', SOURCE, BASE, 'h-new', { takeAiSlot, autoApply: true })
+    await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { takeAiSlot, autoApply: false })
+    expect(takeAiSlot).not.toHaveBeenCalled()
+    await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', { takeAiSlot, autoApply: true })
+    expect(takeAiSlot).toHaveBeenCalledTimes(1)
   })
 
   it('網頁改了一大半 → 停下來問（多半是網站改版）', async () => {

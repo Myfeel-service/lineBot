@@ -168,6 +168,19 @@ describe('總覽只改「你寫的那段」（`C-369`）', () => {
     expect(vi.mocked(updateKnowledgeChunk).mock.calls[0]![1]).toMatchObject({ manualEdit: true })
     expect(STORE.knowledgeChunks.c1!.ownerNote).toBeUndefined()
     expect(STORE.knowledgeChunks.c1!.overviewAuto).toBeUndefined()
+    // ⛔ 紀錄不可以講「之後不會跟著網頁更新」：下次資料更新時總覽會被拆開重做（`C-379`）
+    expect(lastAudit().note).not.toContain('不會跟著')
+    expect(lastAudit().note).toContain('總覽照樣跟著資料更新')
+    expect(lastAudit().note).toContain('這次改的整段另外存著')
+  })
+
+  it('⛔ 還沒拆過的舊總覽（網址來的）整張改 → 紀錄照實講會跟著資料重做，不講「鎖住、不跟著網頁」（C-379）', async () => {
+    STORE.knowledgeChunks = { c1: ov({ overviewAuto: undefined, ownerNote: undefined }) }
+    STORE.knowledgeSources = { s1: { workspaceId: WS, type: 'url', name: '官網首頁', contentHash: 'h1' } }
+    body = { title: '商品總覽', content: '我們賣家電，客服請找 LINE。' }
+    await run(putHandler)
+    expect(lastAudit().note).not.toContain('不會跟著網頁更新')
+    expect(lastAudit().note).toContain('總覽照樣跟著資料更新')
   })
 
   it('還沒拆過的舊總覽帶 ownerNote 來 → 不認（照一般知識改：body 沒內容就擋）', async () => {

@@ -825,9 +825,15 @@ export function markRemovedStillOnPage(diff: DiffResult, pageText: string): { ma
 //   - 跟改了的行有關的 → 照舊比對、照舊給人看（或自動套用）
 //   - 跟改了的行都無關的 → 那是 AI 的寫法在飄，收起來、不採用，原本的知識一個字不動
 // 「有關」怎麼認：有附連結的行用連結認（首頁一個商品一行、一條連結）；沒有連結看文字重疊。
+// ⛔ 連結只認「只有一條知識帶著它」的（跟 computeDiff 第 0 輪同一把尺，`C-379`）：網址的 ?id= 會被拿掉，
+//    `product?id=1` 跟 `product?id=2` 是同一條；頁尾連到首頁的那行也可能很多條都帶。好幾條共用的連結
+//    一認就是全部，結果一條都收不起來＝AI 重寫的版本整批套到網頁沒改的知識上。共用的改看文字認。
 //
 // ⛔ 每一行改動都要有一條知識「認領」。有一行沒人認領、又不像頁尾樣板那種從來沒人寫成知識的字，
 //    就是「系統對不到」——停下來問，不默默略過（`feedback_filters_must_report_what_they_dropped`）。
+//    「頁尾樣板」只認兩種：少了的那行（原本就不在任何知識裡，拿掉不影響）、多了的那行剛好是把少了的
+//    某行改一下（版權年份 2025→2026、選單改名但連到同一頁）。網頁**新冒出來**、AI 又沒寫進任何一條的
+//    一行，可能是 AI 漏掉的新商品——要問（`C-379`；以前直接略過，基準照樣往前推，之後再也比不出來）。
 // ⛔ 數字有變的那一條一律不收（數字紅線）：數字會自己跳的網址比行的時候把數字抹掉了，
 //    改價在行上看不出來，只能靠卡片上的數字變化抓。
 
@@ -839,6 +845,8 @@ export const LINE_UNCOVERED_MAX_OVERLAP = 0.3
 const LINE_MIN_GRAMS = 3
 /** 「緊挨著一行對到知識的就算同一題」只給這麼短的行（問句），見 gateDiffByPageChanges */
 const NEIGHBOR_CLAIM_MAX_CHARS = 40
+/** 多了的一行跟少了的一行字有這麼像＝同一行改了一點（版權年份、選單改字），見 gateDiffByPageChanges */
+const LINE_PAIR_MIN_SIMILARITY = 0.6
 
 export type PageLineStatus = 'claimed' | 'uncovered' | 'uncertain'
 
@@ -896,18 +904,32 @@ export function gateDiffByPageChanges(diff: DiffResult, change: PageLineDiff): P
   const lines: PageLineVerdict[] = []
   const verdicts: Array<{ verdict: PageLineVerdict, line: PageLine }> = []
 
+  // 每條連結有幾條知識帶著（舊的、新的各算）：只有一條帶著的才拿來認（見上面 ⛔ 連結那段）
+  const countLinks = (pick: (p: typeof prepared[number]) => Set<string>) => {
+    const m = new Map<string, number>()
+    for (const p of prepared) for (const l of pick(p)) m.set(l, (m.get(l) ?? 0) + 1)
+    return m
+  }
+  const oldLinkCount = countLinks(p => p.oldLinks)
+  const newLinkCount = countLinks(p => p.newLinks)
+
   const judge = (line: PageLine, side: 'added' | 'removed') => {
     const grams = factGrams(line.key)
     const textUsable = grams.size >= LINE_MIN_GRAMS
     let claimed = false
     let best = 0
+    const linkHit = (links: Set<string>, count: Map<string, number>) => {
+      const shared = line.links.filter(l => links.has(l))
+      // 好幾條共用的連結認不出是哪一條，但這一行確實跟知識有關：不算認領，也不能當頁尾略過
+      if (shared.length) best = 1
+      return shared.some(l => count.get(l) === 1)
+    }
     for (const p of prepared) {
       // 網頁少了的那一行對舊的知識、多了的那一行對新的知識
-      const links = side === 'removed' ? p.oldLinks : p.newLinks
+      const byLink = side === 'removed' ? linkHit(p.oldLinks, oldLinkCount) : linkHit(p.newLinks, newLinkCount)
       const cardGrams = side === 'removed' ? p.oldGrams : p.newGrams
-      const byLink = line.links.some(l => links.has(l))
       const overlap = textUsable ? overlapOf(grams, cardGrams) : 0
-      best = Math.max(best, overlap, byLink ? 1 : 0)
+      best = Math.max(best, overlap)
       if (byLink || overlap >= LINE_CLAIM_MIN_OVERLAP) {
         claimed = true
         if (p.e.kind !== 'unchanged') related.add(p.e)
@@ -916,9 +938,8 @@ export function gateDiffByPageChanges(diff: DiffResult, change: PageLineDiff): P
     // 修改的那條兩邊都算：網頁少了的那行可能被寫進新版，多了的那行可能本來就寫在舊版
     for (const p of prepared) {
       if (p.e.kind !== 'modified') continue
-      const links = side === 'removed' ? p.newLinks : p.oldLinks
+      const byLink = side === 'removed' ? linkHit(p.newLinks, newLinkCount) : linkHit(p.oldLinks, oldLinkCount)
       const cardGrams = side === 'removed' ? p.newGrams : p.oldGrams
-      const byLink = line.links.some(l => links.has(l))
       const overlap = textUsable ? overlapOf(grams, cardGrams) : 0
       if (byLink || overlap >= LINE_CLAIM_MIN_OVERLAP) {
         claimed = true
@@ -932,6 +953,19 @@ export function gateDiffByPageChanges(diff: DiffResult, change: PageLineDiff): P
   }
   for (const l of change.removed) judge(l, 'removed')
   for (const l of change.added) judge(l, 'added')
+  /**
+   * 多了的那一行沒人寫成知識：只有「把少了的某一行改一下」才當頁尾樣板略過（見上面 ⛔ 頁尾那段）。
+   * 有連結的看連結（首頁每個商品那行長得一模一樣、只差名字跟連結，看字會把新商品配到下架的那個）。
+   */
+  const pairsWith = (a: PageLine, b: PageLine) => a.links.length || b.links.length
+    ? a.links.some(l => b.links.includes(l))
+    : jaccard(factGrams(a.key), factGrams(b.key)) >= LINE_PAIR_MIN_SIMILARITY
+  for (const v of verdicts) {
+    if (v.verdict.side !== 'added' || v.verdict.status !== 'uncovered') continue
+    if (!v.line.links.length && factGrams(v.line.key).size < LINE_MIN_GRAMS) continue // 一兩個字的行
+    const pairedRemoved = verdicts.some(o => o.verdict.side === 'removed' && o.verdict.status === 'uncovered' && pairsWith(v.line, o.line))
+    if (!pairedRemoved) v.verdict.status = 'uncertain'
+  }
   /**
    * 問句緊挨著答句（FAQ 一題拆成兩行）：答句那一行對到知識了，緊鄰的短行（問句）算同一題。
    * ⛔ 只給短行：長的一段沒人認領卻沾到邊，是「真的改了、AI 沒寫進任何一條」的樣子，要問。

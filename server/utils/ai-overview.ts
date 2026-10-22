@@ -43,6 +43,27 @@ export function composeOverviewContent(auto: string, ownerNote: string): string 
   return note ? `${String(auto ?? '').trim()}\n\n${note}` : String(auto ?? '').trim()
 }
 
+/**
+ * 拆舊總覽：一行一行切句，留下的句子接回去時原本同一行的接著、不同行的換行（`C-379`）。
+ * ⛔ 不可以全部 join('')：沒有句號的兩行（「客服信箱：service@x.com」「客服電話：02-1234-5678」）
+ *    會黏成「service@x.com客服電話：…」，AI 讀到壞掉的信箱、店家看到聯絡資料擠成一串。
+ */
+export function ownerNoteSentenceLines(content: string): string[][] {
+  return String(content ?? '').split('\n').map(l => splitOwnerNoteSentences(l)).filter(s => s.length > 0)
+}
+
+export function joinKeptSentences(lines: string[][], keep: number[]): string {
+  const kept = new Set(keep)
+  const out: string[] = []
+  let start = 0 // 這一行第一句在整份裡是第幾句
+  for (const line of lines) {
+    const picked = line.filter((_, j) => kept.has(start + j)).join('')
+    start += line.length
+    if (picked) out.push(picked)
+  }
+  return out.join('\n')
+}
+
 interface ExistingOverview {
   id: string
   manuallyEdited: boolean
@@ -124,10 +145,12 @@ export async function regenerateOverviewCard(
   let splitFrom: string | null = null
   if (existingOverview?.manuallyEdited && existingOverview.ownerNote === undefined) {
     try {
-      const sentences = splitOwnerNoteSentences(existingOverview.content)
+      // 跟 splitOwnerNoteSentences(整段) 切出來的一模一樣、順序也一樣，只是多記了哪幾句在同一行
+      const lines = ownerNoteSentenceLines(existingOverview.content)
+      const sentences = lines.flat()
       const picked = await pickOwnerNoteSentences(sentences)
       if (sentences.length) await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(picked)))
-      ownerNote = picked.keep.map(i => sentences[i]!).join('')
+      ownerNote = joinKeptSentences(lines, picked.keep)
       splitFrom = existingOverview.content
     }
     catch (e) {

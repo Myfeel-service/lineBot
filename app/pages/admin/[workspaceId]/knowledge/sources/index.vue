@@ -2858,6 +2858,8 @@ const chunkForm = ref({ title: '', content: '', tags: [] as string[], questions:
 const chunkOverviewAuto = ref<string | null>(null)
 /** 總覽裡「你寫的那段」 */
 const chunkOwnerNote = ref('')
+/** 打開的是總覽（拆過沒拆過都算）：編輯框那一句不能講「不再跟著網頁」（`C-379`） */
+const chunkIsOverview = ref(false)
 /** 打開的那一條有沒有被鎖（＞0＝用他改過的版本，見鎖頭那段）；編輯框講「它跟不跟著來源」用 */
 const chunkEditLockedAtMs = ref(0)
 /**
@@ -2867,6 +2869,8 @@ const chunkEditLockedAtMs = ref(0)
 const chunkSyncNote = computed(() => {
   // 拆成兩段的總覽（`C-369`）改的只是「你寫的那段」、不會鎖：兩個欄位名稱已經講了誰跟著資料、誰不會動
   if (chunkOverviewAuto.value !== null) return ''
+  // 還沒拆過的總覽：整張改了也不會鎖，下次資料更新時照 `C-369` 拆開重做——跟存檔後那筆操作紀錄講同一句（`C-379`）
+  if (chunkIsOverview.value) return '總覽照樣跟著資料更新：下次更新時商品清單會換成最新的，你寫的介紹會留著。'
   const t = selectedSource.value?.type
   const locked = chunkEditLockedAtMs.value > 0
   if (t === 'gsheet') return locked ? '這一條用你改過的版本，不跟著表格。' : '在這裡改了，這一條就不再跟著表格更新；要一直有效，直接改試算表。'
@@ -5087,6 +5091,7 @@ function openEditChunk(chunk: ChunkRow, resolveQuery = '', reference = '') {
   }
   // 拆成兩段的總覽（`C-369`）：只給改「你寫的那段」
   chunkOverviewAuto.value = chunk.isOverview && typeof chunk.overviewAuto === 'string' ? chunk.overviewAuto : null
+  chunkIsOverview.value = chunk.isOverview === true
   chunkOwnerNote.value = chunk.ownerNote ?? ''
   chunkEditStatus.value = chunk.status
   chunkEditFailureReason.value = chunk.failureReason ?? ''
