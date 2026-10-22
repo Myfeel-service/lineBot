@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { answerGroundingIssue } from './agent-answer-grounding'
+import { answerGroundingIssue, groundingToolToRun } from './agent-answer-grounding'
 
 const ok = (p: Parameters<typeof answerGroundingIssue>[0]) => answerGroundingIssue(p) === null
 
@@ -124,5 +124,23 @@ describe('answerGroundingIssue（沒查就講的回答要退回去）', () => {
     expect(answerGroundingIssue({ text: made, sources: [], calledTools: [] })).toContain('list_scripts')
     // 查過再引用：放行（同一天實測的好例子）
     expect(ok({ text: '「退換貨查詢」這條自動回應目前回給客人的話是：「已收到您的訂單 ［訂單編號］，謝謝您」。請問你要改成什麼內容呢？', sources: [], calledTools: ['list_scripts'] })).toBe(true)
+  })
+
+  // `D-151` 第三輪實測原句；老闆 10-22：「我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」
+  it('🔴 叫他把客人帶去外面填表單 → 擋下來，改成在 LINE 上一題一題問；⚠️ 網址是他自己給的不擋', () => {
+    const out = '請問這條自動回應要讓客人填什麼表單？以及表單的連結是什麼？我會幫你建立一條自動回應，讓客人在對話中點擊連結填寫表單。'
+    expect(answerGroundingIssue({ text: out, sources: [], calledTools: [], userTexts: ['建一條自動回應讓客人先填表單'] })).toContain('在 LINE 上')
+    expect(answerGroundingIssue({ text: out, sources: [], calledTools: [], userTexts: ['回覆改成請填寫保固登錄表單：https://example.com/w'] })).toBeNull()
+    // 不是在叫人去外面填的：照常
+    expect(ok({ text: '要客人留哪些資料？我幫你擬一條自動回應，客人直接在 LINE 上一題一題回答，不用另外做表單。', sources: [], calledTools: [] })).toBe(true)
+  })
+
+  // `D-151`（2026-10-23）：只退回不夠——「改提醒時間」被退回之後它照樣不查，第二次的「目前是 0 分鐘」就放行了
+  it('被退回時該查卻沒查的那一支：系統替它查（設定／自動回應／異常）', () => {
+    expect(groundingToolToRun({ text: '請問提醒時間要改成幾分鐘？目前是 0 分鐘', calledTools: [] })).toBe('get_ai_settings')
+    expect(groundingToolToRun({ text: '目前這條的回覆內容是：「您好」', calledTools: [] })).toBe('list_scripts')
+    expect(groundingToolToRun({ text: '目前沒有異常', calledTools: [] })).toBe('get_current_alerts')
+    expect(groundingToolToRun({ text: '請問提醒時間要改成幾分鐘？', calledTools: ['get_ai_settings'] })).toBeNull()
+    expect(groundingToolToRun({ text: '好的', calledTools: [] })).toBeNull()
   })
 })

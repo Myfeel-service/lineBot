@@ -35,6 +35,22 @@ export class AdminOpUserError extends Error {
   }
 }
 
+/**
+ * 還不知道他要什麼（要改成哪一句、幾分鐘、哪個字）：**先問他**，問話整段由系統寫（`D-151`，2026-10-23）。
+ *
+ * 跟 `AdminOpUserError` 不一樣的地方：那個是把原因回給模型、讓**它**去問；這個是小幫手**原樣**回這段話給他，
+ * ⛔ 不出卡、不簽憑證、不經過模型轉述。
+ * 為什麼要有：2026-10-22 實測同一句「改「退換貨」回給客人的話」問兩次，一次有講現在那句、一次沒有；
+ * 「改提醒時間」它沒查就說「目前是 0 分鐘」（實際 60）；「客人講到要告我們」它自己挑了「告」一個字就出卡。
+ * ⚠️ 訊息會直接給店家看：先講現在是什麼，再問要改成什麼；不寫欄位名、不寫「指令」「格式」這種詞。
+ */
+export class AdminOpAskFirst extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AdminOpAskFirst'
+  }
+}
+
 export interface AdminOpDef {
   /** 執行門檻：掛既有 capability 表，⛔不在這裡另外訂一套角色 */
   capability: Capability
@@ -67,6 +83,11 @@ export interface AdminOpDef {
    *    回 true 的條件寬了，就等於把上面那道防線拆掉。
    */
   numberOptional?: (raw: Record<string, unknown>) => boolean
+  /**
+   * 選填（配 `needsUserNumber`）：他沒講數字時，小幫手要回的那句問話——**先講現在是多少**再問要改成多少（`D-151`）。
+   * 有寫的話系統直接用這句（`AdminOpAskFirst`）；沒寫才退回「叫模型自己去問」。
+   */
+  askForNumber?: (ctx: AdminOpCtx) => Promise<string>
   /**
    * 選填：檢查參數是不是**使用者自己講過的**（`D-116`，2026-10-08）。不合格就丟 `AdminOpUserError`，
    * 訊息回給模型、讓它照著去問。

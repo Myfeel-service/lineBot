@@ -40,13 +40,14 @@ import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { getCurrentMonthUsageCounts, recordAiUsage } from './ai-usage'
 import { runMeteredAi, usageFromCalls } from './ai-usage-calls'
 import { generateScriptDraft } from './ai-script-generate'
-import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
+import { AdminOpAskFirst, AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import {
   aiSettingsAutoClose,
   aiSettingsEnabled,
   aiSettingsHandbackIdle,
   aiSettingsToneTemplate,
   knowledgeDraftCreate,
+  scriptUpdateExample,
   scriptUpdateKeyword,
   scriptUpdateReply,
   tagCreate,
@@ -93,7 +94,20 @@ const aiSettingsServiceHours: AdminOpDef = {
     + '⛔ mode 一定要照使用者的原話選：他講「服務時間 9 點到 6 點」→ mode="service"；'
     + '講「晚上 10 點到早上 8 點不要吵我」→ mode="dnd"。'
     + '⛔ 你不要自己換算兩者，系統會換（換錯會把上下班時間顛倒）。'
-    + 'weekendOff 只有使用者明確提到週末時才帶。',
+    + 'weekendOff 只有使用者明確提到週末時才帶。'
+    + '他沒講幾點：照樣提議、不帶時間——系統會先講現在的服務時間再問他（⛔ 不要自己轉述）。',
+
+  // 他沒講幾點：系統先講現在的服務時間再問（`D-151`）——⛔ 不交給模型轉述現況
+  async askForNumber(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const sh = s.serviceHours as ServiceHoursLike
+    // ⚠️ 要講清楚改哪一段（`D-151` 第二輪：「晚上不要吵我」「我們週六也有上班」都只得到一句「要改成幾點到幾點？」）；
+    //    範例⛔不帶數字（同 `AGENT_NUMBERLESS_SAY`：看起來像系統建議的值）
+    return sh?.enabled
+      ? `現在的服務時間：${serviceSentence(sh)}\n勿擾時段：${dndSentence(sh)}\n\n`
+        + '要改哪一段、改成幾點？直接跟我說，例如「服務時間改成幾點到幾點」或「勿擾改成晚上幾點到早上幾點」；週末要不要服務也可以一起講。'
+      : '現在沒有設服務時間：客人任何時候要找真人，都會馬上通知你們。\n\n要設成幾點到幾點？週末要不要服務也可以一起講。'
+  },
 
   normalize(raw) {
     if (raw?.enabled === false) return { enabled: false } satisfies ServiceHoursArgs
@@ -351,7 +365,10 @@ const scriptSetEnabled: AdminOpDef = {
         : `我會把「${row.name}」停用，它就不再接客人的訊息（內容都留著，隨時可以再開回來）。`,
       items,
       warning: args.enabled
-        ? '啟用之後，打中這些字的客人會走這條，AI 不會再回答那幾句話。'
+        // 照比對方式講（`D-151`：AI 判斷那種沒有字，以前也寫「打中這些字」）
+        ? (row.matchMode === 'semantic'
+            ? '啟用之後，客人講到這類事就會走這條，AI 不會再回答那幾句話。'
+            : '啟用之後，客人打這些字就會走這條，AI 不會再回答那幾句話。')
         : '停用之後，這條原本回覆的內容客人就收不到了；那些訊息會改由 AI 或其他設定接手。',
       confirmLabel: args.enabled ? '確定啟用' : '確定停用',
     }
@@ -411,7 +428,16 @@ const aiSettingsHandoffSla: AdminOpDef = {
   capability: 'ai.settings.write',
   needsUserNumber: true,
   argsHint: '參數：{"minutes":30}＝客人被轉給真人後等超過幾分鐘要提醒客服；'
-    + '{"minutes":0}＝不要提醒。⛔ 使用者沒講數字就先問，不要自己填一個。',
+    + '{"minutes":0}＝不要提醒。⛔ 不要自己填一個數字：他沒講就照樣提議、不帶數字——系統會先講現在是幾分鐘再問他。',
+
+  // `D-151` 實測：它沒查就說「目前是 0 分鐘」（實際 60）——問話由系統寫、附上現在的值
+  async askForNumber(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const m = Number(s.handoffNotify?.slaRemindMinutes ?? 0)
+    return m > 0
+      ? `現在是客人被轉給真人之後，等超過 ${m} 分鐘還沒人回，就提醒客服。\n\n要改成等幾分鐘？（不要提醒也可以跟我說）`
+      : '現在沒有開「客人等太久」的提醒。\n\n要設成客人等超過幾分鐘還沒人回，就提醒客服？'
+  },
 
   normalize(raw) {
     const n = Number(raw?.minutes)
@@ -523,6 +549,22 @@ const aiSettingsSensitiveTopic: AdminOpDef = {
     if (args.action === 'remove' && !has)
       return { ...base, summary: `清單裡沒有「${args.word}」，沒有東西要拿掉。`, items: [], confirmLabel: '知道了', noop: true }
 
+    // 清單裡跟它重疊的字（「告」↔「提告」）：講出來——客人講到那些本來就會轉真人
+    const related = list.filter(w => w.trim().toLowerCase() !== args.word.toLowerCase()
+      && (w.includes(args.word) || args.word.includes(w)))
+    const relatedLine = related.length
+      ? `清單裡已經有${related.slice(0, 5).map(w => `「${w}」`).join('')}，客人講到這些本來就會轉真人。`
+      : ''
+    // 一個字＝客人講的話裡只要有它就轉真人（`D-151` 實測：「客人講到要告我們」它自己挑了「告」，「廣告」「公告」也會中）。
+    // 先問完整的說法，⛔ 不出卡
+    if (args.action === 'add' && [...args.word].length === 1) {
+      throw new AdminOpAskFirst([
+        `「${args.word}」只有一個字：客人講的話裡只要有這個字（不管前後是什麼）就會轉給真人，很容易誤轉。`,
+        ...(relatedLine ? [relatedLine] : []),
+        '要加的話，給我完整一點的說法（兩個字以上，照客人真的會怎麼講）。',
+      ].join('\n'))
+    }
+
     return {
       ...base,
       summary: args.action === 'add'
@@ -534,7 +576,7 @@ const aiSettingsSensitiveTopic: AdminOpDef = {
       ],
       // 加字是往保守的方向動、拿掉字是放寬——兩者的後果完全不同，⛔不能用同一句話帶過
       warning: args.action === 'add'
-        ? `加了之後，客人只要講到「${args.word}」就會直接轉給真人，AI 不會先回答（連問清楚都不會）。`
+        ? `加了之後，客人只要講到「${args.word}」就會直接轉給真人，AI 不會先回答（連問清楚都不會）。${relatedLine}`
         : `⚠️ 拿掉之後，客人講到「${args.word}」時 AI 會自己回答，不再自動轉給真人。`,
       confirmLabel: args.action === 'add' ? '確定加進去' : '確定拿掉',
     }
@@ -708,6 +750,25 @@ const aiSettingsReplyMode: AdminOpDef = {
 // ⛔ 建好一律**停用**：AI 生的流程會有錯（16 案實測出過占位符沒填、觸發詞打架），
 //    要人到流程頁看過才上架。這條不能為了「一句話就搞定」而省掉。
 
+/** 他用引號講的「回客人的話」（「就回「可以，Visa、Master 都收」」），照出現的順序 */
+export function quotedReplies(description: string): string[] {
+  return [...String(description ?? '').matchAll(/回(?:覆|答)?(?:客人)?[：:]?\s*「([^」]{2,})」/g)].map(m => m[1]!.trim())
+}
+
+/** 擬不出來時問他的話：要知道三件事；講到表單就順便講「客人在 LINE 上回答，不用另外做表單」 */
+export function scriptCreateAsk(description: string): string {
+  return [
+    '這條我還擬不出來，先跟你確認三件事：',
+    '・客人講什麼的時候開始（例如問「可以退貨嗎」）',
+    '・要在 LINE 上問客人哪幾題（例如訂單編號、要退哪一件）',
+    '・最後回客人什麼、要不要交給真人',
+    '',
+    /表單|表格|問卷/.test(description)
+      ? '講給我聽，我幫你擬一條——客人直接在 LINE 上一題一題回答，不用另外做表單。'
+      : '講給我聽，我幫你擬一條。',
+  ].join('\n')
+}
+
 interface CreateScriptArgs {
   description: string
   /** prepare 階段生好的草稿：**執行時原樣建立**，⛔不重生（重生＝跟他看過的不是同一份） */
@@ -718,7 +779,7 @@ const scriptCreateFromDescription: AdminOpDef = {
   capability: 'scripts.write',
   freeTextFields: ['description'],
   argsHint: '參數：{"description":"整句描述這條流程要做什麼"}。'
-    + '把使用者的原話盡量完整帶進去（要問客人什麼、依序問幾題、最後回什麼）；'
+    + '把使用者的原話盡量完整帶進去（要問客人什麼、依序問幾題、最後回什麼），⛔ 他用「」講的字原樣保留；'
     + '⛔ 描述太籠統（例如「建一個流程」）就先問清楚用途再提議。',
 
   normalize(raw) {
@@ -738,14 +799,31 @@ const scriptCreateFromDescription: AdminOpDef = {
     const settings = await getAiSettings(ctx.workspaceId, ctx.db).catch(() => null)
     // 生成屬後台內部操作 → 記進後台自用桶（與 scripts/generate 端點同一個慣例）。
     // 用計量器記：沒生好丟錯的那幾次也付了錢，照實際模型算（`C-338`②／`D-130`②）
-    const draft = await runMeteredAi(
-      () => generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] }),
-      calls => recordAiUsage(ctx.workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, ctx.db),
-    )
+    let draft: Awaited<ReturnType<typeof generateScriptDraft>>
+    try {
+      draft = await runMeteredAi(
+        () => generateScriptDraft(args.description, { sensitiveTopics: settings?.sensitiveTopics ?? [] }),
+        calls => recordAiUsage(ctx.workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, ctx.db),
+      )
+    }
+    catch (e: any) {
+      // 擬不出來（描述不夠、或它判斷這不是一條流程）：先問他——⛔ 不要變成「準備到一半出了狀況」
+      // （`D-151` 實測：「建一條自動回應讓客人先填表單」那一步其實已經想好要問什麼，卻因為出錯的方式不對被吞掉）
+      const status = Number(e?.statusCode ?? e?.status)
+      if (status === 400 || status === 422) throw new AdminOpAskFirst(scriptCreateAsk(args.description))
+      throw e
+    }
+
+    // 他用引號講了要回什麼：⛔ 不讓擬稿的 AI 改寫（`D-151` 實測：「可以，Visa、Master 都收」被寫成「可以喔！我們接受…」）
+    const quoted = quotedReplies(args.description)
+    const replies = (draft.nodes as Record<string, any>[]).filter(n => n?.type === 'reply')
+    const nodes = quoted.length && quoted.length === replies.length
+      ? (draft.nodes as Record<string, any>[]).map(n => (replies.includes(n) ? { ...n, text: quoted[replies.indexOf(n)] } : n))
+      : draft.nodes
 
     return {
       description: args.description,
-      draft: { name: draft.name, nodes: draft.nodes, rootNodeId: draft.rootNodeId },
+      draft: { name: draft.name, nodes, rootNodeId: draft.rootNodeId },
     } satisfies CreateScriptArgs as unknown as Record<string, unknown>
   },
 
@@ -829,7 +907,7 @@ const broadcastDraftCreate: AdminOpDef = {
   capability: 'broadcast.write',
   targetField: 'name',
   freeTextFields: ['name', 'text'],
-  argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
+  argsHint: '參數：{"name":"這則推播的名稱（給你們自己看的；⛔ 不要問他，照內容取一個短名字）","text":"要發給客人的內容","tagName":"（選填）只發給貼這個標籤的人"}。'
     + '⛔ 只會建**草稿**，不會發送——發送一定要人到推播頁自己按。'
     + '⛔ 內容要照使用者說的寫，不要自己加促銷詞或表情符號。'
     // `D-116`：這兩條現在有機制擋（checkUserWords），寫在這裡是讓它一開始就先問、不要白提議一次
@@ -1010,6 +1088,8 @@ export const ADMIN_OPS: Record<AdminOpId, AdminOpDef> = {
   'knowledge-draft-create': knowledgeDraftCreate,
   'script-update-keyword': scriptUpdateKeyword,
   'script-update-reply': scriptUpdateReply,
+  // `D-151`⑵：AI 判斷那種的「客人會這樣講」
+  'script-update-example': scriptUpdateExample,
 }
 
 /** 端點／迴圈用：不認得的 op 一律擋下（⛔不做「最接近的那個」） */

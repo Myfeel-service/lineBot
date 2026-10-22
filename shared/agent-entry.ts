@@ -53,6 +53,7 @@ export const ADMIN_OP_TARGET: Record<AdminOpId, { page: AgentOpPage, section?: s
   'knowledge-draft-create': { page: 'knowledge' },
   'script-update-keyword': { page: 'ai-scripts' },
   'script-update-reply': { page: 'ai-scripts' },
+  'script-update-example': { page: 'ai-scripts' },
 }
 
 /**
@@ -75,6 +76,7 @@ export const ADMIN_OP_CAPABILITY: Record<AdminOpId, Capability> = {
   'knowledge-draft-create': 'knowledge.write',
   'script-update-keyword': 'scripts.write',
   'script-update-reply': 'scripts.write',
+  'script-update-example': 'scripts.write',
 }
 
 /** 改完「前往查看」要去的網址。有 id 的兩頁沿用 `?id=` 深連結（`C-237`，會自己翻頁找、打開、捲到那一列） */
@@ -244,6 +246,8 @@ export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
   'script-update-keyword': '「營業時間」多加一個關鍵字「今天有開嗎」',
   // ⛔ 不帶新的話（理由見 AGENT_PAGE_PROMPTS 的 ai-scripts 範例字）
   'script-update-reply': '改「退換貨」回給客人的話',
+  // `D-151`⑵：AI 判斷的那種（新開的預設就是）要多認一種講法
+  'script-update-example': '客人問「寄出了嗎」也要走「查詢訂單」',
   'tag-create': '建一個標籤「想買禮盒」',
   'broadcast-draft-create': '擬一則週年慶推播草稿，只發給「VIP」標籤的人',
   'knowledge-draft-create': '補一條知識：客人問「可以刷卡嗎」，就回「可以」',

@@ -47,11 +47,11 @@ import { agentDestinationCatalogueForPrompt, resolveAgentDestinations } from '~~
 import { agentTeachingCatalogueForPrompt, resolveAgentTeaching } from '~~/shared/agent-teachings'
 import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
-import { AdminOpUserError } from './admin-op-def'
+import { AdminOpAskFirst, AdminOpUserError } from './admin-op-def'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
 import { clockFieldsChangedBeyondUserWords, hasNumberSignal, isBareAssent } from '~~/shared/agent-user-signal'
 import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
-import { answerGroundingIssue } from '~~/shared/agent-answer-grounding'
+import { answerGroundingIssue, groundingToolToRun } from '~~/shared/agent-answer-grounding'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
 import { DEFAULT_SYSTEM_PROMPT, HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
@@ -994,13 +994,30 @@ ${agentTeachingCatalogueForPrompt(role)}
 - 要 AI 回答某件事(價錢、規格、能不能寄國外…):那是**知識**的事(AI 照知識庫裡的內容回答),提議補一條知識;
   ⛔ 自動回應不是讓 AI 回答的地方:它是「什麼時候接（客人打了特定的字，或 AI 判斷客人在問某件事）→ 先問客人資料 → 回固定的字或交給真人」,
   回給客人的字是店家寫好的,不要說成「讓 AI 用自動回應回答」。
+  ⛔ **某一位客人的事**(他的訂單寄了沒、他的退貨)不是知識:知識會拿來回答**所有**客人,⛔ 不可以建議補成知識,也不用提知識庫(2026-10-23 實測:
+  「幫我回王小姐說訂單已經寄出了」它建議把「訂單已經寄出」補進知識庫——那樣 AI 會跟每個客人說他的訂單寄出了)。
+- ⛔ 不建議把客人帶出 LINE(去外面填表單、點連結):要客人留資料,就是在自動回應裡一題一題問,客人直接在 LINE 上回答(老闆 10-22)。
 - ⛔ 操作與範本的英文代號(friendly、professional、script-set-enabled…)是給你看的,不可以出現在回話裡;講中文名稱。
+  ⛔ 後台詞也不講(觸發、節點、腳本、參數、格式、指令);也不說「我無法」,講「這個要你到…按」「我可以幫你…」。
+- 他請你**幫忙寫一句／寫得親切一點**(回給客人的話、推播內容、知識的答案)(2026-10-23 老闆拍板):
+  可以在 "answer" 擬 1～2 句給他參考。他講的是某條自動回應的回覆(「退換貨的回覆」)就是那條自動回應:
+  先查 list_scripts 找到那條、附上現在那句(replyText)再擬,⛔ 不要問他要放自動回應還是知識庫;
+  ⛔ 不要直接提議:擬完結尾講「要用的話,照抄或改過再打給我」,確認卡上的字一定是他打的那句;
+  ⛔ 不要問「要幫你改成這句嗎」——他回「好」也不能用(要他自己打)。
+- 他說「發」推播(「幫我發」「發出去」):先講你只能幫他擬成草稿、發送要他到推播頁自己按,再問缺的(內容、發給誰)。
+  ⛔ 他只說「擬」「弄一則」時不用講這句(確認卡上本來就寫了不會發出去)。
+- 他說某條**知識寫錯了**:你看不到知識的內容,⛔ 不要只問正確答案就補一條——先講你能做的是補一條正確的放進「等你看過」,
+  原本那條要他到知識庫改或停用(附 goto 知識庫),再問正確的是什麼。
 - 問「設定好了沒／幫我把該設定的設定好」:必要設定、加分項、目前狀況裡的建議都要看;每一項帶路到 get_setup_status 給的那一頁(gotoId 照抄進 goto)。
 
 【提議修改的規矩】
 - 參數裡的名稱一律**照抄工具結果上的原字**(例如流程名字),⛔不要自己拼、不要猜最接近的那一條;不確定就先查清單、或直接反問使用者。
 - 使用者話裡缺的資訊(要改哪一條、開還是關、幾點到幾點)⛔不要自己補一個常見值——問清楚再提議。
+  ⛔ 也不要從他講的**目的**裡挑一個字、取一個名字就提議(2026-10-22 實測):「客人講到要告我們就給真人」不是要加「告」這個字,
+  「把常買的客人分出來」不是要你建一個空標籤——先講做法、問清楚再提議。
 - 反問缺的資訊時,**要先講現在是多少**再問要改成多少——只問「要改成幾分鐘」他沒有基準可以回答。
+  改時間／分鐘(服務時間、提醒、自動交還、自動結束)與改回覆字這幾件:他沒講要改成多少,**照樣提議、那一格不填**,
+  系統會先講現在是多少再問他(⛔ 不要自己轉述現況,你會講錯)。
 - ⛔ **相對的量要先查現值再算**(兩倍、一半、短一點、久一點、提早):查到現值算完再提議,
   ⛔不可以憑印象給一個數字。
 - ⛔ **他只抱怨一邊,就不要動另一邊**:講「晚上太晚」是在講結束時間,
@@ -1009,7 +1026,7 @@ ${agentTeachingCatalogueForPrompt(role)}
   遇到「全部」「都」這種批次要求,先把**現在有哪些**列出來,再問他先從哪一個開始。
   ⛔不可以因為做不到整批就不回答;⛔更不可以從前幾句話裡挑一個出來當成他要的那個。
 - ⛔ **使用者說「刪掉」「砍掉」「移除」某條自動回應時,不可以自作主張改成提議停用**:
-  先講你不能刪,再問他要不要改成停用——⛔不要直接給一張停用的確認卡。
+  先講你不能刪、要刪的話他打開那一條按右上角「⋯」→「刪除」,再問他要不要改成停用——⛔不要直接給一張停用的確認卡。
 - 【提議失敗】會告訴你哪裡不對,照它說的去反問或改正,同一個提議最多再試一次。
 - 提議送出後就停:不要在同一輪又接著說「已經改好了」,你還沒改。
 - ⛔ **提議時那句話裡的數字,只能講你這次要改成的值**:「現在是多少」確認卡自己會顯示,
@@ -1150,10 +1167,40 @@ function internalIds(): RegExp {
 }
 
 /**
- * 小幫手泡泡裡的一段話:粗體與 ⛔ 拿掉、清單符號換成「・」、括號裡的英文代號拿掉、統一用「你」(面板其他地方都是「你」)。
+ * 模型的 answer 裡，**不是**在重講系統問話的那幾段（`D-151`）。
+ * 重講＝跟問話有四成以上的字兩兩相同（把現況再念一次），或是在問「要改成什麼」（問話本來就在問）。
+ */
+export function otherThanAsk(answer: string, ask: string): string {
+  const grams = (s: string) => {
+    const t = s.replace(/[\s，,。、：:「」『』？?！!（）()・\-—]/g, '')
+    const out = new Set<string>()
+    for (let i = 0; i < t.length - 1; i++) out.add(t.slice(i, i + 2))
+    return out
+  }
+  const askGrams = grams(ask)
+  return String(answer ?? '').split(/\n{2,}/).map(p => p.trim()).filter((p) => {
+    if (!p) return false
+    if (/(要改成|改成什麼|改為什麼|希望改|要調整|想改成)/.test(p)) return false
+    const g = grams(p)
+    if (!g.size) return false
+    let hit = 0
+    for (const x of g) if (askGrams.has(x)) hit++
+    return hit / g.size < 0.4
+  }).join('\n\n')
+}
+
+/**
+ * 店家聽起來像機器的兩個詞，換成講話的說法（`D-151` 第三輪：提示裡寫了「不講觸發、不說我無法」照樣出現 → 收在送上畫面這一關）。
+ * ⛔ 只換引號外面：引號裡是他自己的字或客人會看到的原文。
+ */
+const plainWordsOutsideQuotes = (s: string) => mapOutsideQuotes(s, p => p.replace(/我無法/g, '我沒辦法').replace(/觸發/g, '啟動'))
+
+/**
+ * 小幫手泡泡裡的一段話:粗體與 ⛔ 拿掉、清單符號換成「・」、括號裡的英文代號拿掉、統一用「你」(面板其他地方都是「你」)、
+ * 「我無法」「觸發」換成講話的說法。
  */
 export function plainReply(text: string): string {
-  return youOutsideQuotes(stripMarksOutsideQuotes(text).replace(/^[ \t]*[*\-•][ \t]+/gm, '・').replace(internalIds(), ''))
+  return plainWordsOutsideQuotes(youOutsideQuotes(stripMarksOutsideQuotes(text).replace(/^[ \t]*[*\-•][ \t]+/gm, '・').replace(internalIds(), '')))
 }
 
 /**
@@ -1249,6 +1296,27 @@ export async function runAdminAgentChat(params: {
    * ⛔ 只退一次:模型有可能每次都寫同一句話,無限退回就是無限燒錢。
    */
   let regrounded = false
+  /**
+   * 被退回時，該查卻沒查的那一支由系統直接查、結果塞進這一輪（`D-151`）：只退回不夠，它被退回之後照樣不查，
+   * 第二次的答案就放行了（「改提醒時間」→「目前是 0 分鐘」，實際 60）。只查不必帶參數的那三支。
+   */
+  const lookupFor = async (issueText: string) => {
+    const name = groundingToolToRun({ text: issueText, calledTools: toolCalls.map(t => t.tool) })
+    if (!name) return ''
+    const tool = TOOLS[name]
+    if (tool.requires && !can(role, tool.requires)) return ''
+    try {
+      const line = `${name}({}) → ${summarizeToolResult(await tool.run(db, workspaceId, {}, { authHeader, role, cards: toolCards, alertsMemo }))}`
+      // 查成了才算「查過」：查失敗還記成查過的話，下一道檢查會以為它有出處
+      toolCalls.push({ tool: name, args: {} })
+      toolResults.push(line)
+      groundingSources.push(line)
+      return `（系統已經幫你查了 ${name}，結果在上面，照結果重寫）`
+    }
+    catch {
+      return ''
+    }
+  }
   /** 模型吐出壞掉的格式時已經重來過一次了嗎(只重來一次) */
   let formatRetried = false
 
@@ -1327,10 +1395,12 @@ export async function runAdminAgentChat(params: {
           sources: [...groundingSources, ...userSaidTexts],
           dateSources: dateTexts,
           calledTools: toolCalls.map(t => t.tool),
+          userTexts: userSaidTexts,
         })
         if (issue) {
           regrounded = true
-          toolResults.push(`上一次的回答被擋下 → ${issue}`)
+          const looked = await lookupFor(text)
+          toolResults.push(`上一次的回答被擋下 → ${issue}${looked}`)
           continue
         }
       }
@@ -1375,10 +1445,12 @@ export async function runAdminAgentChat(params: {
           sources: [...groundingSources, ...userSaidTexts],
           dateSources: dateTexts,
           calledTools: toolCalls.map(t => t.tool),
+          userTexts: userSaidTexts,
         })
         if (issue) {
           regrounded = true
-          toolResults.push(`上一次的回答被擋下 → ${issue}（提議本身沒問題,查完再提一次就好）`)
+          const looked = await lookupFor(String(data?.answer ?? ''))
+          toolResults.push(`上一次的回答被擋下 → ${issue}（提議本身沒問題,查完再提一次就好）${looked}`)
           continue
         }
       }
@@ -1419,6 +1491,8 @@ export async function runAdminAgentChat(params: {
         const numberScope = lastProposal ? userSaid : [message]
         // `numberOptional`（`D-109`）：「不要自動交還了」這種關掉的要求本來就沒有數字，⛔ 不可以因此擋成「關不掉」
         if (op.needsUserNumber && !op.numberOptional?.(rawArgs) && !hasNumberSignal(numberScope)) {
+          // 有系統寫好的問話（先講現在是多少）就用它：⛔ 不交給模型轉述現況（`D-151`：它沒查就說「目前是 0 分鐘」，實際 60）
+          if (op.askForNumber) throw new AdminOpAskFirst(await op.askForNumber(ctx))
           throw new AdminOpUserError(
             // ⛔ 這句不寫示範的時間（以前寫「例如 22:00–08:00」）：糾正話裡的數字會被當成模型下一句的出處（`E-40`）
             '使用者從頭到尾沒有講到任何時間或數字,⛔不可以自己填一組常見的時段。'
@@ -1453,20 +1527,6 @@ export async function runAdminAgentChat(params: {
         // 現況指紋:按確定時會再算一次,中間被別人改過就不執行(拿舊世界的判斷去寫新世界＝覆蓋別人的修改)
         const guard = await op.fingerprint(ctx, args)
         const rawPreview = await op.preview(ctx, args)
-
-        // 還不知道他要改成什麼（needsInput）：先問他——⛔ 不出卡、不簽憑證（老闆 10-22：「說要改就直接做，也不知道使用者要改什麼」）。
-        // 問話整段由後端寫（含現在那句），⛔ 不採用模型寫的：它會漏講現況，甚至自己編一句。他回了之後模型照對話接著提議
-        if (rawPreview.needsInput) {
-          const answer = String(data?.answer ?? '').trim()
-          return {
-            reply: say([answer, rawPreview.needsInput].filter(Boolean).join('\n\n')),
-            toolCalls,
-            messages: [],
-            inputTokens,
-            outputTokens,
-            calls,
-          }
-        }
 
         // ⛔ 上一個提議**沒有被執行過**,而這一次不會連它一起做——這件事一定要講出來。
         // 2026-09-16 實測(`C-192`):提議加「退費」之後使用者說「順便把客訴也加進去」,
@@ -1566,6 +1626,21 @@ export async function runAdminAgentChat(params: {
         }
       }
       catch (e) {
+        // 還不知道他要什麼：先問他——⛔ 不出卡、不簽憑證（老闆 10-22：「說要改就直接做，也不知道使用者要改什麼」）。
+        // 問話整段由系統寫（含現在是什麼），⛔ 不採用模型寫的：它會漏講現況，甚至自己編一句。他回了之後模型照對話接著提議
+        if (e instanceof AdminOpAskFirst) {
+          // 它自己也寫了一段現況、一句「要改成什麼」：跟系統的問話重複的段落拿掉，⛔ 同一段話講兩次（`D-151` 第二輪實測）；
+          // 回答他別的問題的段落照留
+          const answer = otherThanAsk(String(data?.answer ?? ''), e.message)
+          return {
+            reply: say([answer, e.message].filter(Boolean).join('\n\n')),
+            toolCalls,
+            messages: [],
+            inputTokens,
+            outputTokens,
+            calls,
+          }
+        }
         // 參數不合格／東西找不到／沒權限:把原因原樣回給模型,讓它照著反問使用者。
         // ⛔ 這是「寫之前」的來回,不是「寫失敗後重試」——後者是明文禁止的。
         if (e instanceof AdminOpUserError) {

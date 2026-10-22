@@ -26,10 +26,10 @@ import {
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
-import { MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
+import { MAX_TRIGGER_EXAMPLES, MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { toBracketText, toStoredText, variableLabel } from '~~/shared/variable-tokens'
 // ⛔ 從 admin-op-def 拿、不從 admin-ops 拿：admin-ops 的註冊表 import 這支，反過來就是循環相依
-import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
+import { AdminOpAskFirst, AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import { getAiSettings, setAiSettings } from './ai-settings'
 import { writeAuditLog } from './audit-log'
 import { KNOWLEDGE_CHUNKS_COLLECTION, searchSimilarChunksWithDrafts } from './ai-knowledge-chunks'
@@ -153,7 +153,17 @@ export const aiSettingsHandbackIdle: AdminOpDef = {
   // 「關掉自動交還」一個數字都不會講，那是合理的要求——不可以因為沒數字就擋
   numberOptional: raw => raw?.off === true,
   argsHint: '參數：{"minutes":30}＝客服按了「我接手」之後，超過幾分鐘沒再回覆就自動交還給機器人；'
-    + '{"off":true}＝不自動交還（只有他明講「關掉／不要」時才用）。⛔ 他沒講數字又不是要關，就先問幾分鐘。',
+    + '{"off":true}＝不自動交還（只有他明講「關掉／不要」時才用）。'
+    + '⛔ 他沒講數字又不是要關：照樣提議、不帶數字——系統會先講現在是多少再問他。',
+
+  // 問話由系統寫、附上現在的值（`D-151`）
+  async askForNumber(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const m = Number(s.handbackIdleMinutes ?? 0)
+    return m > 0
+      ? `現在是客服接手後閒置 ${m} 分鐘，就自動交還給機器人。\n\n要改成閒置幾分鐘？（不要自動交還也可以跟我說）`
+      : '現在沒有開自動交還：客服接手之後，要自己按「交還機器人」。\n\n要設成客服閒置幾分鐘，就自動交還給機器人？'
+  },
 
   normalize(raw) {
     if (raw?.off === true) return { minutes: 0 } satisfies HandbackArgs as unknown as Record<string, unknown>
@@ -222,12 +232,27 @@ export const aiSettingsHandbackIdle: AdminOpDef = {
 
 interface AutoCloseArgs { hours: number }
 
+/** 自動結束的範圍講天數：「最短 6 小時、最長 14 天」（⛔ 不講「336 小時」，店家要自己除 24） */
+const AUTO_CLOSE_RANGE = `最短 ${MIN_HUMAN_SESSION_MAX_IDLE_HOURS} 小時、最長 ${MAX_HUMAN_SESSION_MAX_IDLE_HOURS / 24} 天`
+/** 48 → 「2 天」、30 → 「30 小時」 */
+const hoursText = (h: number) => (h % 24 === 0 ? `${h / 24} 天` : `${h} 小時`)
+
 export const aiSettingsAutoClose: AdminOpDef = {
   capability: 'ai.settings.write',
   needsUserNumber: true,
   numberOptional: raw => raw?.off === true,
-  argsHint: `參數：{"hours":48}＝真人接手的對話超過幾小時沒動靜就自動結束（${MIN_HUMAN_SESSION_MAX_IDLE_HOURS}～${MAX_HUMAN_SESSION_MAX_IDLE_HOURS} 小時；「兩天」就是 48）；`
-    + '{"off":true}＝不自動結束（只有他明講「關掉／不要」時才用）。⛔ 他沒講多久又不是要關，就先問。',
+  // ⚠️ 範圍講天數（`D-151`：它照這裡講成「6 到 336 小時」，店家要自己除 24）
+  argsHint: `參數：{"hours":48}＝真人接手的對話超過幾小時沒動靜就自動結束（${AUTO_CLOSE_RANGE}；「兩天」就是 48）；`
+    + '{"off":true}＝不自動結束（只有他明講「關掉／不要」時才用）。'
+    + '⛔ 他沒講多久又不是要關：照樣提議、不帶數字——系統會先講現在是多少再問他。',
+
+  async askForNumber(ctx) {
+    const s = await getAiSettings(ctx.workspaceId, ctx.db)
+    const h = Number(s.humanSessionMaxIdleHours ?? 0)
+    return h > 0
+      ? `現在是真人接手的對話 ${hoursText(h)}沒動靜，就自動結束。\n\n要改成多久？（${AUTO_CLOSE_RANGE}；不要自動結束也可以跟我說）`
+      : `現在沒有開自動結束：真人接手的對話，要有人按「結束會話」才會結束。\n\n要設成多久沒動靜就自動結束？（${AUTO_CLOSE_RANGE}）`
+  },
 
   normalize(raw) {
     if (raw?.off === true) return { hours: 0 } satisfies AutoCloseArgs as unknown as Record<string, unknown>
@@ -237,7 +262,7 @@ export const aiSettingsAutoClose: AdminOpDef = {
     const hours = Math.round(n)
     if (hours < MIN_HUMAN_SESSION_MAX_IDLE_HOURS || hours > MAX_HUMAN_SESSION_MAX_IDLE_HOURS) {
       throw new AdminOpUserError(
-        `自動結束只能設 ${MIN_HUMAN_SESSION_MAX_IDLE_HOURS} 到 ${MAX_HUMAN_SESSION_MAX_IDLE_HOURS} 小時（最多兩週）；要關掉的話講「不要自動結束」。`,
+        `自動結束只能設${AUTO_CLOSE_RANGE}；要關掉的話講「不要自動結束」。`,
       )
     }
     return { hours } satisfies AutoCloseArgs as unknown as Record<string, unknown>
@@ -405,7 +430,23 @@ export const tagCreate: AdminOpDef = {
   targetField: 'name',
   freeTextFields: ['name'],
   argsHint: '參數：{"name":"標籤的顯示名稱","color":"#RRGGBB（選填）"}。英文代號系統會自己取，⛔不要問他。'
-    + '⛔ 一次只建一個；他要建好幾個就先建第一個，其餘的等這個確認完再提議。',
+    + '⛔ 一次只建一個；他要建好幾個就先建第一個，其餘的等這個確認完再提議。'
+    + '他講的是目的（「把常買的客人分出來」）沒講要建標籤：照樣提議、name 用他講的那幾個字——系統會先講做法再問他。',
+
+  // 他講的是目的、沒講要建標籤（`D-151` 實測：「我想把常買的客人分出來」直接出卡建一個空標籤）：
+  // 先講標籤建好是空的、還要決定誰會被貼上，再問名字——⛔ 不出卡
+  checkUserWords(raw, userSaid) {
+    const name = String(raw?.name ?? '').trim()
+    const said = userSaid.join('\n')
+    if (/標籤/.test(said) || (name && said.includes(`「${name}」`))) return
+    throw new AdminOpAskFirst([
+      '可以用「標籤」把他們分出來，先跟你確認兩件事：',
+      '・標籤建好是空的，還要決定誰會被貼上：可以在對話、好友頁手動貼，在自動回應裡自動貼，或到標籤管理打開「讓 AI 判斷」。',
+      `・要叫什麼名字？${name ? `例如「${name}」。` : ''}`,
+      '',
+      name ? `要建的話，跟我說「建一個標籤「${name}」」。` : '想好名字跟我說，我幫你建。',
+    ].join('\n'))
+  },
 
   normalize(raw) {
     const name = String(raw?.name ?? '').trim().slice(0, 30)
@@ -436,9 +477,9 @@ export const tagCreate: AdminOpDef = {
     return {
       opId: 'tag-create',
       summary: `我會建一個叫「${args.name}」的標籤。`,
+      // ⛔ 英文代號不上卡（`D-151`：「tag_3」店家用不到也看不懂）——系統自己取、自己管
       items: [
-        { heading: '顯示名稱', label: args.name, note: '客人看不到', verbatim: true },
-        { heading: '英文代號', label: args.code ?? '', note: '系統自動取，建好就不能改' },
+        { heading: '名稱', label: args.name, note: '客人看不到', verbatim: true },
       ],
       warning: '建好之後是空的，不會自動貼到任何人身上——要在對話、好友頁或自動回應裡貼，或到標籤管理打開「讓 AI 判斷」。',
       confirmLabel: '確定建立標籤',
@@ -472,7 +513,7 @@ export const tagCreate: AdminOpDef = {
     if (!created)
       return { ok: false, message: `標籤沒有建成功${lastError ? `：${lastError}` : '（代號一直撞到現有的標籤）'}。沒有動任何資料，可以到標籤管理自己建。` }
 
-    // 確認卡上把代號寫成「建好就不能改」：真的建出來的跟卡上不一樣時，⛔ 不可以安靜帶過
+    // 真的建出來的代號跟提議時取的不一樣（建的當下撞號）：記在操作紀錄
     const codeChanged = !!args.code && code !== args.code
     await writeAuditLog({
       workspaceId: ctx.workspaceId,
@@ -482,17 +523,12 @@ export const tagCreate: AdminOpDef = {
       targetId: created.id,
       after: { name: args.name, code },
       note: codeChanged
-        ? `建立標籤「${args.name}」（確認卡上的代號 ${args.code} 剛好被別的標籤用走，改用 ${code}）`
+        ? `建立標籤「${args.name}」（提議時取的代號 ${args.code} 剛好被別的標籤用走，改用 ${code}）`
         : `建立標籤「${args.name}」`,
     }, ctx.db)
 
-    return {
-      ok: true,
-      message: codeChanged
-        ? `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。⚠️ 英文代號改成了「${code}」：確認卡上的「${args.code}」剛好在這段時間被別的標籤用走了。`
-        : `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。`,
-      targetId: created.id,
-    }
+    // 代號不上卡（`D-151`）：撞號換了一組也不必跟他講，操作紀錄記著就好
+    return { ok: true, message: `標籤「${args.name}」建好了（目前還沒有貼在任何人身上）。`, targetId: created.id }
   },
 }
 
@@ -771,7 +807,7 @@ export const scriptUpdateKeyword: AdminOpDef = {
     if (!trig || scriptTriggerEvent({ nodes: row.nodes as never, rootNodeId: row.rootNodeId }) === 'follow')
       throw new AdminOpUserError(`「${row.name}」是客人加好友時啟動的，沒有關鍵字可以改。（請照實告訴他。）`)
     if ((trig.matchMode ?? 'keyword') !== 'keyword')
-      throw new AdminOpUserError(`「${row.name}」是「看意思」判斷的，要改的是範例句不是關鍵字——請他到自動回應頁改。`)
+      throw new AdminOpUserError(`「${row.name}」是 AI 判斷的（看意思），沒有關鍵字——要它多認一種講法，改用 script-update-example 加一句「客人會這樣講」。`)
     if (trig.keywordMatch === 'anyText')
       throw new AdminOpUserError(`「${row.name}」設的是「客人輸入任何內容」都會啟動，沒有關鍵字可以改——請他到自動回應頁看。`)
 
@@ -854,11 +890,139 @@ export const scriptUpdateKeyword: AdminOpDef = {
   },
 }
 
+// ── ⑤ AI 判斷那種的「客人會這樣講」（`D-151`⑵，2026-10-23 老闆拍板）─────────────────
+//
+// 為什麼要有：`D-151` 實測三種問法（「查詢訂單那條多加一個關鍵字」「客人打「寄出了嗎」也要跑查詢訂單」）
+// 撞到的都是 AI 判斷的那種，小幫手只能叫他自己去頁面改；`C-371` 之後新開的預設就是這種。
+// 跟改關鍵字同一套：整份送回 PUT、指紋涵蓋整份、一次只動一句。
+
+interface ScriptExampleArgs { name: string, action: 'add' | 'remove', example: string }
+
+export const scriptUpdateExample: AdminOpDef = {
+  capability: 'scripts.write',
+  targetField: 'name',
+  freeTextFields: ['example'],
+  argsHint: '參數：{"name":"自動回應的名字","action":"add"|"remove","example":"客人會這樣講的一句話"}。'
+    + '只適用 AI 判斷的那種（list_scripts 的 matchMode=semantic，畫面上叫「客人會這樣講」）；用關鍵字的請用 script-update-keyword。'
+    + 'name 要照清單一字不差；⛔ 一次只動一句；example 照他講的、客人真的會打的那句寫，⛔ 不要自己想一句。',
+  checkUserWords(raw, userSaid) {
+    const issue = userAuthoredTextIssue(String(raw?.example ?? ''), userSaid, '這句「客人會這樣講」', '客人會怎麼講（照客人真的會打的字）')
+    if (issue) throw new AdminOpUserError(issue)
+  },
+
+  normalize(raw) {
+    const name = String(raw?.name ?? '').trim().slice(0, 100)
+    const action = String(raw?.action ?? '').trim()
+    const example = String(raw?.example ?? '').trim().slice(0, 200)
+    if (!name) throw new AdminOpUserError('要先問清楚是哪一條自動回應（可以先列出清單讓他挑）。')
+    if (action !== 'add' && action !== 'remove') throw new AdminOpUserError('要問清楚是要「多認一種講法」還是「拿掉一種講法」。')
+    if (example.length < 2) throw new AdminOpUserError('要問清楚客人會怎麼講（一句客人真的會打的話）。')
+    return { name, action, example } satisfies ScriptExampleArgs as unknown as Record<string, unknown>
+  },
+
+  async fingerprint(ctx, raw) {
+    return scriptFingerprint(await findScriptByName(ctx, (raw as unknown as ScriptExampleArgs).name))
+  },
+
+  async preview(ctx, raw) {
+    const args = raw as unknown as ScriptExampleArgs
+    await assertScriptingPlan(ctx)
+    const row = await findScriptByName(ctx, args.name)
+    const trig = triggerOf(row)
+    const base = { opId: 'script-update-example' as const }
+
+    if (!trig || scriptTriggerEvent({ nodes: row.nodes as never, rootNodeId: row.rootNodeId }) === 'follow')
+      throw new AdminOpUserError(`「${row.name}」是客人加好友時啟動的，沒有「客人會這樣講」可以改。（請照實告訴他。）`)
+    if ((trig.matchMode ?? 'keyword') !== 'semantic')
+      throw new AdminOpUserError(`「${row.name}」是用關鍵字啟動的，要多認一種講法是加關鍵字——改用 script-update-keyword。`)
+
+    const list: string[] = Array.isArray(trig.examples) ? trig.examples.map(String) : []
+    const same = (e: string) => e.trim().toLowerCase() === args.example.toLowerCase()
+    const has = list.some(same)
+    if (args.action === 'add' && has)
+      return { ...base, summary: `「${row.name}」本來就認得「${args.example}」這種講法，不用再加。`, items: [], confirmLabel: '知道了', noop: true }
+    if (args.action === 'remove' && !has)
+      return { ...base, summary: `「${row.name}」的「客人會這樣講」裡沒有「${args.example}」，沒有東西要拿掉。`, items: [], confirmLabel: '知道了', noop: true }
+    if (args.action === 'remove' && list.length === 1)
+      throw new AdminOpUserError(`「${args.example}」是「${row.name}」唯一的一句「客人會這樣講」，拿掉之後 AI 就認不出客人在問這件事——要停用的話請他叫我「停用」。`)
+    // ⛔ 存檔端點超過上限會直接截掉最後面的（新加的就排在最後）——不先擋，卡上寫「加好了」、其實沒加進去
+    if (args.action === 'add' && list.length >= MAX_TRIGGER_EXAMPLES)
+      throw new AdminOpUserError(`「${row.name}」已經有 ${list.length} 句「客人會這樣講」，一條最多 ${MAX_TRIGGER_EXAMPLES} 句，加不進去了——要先拿掉一句（可以叫我拿掉），或到自動回應頁調整。（請照實告訴他。）`)
+
+    const after = args.action === 'add' ? [...list, args.example] : list.filter(e => !same(e))
+    const quote = (xs: string[]) => xs.map(e => `「${e}」`).join('')
+    return {
+      ...base,
+      summary: args.action === 'add'
+        ? `我會讓「${row.name}」多認一種講法：客人講「${args.example}」這類話時也會走這條。`
+        : `我會把「${args.example}」從「${row.name}」的「客人會這樣講」拿掉。`,
+      items: [
+        { heading: '現在「客人會這樣講」', label: quote(list), tone: 'before', verbatim: true },
+        { heading: '改成', label: quote(after), tone: 'after', verbatim: true },
+      ],
+      warning: !row.enabled
+        ? '這條目前是停用的，要啟用後才會生效。'
+        : args.action === 'add'
+          ? `之後客人講到像「${args.example}」這樣的話，也會走這條，AI 不會再回答那幾句話。`
+          : `之後客人講「${args.example}」這類話，不一定會走這條，可能改由 AI 或其他自動回應接。`,
+      confirmLabel: args.action === 'add' ? '確定加這句' : '確定拿掉這句',
+    }
+  },
+
+  async execute(ctx, raw) {
+    const args = raw as unknown as ScriptExampleArgs
+    const row = await findScriptByName(ctx, args.name)
+    const trig = triggerOf(row)
+    if (!trig || (trig.matchMode ?? 'keyword') !== 'semantic')
+      return { ok: false, message: `「${row.name}」現在不是 AI 判斷的，沒有動任何設定——請到自動回應頁看。` }
+    const list: string[] = Array.isArray(trig.examples) ? trig.examples.map(String) : []
+    const same = (e: string) => e.trim().toLowerCase() === args.example.toLowerCase()
+    const after = args.action === 'add'
+      ? (list.some(same) ? list : [...list, args.example])
+      : list.filter(e => !same(e))
+    if (after.length === list.length && after.every((e, i) => e === list[i]))
+      return { ok: true, message: '本來就是這樣，沒有動任何設定。' }
+    if (after.length > MAX_TRIGGER_EXAMPLES)
+      return { ok: false, message: `「${row.name}」現在已經有 ${list.length} 句（上限 ${MAX_TRIGGER_EXAMPLES} 句），「${args.example}」加不進去，沒有動任何設定。要先拿掉一句再加。` }
+    if (!after.length)
+      return { ok: false, message: `「${row.name}」只剩這一句，拿掉之後 AI 就認不出客人在問這件事，沒有動任何設定。` }
+
+    const nodes = row.nodes.map(n => (n === trig ? { ...n, examples: after } : n))
+    try {
+      await callApi(ctx, `/api/ai/scripts/${encodeURIComponent(row.id)}`, { method: 'PUT', body: scriptPutBody(row, nodes) })
+    }
+    catch (e: any) {
+      return { ok: false, message: `沒有改成功：${apiErrorText(e) || '請稍後再試'}。沒有動任何設定。` }
+    }
+
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'agent',
+      action: adminOpAuditAction('script-update-example'),
+      targetId: row.id,
+      before: { examples: list },
+      after: { examples: after },
+      note: `「${row.name}」${args.action === 'add' ? '多認' : '拿掉'}「${args.example}」這種講法`,
+    }, ctx.db)
+
+    return {
+      ok: true,
+      message: args.action === 'add'
+        ? `改好了：「${row.name}」之後也認得「${args.example}」這種講法。`
+        : `改好了：「${row.name}」拿掉了「${args.example}」這種講法。`,
+      targetId: row.id,
+    }
+  },
+}
+
 interface ScriptReplyArgs {
   name: string
   text: string
-  /** 他講的是「先填表單」這種話（要客人多留資料）：卡片多一句「在這條多問一題，客人直接在 LINE 上回答」 */
+  /** 他講的是「先填表單」這種話（要客人多留資料）：問他時多一句「在這條多問一題，客人直接在 LINE 上回答」 */
   wantsForm?: boolean
+  /** 他打的是要客人做的事（「請客人先拍照」）：問他時先講出來，請他寫成對客人說的話 */
+  instruction?: string
 }
 
 /**
@@ -888,9 +1052,9 @@ export const scriptUpdateReply: AdminOpDef = {
   argsHint: '參數：{"name":"自動回應的名字","text":"新的回覆內容（整段）"}。name 要照清單一字不差。'
     + 'text＝客人收到的就是這整段字。'
     // 2026-10-22：範例「把「退換貨」的回覆改成「先填表單」」照送，客人只會收到「先填表單」四個字——不知道填哪一份、去哪裡填
-    + '⛔ 他沒講要改成哪一句，或講的像是要你做的事（例：「改成先問電話」）而不是一句客人看得懂的話：'
-    + '照樣提議，text 給空字串 ""——系統會先問他要怎麼改（附上現在那句），不會出確認卡；⛔ 不要自己轉述現在那句，也不要自己反問。'
-    + '他提到表單、問卷（例：「先填表單」）：text 照他講的那幾個字放——系統一樣先問他，並告訴他在這條多問一題就好。'
+    + '⛔ 他沒講要改成哪一句：照樣提議，text 給空字串 ""——系統會先問他要怎麼改（附上現在那句），不會出確認卡；'
+    + '⛔ 不要自己轉述現在那句，也不要自己反問。'
+    + '他講的像是要客人做的事、或提到表單（例：「請客人先拍照」「先填表單」）：text 照他講的那幾個字放——系統會認出來、一樣先問他。'
     + '他接著講了那一句，再用同一個 name 提議一次。'
     // 2026-10-22 老闆：「為什麼還要退貨表單，我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」
     + '⛔ 不要建議把客人帶去外面填表單或看網頁：自動回應本來就在 LINE 上問客人；要多問客人資料，是到自動回應頁在這條多加一題。'
@@ -908,8 +1072,16 @@ export const scriptUpdateReply: AdminOpDef = {
     // 「先填表單」這種一句話（短、講表單、沒網址）：他要的是「讓客人多留資料」，不是要客人收到這幾個字——
     // 跟沒講一樣出「先給你看現在那句」的卡，多一句「不用另外做表單，在這條多問一題」（老闆 10-22：這個流程就是要在 LINE 上完成）
     const wantsForm = /表單|表格|問卷/.test(text) && [...text.replace(/\s/g, '')].length <= 12 && !/https?:\/\//.test(text)
-    // 還沒講要改成哪一句（或只有一個字）＝空字串：預覽出「先給你看現在那句」的卡（needsInput），⛔ 不擋回去讓模型自己問
-    return { name, text: (text.length < 2 || wantsForm) ? '' : text, ...(wantsForm ? { wantsForm: true } : {}) } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
+    // 講的是「客人」卻沒有一個「您／你」（「請客人先拍照」）：是在講要客人做什麼，不是對客人說的話（`D-151` 實測直接出卡）。
+    // ⚠️「親愛的客人您好」有「您」，照常
+    const instruction = !wantsForm && /客人|顧客|消費者/.test(text) && !/[您你]/.test(text) ? text : ''
+    // 還沒講要改成哪一句（或只有一個字）＝空字串：預覽時先問他（`AdminOpAskFirst`），⛔ 不擋回去讓模型自己問
+    return {
+      name,
+      text: (text.length < 2 || wantsForm || instruction) ? '' : text,
+      ...(wantsForm ? { wantsForm: true } : {}),
+      ...(instruction ? { instruction } : {}),
+    } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
   },
 
   // 他照抄現在那句時會帶著［訂單編號］（小幫手講給他聽的寫法）：換回變數，⛔ 不然客人收到的就是括號那幾個字
@@ -949,18 +1121,20 @@ export const scriptUpdateReply: AdminOpDef = {
     // 還沒講要改成哪一句：先問他要怎麼改——⛔ 不出卡（老闆 10-22：「說要改就直接做，也不知道使用者要改什麼」，
     // 一張「改一條自動回應…」的卡看起來就是要動手了）。現在那句由系統照抄（⛔ 不交給模型轉述——它會漏講，甚至自己編一句）
     if (!args.text) {
-      const ask = [
+      throw new AdminOpAskFirst([
         when ? `「${row.name}」裡，客人${when}會收到的話是：` : `「${row.name}」現在回給客人的話是：`,
         before ? `「${toBracketText(before, 'script')}」` : '（現在是空的）',
         ...(row.enabled ? [] : ['（這條目前是停用的，客人現在收不到。）']),
         '',
-        '你想改成怎麼說？直接把新的那句打給我。',
+        // 他打的是要客人做的事（「請客人先拍照」）：先講出來，再請他寫成直接對客人說的話
+        ...(args.instruction
+          ? [`「${args.instruction}」是要客人做的事——客人收到時要看到哪一句？請寫成直接對客人說的話，例如「請先…」。`]
+          : ['你想改成怎麼說？直接把新的那句打給我。']),
         // ⛔ 不提「附上網址」「填表單」：這個流程就是要客人在 LINE 上完成（老闆 10-22）
         ...(args.wantsForm
           ? ['想讓客人多留一些資料（例如要退哪一件、為什麼退），不用另外做表單：到「自動回應」頁在這條多加一題，客人直接在 LINE 上回答。']
           : []),
-      ].join('\n')
-      return { ...base, summary: ask, items: [], needsInput: ask, confirmLabel: '' }
+      ].join('\n'))
     }
 
     if (before.trim() === args.text.trim())

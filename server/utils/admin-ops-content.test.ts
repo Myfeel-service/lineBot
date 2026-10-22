@@ -153,9 +153,10 @@ describe('自動交還／自動結束', () => {
     expect(setCalls).toEqual([{ handbackIdleMinutes: 0 }])
   })
 
-  it('自動結束：範圍照設定頁（6～336 小時），0 只能從「關掉」來', async () => {
-    expect(() => ops.aiSettingsAutoClose.normalize({ hours: 3 })).toThrow('6 到 336')
-    expect(() => ops.aiSettingsAutoClose.normalize({ hours: 400 })).toThrow('6 到 336')
+  it('自動結束：範圍照設定頁（6 小時～14 天，⛔ 不講「336 小時」），0 只能從「關掉」來', async () => {
+    expect(() => ops.aiSettingsAutoClose.normalize({ hours: 3 })).toThrow('最短 6 小時、最長 14 天')
+    expect(() => ops.aiSettingsAutoClose.normalize({ hours: 400 })).toThrow('最短 6 小時、最長 14 天')
+    expect(ops.aiSettingsAutoClose.argsHint).not.toContain('336')
     expect(ops.aiSettingsAutoClose.normalize({ hours: 48 })).toEqual({ hours: 48 })
     expect(ops.aiSettingsAutoClose.normalize({ off: true })).toEqual({ hours: 0 })
     await ops.aiSettingsAutoClose.execute(ctx, { hours: 48 })
@@ -203,7 +204,8 @@ describe('建標籤', () => {
     tagDocs = [{ id: 't1', data: { name: '問過運費', code: 'tag' } }]
     const { args, preview } = await propose(ops.tagCreate, { name: '問過出貨' })
     expect(args.code).toBe('tag_2')
-    expect(preview.items.map((i: any) => i.label)).toContain('tag_2')
+    // ⛔ 代號不上卡（`D-151`：「tag_3」店家用不到也看不懂）
+    expect(preview.items.map((i: any) => `${i.heading ?? ''}${i.label}${i.note ?? ''}`).join()).not.toMatch(/tag_|代號/)
   })
 
   it('建的當下撞號（別人同時建了一顆）就自己換一組重試，⛔不叫他換代號', async () => {
@@ -221,20 +223,25 @@ describe('建標籤', () => {
     expect(auditLogs[0]).toMatchObject({ actor: 'agent', targetId: 'new-tag', after: { code: 'vip_2' } })
   })
 
-  it('🔴 代號被換掉要照實講：確認卡寫「建好就不能改」的是 vip，真的建出來是 vip_2', async () => {
+  it('代號被換掉（建的當下撞號）：卡上沒有代號，⛔ 不跟他講；操作紀錄照實記', async () => {
     let n = 0
     fetchImpl = (url) => {
       if (url === '/api/tag/create' && n++ === 0) throw Object.assign(new Error('conflict'), { statusCode: 409 })
       return { id: 'new-tag' }
     }
     const res = await ops.tagCreate.execute(ctx, { name: 'VIP', code: 'vip' })
-    expect(res.message).toContain('「vip_2」')
-    expect(res.message).toContain('「vip」')
+    expect(res.message).not.toContain('代號')
+    expect(auditLogs[0].note).toContain('vip_2')
+  })
 
-    // 沒撞號就不多講一句
-    fetchImpl = () => ({ id: 'new-tag' })
-    const plain = await ops.tagCreate.execute(ctx, { name: 'VIP', code: 'vip' })
-    expect(plain.message).not.toContain('代號')
+  // `D-151` 實測：「我想把常買的客人分出來」直接出卡建一個空標籤
+  it('🔴 他講的是目的、沒講要建標籤：先講做法再問名字，⛔ 不出卡', () => {
+    const ask = () => ops.tagCreate.checkUserWords!({ name: '常買的客人' }, ['我想把常買的客人分出來'])
+    expect(ask).toThrow('標籤建好是空的')
+    expect(ask).toThrow('建一個標籤「常買的客人」')
+    // 講了要建標籤、或用引號講了名字：照常
+    expect(() => ops.tagCreate.checkUserWords!({ name: '回購客' }, ['「回購客」', '建一個標籤'])).not.toThrow()
+    expect(() => ops.tagCreate.checkUserWords!({ name: '回購客' }, ['幫我建「回購客」'])).not.toThrow()
   })
 })
 
@@ -473,8 +480,10 @@ describe('改自動回應的關鍵字／回覆字', () => {
     expect(copied.preview.warning).not.toContain('這幾個字')
 
     // 還沒講要改成哪一句（新的範例句「改「退換貨」回給客人的話」）：先問他要怎麼改，現在那句由系統照抄（⛔ 不出卡，見 propose 測試）
-    const ask = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '' })
-    expect(ask.preview.needsInput).toBe([
+    const askOf = (text: string) => propose(ops.scriptUpdateReply, { name: '退換貨查詢', text }).then(() => null, (e: Error) => e)
+    const ask = await askOf('')
+    expect(ask?.name).toBe('AdminOpAskFirst')
+    expect(ask?.message).toBe([
       '「退換貨查詢」裡，客人回答完「訂單編號」之後會收到的話是：',
       '「已收到您的訂單 ［訂單編號］，將由專人盡快為您處理退換貨，謝謝您 🙇」',
       '（這條目前是停用的，客人現在收不到。）',
@@ -482,19 +491,26 @@ describe('改自動回應的關鍵字／回覆字', () => {
       '你想改成怎麼說？直接把新的那句打給我。',
     ].join('\n'))
     // ⛔ 不叫他附網址、做表單（老闆 10-22：這個流程就是要在 LINE 上完成）
-    expect(ask.preview.needsInput).not.toMatch(/網址|表單/)
-    expect(ask.preview.noop).toBeUndefined()
+    expect(ask?.message).not.toMatch(/網址|表單/)
 
     // 「先填表單」（以前我們自己的範例）：他要的是讓客人多留資料——不出確認卡，跟沒講一樣先給他看現在那句，
     // 多一句「不用另外做表單，在這條多加一題，客人直接在 LINE 上回答」
-    const form = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '先填表單' })
-    expect(form.args.text).toBe('')
-    expect(form.preview.needsInput).toContain('「已收到您的訂單 ［訂單編號］')
-    expect(form.preview.needsInput).toContain('不用另外做表單')
-    expect(form.preview.needsInput).toContain('在 LINE 上回答')
-    expect(form.preview.needsInput).not.toContain('網址')
-    // 憑證照樣簽了：硬送也⛔不可以把回覆清成空的
-    const forced = await ops.scriptUpdateReply.execute(ctx, ask.args)
+    const form = await askOf('先填表單')
+    expect(form?.message).toContain('「已收到您的訂單 ［訂單編號］')
+    expect(form?.message).toContain('不用另外做表單')
+    expect(form?.message).toContain('在 LINE 上回答')
+    expect(form?.message).not.toContain('網址')
+
+    // `D-151` 實測：「請客人先拍照」直接出卡——講的是要客人做的事，不是對客人說的話
+    const photo = await askOf('請客人先拍照')
+    expect(photo?.name).toBe('AdminOpAskFirst')
+    expect(photo?.message).toContain('「請客人先拍照」是要客人做的事')
+    // ⚠️ 對客人說話的那種照常出卡（有「您」）
+    const polite = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '親愛的客人您好，請先拍一張商品照片傳給我們' })
+    expect(polite.preview.items[1].label).toBe('親愛的客人您好，請先拍一張商品照片傳給我們')
+
+    // 憑證照樣簽得出來的話：硬送也⛔不可以把回覆清成空的
+    const forced = await ops.scriptUpdateReply.execute(ctx, { name: '退換貨查詢', text: '' })
     expect(forced.ok).toBe(false)
     expect(fetchCalls.some(c => c.method === 'PUT')).toBe(false)
 
@@ -515,6 +531,92 @@ describe('改自動回應的關鍵字／回覆字', () => {
     expect(preview.warning).toContain('這條目前是停用的')
     expect(preview.warning).toContain('只有一個字')
     expect(preview.warning).not.toContain('之後客人講到')
+  })
+})
+
+// `D-151`⑵（2026-10-23 老闆拍板）：AI 判斷那種沒有關鍵字，「多認一種講法」要加「客人會這樣講」
+describe('增減「客人會這樣講」', () => {
+  const semantic = (examples: string[], enabled = true) => ({
+    id: 's9',
+    data: {
+      name: '查詢訂單',
+      enabled,
+      priority: 60,
+      rootNodeId: 't',
+      nodes: [
+        { id: 't', type: 'trigger', keywords: [], matchMode: 'semantic', examples, priority: 60, next: 'r' },
+        { id: 'r', type: 'reply', text: '請提供訂單編號', thenHandoff: false },
+      ] as Record<string, any>[],
+    },
+  })
+
+  it('加一句：整份送回 PUT，只有那一格變；卡上「現在／改成」兩格', async () => {
+    scriptDocs = [semantic(['我的訂單到哪了', '出貨了嗎'])]
+    const { args, preview } = await propose(ops.scriptUpdateExample, { name: '查詢訂單', action: 'add', example: '寄出了嗎' })
+    expect(preview.items.map((i: any) => [i.heading, i.tone, i.label])).toEqual([
+      ['現在「客人會這樣講」', 'before', '「我的訂單到哪了」「出貨了嗎」'],
+      ['改成', 'after', '「我的訂單到哪了」「出貨了嗎」「寄出了嗎」'],
+    ])
+    expect(preview.confirmLabel).toBe('確定加這句')
+    const res = await ops.scriptUpdateExample.execute(ctx, args)
+    expect(res.ok).toBe(true)
+    const put = fetchCalls.find(c => c.method === 'PUT')!
+    expect(put.body.nodes[0].examples).toEqual(['我的訂單到哪了', '出貨了嗎', '寄出了嗎'])
+    expect(put.body.nodes[1]).toEqual(semantic([]).data.nodes[1])
+    expect(put.body.priority).toBe(60)
+    expect(auditLogs[0]).toMatchObject({ action: 'agent-op/script-update-example', before: { examples: ['我的訂單到哪了', '出貨了嗎'] } })
+  })
+
+  it('做不到的不出卡：關鍵字那種（指去加關鍵字）、拿掉唯一一句、已滿 10 句；本來就有＝不用改', async () => {
+    scriptDocs = [baseScriptLike()]
+    await expect(propose(ops.scriptUpdateExample, { name: '營業時間', action: 'add', example: '今天有開嗎' })).rejects.toThrow('script-update-keyword')
+    scriptDocs = [semantic(['出貨了嗎'])]
+    await expect(propose(ops.scriptUpdateExample, { name: '查詢訂單', action: 'remove', example: '出貨了嗎' })).rejects.toThrow('唯一的一句')
+    scriptDocs = [semantic(Array.from({ length: 10 }, (_, i) => `問法${i}`))]
+    await expect(propose(ops.scriptUpdateExample, { name: '查詢訂單', action: 'add', example: '寄出了嗎' })).rejects.toThrow('最多 10 句')
+    scriptDocs = [semantic(['出貨了嗎'])]
+    expect((await propose(ops.scriptUpdateExample, { name: '查詢訂單', action: 'add', example: '出貨了嗎' })).preview.noop).toBe(true)
+  })
+
+  it('停用中的只講停用；關鍵字那條的錯誤也指到這件代辦', async () => {
+    scriptDocs = [semantic(['出貨了嗎'], false)]
+    const { preview } = await propose(ops.scriptUpdateExample, { name: '查詢訂單', action: 'add', example: '寄出了嗎' })
+    expect(preview.warning).toBe('這條目前是停用的，要啟用後才會生效。')
+    scriptDocs = [semantic(['出貨了嗎'])]
+    await expect(propose(ops.scriptUpdateKeyword, { name: '查詢訂單', action: 'add', keyword: '寄出' })).rejects.toThrow('script-update-example')
+  })
+
+  it('那句要是他講的（⛔ 不自己想一句）', () => {
+    expect(() => ops.scriptUpdateExample.checkUserWords!({ example: '請問我的包裹寄出了沒有呢' }, ['查詢訂單多認一種講法'])).toThrow('不是使用者講的')
+    expect(() => ops.scriptUpdateExample.checkUserWords!({ example: '寄出了嗎' }, ['客人問「寄出了嗎」也要走查詢訂單'])).not.toThrow()
+  })
+
+  function baseScriptLike() {
+    return {
+      id: 's1',
+      data: {
+        name: '營業時間', enabled: true, priority: 50, rootNodeId: 'n1',
+        nodes: [
+          { id: 'n1', type: 'trigger', keywords: ['營業時間'], matchMode: 'keyword', keywordMatch: 'any', priority: 50, next: 'n2' },
+          { id: 'n2', type: 'reply', text: '每天 10:00–19:00', thenHandoff: false },
+        ] as Record<string, any>[],
+      },
+    }
+  }
+})
+
+// `D-151` 實測：「改提醒時間」它沒查就說「目前是 0 分鐘」（實際 60）——改時間的問話改由系統寫、附上現在的值
+describe('沒講幾分鐘／幾小時：系統先講現在是多少再問', () => {
+  it('自動交還、自動結束（範圍講天數，⛔ 不講 336 小時）', async () => {
+    settingsStore = { ...settingsStore, handbackIdleMinutes: 30, humanSessionMaxIdleHours: 48 }
+    expect(await ops.aiSettingsHandbackIdle.askForNumber!(ctx as any)).toContain('閒置 30 分鐘')
+    const close = await ops.aiSettingsAutoClose.askForNumber!(ctx as any)
+    expect(close).toContain('2 天沒動靜')
+    expect(close).toContain('最短 6 小時、最長 14 天')
+    expect(close).not.toContain('336')
+    settingsStore = { ...settingsStore, handbackIdleMinutes: 0, humanSessionMaxIdleHours: 0 }
+    expect(await ops.aiSettingsHandbackIdle.askForNumber!(ctx as any)).toContain('現在沒有開自動交還')
+    expect(await ops.aiSettingsAutoClose.askForNumber!(ctx as any)).toContain('現在沒有開自動結束')
   })
 })
 

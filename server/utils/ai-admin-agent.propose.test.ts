@@ -332,21 +332,22 @@ describe('當使用者的話不足以決定要動什麼', () => {
     expect(res.pendingOp?.opId).toBe('ai-settings-service-hours')
   })
 
-  it('🔴 一個數字都沒講就要改時間 → ⛔不可以自己填 22:00–08:00', async () => {
+  it('🔴 一個數字都沒講就要改時間 → ⛔不可以自己填 22:00–08:00；系統先講現在的服務時間再問（`D-151`）', async () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
-      // ⛔ 這句刻意不帶數字：原本寫「現在是 09:00–18:00，你要改成幾點？」，但那是模型
-      //    **沒查就講出來的當前設定**，`answerGroundingIssue` 會（正確地）把它退回去查，
-      //    於是多出第三次呼叫、假資料用完 → 整支炸掉。這條測的是「沒講數字不可以自己填」，
-      //    不要在假資料裡塞無關的數字把另一道閘門一起引爆（那一道另外一條測，見下）。
-      .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
 
     const res = await ask('晚上太晚有人敲我 受不了 幫我設一下')
 
     expect(res.pendingOp).toBeUndefined()
     expect(setCalls).toHaveLength(0)
-    const second = generateJson.mock.calls[1]?.[0] as string
-    expect(second).toContain('沒有講到任何時間或數字')
+    // 問話是系統寫的、附上現在的值（`D-151`：交給模型轉述，它會沒查就講錯）——⛔ 不再多叫一次模型
+    expect(res.reply).toContain('現在的服務時間：')
+    expect(res.reply).toContain('09:00–18:00')
+    // 講清楚改哪一段（⛔ 只問「要改成幾點到幾點」：分不出是服務時間還是勿擾）
+    expect(res.reply).toContain('要改哪一段、改成幾點？')
+    expect(res.reply).toContain('勿擾改成晚上幾點到早上幾點')
+    expect(res.reply).not.toContain('22:00')
+    expect(generateJson).toHaveBeenCalledTimes(1)
   })
 
   /**
@@ -354,22 +355,26 @@ describe('當使用者的話不足以決定要動什麼', () => {
    * 測試多跑一輪、假資料用完就整支 TypeError——而**測試紅掉就不會部署**，同一批推上去的
    * 三件事全部卡住 33 小時沒人發現（見 `A-21`）。所以把這個接力單獨釘成一條：
    * 它不是壞掉，是**本來就該這樣**，下次不要為了讓測試變綠去拆接地那道。
+   * `D-151`（2026-10-23）：改時間的問話改由系統寫之後，這個接力換成「它不提議、直接自己講現況」那條路。
    */
-  it('數值閘門叫它「先講現在是什麼」→ 它憑空講 → 接地閘門要把它退回去查', async () => {
+  it('它沒提議、直接自己講現況 → 接地閘門要把它退回去，⭐ 而且系統替它查設定（`D-151`：被退回之後它照樣不查）', async () => {
     generateJson
-      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
       // ⛔ 現值確實是 09:00–18:00（見檔頭的 getAiSettings 假資料），但它**一支工具都沒查**
       //    就寫出來了——猜對了也是猜的，下一個帳號就會猜錯。
-      .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
+      .mockResolvedValueOnce(step({ action: 'answer', text: '現在服務時間是 09:00–18:00，你要改成幾點？' }))
       .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
 
     const res = await ask('晚上太晚有人敲我 受不了 幫我設一下')
 
     expect(res.pendingOp).toBeUndefined()
     expect(setCalls).toHaveLength(0)
-    // 真的有第三次呼叫＝它被退回去了，而不是那句話就這樣出去給使用者
-    expect(generateJson).toHaveBeenCalledTimes(3)
-    expect(generateJson.mock.calls[2]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
+    // 真的有第二次呼叫＝它被退回去了，而不是那句話就這樣出去給使用者
+    expect(generateJson).toHaveBeenCalledTimes(2)
+    const second = generateJson.mock.calls[1]?.[0] as string
+    expect(second).toContain('這一輪查到的資料裡沒有它們')
+    // 系統已經替它查了：第二次就有現在的設定可以照講
+    expect(res.toolCalls.map(t => t.tool)).toContain('get_ai_settings')
+    expect(second).toContain('get_ai_settings({}) →')
   })
 
   /**
@@ -381,14 +386,13 @@ describe('當使用者的話不足以決定要動什麼', () => {
     vi.setSystemTime(new Date('2026-10-18T04:00:00Z'))
     try {
       generateJson
-        .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
         .mockResolvedValueOnce(step({ action: 'answer', text: '現在是 09:00–18:00，你要改成幾點？' }))
         .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
 
       await ask('晚上太晚有人敲我 受不了 幫我設一下')
 
-      expect(generateJson).toHaveBeenCalledTimes(3)
-      expect(generateJson.mock.calls[2]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
+      expect(generateJson).toHaveBeenCalledTimes(2)
+      expect(generateJson.mock.calls[1]?.[0] as string).toContain('這一輪查到的資料裡沒有它們')
     }
     finally {
       vi.useRealTimers()
@@ -398,7 +402,6 @@ describe('當使用者的話不足以決定要動什麼', () => {
   it('🔴 前面隨口打過的數字不算數：那道閘門只看這一句', async () => {
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
-      .mockResolvedValueOnce(step({ action: 'answer', text: '你要改成幾點？' }))
 
     // 前一句的「第 3 條」跟他現在要設幾點完全無關，⛔不可以拿它當「他講過數字了」
     const res = await ask('晚上太晚有人敲我 幫我設一下', {
@@ -406,7 +409,24 @@ describe('當使用者的話不足以決定要動什麼', () => {
     })
 
     expect(res.pendingOp).toBeUndefined()
-    expect(generateJson.mock.calls[1]?.[0]).toContain('沒有講到任何時間或數字')
+    expect(res.reply).toContain('要改哪一段、改成幾點？')
+  })
+
+  // `D-151` 第二輪實測：「提醒太頻繁了」→ 它自己念一次現況、系統的問話又念一次
+  it('🔴 它自己也寫了現況與「要改成什麼」：跟系統問話重複的段落拿掉，回答別的問題的照留', async () => {
+    generateJson
+      // 先查過設定（不然那段現況會被接地閘門退回去，那是另一條測的事）
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_settings', args: {} }))
+      .mockResolvedValueOnce(step({
+        action: 'propose',
+        op: 'ai-settings-service-hours',
+        args: { mode: 'dnd', start: '22:00', end: '08:00' },
+        answer: '用量的部分在「AI 表現」頁看得到。\n\n目前服務時間是週一至週五 09:00–18:00，勿擾時段是 18:00–09:00。\n\n請問你希望改成幾點？',
+      }))
+    const res = await ask('晚上太晚有人敲我，順便問用量在哪看')
+    expect(res.reply).toContain('用量的部分在「AI 表現」頁看得到。')
+    expect(res.reply).not.toContain('請問你希望改成')
+    expect(res.reply.match(/09:00–18:00/g)).toHaveLength(1)
   })
 
   it('講了數字就照做（⛔別把正常需求一起擋掉）', async () => {
@@ -431,10 +451,11 @@ describe('當使用者的話不足以決定要動什麼', () => {
     generateJson.mockReset()
     generateJson
       .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { minutes: 30 } }))
-      .mockResolvedValueOnce(step({ action: 'answer', text: '你要設幾分鐘？' }))
     const guessed = await ask('幫我設一下自動交還')
     expect(guessed.pendingOp).toBeUndefined()
-    expect(generateJson.mock.calls[1]?.[0]).toContain('沒有講到任何時間或數字')
+    // 系統先講現在（假資料沒設＝沒開）再問，⛔ 不出它自己填的 30 分鐘
+    expect(guessed.reply).toContain('現在沒有開自動交還')
+    expect(guessed.reply).not.toContain('30')
   })
 })
 
@@ -880,6 +901,14 @@ describe('畫面上的字（D-116）', () => {
     // 泡泡：引號外的照舊清、引號裡的原文不動
     expect(plainReply('我會**建**草稿「**限時**優惠，您好」，您確認一下'))
       .toBe('我會建草稿「**限時**優惠，您好」，你確認一下')
+  })
+
+  // `D-151` 第三輪：提示裡寫了「不講觸發、不說我無法」照樣出現
+  it('「我無法」「觸發」換成講話的說法；⛔ 引號裡（他的字、客人看的原文）不動', async () => {
+    const { plainReply } = await import('./ai-admin-agent')
+    expect(plainReply('我無法直接刪除。客人說什麼會觸發它？'))
+      .toBe('我沒辦法直接刪除。客人說什麼會啟動它？')
+    expect(plainReply('改成「我無法接受，觸發了」')).toBe('改成「我無法接受，觸發了」')
   })
 
   it('真的推播草稿卡：客人會看到的那一格是原文', async () => {

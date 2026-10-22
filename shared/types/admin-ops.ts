@@ -37,6 +37,8 @@ export const ADMIN_OP_LABELS = {
   'knowledge-draft-create': '補一條知識（放進「等你看過」，不直接上線）',
   'script-update-keyword': '增減一條自動回應的關鍵字',
   'script-update-reply': '改一條自動回應回給客人的話',
+  // ── `D-151`⑵（2026-10-23 老闆拍板）：AI 判斷那種沒有關鍵字，「多認一種講法」要改的是「客人會這樣講」──
+  'script-update-example': '增減一條自動回應「客人會這樣講」的說法',
 } as const satisfies Record<string, string>
 
 export type AdminOpId = keyof typeof ADMIN_OP_LABELS
@@ -84,6 +86,8 @@ export const ADMIN_OP_RISK: Record<AdminOpId, 'low' | 'medium'> = {
   // 改了立刻影響打中這條的客人收到什麼
   'script-update-keyword': 'medium',
   'script-update-reply': 'medium',
+  // 跟關鍵字同一級：改了立刻影響客人講到那句時走不走這條
+  'script-update-example': 'medium',
 }
 
 /** 稽核動作代號：操作紀錄上看到的就是這個（與 audit 的白話對照成對） */
@@ -144,13 +148,6 @@ export interface AdminOpPreview {
    * ⛔ 跟 `noop` 分開：確認端點把 `noop` 解讀成「剛剛已經執行過了」，擋下來的提議會被講成做好了。
    */
   planLocked?: boolean
-  /**
-   * 還缺**他要講的東西**（例：要改成哪一句）＝小幫手要回的那一整段問話（含現況）：⛔ **不出卡**，照這段字回他，他講了再提議。
-   * 為什麼不出卡：老闆 10-22「說要改就直接做，也不知道使用者要改什麼」——一張「改一條自動回應…」的卡看起來就是要動手了。
-   * 為什麼問話由系統寫、不交給模型：同一天實測同一句「改「退換貨」回給客人的話」問兩次，
-   * 一次有把現在那句講出來、一次沒有；另一句它乾脆**自己編了一句**「現在的回覆」。
-   */
-  needsInput?: string
   /**
    * 泡泡要講的那句，**跟卡片主句不一樣時才填**（`C-352`：方案做不到的卡，泡泡講「先不建」、卡片講為什麼——
    * 兩邊都印推播頁那一句＝同一句話在畫面上出現兩次）。沒填就用 `summary`。⛔ 不採用模型寫的那句。

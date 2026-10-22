@@ -58,19 +58,25 @@ vi.mock('./billing', () => ({
 }))
 // 生成端：每次回不一樣的名字，好驗「同意的那份就是建出來的那份」
 let draftSeq = 0
+/** 生成端拒答／沒生好時丟的錯（`D-151`：以前會變成「準備到一半出了狀況」） */
+let draftThrows: unknown = null
 vi.mock('./ai-script-generate', () => ({
-  generateScriptDraft: async (description: string) => ({
-    name: `退貨查詢 v${++draftSeq}`,
-    rootNodeId: 'n1',
-    nodes: [
-      { id: 'n1', type: 'trigger', keywords: ['退貨'], matchMode: 'keyword', priority: 1, next: 'n2' },
-      { id: 'n2', type: 'collect', question: '請給我訂單編號', fieldName: 'orderNo', expireMs: 600000, next: 'n3' },
-      { id: 'n3', type: 'reply', text: `收到，我們三天內回覆（${description.slice(0, 6)}）`, next: '' },
-    ],
-    inputTokens: 10,
-    outputTokens: 20,
-  }),
+  generateScriptDraft: async (description: string) => {
+    if (draftThrows) throw draftThrows
+    return draftOf(description)
+  },
 }))
+const draftOf = (description: string) => ({
+  name: `退貨查詢 v${++draftSeq}`,
+  rootNodeId: 'n1',
+  nodes: [
+    { id: 'n1', type: 'trigger', keywords: ['退貨'], matchMode: 'keyword', priority: 1, next: 'n2' },
+    { id: 'n2', type: 'collect', question: '請給我訂單編號', fieldName: 'orderNo', expireMs: 600000, next: 'n3' },
+    { id: 'n3', type: 'reply', text: `收到，我們三天內回覆（${description.slice(0, 6)}）`, next: '' },
+  ],
+  inputTokens: 10,
+  outputTokens: 20,
+})
 vi.mock('./ai-usage', () => ({
   recordAiUsage: async () => {},
   getCurrentMonthUsageCounts: async () => ({ invocations: 120, answered: 98, billable: 110 }),
@@ -84,8 +90,8 @@ const fetchCalls: any[] = []
   return { id: 'new-script-id' }
 }
 
-const { ADMIN_OPS, getAdminOp } = await import('./admin-ops')
-const { AdminOpUserError } = await import('./admin-op-def')
+const { ADMIN_OPS, getAdminOp, quotedReplies } = await import('./admin-ops')
+const { AdminOpAskFirst, AdminOpUserError } = await import('./admin-op-def')
 
 // ── 假的 Firestore：只夠這兩個 op 用（流程清單 + 單一文件 update）────
 const scriptDocs: { id: string, data: Record<string, any> }[] = []
@@ -136,6 +142,7 @@ beforeEach(() => {
   extraCollections.broadcasts = []
   fetchCalls.length = 0
   draftSeq = 0
+  draftThrows = null
   followConflict = null
   followConflictAsks.length = 0
   planStore = { scripting: true }
@@ -275,6 +282,13 @@ describe('op：客人等太久的提醒時間', () => {
     expect(() => op.normalize({ minutes: 5000 })).toThrow(AdminOpUserError)
   })
 
+  // `D-151` 實測：它沒查就說「目前是 0 分鐘」（實際 60）——問話改由系統寫、附上現在的值
+  it('🔴 他沒講幾分鐘：系統先講現在是幾分鐘再問', async () => {
+    expect(await op.askForNumber!(ctx)).toContain('等超過 30 分鐘還沒人回')
+    settingsStore.handoffNotify = { enabled: true, lineUserIds: ['U1'], slaRemindMinutes: 0 }
+    expect(await op.askForNumber!(ctx)).toContain('現在沒有開「客人等太久」的提醒')
+  })
+
   it('🔴 通知本身是關的：要當場講「改了也不會有人被提醒」', async () => {
     settingsStore.handoffNotify = { enabled: false, lineUserIds: [], slaRemindMinutes: 30 }
     const preview = await op.preview(ctx, op.normalize({ minutes: 10 }))
@@ -321,6 +335,19 @@ describe('op：一提到就轉真人的字', () => {
     expect(() => op.normalize({ word: '退款' })).toThrow(AdminOpUserError)
     expect(() => op.normalize({ action: 'add' })).toThrow(AdminOpUserError)
   })
+
+  // `D-151` 實測：「客人講到要告我們的時候直接給真人」它自己挑了「告」——「廣告」「公告」也會轉真人
+  it('🔴 一個字：先問完整的說法，⛔ 不出卡；清單裡相近的（提告）要講出來', async () => {
+    settingsStore.sensitiveTopics = ['提告', '律師']
+    const err = await op.preview(ctx, op.normalize({ action: 'add', word: '告' })).catch(e => e)
+    expect(err).toBeInstanceOf(AdminOpAskFirst)
+    expect(err.message).toContain('只有一個字')
+    expect(err.message).toContain('「提告」')
+    expect(err.message).not.toContain('律師')
+    // 兩個字以上照常出卡，相近的一樣講在後果那句
+    const ok = await op.preview(ctx, op.normalize({ action: 'add', word: '提告你們' }))
+    expect(ok.warning).toContain('清單裡已經有「提告」')
+  })
 })
 
 describe('op：自動回應上架／下架', () => {
@@ -343,6 +370,17 @@ describe('op：自動回應上架／下架', () => {
       },
     })))
   }
+
+  // `D-151`：AI 判斷那種沒有字，以前啟用的卡也寫「打中這些字的客人會走這條」
+  it('啟用的後果照比對方式講：AI 判斷的講「講到這類事」、關鍵字的講「打這些字」，⛔ 不講「打中」', async () => {
+    seed([{ id: 'd1', name: '出貨查詢', enabled: false }])
+    scriptDocs.push({ id: 'd2', data: { name: '退換貨', enabled: false, rootNodeId: 'n1', nodes: [{ id: 'n1', type: 'trigger', keywords: [], matchMode: 'semantic', examples: ['我要退貨'] }] } })
+    const kw = await op.preview(ctx, op.normalize({ name: '出貨查詢', enabled: true }))
+    const sem = await op.preview(ctx, op.normalize({ name: '退換貨', enabled: true }))
+    expect(kw.warning).toContain('客人打這些字就會走這條')
+    expect(sem.warning).toContain('客人講到這類事就會走這條')
+    expect(`${kw.warning}${sem.warning}`).not.toContain('打中')
+  })
 
   it('預覽講出觸發字與影響，⛔不寫任何東西', async () => {
     seed([{ id: 'd1', name: '出貨查詢', enabled: true, keywords: ['出貨', '到貨'] }])
@@ -593,6 +631,30 @@ describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () 
 
     await expect(op.prepare!(ctx, args)).rejects.toThrow(/方案不含/)
     expect(draftSeq).toBe(0) // generateScriptDraft 一次都沒被叫
+  })
+
+  // `D-151` 實測：他說就回「可以，Visa、Master 都收」，卡上變成「可以喔！我們接受 Visa、MasterCard 信用卡付款。」
+  it('🔴 他用引號講了要回什麼：擬出來的回覆原樣用那一句，⛔ 不讓擬稿的 AI 改寫', async () => {
+    const args = await op.prepare!(ctx, op.normalize({ description: '有人問「可以刷卡嗎」，就回「可以，Visa、Master 都收」' }))
+    const reply = (args as any).draft.nodes.find((n: any) => n.type === 'reply')
+    expect(reply.text).toBe('可以，Visa、Master 都收')
+    // 沒用引號講的：照擬出來的
+    const plain = await op.prepare!(ctx, op.normalize({ description: '客人說退貨時，先問訂單編號再回覆處理時間' }))
+    expect((plain as any).draft.nodes.find((n: any) => n.type === 'reply').text).toContain('三天內')
+    expect(quotedReplies('有人問「可以刷卡嗎」，就回「可以，Visa、Master 都收」')).toEqual(['可以，Visa、Master 都收'])
+  })
+
+  // `D-151` 實測：「建一條自動回應讓客人先填表單」只回「準備到一半出了狀況」
+  it('🔴 擬不出來（拒答）：先問他三件事，⛔ 不要變成「出了狀況」；講到表單就講客人在 LINE 上回答', async () => {
+    draftThrows = Object.assign(new Error('「填表單」本身不是一個客服流程'), { statusCode: 422 })
+    const err = await op.prepare!(ctx, op.normalize({ description: '建一條自動回應讓客人先填表單' })).catch(e => e)
+    expect(err).toBeInstanceOf(AdminOpAskFirst)
+    expect(err.message).toContain('客人講什麼的時候開始')
+    expect(err.message).toContain('不用另外做表單')
+    expect(err.message).not.toContain('客服流程')
+    // 別的錯（連不上之類）照舊往外丟
+    draftThrows = new Error('boom')
+    await expect(op.prepare!(ctx, op.normalize({ description: '客人說退貨時先問訂單編號' }))).rejects.toThrow('boom')
   })
 })
 

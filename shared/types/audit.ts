@@ -63,6 +63,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'agent-op/knowledge-draft-create': '補了一條知識（放在「等你看過」，還沒上線）',
   'agent-op/script-update-keyword': '增減了一條自動回應的關鍵字',
   'agent-op/script-update-reply': '改了一條自動回應回給客人的話',
+  'agent-op/script-update-example': '增減了一條自動回應「客人會這樣講」的說法',
   // 還原也是一次操作：⛔原本那一筆不刪不改，這裡再記一筆
   'audit/revert': '把先前的某一筆改動還原回去',
   // 人自己在頁面上改的（2026-09-16 補接）：小幫手的每一筆都記了，人改的卻沒有，時間軸會是斷的

@@ -52,6 +52,26 @@ const AI_SERVICE_HOURS = /AI[^。，,\n]{0,6}的(服務時間|上班時間)|(服
 const QUOTES_SCRIPT_REPLY = /(回覆(內容|的話)?|回給客人的話)\s*(目前|現在)?\s*(是|為)\s*[：:]?\s*「/
 const SCRIPTS_TOOL = 'list_scripts'
 
+/**
+ * 叫店家把客人帶去外面填表單（`D-151` 第三輪實測）：「建一條自動回應讓客人先填表單」它回
+ * 「表單的連結是什麼？…讓客人在對話中點擊連結填寫表單」。老闆 10-22：「我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」。
+ * 提示寫了照樣中，所以擋。⚠️ 他自己給了網址（「請填寫保固登錄：https://…」）是他的決定，不擋。
+ */
+const LEADS_OUT_OF_LINE = /(表單|問卷)[^。\n]{0,15}(連結|網址|點擊|點進)|(連結|網址|點擊)[^。\n]{0,10}填[^。\n]{0,4}(表單|問卷)/
+
+/**
+ * 被退回時該查、這一輪卻沒查的那一支（`D-151`，2026-10-23）：系統直接幫它查，結果塞進這一輪再讓它重寫。
+ * ⛔ 只靠退回不夠：2026-10-22「改「客人等太久」的提醒時間」被退回之後它照樣不查，
+ *    第二次的答案（「目前是 0 分鐘」，實際 60）就因為「同一輪只退一次」被放行了。
+ */
+export function groundingToolToRun({ text, calledTools }: Pick<GroundingParams, 'text' | 'calledTools'>): 'get_ai_settings' | 'list_scripts' | 'get_current_alerts' | null {
+  const answer = String(text ?? '')
+  if (SETTINGS_TOPIC.test(answer) && !calledTools.includes(SETTINGS_TOOL)) return 'get_ai_settings'
+  if (QUOTES_SCRIPT_REPLY.test(answer) && !calledTools.includes(SCRIPTS_TOOL)) return 'list_scripts'
+  if (CLAIMS_ALL_CLEAR.test(answer) && !calledTools.includes(ALERTS_TOOL)) return 'get_current_alerts'
+  return null
+}
+
 export interface GroundingParams {
   /** 模型這一輪寫的回答 */
   text: string
@@ -68,6 +88,8 @@ export interface GroundingParams {
   dateSources?: readonly string[]
   /** 這一輪實際呼叫過的工具名 */
   calledTools: readonly string[]
+  /** 使用者自己講過的話（判斷「網址是不是他給的」用；沒給＝當成他沒給） */
+  userTexts?: readonly string[]
 }
 
 /**
@@ -80,7 +102,7 @@ const DATE_SPAN = /\d{4}\s*[-/.年]\s*\d{1,2}(?:\s*[-/.月]\s*\d{1,2}\s*[日號]
  * 回答站不住腳的地方（沒問題回 null）。
  * 回傳的字串會原樣回饋給模型，所以要寫成「該怎麼補」而不是罵它。
  */
-export function answerGroundingIssue({ text, sources, dateSources = [], calledTools }: GroundingParams): string | null {
+export function answerGroundingIssue({ text, sources, dateSources = [], calledTools, userTexts = [] }: GroundingParams): string | null {
   const answer = String(text ?? '').trim()
   if (!answer) return null
 
@@ -106,6 +128,12 @@ export function answerGroundingIssue({ text, sources, dateSources = [], calledTo
     return `你寫了「${aiHours}」——服務時間不是 AI 的上班時間。`
       + '⛔ 服務時間只管「客人要找真人時會不會通知你們」（勿擾時段內客人先收到一句稍後回覆），AI 全天照常回答。'
       + '請改寫那句話，⛔ 不要說成「AI 自動回覆的服務時間」。'
+  }
+
+  if (LEADS_OUT_OF_LINE.test(answer) && !userTexts.some(t => /https?:\/\//.test(t))) {
+    return '你建議把客人帶去外面填表單或點連結。⛔ 這個產品要客人在 LINE 上完成：要客人留資料，'
+      + '就是在自動回應裡一題一題問（例如訂單編號、要退哪一件、為什麼退），客人直接在 LINE 上回答。'
+      + '請改成這個做法（他講清楚要問哪幾題，就可以提議 script-create-from-description）。'
   }
 
   if (QUOTES_SCRIPT_REPLY.test(answer) && !calledTools.includes(SCRIPTS_TOOL)) {
