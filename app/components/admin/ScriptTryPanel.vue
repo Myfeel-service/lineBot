@@ -16,7 +16,7 @@
 
     <div ref="chatEl" class="scripts-sim-chat scripts-try__chat" data-tour="scr-sim-panel">
       <p v-if="!log.length" class="scripts-sim-empty">
-        {{ isFollow ? '按下面「模擬客人加好友」開始' : '例：我的訂單到哪了' }}
+        {{ isFollow ? '按下面「模擬客人加好友」開始' : `例：${sampleText}` }}
       </p>
       <template v-for="(m, i) in log" :key="i">
         <p v-if="m.who === 'verdict'" class="scripts-try__verdict" :class="`is-${m.tone}`">
@@ -134,6 +134,12 @@ const trigger = computed(() => {
   return t?.type === 'trigger' ? t : null
 })
 const isFollow = computed(() => trigger.value?.triggerEvent === 'follow')
+/** 還沒試的時候給的例句：照這一條自己的設定（`D-148`）——關鍵字那種用第一個字、AI 判斷那種用第一句 */
+const sampleText = computed(() => {
+  const t = trigger.value
+  const first = (t?.matchMode ?? 'keyword') === 'semantic' ? t?.examples?.[0] : t?.keywordMatch === 'anyText' ? '' : t?.keywords?.[0]
+  return String(first ?? '').trim() || '我的訂單到哪了'
+})
 
 function push(m: SimMsg) { log.value.push(m) }
 

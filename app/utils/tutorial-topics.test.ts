@@ -234,7 +234,8 @@ describe('教學文案的寫作規則', () => {
 
     // 對照組：網撈不到東西的話，下面那關會空轉通過
     expect(phrases.length).toBeGreaterThan(50)
-    expect(phrases).toContain('客人輸入任何內容')
+    // `D-148`：自動回應導覽改講「一模一樣才接」（「客人輸入任何內容」已經不在新的選項裡）
+    expect(phrases).toContain('一模一樣才接')
 
     const missing = phrases.filter(p => !NOT_UI.has(p) && !onScreen(p))
     expect(missing, `導覽講了這幾個字，畫面上找不到（照著導覽去找會走丟）：\n${missing.join('\n')}`).toEqual([])

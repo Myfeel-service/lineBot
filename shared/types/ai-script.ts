@@ -975,6 +975,10 @@ export function hitScriptKeyword(script: Pick<ScriptDoc, 'nodes' | 'rootNodeId' 
     const i = keywords.indexOf(text)
     return i >= 0 ? raw[i]! : null
   }
+  // 「有些講法不要接」（`D-148`，跟 AI 判斷那種同一格）：訊息裡有這幾句就不接、交給 AI。
+  // 一模一樣才接的用不到（整句都對上了，不會有「其實不是這個意思」）
+  const excludes = (root.excludes ?? []).map(x => String(x).trim().toLowerCase()).filter(Boolean)
+  if (excludes.some(x => text.includes(x))) return null
   if (mode === 'all') return keywords.every(k => text.includes(k)) ? raw.join('＋') : null
   const i = keywords.findIndex(k => text.includes(k))
   return i >= 0 ? raw[i]! : null

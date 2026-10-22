@@ -1180,6 +1180,16 @@
   row-gap: 6px;
 }
 
+/* 關鍵字那種的「怎樣才接」（`D-148`）：兩顆圓鈕一行，窄的時候換行不擠在一起 */
+.scripts-keyword-match {
+  flex-wrap: wrap;
+  row-gap: 4px;
+
+  .el-radio {
+    height: 28px;
+  }
+}
+
 /* 加好友那一條：不給切，直接寫明（2026-10-22，只從清單最上面那一列進來） */
 .scripts-trigger-fixed {
   font-size: 15px;

@@ -119,6 +119,25 @@ describe('matchesScriptKeywords（腳本關鍵字比對的唯一入口）', () =
       expect(matchesScriptKeywords(s, '哈囉')).toBe(false)
     })
   })
+
+  describe('有些講法不要接（`D-148`，看字的那種也有）', () => {
+    it('訊息裡有字、但也有「不要接」那句 → 不接（「退貨」不再接走「我不想退貨了」）', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywords: ['退貨'], excludes: ['不想退貨'] })
+      expect(hitScriptKeyword(s, '我想退貨')).toBe('退貨')
+      expect(hitScriptKeyword(s, '我不想退貨了')).toBeNull()
+    })
+
+    it('含全部關鍵字那種也一樣', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywordMatch: 'all', keywords: ['訂單', '取消'], excludes: ['不要取消'] })
+      expect(hitScriptKeyword(s, '我要取消訂單')).toBe('訂單＋取消')
+      expect(hitScriptKeyword(s, '訂單先不要取消')).toBeNull()
+    })
+
+    it('一模一樣才接的不受影響（整句對上就是那個意思）', () => {
+      const s = buildScript({ id: 't1', type: 'trigger', keywordMatch: 'exact', keywords: ['抽獎'], excludes: ['抽獎'] })
+      expect(hitScriptKeyword(s, '抽獎')).toBe('抽獎')
+    })
+  })
 })
 
 describe('matchesSemanticTrigger', () => {

@@ -200,7 +200,7 @@
                   <b v-if="triggerUiMode(triggerNode) === 'follow'" class="scripts-trigger-fixed">客人加好友時</b>
                   <el-radio-group v-else :model-value="triggerUiMode(triggerNode)" class="scripts-trigger-modes" @change="setTriggerMode(triggerNode, $event)">
                     <el-radio-button value="semantic">客人在問這類事（AI 判斷）</el-radio-button>
-                    <el-radio-button value="keyword">客人打特定的字</el-radio-button>
+                    <el-radio-button value="keyword">客人打特定的字（關鍵字）</el-radio-button>
                   </el-radio-group>
                 </div>
 
@@ -221,12 +221,12 @@
                 <template v-else-if="triggerUiMode(triggerNode) === 'semantic'">
                   <div class="admin-field-group" data-tour="scr-meaning">
                     <AdminFieldLabel text="客人會這樣講（一行一句）" tight />
-                    <el-input
-                      :model-value="(triggerNode.examples ?? []).join('\n')"
-                      type="textarea"
+                    <AdminLineListInput
+                      :model-value="triggerNode.examples ?? []"
                       :rows="3"
+                      :max="MAX_TRIGGER_EXAMPLES"
                       placeholder="例：&#10;我想查訂單&#10;我的訂單到哪了"
-                      @update:model-value="updateExamples(triggerNode, $event)"
+                      @update:model-value="triggerNode.examples = $event"
                     />
                     <p class="scripts-section-hint">意思相近 AI 就會接，不用列出所有講法；3～5 句不同說法就夠（最多 {{ MAX_TRIGGER_EXAMPLES }} 句）。</p>
                   </div>
@@ -237,12 +237,12 @@
                   -->
                   <div v-if="excludesOpen(triggerNode)" class="admin-field-group">
                     <AdminFieldLabel text="這些交給 AI 回答，不要接（一行一句）" tight />
-                    <el-input
-                      :model-value="(triggerNode.excludes ?? []).join('\n')"
-                      type="textarea"
+                    <AdminLineListInput
+                      :model-value="triggerNode.excludes ?? []"
                       :rows="2"
+                      :max="MAX_TRIGGER_EXCLUDES"
                       placeholder="例：&#10;什麼時候出貨&#10;何時會收到貨"
-                      @update:model-value="updateExcludes(triggerNode, $event)"
+                      @update:model-value="setExcludes(triggerNode, $event)"
                     />
                     <p class="scripts-section-hint">意思一樣的不走這一條、交給 AI 回答。</p>
                   </div>
@@ -251,12 +251,36 @@
                   </button>
                 </template>
 
+                <!--
+                  `D-148`（2026-10-22 老闆「操作盡量非常接近一致」）：跟上面 AI 判斷同一個順序——
+                  先填客人打什麼（同一種一行一個的多行框）→ 再選怎樣才接 → 一樣有「有些講法不要接」→ 防重複觸發。
+                  以前是先選「怎麼比對」（四選一的下拉）才填字，字用逗號或空白隔開（「LINE Pay」被拆成兩個）。
+                -->
                 <template v-else>
+                  <div v-if="triggerNode.keywordMatch !== 'anyText'" class="admin-field-group">
+                    <AdminFieldLabel text="客人打這些字（一行一個）" tight />
+                    <AdminLineListInput
+                      :model-value="triggerNode.keywords"
+                      :rows="3"
+                      :max="20"
+                      :separator="KEYWORD_SEPARATOR"
+                      :placeholder="keywordPlaceholder(triggerNode)"
+                      @update:model-value="triggerNode.keywords = $event"
+                    />
+                  </div>
                   <div class="admin-field-group" data-tour="scr-match">
-                    <AdminFieldLabel text="怎麼比對" tight />
-                    <el-select :model-value="triggerNode.keywordMatch ?? 'any'" class="control-full" @change="triggerNode.keywordMatch = $event">
-                      <el-option v-for="m in KEYWORD_MATCH_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
-                    </el-select>
+                    <AdminFieldLabel text="怎樣才接" tight />
+                    <!-- 常用的只有兩種；「全部都有」「打什麼都接」只在舊設定已經選了才出現（後者會攔掉所有訊息） -->
+                    <el-radio-group :model-value="triggerNode.keywordMatch ?? 'any'" class="scripts-keyword-match" @change="setKeywordMatch(triggerNode, $event)">
+                      <el-radio value="any">訊息裡有這些字就接</el-radio>
+                      <el-radio value="exact">一模一樣才接</el-radio>
+                      <el-radio v-if="triggerNode.keywordMatch === 'all'" value="all">這些字全部都有才接</el-radio>
+                      <!-- ⛔ 名字不改：異常提醒、小幫手一鍵停用都叫它「客人輸入任何內容」 -->
+                      <el-radio v-if="triggerNode.keywordMatch === 'anyText'" value="anyText">客人輸入任何內容</el-radio>
+                    </el-radio-group>
+                    <!-- 介面上鼓勵用 AI 判斷（2026-10-21 老闆「好」）：講清楚這一種是給誰用的，一般講法指回 AI 判斷 -->
+                    <p v-if="(triggerNode.keywordMatch ?? 'any') === 'exact'" class="scripts-section-hint">只看字、不經過 AI。客人要打得一模一樣才接，適合活動口令、固定公告。</p>
+                    <p v-else-if="triggerNode.keywordMatch !== 'anyText'" class="scripts-section-hint">只看字、不經過 AI。訊息裡出現就接，太常見的字會攔到不相關的話；一般講法用「客人在問這類事（AI 判斷）」比較不會漏接或接錯。</p>
                     <!-- 這種設定排在 AI 前面，開著等於把 AI 整個關掉 -->
                     <el-alert
                       v-if="triggerNode.keywordMatch === 'anyText'"
@@ -264,18 +288,8 @@
                       :closable="false"
                       show-icon
                       title="這條啟用後，會攔截「所有」文字訊息"
-                      description="客人不管打什麼都會走進這一條，AI 客服和其他自動回應都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改用「含任一關鍵字」。"
+                      description="客人不管打什麼都會走進這一條，AI 客服和其他自動回應都收不到訊息、完全失效，而且不會有任何錯誤提示。除非你是刻意要暫停 AI，否則建議改成「訊息裡有這些字就接」。"
                     />
-                  </div>
-                  <div v-if="triggerNode.keywordMatch !== 'anyText'" class="admin-field-group">
-                    <AdminFieldLabel text="關鍵字" tight />
-                    <el-input
-                      :model-value="triggerNode.keywords.join('，')"
-                      :placeholder="keywordPlaceholder(triggerNode)"
-                      @update:model-value="updateKeywords(triggerNode, $event)"
-                    />
-                    <!-- 介面上鼓勵用 AI 判斷（2026-10-21 老闆「好」）：講清楚這一種是給誰用的，一般講法指回 AI 判斷 -->
-                    <p class="scripts-section-hint">只看字、不經過 AI，適合活動口令、固定公告；一般講法用「客人在問這類事（AI 判斷）」比較不會漏接或接錯。</p>
                     <!--
                       打字當下就講（D-33 P1）：太短或太常見的關鍵字會攔到一大堆不相關的訊息
                       （`C-25` 那場「觸發詞劫持」就是人手設的）。⛔只提醒不阻擋——既有設定可能刻意這樣設。
@@ -286,9 +300,26 @@
                       :closable="false"
                       show-icon
                       :title="`「${riskyKeywordsOf(triggerNode).join('、')}」太常見了，會攔到很多不相關的訊息`"
-                      description="關鍵字是「訊息裡有這幾個字就攔走」，例如設「問題」，客人打「我的訂單有問題」也會被這一條接走、AI 就答不到了。建議改成這一條專屬的具體詞（兩個字以上）。"
+                      description="訊息裡有這幾個字就會被攔走，例如設「問題」，客人打「我的訂單有問題」也會被這一條接走、AI 就答不到了。建議改成這一條專屬的具體詞（兩個字以上），或改成「一模一樣才接」。"
                     />
                   </div>
+                  <!-- 「不要接」：同 AI 判斷那一格；一模一樣才接的用不到（整句都對上了） -->
+                  <template v-if="triggerNode.keywordMatch !== 'exact' && triggerNode.keywordMatch !== 'anyText'">
+                    <div v-if="excludesOpen(triggerNode)" class="admin-field-group">
+                      <AdminFieldLabel text="這些交給 AI 回答，不要接（一行一句）" tight />
+                      <AdminLineListInput
+                        :model-value="triggerNode.excludes ?? []"
+                        :rows="2"
+                        :max="MAX_TRIGGER_EXCLUDES"
+                        placeholder="例：&#10;我不想退貨了&#10;退貨要多久"
+                        @update:model-value="setExcludes(triggerNode, $event)"
+                      />
+                      <p class="scripts-section-hint">訊息裡有這幾句，就不走這一條、交給 AI 回答。</p>
+                    </div>
+                    <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="openExcludes">
+                      ＋ 有些講法不要接（交給 AI 回答）
+                    </button>
+                  </template>
                 </template>
 
                 <!-- 防重複觸發（＝自動回覆的冷卻）。多數用不到，沒設時只留一顆鈕 -->
@@ -998,7 +1029,6 @@ import type {
   ScriptSaveLeadNode,
   ScriptTagNode,
   ScriptTriggerNode,
-  TriggerKeywordMatch,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
 import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, MAX_TRIGGER_EXCLUDES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, findPlaceholderTexts, findStuckCollects, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
@@ -1365,8 +1395,8 @@ function excludesOpen(node: ScriptTriggerNode) {
 }
 function openExcludes() { openedExcludes.value = true }
 
-function updateExcludes(node: ScriptTriggerNode, value: string) {
-  const list = String(value || '').split(/\n+/g).map(e => e.trim()).filter(Boolean).slice(0, MAX_TRIGGER_EXCLUDES)
+/** 「不要接」那一格（一行一句，AdminLineListInput 已經整理好）：清空就拿掉這個欄位 */
+function setExcludes(node: ScriptTriggerNode, list: string[]) {
   if (list.length) node.excludes = list
   else delete node.excludes
 }
@@ -1386,13 +1416,6 @@ const namePlaceholder = computed(() => `例：${autoName() || '訂單查詢、�
 const createSeq = ref(0)
 const tryKey = computed(() => selectedId.value ?? `new-${createSeq.value}`)
 
-/** 關鍵字比對方式；文案與自動回覆的「比對方式」對齊，兩邊講的是同一件事 */
-const KEYWORD_MATCH_OPTIONS: Array<{ value: TriggerKeywordMatch; label: string }> = [
-  { value: 'any', label: '含任一關鍵字' },
-  { value: 'all', label: '含全部關鍵字' },
-  { value: 'exact', label: '內容完全一致' },
-  { value: 'anyText', label: '客人輸入任何內容' },
-]
 
 /** 防重複觸發的間隔選項；與自動回覆共用同一份，兩邊講的是同一件事 */
 const COOLDOWN_OPTIONS = AUTO_REPLY_COOLDOWN_OPTIONS
@@ -1421,11 +1444,18 @@ function riskyKeywordsOf(node: ScriptTriggerNode): string[] {
   return riskyTriggerKeywords(node.keywords ?? [])
 }
 
+/** 「怎樣才接」（`D-148`）：圓鈕給的值收回四種比對方式之一 */
+function setKeywordMatch(node: ScriptTriggerNode, value: string | number | boolean | undefined) {
+  const v = String(value)
+  if (v === 'any' || v === 'all' || v === 'exact' || v === 'anyText') node.keywordMatch = v
+}
+
+/** 一行一個（`D-148`，同「客人會這樣講」那一格）：例子照比對方式換 */
 function keywordPlaceholder(node: ScriptTriggerNode): string {
   const mode = node.keywordMatch ?? 'any'
-  if (mode === 'all') return '例：訂單 取消（要全部出現才算命中）'
-  if (mode === 'exact') return '例：查訂單（客人要一字不差地打這句）'
-  return '例：退換貨，退費，要退（用逗號或空白分隔，任一命中即觸發）'
+  if (mode === 'all') return '例：\n訂單\n取消'
+  if (mode === 'exact') return '例：\n抽獎\n週年慶'
+  return '例：\n退貨\n退費'
 }
 
 /**
@@ -1575,10 +1605,11 @@ function triggerSummary(script: ScriptRow): string {
     if (!ex.length) return '還沒填客人會怎麼講'
     return ex.length > 1 ? `「${ex[0]}」等 ${ex.length} 句` : `「${ex[0]}」`
   }
+  // 兩種寫法對齊（`D-148`）：「我想查訂單」等 3 句／「抽獎」等 2 個關鍵字
   if (trig.keywordMatch === 'anyText') return '客人輸入任何內容'
   const kw = (trig.keywords ?? []).filter(Boolean)
   if (!kw.length) return '還沒填關鍵字'
-  return kw.length > 1 ? `打了「${kw[0]}」等 ${kw.length} 個字` : `打了「${kw[0]}」`
+  return kw.length > 1 ? `「${kw[0]}」等 ${kw.length} 個關鍵字` : `「${kw[0]}」`
 }
 
 /**
@@ -2349,13 +2380,11 @@ function deepCloneNodes(nodes: ScriptNode[] = []): ScriptNode[] {
 }
 
 // ── Node operations ─────────────────────────────────────────────────
-function updateKeywords(node: ScriptTriggerNode, value: string) {
-  node.keywords = String(value || '')
-    .split(/[\n,，、\s]+/g)
-    .map(k => k.trim())
-    .filter(Boolean)
-    .slice(0, 20)
-}
+/**
+ * 關鍵字那一格的分隔（`D-148`）：一行一個，逗號也算。⛔ 空白不算：以前空白也拆，「LINE Pay」變成
+ * 「LINE」「Pay」兩個字，選「一模一樣才接」時客人打「LINE Pay」反而接不到。
+ */
+const KEYWORD_SEPARATOR = /[\n,，、]+/g
 
 /**
  * 觸發方式有三種（關鍵字／看意思／客人加好友時；畫面上只在前兩種之間切），但資料上是兩個欄位
@@ -2371,15 +2400,6 @@ function setTriggerMode(node: ScriptTriggerNode, mode: string | number | boolean
   const m: TriggerMatchMode = mode === 'semantic' ? 'semantic' : 'keyword'
   node.matchMode = m
   if (m === 'semantic' && !node.examples) node.examples = []
-}
-
-function updateExamples(node: ScriptTriggerNode, value: string) {
-  // 一行一句（語意比對靠整句意思，不需逗號拆短詞）
-  node.examples = String(value || '')
-    .split(/\n+/g)
-    .map(e => e.trim())
-    .filter(Boolean)
-    .slice(0, MAX_TRIGGER_EXAMPLES)
 }
 
 function addNode(type: 'collect' | 'reply' | 'branch' | 'quickReply' | 'tag' | 'saveLead' | 'module') {
