@@ -47,6 +47,8 @@
 @use "./components/follow-welcome";
 @use "./components/store-profile";
 @use "./components/marketing-calendar";
+// LINE 訊息還剩幾則（`D-146`）：登入後第一頁最上面那一條
+@use "./components/line-quota";
 // 知識庫改版（`C-315`／`C-317`，D-126）：右邊「問 AI 一題」、「補一條知識」小視窗
 @use "./components/knowledge-ask";
 @use "./components/knowledge-add-one";

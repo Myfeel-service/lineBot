@@ -20,6 +20,8 @@ import { getWorkspaceSubscription, buildPlanView, effectivePlanOf } from './bill
 import { getAiCallCeilingStatus } from './reply-quota'
 import { getQuotaAnswered, getCurrentMonthUsageCounts, currentYyyyMm, monthlyBillable } from './ai-usage'
 import { derivePlanState } from '~~/shared/billing/plan-state'
+import { getLineMonthSendBreakdown, readLineMessageQuota } from './line'
+import { lineQuotaLevel, lineQuotaResetLabel } from '~~/shared/line-quota'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { triggerKeywordsInUse } from '~~/shared/types/ai-script'
@@ -402,6 +404,51 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         resetsOn: plan?.currentPeriodEnd ?? null,
         overagePerReply: plan?.overagePerReply ?? null,
         // ⛔ 金額、卡號、扣款委託一律不回:這裡是「還能不能用」,不是帳務頁。
+      }
+    },
+  },
+  get_line_quota: {
+    // `D-146`（2026-10-22）：老闆「LINE 這個月還剩幾則是很重要的訊息」。以前小幫手只查得到 AI 回覆額度，
+    // 問 LINE 剩幾則會被拿 get_plan_quota 的數字回答——那是另一種「則」。
+    description: 'LINE 官方帳號這個月的訊息則數:上限、已送、還剩、幾號重算,以及這個月用在哪(群發推播／一則一則送的／回覆客人)。'
+      + '問「LINE 還剩幾則 / LINE 額度 / 推播還能發多少 / LINE 訊息快用完了嗎」時用。'
+      + '⛔ 這**不是** AI 回覆額度(那個用 get_plan_quota);兩種都叫「則」,回答時一律說「LINE 訊息」。'
+      + '⛔ 已送、還剩一律說「約」(LINE 說那是大約數,也含在 LINE 官方帳號後台手動發的)。'
+      + '⛔ 上限是方案內含＋加購的合計,⛔ 不可以說成「免費的還剩這麼多」。'
+      + 'unlimited=true 代表沒設上限:只講已送,⛔ 不講還剩或會用完。'
+      + '回覆客人(AI、自動回應)那一項 LINE 不算則數:講用在哪時要分開講,⛔ 不可以加進已送。'
+      + 'state=unconfigured 代表還沒接 LINE;state=error 代表這次問不到,如實講,⛔ 不猜。',
+    requires: 'workspace.read',
+    mutates: false,
+    async run(_db, workspaceId) {
+      const read = await readLineMessageQuota(workspaceId)
+      if (read.kind === 'unconfigured') return { state: 'unconfigured' }
+      if (read.kind === 'error') return { state: 'error', detail: read.detail }
+      const q = read.quota
+      const breakdown = await getLineMonthSendBreakdown(workspaceId)
+      const counted = breakdown ? breakdown.multicast + breakdown.push : 0
+      const pct = (x: number) => (counted ? Math.round((x / counted) * 100) : null)
+      return {
+        state: 'ok',
+        unlimited: q.limit === null,
+        limit: q.limit,
+        usedApprox: q.used,
+        remainingApprox: q.remaining,
+        // ok / near(用到八成) / over(用完了:推播、後台回客人、LINE 通知都送不出去;AI 回客人照常)
+        level: lineQuotaLevel(q),
+        resetsOn: lineQuotaResetLabel(),
+        thisMonthByType: breakdown
+          ? {
+              countedThrough: breakdown.throughLabel,
+              groupBroadcasts: breakdown.multicast,
+              groupBroadcastsPercentOfCounted: pct(breakdown.multicast),
+              oneByOne: breakdown.push,
+              oneByOnePercentOfCounted: pct(breakdown.push),
+              oneByOneIncludes: '你在後台回客人、傳給你的 LINE 通知、試發、活動頁加好友後送的那則、用了客人名字的推播',
+              repliesNotCounted: breakdown.reply,
+              daysLineGaveNoNumber: breakdown.missingDays,
+            }
+          : null,
       }
     },
   },

@@ -1785,6 +1785,9 @@ export async function pushCriticalAlerts(db: Firestore) {
       const already = await wasAiCallCeilingNotified(wid, db).catch(() => false)
       if (already) criticals = criticals.filter(i => i.id !== 'aiCallCeiling')
     }
+    // `D-146`：「LINE 這個月的訊息用完了」**永遠不從 LINE 推**——這則通知本身就用同一份則數送，用完了一定送不出去。
+    // 它有自己的路：八成時先傳一則、用完寄 Email（`notifyLineQuotaLevels`）。
+    criticals = criticals.filter(i => i.id !== 'lineQuotaExhausted')
     const sent = prev.sent ?? {}
     const fresh = criticals.filter(i => now - (sent[i.id] ?? 0) >= CRITICAL_PUSH_REPEAT_MS)
     if (!fresh.length) {

@@ -46,6 +46,8 @@
       <div class="solo-editor-body admin-panel-stack conv-stats-page">
         <!-- 還沒把手機加進 LINE 通知的成員，第一次登入問一次（`C-270`／`D-103`⑧） -->
         <AdminLineNotifyInviteCard />
+        <!-- `D-146`①：LINE 這個月還剩幾則。放在數字列上面、不放進去（那排跟日期區間走，這個每月 1 號重算） -->
+        <AdminLineQuotaStrip />
         <div v-if="kpiLoading" class="tags-loading">
           <div class="spinner" />
           <span>載入中…</span>

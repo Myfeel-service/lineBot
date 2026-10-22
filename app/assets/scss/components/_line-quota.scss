@@ -1,0 +1,136 @@
+/* LINE 訊息還剩幾則（`D-146`）——登入後第一頁（客服對話統計）最上面那一條（AdminLineQuotaStrip）。
+   平常白底一行，跟下面的數字卡同一族、不搶；八成黃、用完紅，顏色照「AI 額度」那條（.quota-banner--near／--over，layout/_main.scss），
+   同一個份量的事長同一個樣子。用完時每一頁的紅條直接用 .quota-banner，這裡不另畫。 */
+.lq-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+
+  &--near {
+    background: #fdf6ec;
+    border-color: #f3d19e;
+  }
+
+  &--over {
+    background: #fef0f0;
+    border-color: #f0a6a6;
+  }
+}
+
+.lq-strip__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.lq-strip__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.lq-strip__icon {
+  font-size: 1.05rem;
+  color: var(--color-line);
+
+  .lq-strip--near & { color: var(--color-warning); }
+  .lq-strip--over & { color: var(--color-error); }
+}
+
+.lq-strip__main {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.lq-strip__bar {
+  flex: 1;
+  min-width: 60px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  overflow: hidden;
+
+  .lq-strip--near & { background: #f6e3c4; }
+  .lq-strip--over & { background: #f8d4d4; }
+}
+
+.lq-strip__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-line);
+
+  .lq-strip--near & { background: var(--color-warning); }
+  .lq-strip--over & { background: var(--color-error); }
+}
+
+/* 沒設上限時沒有進度條，右邊小字照樣貼右 */
+.lq-strip__spacer {
+  flex: 1;
+}
+
+.lq-strip__meta {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  cursor: help;
+}
+
+.lq-strip__info {
+  color: var(--text-muted);
+}
+
+/* 後果那一行跟第一行的字對齊（讓過圖示寬＋間距），按鈕貼右 */
+.lq-strip__note-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-left: 1.45rem;
+}
+
+.lq-strip__note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: #5f4c16;
+
+  .lq-strip--over & { color: #7a1f1f; }
+}
+
+.lq-strip__go {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .lq-strip__row {
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+  }
+
+  /* 手機：進度條自己一行，小字接在主句後面 */
+  .lq-strip__bar {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .lq-strip__spacer {
+    display: none;
+  }
+
+  .lq-strip__note-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding-left: 0;
+  }
+}

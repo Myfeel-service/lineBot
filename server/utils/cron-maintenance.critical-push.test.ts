@@ -193,7 +193,7 @@ describe('嚴重異常推播', () => {
     wasQuotaExhaustedNotified.mockResolvedValue(false)
     collectWorkspaceAlerts.mockResolvedValue([alert('quotaExceeded')])
     await pushCriticalAlerts(fakeDb(['ws1']))
-    expect(pushedText()).toContain('本期回覆則數用完了')
+    expect(pushedText()).toContain('AI 回覆則數本期用完了')
   })
 
   it('額度用完被讓路時,同批其他紅燈照推（別把整則吞掉）', async () => {
@@ -202,7 +202,7 @@ describe('嚴重異常推播', () => {
     await pushCriticalAlerts(fakeDb(['ws1']))
     const text = pushedText()
     expect(text).toContain('機器人收不到客人訊息')
-    expect(text).not.toContain('本期回覆則數用完了')
+    expect(text).not.toContain('AI 回覆則數本期用完了')
   })
 
   it('`C-8` AI 被叫太多次:這個月的專屬那則（🚫 AI 先停下來了）已送達 → 彙總讓路', async () => {
@@ -217,7 +217,21 @@ describe('嚴重異常推播', () => {
     collectWorkspaceAlerts.mockResolvedValue([alert('aiCallCeiling')])
     await pushCriticalAlerts(fakeDb(['ws1']))
     expect(pushedText()).toContain('AI 被叫太多次、大多答不出來，先停下來了')
-    expect(pushedText()).not.toContain('本期回覆則數用完了')
+    expect(pushedText()).not.toContain('AI 回覆則數本期用完了')
+  })
+
+  it('`D-146` LINE 訊息用完了這顆永遠不從 LINE 推（用同一份則數送，一定送不出去），同批其他紅燈照推', async () => {
+    collectWorkspaceAlerts.mockResolvedValue([alert('lineQuotaExhausted'), alert('lineWebhookBroken')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    const text = pushedText()
+    expect(text).toContain('機器人收不到客人訊息')
+    expect(text).not.toContain('LINE 這個月的訊息用完了')
+  })
+
+  it('`D-146` 只有 LINE 訊息用完了這一顆 → 一則都不推', async () => {
+    collectWorkspaceAlerts.mockResolvedValue([alert('lineQuotaExhausted')])
+    await pushCriticalAlerts(fakeDb(['ws1']))
+    expect(pushMessage).not.toHaveBeenCalled()
   })
 
   it('🔴 一則都沒送成功就不記「已通知」，下一輪要重試', async () => {

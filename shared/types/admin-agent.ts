@@ -12,6 +12,8 @@ export const ADMIN_AGENT_TOOL_LABELS = {
   get_ai_settings: 'AI 設定',
   get_ai_usage: 'AI 用量',
   get_plan_quota: '方案與額度',
+  // `D-146`：LINE 官方帳號的訊息則數（不是上面那個 AI 回覆額度）
+  get_line_quota: 'LINE 訊息還剩幾則',
   get_conversation_stats: '對話統計',
   get_knowledge_status: '知識庫',
   get_current_alerts: '目前異常',

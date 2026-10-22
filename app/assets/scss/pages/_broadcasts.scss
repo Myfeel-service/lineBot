@@ -264,7 +264,7 @@
 }
 
 /* LINE 這個月還剩幾則（`C-380`）——側欄清單頂上的一行，跟上面兩行同一族。
-   平常不用警示色；剩不到一成或用完了才換成跟發送確認視窗那句警告同一組黃（.admin-alert--warn）。 */
+   平常不用警示色；用到八成黃、用完紅（`D-146`：跟登入後第一頁那一條、每一頁紅條同一組顏色）。 */
 .bc-quota-hint {
   margin: 0;
   padding: 0.5rem 0.75rem;
@@ -274,9 +274,14 @@
   line-height: 1.6;
   color: var(--text-secondary);
 
-  &.is-warn {
-    background: #f8efc7;
+  &.is-near {
+    background: #fdf6ec;
     color: #5f4c16;
+  }
+
+  &.is-over {
+    background: #fef0f0;
+    color: #7a1f1f;
   }
 }
 

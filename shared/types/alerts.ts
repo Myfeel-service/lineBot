@@ -68,6 +68,13 @@ export type WorkspaceAlertId =
   | 'knowledgeQuotaFull'
   /** AI 知識量快滿了（達 80%，跟則數 `quotaRunningOut` 同一把尺 `QUOTA_NEAR_THRESHOLD`）。還加得進去，是提前量 */
   | 'knowledgeQuotaRunningOut'
+  /**
+   * LINE 官方帳號這個月的訊息則數用完了（`D-146`）：推播、真人在後台回客人、傳給店家的 LINE 通知都送不出去，
+   * AI／自動回應回客人照常（那是回覆，LINE 不計）。⛔ 跟 quotaExceeded（MiniMe 的 AI 回覆則數）是兩回事。
+   */
+  | 'lineQuotaExhausted'
+  /** LINE 訊息用到八成（`D-146`，尺在 `shared/line-quota.ts` 的 `lineQuotaLevel`）。還送得出去，是提前量 */
+  | 'lineQuotaRunningOut'
   /** 自動扣款失敗，寬限期中 */
   | 'paymentPastDue'
   /** 發票開立失敗 */
@@ -169,12 +176,16 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   knowledgeOutdated: '有資料內容變了還沒重新學',
   anyTextBlocking: 'AI 被一條自動回應擋住了',
   llmError: 'AI 服務近 24 小時失敗過',
-  quotaExceeded: '本期回覆則數用完了',
-  quotaRunningOut: '回覆則數快用完了',
+  // `D-146`：前面加「AI」——加了「LINE 訊息」那兩顆之後，光講「回覆則數」分不出是哪一種
+  quotaExceeded: 'AI 回覆則數本期用完了',
+  quotaRunningOut: 'AI 回覆則數快用完了',
   aiCallCeiling: 'AI 被叫太多次、大多答不出來，先停下來了',
   // `D-131`：名字跟官網、條款、方案頁同一個（AI 知識量）
   knowledgeQuotaFull: 'AI 知識量滿了',
   knowledgeQuotaRunningOut: 'AI 知識量快滿了',
+  // `D-146`：一律叫「LINE 訊息」，跟 AI 回覆則數那兩顆分得出來（示意畫布 ③）
+  lineQuotaExhausted: 'LINE 這個月的訊息用完了',
+  lineQuotaRunningOut: 'LINE 訊息快用完了',
   // ⛔標題必須把「這期／下期」講出來（2026-08-28 老闆拍板）：這兩顆同在帳單頁，
   // 原本叫「自動扣款沒有成功」與「付款成功但自動扣款沒綁好」——文案用詞重疊 26%（全表最高），
   // 並列在清單裡幾乎分不出來。差別本來就只有一個字：壞的是**這期**還是**下期**。
@@ -249,6 +260,9 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   // ⛔ 滿了也只是 warning：客人問問題照樣有人答（AI 用已有的知識），受影響的是「加新的」——不進紅點、不推 LINE
   knowledgeQuotaFull: 'warning',
   knowledgeQuotaRunningOut: 'warning',
+  // 用完＝同事在後台回客人的訊息送不出去、推播發不出去＝客人收不到 → 影響客人（紅）。八成是提前量（黃）
+  lineQuotaExhausted: 'critical',
+  lineQuotaRunningOut: 'warning',
   paymentPastDue: 'critical',
   handoffNotifyMissing: 'warning',
   // 同一份名單的「一部分」：其他人照樣收得到，客人的找真人仍然有人知道 → 跟上一顆同級

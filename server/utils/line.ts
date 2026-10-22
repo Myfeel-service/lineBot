@@ -117,36 +117,130 @@ export async function showLoadingAnimation(
 }
 
 const LINE_QUOTA_TIMEOUT_MS = 4000
+/**
+ * `D-146`：登入後第一頁那一條、每一頁紅條、小幫手都會問，5 分鐘內同一個帳號只問 LINE 一次（同 webhook 那顆檢查）。
+ * 推播頁與發送前確認照舊每次現問（剛送完就要看到新的數字）。
+ */
+const LINE_QUOTA_CACHE_MS = 5 * 60_000
+
+export type LineQuotaRead =
+  | { kind: 'ok', quota: LineMessageQuota }
+  /** 還沒接 LINE（沒有存取權杖）：沒有則數這回事，畫面不顯示、小幫手也不亮 */
+  | { kind: 'unconfigured' }
+  /** 問了沒問到（LINE 退件、逾時、格式看不懂）：⛔ 不等於沒事，小幫手要照「這次查不到」講 */
+  | { kind: 'error', detail: string }
+
+const _lineQuotaCache = new Map<string, { at: number, read: LineQuotaRead }>()
+
+function rememberLineQuota(wid: string, read: LineQuotaRead): LineQuotaRead {
+  _lineQuotaCache.set(wid, { at: Date.now(), read })
+  return read
+}
 
 /**
- * LINE 這個月還能送幾則（`C-380`，數字的意思見 `shared/line-quota.ts`）。
- * 讀不到（還沒接 LINE、憑證失效、LINE 沒回）回 null，畫面整行不顯示。
- * ⛔ 不讓它拖住呼叫它的端點：推播清單與發送前確認都會順便問，LINE 慢的時候最多等 4 秒就放棄。
+ * LINE 這個月還能送幾則（`C-380`，數字的意思見 `shared/line-quota.ts`）：現問、不看快取，問到就順手更新快取。
+ * ⛔ 不讓它拖住呼叫它的端點：LINE 慢的時候最多等 4 秒就放棄（回 error）。
  */
-export async function getLineMessageQuota(workspaceId: string): Promise<LineMessageQuota | null> {
+export async function readLineMessageQuota(workspaceId: string): Promise<LineQuotaRead> {
+  const wid = String(workspaceId || '').trim()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const { client } = await getMessagingBundle(workspaceId)
+    const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
+    if (!String(channelAccessToken || '').trim()) return rememberLineQuota(wid, { kind: 'unconfigured' })
+    const { client } = await getMessagingBundle(wid)
     const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), LINE_QUOTA_TIMEOUT_MS) })
     const res = await Promise.race([
       Promise.all([client.getMessageQuota(), client.getMessageQuotaConsumption()]),
       timeout,
     ])
     if (!res) {
-      console.warn(`[getLineMessageQuota] ${workspaceId} LINE 超過 ${LINE_QUOTA_TIMEOUT_MS}ms 沒回，這次不顯示`)
-      return null
+      console.warn(`[getLineMessageQuota] ${wid} LINE 超過 ${LINE_QUOTA_TIMEOUT_MS}ms 沒回，這次不顯示`)
+      return { kind: 'error', detail: `LINE 超過 ${LINE_QUOTA_TIMEOUT_MS / 1000} 秒沒回` }
     }
     const q = lineQuotaFromLine(res[0], res[1])
-    if (!q) console.warn(`[getLineMessageQuota] ${workspaceId} LINE 回的格式看不懂：`, JSON.stringify(res))
-    return q
+    if (!q) {
+      console.warn(`[getLineMessageQuota] ${wid} LINE 回的格式看不懂：`, JSON.stringify(res))
+      return { kind: 'error', detail: 'LINE 回的格式看不懂' }
+    }
+    return rememberLineQuota(wid, { kind: 'ok', quota: q })
   }
   catch (err) {
-    console.warn(`[getLineMessageQuota] ${workspaceId} 讀不到 LINE 則數：`, lineMulticastErrorDetail(err))
-    return null
+    const detail = lineMulticastErrorDetail(err)
+    console.warn(`[getLineMessageQuota] ${wid} 讀不到 LINE 則數：`, detail)
+    return { kind: 'error', detail }
   }
   finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+/** 5 分鐘內問過就用上次的。只記「問到了」與「沒接 LINE」；問失敗不記，下一次照問 */
+export async function readLineMessageQuotaCached(workspaceId: string, opts?: { skipCache?: boolean }): Promise<LineQuotaRead> {
+  const wid = String(workspaceId || '').trim()
+  const hit = opts?.skipCache ? null : _lineQuotaCache.get(wid)
+  if (hit && Date.now() - hit.at < LINE_QUOTA_CACHE_MS) return hit.read
+  return readLineMessageQuota(wid)
+}
+
+/** 讀不到（還沒接 LINE、憑證失效、LINE 沒回）回 null，畫面整行不顯示 */
+export async function getLineMessageQuota(workspaceId: string): Promise<LineMessageQuota | null> {
+  const r = await readLineMessageQuota(workspaceId)
+  return r.kind === 'ok' ? r.quota : null
+}
+
+export type LineMonthSendBreakdown = {
+  /** 群發（我們的推播走這條） */
+  multicast: number
+  /** 一則一則送的：後台回客人、LINE 通知、試發、活動頁加好友那則、用了客人名字的推播 */
+  push: number
+  /** 回覆客人剛傳來的那則（AI、自動回應）：LINE 不算則數 */
+  reply: number
+  /** 統計到哪一天（「10/21」）；這個月還沒有任何一天可以查＝null */
+  throughLabel: string | null
+  /** 有幾天問不到（LINE 還沒算好、或那天不到 20 則它不給數字） */
+  missingDays: number
+}
+
+/**
+ * 這個月到昨天為止，各種送法各送了幾則（`D-146`：問小幫手「LINE 還剩幾則」時順便講用在哪）。
+ * ⚠️ LINE 的統計照**日本時間**切天、隔天才有數字、一天不到 20 則不給數字——所以只算到昨天，問不到的天數照實回。
+ * 一天問 3 支（LINE 這幾支每秒 2,000 次上限），一個月最多約 90 次。問不到回 null。
+ */
+export async function getLineMonthSendBreakdown(workspaceId: string, nowMs: number = Date.now()): Promise<LineMonthSendBreakdown | null> {
+  try {
+    const { client } = await getMessagingBundle(workspaceId)
+    const jstToday = new Date(nowMs + 9 * 3600_000)
+    const y = jstToday.getUTCFullYear()
+    const m = jstToday.getUTCMonth()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    const days = Array.from({ length: jstToday.getUTCDate() - 1 }, (_, i) => `${y}${p2(m + 1)}${p2(i + 1)}`)
+    const sum = { multicast: 0, push: 0, reply: 0 }
+    let missingDays = 0
+    await Promise.all(days.map(async (date) => {
+      const [mc, ps, rp] = await Promise.all([
+        client.getNumberOfSentMulticastMessages(date),
+        client.getNumberOfSentPushMessages(date),
+        client.getNumberOfSentReplyMessages(date),
+      ])
+      if ([mc, ps, rp].some(r => r.status !== 'ready')) missingDays++
+      sum.multicast += mc.status === 'ready' ? mc.success ?? 0 : 0
+      sum.push += ps.status === 'ready' ? ps.success ?? 0 : 0
+      sum.reply += rp.status === 'ready' ? rp.success ?? 0 : 0
+    }))
+    return { ...sum, throughLabel: days.length ? `${m + 1}/${days.length}` : null, missingDays }
+  }
+  catch (err) {
+    console.warn(`[getLineMonthSendBreakdown] ${workspaceId} 問不到這個月各種送法的則數：`, lineMulticastErrorDetail(err))
+    return null
+  }
+}
+
+/**
+ * 送東西被 LINE 擋下「這個月用完了」→ 丟掉快取（`D-146`）：下一次問就是新的，紅色不用等 5 分鐘。
+ * ⛔ 不在這裡自己記「用完了」：已送是大約數，而店家可能剛在 LINE 後台加購——以 LINE 回的數字為準。
+ */
+function forgetLineQuotaOnRejection(err: unknown, workspaceId: string) {
+  if (lineSendFailureKind(err) === 'monthlyQuota') _lineQuotaCache.delete(String(workspaceId || '').trim())
 }
 
 /** Push a message to a LINE userId */
@@ -156,7 +250,13 @@ export async function pushMessage(
   workspaceId: string,
 ) {
   const { client } = await getMessagingBundle(workspaceId)
-  return client.pushMessage({ to: userId, messages })
+  try {
+    return await client.pushMessage({ to: userId, messages })
+  }
+  catch (err) {
+    forgetLineQuotaOnRejection(err, workspaceId)
+    throw err
+  }
 }
 
 export type LineMessageContentResult =
@@ -295,6 +395,7 @@ export async function multicastMessage(
             `[multicastMessage] batch ${i}~${i + batch.length - 1} failed:`,
             lineMulticastErrorDetail(err2),
           )
+          forgetLineQuotaOnRejection(err2, workspaceId)
           failedIds.push(...batch)
         }
       }
@@ -303,6 +404,7 @@ export async function multicastMessage(
           `[multicastMessage] batch ${i}~${i + batch.length - 1} failed:`,
           lineMulticastErrorDetail(err),
         )
+        forgetLineQuotaOnRejection(err, workspaceId)
         failedIds.push(...batch)
       }
     }
@@ -395,6 +497,7 @@ export async function pushMessagesPerRecipient(
         const kind = lineSendFailureKind(err)
         const detail = describeLineSendFailure(err) ?? lineMulticastErrorDetail(err)
         if (kind === 'monthlyQuota' || kind === 'auth') {
+          forgetLineQuotaOnRejection(err, workspaceId)
           stoppedReason ??= detail
           return { ok: false, status, detail }
         }

@@ -63,7 +63,7 @@ export interface AlertDefinition {
    * ⚠️2026-08-27 五輪拍板：提醒帶**不因頁面自己也有呈現而閉嘴**（四輪曾做過
    * presents 抑制，老闆否決：「進來之後就不知道問題在哪」）。頁內有重複呈現沒關係，
    * 提醒帶負責第一眼，「帶我看」聚光燈負責指到那個區塊。
-   * 唯一的例外是知識庫來源頁的五顆（`C-314`，見 PAGE_LIST_COVERED_ALERTS）。
+   * 例外只有 PAGE_LIST_COVERED_ALERTS 那張表：知識庫來源頁的五顆（`C-314`）、登入後第一頁的 LINE 訊息兩顆（`D-146`）。
    */
   anchor?: { selector: string, note: string }
   /**
@@ -334,6 +334,28 @@ const ALERTS: AlertDefinition[] = [
     requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
     anchor: { selector: '[data-tour="bill-knowledge"]', note: '這一區是 AI 知識量；到知識庫刪掉不需要的，或按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+  },
+  {
+    // `D-146`：LINE 官方帳號的訊息則數（不是 AI 回覆則數）。後果那句跟登入後第一頁那一條、每一頁紅條同一句（shared/line-quota.ts）；
+    // 這裡沒有日期可帶（重算日在 detail 那一行），所以寫「下個月 1 號」
+    id: 'lineQuotaExhausted',
+    icon: ChatDotRound,
+    impact: '推播、你在後台回客人的訊息、傳給你的 LINE 通知現在都送不出去，下個月 1 號才恢復（AI 回客人照常）。',
+    cta: '去看 LINE 訊息用量',
+    // 能處理的人＝管 LINE 那一位（加購或升級要到 LINE 官方帳號後台）；客服看得到每一頁最上面的紅條
+    requires: 'line.manage',
+    // 用量那一條在登入後第一頁（客服對話統計）最上面，「前往 LINE 官方帳號後台」就在那一條上
+    route: wid => `/admin/${wid}/conversation-stats`,
+    anchor: { selector: '[data-tour="cs-line-quota"]', note: '要現在恢復，按這一條右邊的「前往 LINE 官方帳號後台」升級方案或加購。' },
+  },
+  {
+    id: 'lineQuotaRunningOut',
+    icon: ChatDotRound,
+    impact: '用完後，推播、你在後台回客人的訊息、傳給你的 LINE 通知都會送不出去。AI 回客人不受影響。',
+    cta: '去看 LINE 訊息用量',
+    requires: 'line.manage',
+    route: wid => `/admin/${wid}/conversation-stats`,
+    anchor: { selector: '[data-tour="cs-line-quota"]', note: '趁還沒用完，按這一條右邊的「前往 LINE 官方帳號後台」升級方案或加購。' },
   },
   {
     id: 'paymentPastDue',
@@ -693,6 +715,9 @@ function alertRoutes(def: AlertDefinition, scopes: WorkspaceAlertScope[] | undef
  */
 export const PAGE_LIST_COVERED_ALERTS: Record<string, readonly WorkspaceAlertId[]> = {
   'knowledge/sources': ['knowledgeSyncFailed', 'knowledgeDetectStalled', 'knowledgeIndexFailed', 'knowledgeWrongAnswers', 'knowledgeOutdated'],
+  // `D-146`：登入後第一頁最上面那一條「LINE 訊息」本身就是這兩顆（同一個位置、同一個顏色、同一句後果、按鈕就在上面），
+  // 頁頂提醒帶再講一次＝同一件事上下兩條
+  'conversation-stats': ['lineQuotaExhausted', 'lineQuotaRunningOut'],
 }
 
 /**

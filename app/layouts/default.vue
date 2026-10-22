@@ -171,6 +171,8 @@
       <!-- 額度快用完 / 已用完的升級提示。掛在 layout 而不是某一頁：
            「快沒額度了」不管他人在哪一頁都該知道，而額度用完更是服務中斷。 -->
       <AdminQuotaBanner v-if="workspaceId" />
+      <!-- LINE 訊息用完了（`D-146`）：推播、後台回客人、LINE 通知都送不出去——跟上面那條同一個份量，所有角色都要知道 -->
+      <AdminLineQuotaBanner v-if="workspaceId" />
       <!-- 頁面級提醒條（D-33 二輪）：這一頁現在有的事＋下一步按鈕。
            掛在 layout＝每一頁同位置同長相；哪頁有事由側欄的點的同一份資料決定。 -->
       <AdminPageAlertStrip v-if="workspaceId" />

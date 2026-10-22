@@ -74,7 +74,8 @@ const show = computed(() => {
 
 const title = computed(() => {
   if (tone.value === 'over') return 'AI 已停止自動回覆'
-  return `本期額度只剩 ${state.value.remaining?.toLocaleString() ?? 0} 則`
+  // `D-146`：「AI 回覆」講明是哪一種則數（LINE 訊息那條也會出現在同一個位置）
+  return `AI 回覆本期只剩 ${state.value.remaining?.toLocaleString() ?? 0} 則`
 })
 
 function goUnanswered() {

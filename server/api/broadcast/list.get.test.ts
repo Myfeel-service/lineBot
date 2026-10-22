@@ -15,7 +15,8 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
 const workspaceBroadcastTier = vi.fn(async () => 'basic')
 vi.mock('~~/server/utils/broadcast-plan-gate', () => ({ workspaceBroadcastTier }))
 const getLineMessageQuota = vi.fn(async (): Promise<unknown> => ({ limit: 3000, used: 210, remaining: 2790 }))
-vi.mock('~~/server/utils/line', () => ({ getLineMessageQuota }))
+const readLineMessageQuotaCached = vi.fn(async (): Promise<unknown> => ({ kind: 'ok', quota: { limit: 3000, used: 2500, remaining: 500 } }))
+vi.mock('~~/server/utils/line', () => ({ getLineMessageQuota, readLineMessageQuotaCached }))
 
 let query: Record<string, unknown> = {}
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -27,6 +28,7 @@ beforeEach(() => {
   listDocs.mockClear()
   workspaceBroadcastTier.mockClear()
   getLineMessageQuota.mockClear()
+  readLineMessageQuotaCached.mockClear()
   query = {}
 })
 
@@ -72,6 +74,23 @@ describe('推播清單：順便回 LINE 這個月還剩幾則', () => {
     const r = await (handler as any)({})
     expect(r.lineQuota).toBeNull()
     expect(r.items).toHaveLength(1)
+  })
+
+  it('`D-146` lineQuotaOnly=1 → 只回則數（走 5 分鐘快取），⛔ 推播清單一筆都沒讀、也不問方案', async () => {
+    query = { lineQuotaOnly: '1' }
+    const r = await (handler as any)({})
+    expect(r).toEqual({ lineQuota: { limit: 3000, used: 2500, remaining: 500 } })
+    expect(readLineMessageQuotaCached).toHaveBeenCalledWith('ws1')
+    expect(listDocs).not.toHaveBeenCalled()
+    expect(workspaceBroadcastTier).not.toHaveBeenCalled()
+  })
+
+  it('`D-146` lineQuotaOnly：沒接 LINE、問不到 → null（畫面不顯示）', async () => {
+    query = { lineQuotaOnly: '1' }
+    readLineMessageQuotaCached.mockResolvedValueOnce({ kind: 'unconfigured' })
+    expect(await (handler as any)({})).toEqual({ lineQuota: null })
+    readLineMessageQuotaCached.mockResolvedValueOnce({ kind: 'error', detail: 'x' })
+    expect(await (handler as any)({})).toEqual({ lineQuota: null })
   })
 
   it('只帶 withPlan（舊的呼叫）→ 不去問 LINE、也沒有 lineQuota 這一格', async () => {

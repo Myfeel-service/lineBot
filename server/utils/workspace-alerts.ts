@@ -32,6 +32,8 @@ import { HUMAN_STALE_HOURS, customerReturnedAtMs } from '~~/shared/types/convers
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 import { normalizeLineUserId, notifyRecipients } from '~~/shared/line-notify-list'
 import { isAutoRetryExhausted } from '~~/shared/knowledge-relearn'
+import { readLineMessageQuotaCached, type LineQuotaRead } from './line'
+import { lineQuotaAlertDetail, lineQuotaLevel, type LineQuotaLevel } from '~~/shared/line-quota'
 
 /**
  * 工作區「目前異常」的訊號收集核心。
@@ -335,6 +337,17 @@ export function knowledgeQuotaProbe(kind: 'full' | 'near', usage: PlanUsageState
   return usage.state === 'near'
     ? { active: true, detail: `已用 ${usage.used} / ${usage.limit} 條（${usage.percentRaw}%）` }
     : { active: false }
+}
+
+/**
+ * LINE 訊息用完了／快用完（`D-146`）：兩顆共用同一次查詢，各自只認自己那一級（同一時間只會亮一顆）。
+ * 還沒接 LINE＝不亮（沒有則數這回事；沒接 LINE 有自己的提醒）；⛔ 問不到＝丟錯→unknown，不是「沒事」。
+ */
+export function lineQuotaProbe(r: LineQuotaRead, want: Exclude<LineQuotaLevel, 'ok'>): ProbeResult {
+  if (r.kind === 'unconfigured') return { active: false }
+  if (r.kind === 'error') throw new Error(`查不到 LINE 則數：${r.detail}`)
+  if (lineQuotaLevel(r.quota) !== want) return { active: false }
+  return { active: true, detail: lineQuotaAlertDetail(r.quota) }
 }
 
 /** 把一次判定包成 active/clear；丟錯降級為 unknown（狀態未知，不等於沒問題） */
@@ -971,6 +984,8 @@ export async function collectWorkspaceAlerts(
 
   // webhook 只問 LINE 一次，「確定收不到」與「網址不一致」兩顆 probe 共用同一個答案
   const webhookCheckPromise = canSettings ? checkLineWebhook(wid, skipCache) : null
+  // LINE 訊息還剩幾則（`D-146`）：也只問一次，「用完了」與「快用完」兩顆共用（5 分鐘快取，同上面 webhook 那顆）
+  const lineQuotaPromise = canSettings ? readLineMessageQuotaCached(wid, { skipCache }) : null
 
   // LIFF endpoint 也只探一次，「到不了活動頁」與「網址不一致」兩顆 probe 共用同一份結果
   // （快取在 liff-endpoint-remote 內、按 liffId 分鍵——同一個 LIFF 被多個工作區用也只探一次）
@@ -1140,6 +1155,8 @@ export async function collectWorkspaceAlerts(
             detail: `上次執行約 ${humanizeHours(ageMs / 3600_000)}前`,
           }
         }),
+        probe('lineQuotaExhausted', async () => lineQuotaProbe(await lineQuotaPromise!, 'over')),
+        probe('lineQuotaRunningOut', async () => lineQuotaProbe(await lineQuotaPromise!, 'near')),
         probe('paymentPastDue', async () => {
           const plan = buildPlanView(await subPromise!)
           if (plan?.status !== 'past_due') return { active: false }

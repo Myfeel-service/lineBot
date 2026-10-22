@@ -30,8 +30,8 @@
         <span v-else>📝 草稿都處理完了</span>
         <span class="bc-draft-hint__act">{{ draftFilterOn ? '顯示全部' : '只看草稿' }}</span>
       </button>
-      <!-- `C-380`：LINE 這個月還剩幾則（讀不到整行不顯示）。只有快用完／用完才換提醒色 -->
-      <p v-if="lineQuotaRow" class="bc-quota-hint" :class="{ 'is-warn': lineQuotaRow.warn }" :title="lineQuotaRow.title" data-testid="bc-quota-hint">
+      <!-- `C-380`：LINE 這個月還剩幾則（讀不到整行不顯示）。八成黃、用完紅（`D-146`，跟登入後第一頁那一條同一組顏色） -->
+      <p v-if="lineQuotaRow" class="bc-quota-hint" :class="`is-${lineQuotaRow.level}`" :title="lineQuotaRow.title" data-testid="bc-quota-hint">
         {{ lineQuotaRow.text }}
       </p>
       <div v-if="loading && !broadcasts.length" class="split-sidebar-loading">

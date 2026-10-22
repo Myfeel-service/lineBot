@@ -2,7 +2,7 @@ import { listDocs } from '~~/server/utils/firebase'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
-import { getLineMessageQuota } from '~~/server/utils/line'
+import { getLineMessageQuota, readLineMessageQuotaCached } from '~~/server/utils/line'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -22,6 +22,17 @@ export default defineEventHandler(async (event) => {
    */
   if (query.planOnly) {
     return { broadcastTier: await workspaceBroadcastTier(workspaceId) }
+  }
+
+  /**
+   * `lineQuotaOnly=1`：**只問 LINE 這個月還剩幾則**（`D-146`）——登入後第一頁那一條、用完時每一頁最上面的紅條要用。
+   * 跟 `planOnly` 同一個做法：放在推播自己的端點、排在讀清單之前（⛔ 不為了一個數字把整個推播集合讀一遍），
+   * 不另開端點（多一支路由 typecheck 會在不相干的地方爆型別太深）。走 5 分鐘快取：每換一頁都會問，不必每次打 LINE。
+   * null＝還沒接 LINE 或這次問不到（畫面不顯示）。
+   */
+  if (query.lineQuotaOnly) {
+    const r = await readLineMessageQuotaCached(workspaceId)
+    return { lineQuota: r.kind === 'ok' ? r.quota : null }
   }
 
   const statusFilter = query.status as string | undefined
