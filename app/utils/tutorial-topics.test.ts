@@ -21,10 +21,12 @@ const SETUP_STATUS_FILE = join(APP_DIR, 'composables/useSetupStatus.ts')
 /**
  * 由程式動態組出來的錨點，掃 .vue 的字面值找不到，要在這裡登記。
  * flow-sys-*：flow.vue 用 `flow-sys-${flow.moduleType}` 產生。
+ * scr-reply：ai-scripts.vue「最後」那一段只掛在第一種結尾的回覆上（`:data-tour="ei === 0 ? 'scr-reply' : undefined"`）；
+ *   `D-150` 拿掉流程圖編法以前，那邊的回覆卡有一個字面值的，掃得到。
  */
 // ⛔ `flow-sys-welcome` 2026-09-21 隨歡迎模組一起拿掉（`D-23`）——那一步教的是一顆
 //    沒有任何執行路徑的模組。留在這裡的話，哪天有人把它加回導覽也不會被擋下來。
-const DYNAMIC_ANCHORS = new Set(['flow-sys-live_agent'])
+const DYNAMIC_ANCHORS = new Set(['flow-sys-live_agent', 'scr-reply'])
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

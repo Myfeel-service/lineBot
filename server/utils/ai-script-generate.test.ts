@@ -189,3 +189,40 @@ describe('加好友觸發（事件型）', () => {
     expect(src).toContain('"triggerEvent": "follow"')
   })
 })
+
+describe('generateScriptDraft：排不進設定畫面的步驟（`D-150`）', () => {
+  /** 存進客人資料放在兩題中間：存得了、走得通，但問答清單排不進去（會列在「排不進清單的步驟」） */
+  const MID_SAVE = {
+    name: '活動報名',
+    rootNodeId: 't',
+    nodes: [
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: [], examples: ['我要報名'], priority: 50, next: 'c1' },
+      { id: 'c1', type: 'collect', question: '請問大名?', fieldName: 'name', format: 'any', next: 's1' },
+      { id: 's1', type: 'saveLead', fieldMap: [{ fromField: 'name', attrKey: '姓名' }], next: 'c2' },
+      { id: 'c2', type: 'collect', question: '請留電話', fieldName: 'phone', format: 'phone', next: 'r1' },
+      { id: 'r1', type: 'reply', text: '報名完成', thenHandoff: false },
+    ],
+  }
+  const END_SAVE = {
+    ...MID_SAVE,
+    nodes: [
+      MID_SAVE.nodes[0], { ...MID_SAVE.nodes[1], next: 'c2' }, { ...MID_SAVE.nodes[3], next: 's1' },
+      { ...MID_SAVE.nodes[2], next: 'r1' }, MID_SAVE.nodes[4],
+    ],
+  }
+
+  it('第一次把存進客人資料放在兩題中間 → 回饋一次讓它挪到結尾前面', async () => {
+    generateJson.mockResolvedValueOnce(reply(MID_SAVE)).mockResolvedValueOnce(reply(END_SAVE))
+    const draft = await generateScriptDraft('報名要問姓名電話')
+    expect(generateJson).toHaveBeenCalledTimes(2)
+    expect(String(generateJson.mock.calls[1]![0])).toContain('排不進設定畫面的步驟')
+    expect(draft.nodes.find(n => n.id === 's1')).toMatchObject({ next: 'r1' })
+  })
+
+  it('第二次還是一樣 → 照收（畫面照樣看得到、刪得掉），不整份失敗', async () => {
+    generateJson.mockResolvedValueOnce(reply(MID_SAVE)).mockResolvedValueOnce(reply(MID_SAVE))
+    const draft = await generateScriptDraft('報名要問姓名電話')
+    expect(validateScriptDoc({ name: 'x', nodes: draft.nodes, rootNodeId: draft.rootNodeId })).toBeNull()
+    expect(draft.nodes.find(n => n.id === 's1')).toMatchObject({ next: 'c2' })
+  })
+})

@@ -509,7 +509,7 @@ describe('validateScriptDoc：圖驗證（分支 / 快速回覆 / 循環）', ()
       { id: 'r1', type: 'reply', text: 'a', thenHandoff: false },
       { id: 'r2', type: 'reply', text: 'b', thenHandoff: false },
     ]
-    expect(validateScriptDoc({ ...base, nodes })).toMatch(/重複的按鈕文字/)
+    expect(validateScriptDoc({ ...base, nodes })).toMatch(/兩顆按鈕都叫「其他」/)
   })
 
   it('rejects an orphan node (unreachable from trigger)', () => {

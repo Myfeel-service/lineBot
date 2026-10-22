@@ -23,7 +23,7 @@ export const SCRIPT_NODE_TYPE_LABELS: Record<ScriptNodeType, string> = {
   trigger: '什麼時候開始',
   collect: '問一題',
   reply: '回客人',
-  branch: '依答案分路',
+  branch: '看答案走不同路',
   quickReply: '給客人按鈕選',
   tag: '貼標籤',
   saveLead: '存進客人資料',
@@ -208,6 +208,12 @@ export interface ScriptTagNode {
   /** 要貼的標籤 id（對應 workspace 既有標籤系統） */
   addTagIds: string[]
   next: string
+  /**
+   * 貼在路上（`D-150`②：按了那顆按鈕就貼），不是某一種結尾的一部分。引擎照樣只是「走到這裡就貼」，
+   * 這個記號只給設定畫面分辨：沒有它時，「按鈕 → 貼標籤 → 結尾」會被讀成那一種結尾的標籤，
+   * 之後別的按鈕也接到那一種結尾就會一起被貼。
+   */
+  onRoute?: boolean
 }
 
 /** ⑪「存進客人資料」的單欄映射：把 collected[fromField] 寫進 user attributes[attrKey] */
@@ -460,33 +466,34 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
       continue
     }
     const outs = outgoingNodeIds(n)
+    // 2026-10-23（`D-150`）：訊息跟畫面同一套叫法——看答案走不同路／其他答案／給客人按鈕選／貼標籤
     if (n.type === 'branch') {
-      if (!n.defaultNext || !ids.has(n.defaultNext)) return `「依答案分路」步驟請設定「其餘情況」的下一步`
+      if (!n.defaultNext || !ids.has(n.defaultNext)) return '「看答案走不同路」請選「其他答案」要去哪'
       for (const c of n.cases) {
         const field = c.field?.trim() ?? ''
-        if (!field) return '分路條件請選擇要判斷的欄位'
-        if (!collectFieldNames.has(field)) return `分路條件的欄位「${field}」沒有對應的收集步驟，請確認欄位名`
+        if (!field) return '「看答案走不同路」每一條都要選看哪一題的答案'
+        if (!collectFieldNames.has(field)) return `「看答案走不同路」看的是「${SCRIPT_PRESET_FIELD_LABELS[field] ?? field}」，但沒有問這一題`
         if ((c.op === 'equals' || c.op === 'contains') && !String(c.value ?? '').trim()) {
-          return '分路條件（等於／包含）請填寫比較值'
+          return '「看答案走不同路」請填寫答案是什麼'
         }
-        if (!c.next || !ids.has(c.next)) return '分路條件請指定條件成立要跳到的步驟'
+        if (!c.next || !ids.has(c.next)) return '「看答案走不同路」每一條都要選去哪'
       }
     }
     else if (n.type === 'quickReply') {
-      if (!n.question?.trim()) return '快速回覆步驟請填寫問句（會和按鈕一起送出）'
-      if (n.options.length === 0) return '快速回覆步驟請至少新增一個選項'
+      if (!n.question?.trim()) return '「給客人按鈕選」請填寫問句（會和按鈕一起送出）'
+      if (n.options.length === 0) return '「給客人按鈕選」請至少新增一顆按鈕'
       const seenLabels = new Set<string>()
       for (const o of n.options) {
         const label = o.label?.trim() ?? ''
-        if (!label) return '快速回覆的選項請填寫按鈕文字'
+        if (!label) return '「給客人按鈕選」每一顆按鈕都要填按鈕上的字'
         // label 是「客人送出的文字」用來比對走哪條路；重複會讓後面那顆永遠選不到
-        if (seenLabels.has(label)) return `快速回覆有重複的按鈕文字「${label}」，請改成不同名稱`
+        if (seenLabels.has(label)) return `「給客人按鈕選」有兩顆按鈕都叫「${label}」，請改成不同的字`
         seenLabels.add(label)
-        if (!o.next || !ids.has(o.next)) return `快速回覆選項「${label}」請指定要跳到的步驟`
+        if (!o.next || !ids.has(o.next)) return `按鈕「${label}」請選按了要去哪`
       }
     }
     else if (n.type === 'tag') {
-      if (!n.addTagIds.length) return '貼標步驟請至少選一個標籤'
+      if (!n.addTagIds.length) return '「貼標籤」請至少選一個標籤'
       if (!n.next || !ids.has(n.next)) return `步驟「${nodeLabelOf(n)}」未指定下一步`
     }
     else if (n.type === 'saveLead') {

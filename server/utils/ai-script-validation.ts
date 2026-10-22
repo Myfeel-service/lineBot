@@ -175,6 +175,8 @@ function normalizeNode(raw: any): ScriptNode | null {
         ? raw.addTagIds.map((t: unknown) => String(t).trim()).filter(Boolean).slice(0, 30)
         : [],
       next: String(raw?.next ?? '').trim(),
+      // 貼在路上的記號（`D-150`②）：只給設定畫面用；沒有就不寫這個欄位（Firestore 不收 undefined）
+      ...(raw?.onRoute === true ? { onRoute: true } : {}),
     }
     return node
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFlowRouteMap, buildRouteMap } from './script-route-map'
+import { buildRouteMap } from './script-route-map'
 import { moveQuestion, toQuestionList } from './script-question-list'
 import type { ScriptNode } from './types/ai-script'
 
@@ -95,18 +95,33 @@ describe('路線圖（D-142）', () => {
     expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[0, 2, '退換貨'], [0, 3, '找真人']])
   })
 
-  it('流程圖編法（依答案分路，`D-149`②）：每一步一站，分路的條件與「其他」當標籤', () => {
+  it('看答案走不同路（`D-150`①）：分路掛在那一題上、不是一站；每一條標答案、其他答案標「其他」', () => {
     const nodes: ScriptNode[] = [
       { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'c' },
       { id: 'c', type: 'collect', question: '會員等級？', fieldName: 'level', expireMs: 1, format: 'any', next: 'b' },
-      { id: 'b', type: 'branch', cases: [{ field: 'level', op: 'equals', value: 'VIP', next: 'r_vip' }], defaultNext: 'r_all' },
+      { id: 'b', type: 'branch', cases: [{ field: 'level', op: 'equals', value: 'VIP', next: 'r_vip' }, { field: 'level', op: 'contains', value: '金卡', next: 'r_vip' }], defaultNext: 'c2' },
+      { id: 'c2', type: 'collect', question: '電話？', fieldName: 'phone', expireMs: 1, format: 'phone', next: 'r_all' },
       { id: 'r_vip', type: 'reply', text: 'VIP', thenHandoff: true },
       { id: 'r_all', type: 'reply', text: '一般', thenHandoff: false },
     ]
-    const m = buildFlowRouteMap(nodes)
-    expect(m.stationIds).toEqual(['c', 'b', 'r_vip', 'r_all'])
-    expect(m.rails).toEqual([true, true, false]) // 問一題→分路、分路「VIP」→第一個結尾
-    expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[1, 3, '其他']])
+    const m = buildRouteMap(toQuestionList(nodes, 't')!)
+    expect(m.stationIds).toEqual(['c', 'c2', 'r_vip', 'r_all'])
+    expect(m.rails).toEqual([true, false, false]) // 其他答案 → 下一題＝直線
+    expect(m.brackets.map(b => [b.from, b.to, b.labels.join('、')])).toEqual([[0, 2, 'VIP、金卡'], [1, 3, '答了']])
+  })
+
+  it('路上貼了標籤的照樣畫到真正的去處；排不進清單的步驟不畫', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '?', expireMs: 1, options: [{ label: '出貨', next: 'r1' }, { label: '退換貨', next: 'tg' }] },
+      { id: 'tg', type: 'tag', addTagIds: ['退貨'], next: 'c', onRoute: true },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 1, format: 'any', next: 'r1' },
+      { id: 'r1', type: 'reply', text: '好', thenHandoff: false },
+    ]
+    const m = buildRouteMap(toQuestionList(nodes, 't')!)
+    expect(m.stationIds).toEqual(['q', 'c', 'r1'])
+    expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[0, 2, '出貨']])
+    expect(m.rails).toEqual([true, true]) // 退換貨（路上貼標籤）→ 下一題、答了 → 最後
   })
 
   it('標籤放在跨過的範圍正中間那一格（站與站之間）', () => {

@@ -15,6 +15,7 @@
 import { generateJson } from './gemini'
 import { normalizeScriptInput } from './ai-script-validation'
 import { addSkipExitsToCollects, findStuckCollects, validateScriptDoc, type ScriptNode, type ScriptStuckCollect } from '~~/shared/types/ai-script'
+import { toQuestionList } from '~~/shared/script-question-list'
 import { isRiskyTriggerKeyword } from '~~/shared/script-trigger-keywords'
 
 export interface ScriptDraft {
@@ -149,9 +150,24 @@ function repairStuckCollects(draft: ScriptDraft, stuck: ScriptStuckCollect[]): S
   return { ...draft, nodes: addSkipExitsToCollects(draft.nodes, new Set(stuck.map(s => s.nodeId))) }
 }
 
-/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟清單)、驗證錯誤、或模型拒答 */
+/**
+ * 設定畫面排不進清單的步驟(`D-150`:只留問答清單一套,排不進去的會列在「排不進清單的步驟」標黃)。
+ * 模型會做出來的只有「存進客人資料放在兩題中間」這種(tag／branch 已經不教),回饋一次讓它挪到結尾前面;
+ * 第二次還是這樣就照收——畫面照樣看得到、刪得掉,不值得為這個整份失敗。
+ */
+function findStrayNodes(nodes: ScriptNode[], rootNodeId: string): ScriptNode[] {
+  return toQuestionList(nodes, rootNodeId)?.strays.map(s => s.node) ?? []
+}
+
+function strayFeedback(strays: ScriptNode[]): string {
+  const lines = strays.map(n => `- 節點 ${n.id}(${n.type})`).join('\n')
+  return `【上一次的輸出有排不進設定畫面的步驟】\n${lines}\n`
+    + 'saveLead 只能緊接在 reply 前面(collect → … → saveLead → reply),不要放在兩題中間;不要用 tag、branch。'
+}
+
+/** 呼叫一次模型並走「存檔同一套」收斂+驗證;回傳草稿(附卡死步驟、排不進清單的步驟)、驗證錯誤、或模型拒答 */
 async function generateOnce(prompt: string, sensitiveTopics: readonly string[]): Promise<
-  | { ok: true; refused?: undefined; draft: ScriptDraft; stuck: ScriptStuckCollect[]; inputTokens: number; outputTokens: number }
+  | { ok: true; refused?: undefined; draft: ScriptDraft; stuck: ScriptStuckCollect[]; strays: ScriptNode[]; inputTokens: number; outputTokens: number }
   | { ok: false; refused?: boolean; error: string; inputTokens: number; outputTokens: number }
 > {
   const { data, inputTokens, outputTokens } = await generateJson<RawDraft>(prompt, {
@@ -186,6 +202,7 @@ async function generateOnce(prompt: string, sensitiveTopics: readonly string[]):
     draft: { name: input.name, nodes: sanitized.nodes, rootNodeId: input.rootNodeId, inputTokens, outputTokens },
     // 驗證過不代表流程走得通:代碼類問題沒有跳過出口 = 客人答不出來就卡死在那題
     stuck: findStuckCollects(sanitized.nodes),
+    strays: findStrayNodes(sanitized.nodes, input.rootNodeId),
     inputTokens,
     outputTokens,
   }
@@ -214,14 +231,14 @@ export async function generateScriptDraft(description: string, options: Generate
   const sensitiveTopics = options.sensitiveTopics ?? []
 
   const first = await generateOnce(`【使用者描述】\n${desc}`, sensitiveTopics)
-  if (first.ok && !first.stuck.length) return first.draft
+  if (first.ok && !first.stuck.length && !first.strays.length) return first.draft
   if (!first.ok && first.refused) {
     throw createError({ statusCode: 422, statusMessage: first.error })
   }
 
-  // 回饋給模型修正一次:驗證錯誤(接線/欄位名筆誤)或卡死步驟,模型都看得懂
+  // 回饋給模型修正一次:驗證錯誤(接線/欄位名筆誤)、卡死步驟、排不進設定畫面的步驟,模型都看得懂
   const feedback = first.ok
-    ? stuckFeedback(first.stuck)
+    ? `${first.stuck.length ? stuckFeedback(first.stuck) : ''}${first.strays.length ? strayFeedback(first.strays) : ''}`
     : `【上一次的輸出沒通過驗證,錯誤是】\n${first.error}\n`
   const second = await generateOnce(`【使用者描述】\n${desc}\n\n${feedback}請修正後重新輸出完整 JSON。`, sensitiveTopics)
 

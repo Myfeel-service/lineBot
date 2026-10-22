@@ -119,19 +119,6 @@
   align-items: flex-start;
 }
 
-/* 卡內的文字型展開/新增鈕（進階設定、加退路共用外觀底） */
-.scripts-inline-toggle {
-  font-size: 12.5px;
-  color: var(--el-color-primary);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
 
 /* 健康狀態＋流程圖：跟著整頁一起捲。
    ⛔ 這一區曾經做成吸頂＋自身限高可捲，結果整頁出現兩條捲軸（上面一塊自己捲、下面又捲一次），
@@ -165,160 +152,15 @@
   }
 }
 
-.scripts-node-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* 流程圖編法的步驟卡：外觀同問答清單的題目卡 `.scripts-q`（`D-149`②：以前灰底深框，兩套） */
-.scripts-node-card {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--el-bg-color);
-  /* 卡內各欄位群組靠這裡的 gap 撐開間距，否則 field group 會直接相黏、看起來 padding 消失 */
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: border-color 0.2s, box-shadow 0.2s;
-
-  /* 從路線圖點過來時短暫高亮，指出是哪一張卡（同 .scripts-q.is-focused） */
-  &.is-focused {
-    border-color: var(--el-color-primary);
-    box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
-  }
-}
-
-.scripts-node-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-/* 簡單模式（一步就結束）：卡片退成單純的分段，不用邊框把兩格裝成兩張「步驟卡」——
-   一問一答的設定看起來就該是一張表單，不是一條流程。 */
-.scripts-node-card.is-plain {
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-
-  & + & {
-    padding-top: 1.25rem;
-    border-top: 1px solid var(--el-border-color-lighter);
-  }
-}
-
-/* 「客人說什麼」「你回什麼」：要比欄位標題重，才讀得出是分節而不是又一個欄位 */
-.scripts-simple-heading {
-  font-size: 13.5px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--el-text-color-primary);
-  padding-inline-start: 0.5rem;
-  border-inline-start: 3px solid var(--el-color-primary-light-5);
-}
-
-/* 「還要多做一步…」：簡單模式長成完整流程的唯一入口 */
-.scripts-grow {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  align-self: flex-start;
-  margin-top: 12px;
-  padding: 9px 14px;
-  border: 1px dashed var(--el-border-color);
-  border-radius: 8px;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--el-color-primary);
-  transition: border-color 0.15s, background 0.15s;
-
-  small {
-    font-size: 11.5px;
-    font-weight: 400;
-    color: var(--el-text-color-secondary);
-  }
-
-  &:hover {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary-light-9);
-  }
-}
-
-.scripts-node-badge {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-weight: 500;
-
-  &--trigger {
-    background: var(--el-color-warning-light-9);
-    color: var(--el-color-warning);
-  }
-  &--collect {
-    background: var(--el-color-info-light-9);
-    color: var(--el-color-info);
-  }
-  &--reply {
-    background: var(--el-color-success-light-9);
-    color: var(--el-color-success);
-  }
-  &--branch {
-    background: var(--el-color-primary-light-9);
-    color: var(--el-color-primary);
-  }
-  &--quickreply {
-    background: var(--el-color-danger-light-9);
-    color: var(--el-color-danger);
-  }
-  &--action {
-    background: var(--el-fill-color-dark);
-    color: var(--el-text-color-regular);
-  }
-}
-
-.scripts-tag-select {
-  width: 100%;
-}
-
 /* 回覆框下方的「插入欄位變數」按鈕 */
 .scripts-var-insert {
   margin-top: 6px;
 }
 
-/* 「下一步」摘要：把自動接線/結束這種看不見的去向講出來 */
-.scripts-next-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  margin: 0;
-  padding-top: 0.75rem;
-  border-top: 1px dashed var(--el-border-color);
-
-  strong {
-    color: var(--el-text-color-primary);
-    font-weight: 600;
-  }
-
-  /* 出口沒接好（存檔會被擋）→ 標紅指出要修的節點 */
-  &.is-unwired {
-    color: var(--el-color-danger);
-
-    strong {
-      color: var(--el-color-danger);
-    }
-  }
-}
-
-/* 退路 / 分路條件 / 快速回覆選項 / 欄位對應：四種列共用這個底。
-   用 grid 而不是 flex-wrap：欄寬固定才對得上下方欄位的右緣，換行時整組一起換，
-   不會出現「→」單獨掉一行變成一支沒有前後文的箭頭。
-   列內控制項一律 default 尺寸（32px）；混 size="small"（24px）會差 8px、同一列上下不齊。 */
+/* 防重複觸發 / 附連結按鈕：前綴 欄位 前綴 欄位 ✕ 一列。
+   用 grid 而不是 flex-wrap：欄寬固定才對得上下方欄位的右緣。
+   列內控制項一律 default 尺寸（32px）；混 size="small"（24px）會差 8px、同一列上下不齊。
+   （`D-150`：流程圖編法的分路條件列、步驟卡跟著拿掉了，題目卡上的路一律用 .scripts-q__route） */
 .scripts-branch-case {
   display: grid;
   align-items: center;
@@ -326,32 +168,16 @@
   margin-bottom: 8px;
 }
 
-/* 退路 / 快速回覆選項：前綴 按鈕文字 → 前往 ✕ */
 .scripts-branch-case--route {
   grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 32px;
 }
-/* 依答案分路：如果 欄位 條件 比較值 → 前往 ✕
-   「有填寫」不需要比較值，但那一欄永遠留著（模板裡是空的 span）——欄數會變的話，
-   同一張卡裡混用幾種條件時，後面的「→」和「前往」就會在各列之間左右錯開。 */
-.scripts-branch-case--cond {
-  grid-template-columns: auto minmax(0, 1fr) 104px minmax(0, 1fr) auto minmax(0, 1fr) 32px;
-}
-/* 存進客人資料：收集欄位 欄位 存成 屬性名 ✕ */
 .scripts-branch-case--map {
   grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) 32px;
 }
 
 /* grid 欄寬由 grid-template-columns 決定，控制項只要允許被壓縮 */
-.scripts-branch-field,
-.scripts-branch-op,
-.scripts-branch-value,
-.scripts-branch-next {
+.scripts-branch-field {
   min-width: 0;
-}
-
-/* 比較值那一格是包住 el-input 的容器（「有填寫」時空著佔位），內層要撐滿 */
-.scripts-branch-value > .el-input {
-  width: 100%;
 }
 
 /* ✕ 永遠佔位：原本用 v-if 讓它有內容才出現，一開始打字整列寬度就縮一次 */
@@ -360,40 +186,6 @@
   min-width: 32px;
   padding-inline: 0;
   justify-self: end;
-}
-
-/* 窄面板：整組一起換行——每個控制項各自成列、✕ 釘在右上，箭頭不會落單。
-   ⛔ 用 container query 不是 media query：會擠到的是**編輯區**的寬度（受側欄寬度、
-   使用者拖曳的分隔線影響），不是視窗寬度。用 @media 的話，1000px 視窗＋寬側欄
-   會讓編輯區只剩 560px 卻不換行，照樣擠成一團。 */
-.scripts-node-card {
-  container-type: inline-size;
-  container-name: scriptnode;
-}
-
-@container scriptnode (max-width: 620px) {
-  .scripts-branch-case--route,
-  .scripts-branch-case--cond,
-  .scripts-branch-case--map {
-    grid-template-columns: minmax(0, 1fr) 32px;
-    row-gap: 6px;
-
-    > * {
-      grid-column: 1;
-    }
-    > .scripts-branch-remove {
-      grid-column: 2;
-      grid-row: 1;
-    }
-    /* 由上往下排本身就講完了順序，這時候的「→」只是一個沒有前後文的孤字 */
-    > .scripts-branch-arrow {
-      display: none;
-    }
-    /* 「有填寫」不需要比較值：橫排時那一格要留著撐欄位對齊，直排時只會多一列空白 */
-    > .scripts-branch-value:empty {
-      display: none;
-    }
-  }
 }
 
 /* 沒設退路時只留這一顆：八成的收集步驟用不到，不該永遠佔一整塊 */
@@ -743,6 +535,63 @@
   }
 }
 
+/* ── 路上貼的標籤（`D-150`②，AdminScriptRouteTags）：一列裡只放小膠囊＋「＋ 貼標籤」，選標籤在點開的小視窗 ── */
+.scripts-route-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+
+  /* 一列裡固定寬：貼了標籤跟沒貼的那幾列，去哪那一格的右緣才對得齊（貼很多個就在這一格裡換行） */
+  .scripts-q__route > & {
+    flex: 0 0 120px;
+  }
+
+  &__add {
+    padding: 0 2px;
+    border: none;
+    background: none;
+    color: var(--el-text-color-secondary);
+    font-size: 12.5px;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--el-color-primary);
+    }
+  }
+}
+
+/* ── 排不進清單的步驟（`D-150`③）：照樣列出來標黃、給一顆刪除，⛔ 不換一套畫面 ── */
+.scripts-stray {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 8px;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning-dark-2);
+  font-size: 13px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+
+  &.is-focused {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+
+    b {
+      color: var(--el-text-color-primary);
+    }
+  }
+}
+
 /* ── 最後：一種結尾時就是那幾格；好幾種時每一種一張小卡（`D-149`，外觀同「先問客人」的題目卡） ── */
 .scripts-ending {
   display: flex;
@@ -754,6 +603,12 @@
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     transition: box-shadow 0.2s, border-color 0.2s;
+  }
+
+  /* 客人走不到這一種（`D-150`③，示意第⑨張③）：黃底，跟「排不進清單的步驟」同一個顏色 */
+  &.is-many.is-unreached {
+    border-color: var(--el-color-warning-light-5);
+    background: var(--el-color-warning-light-9);
   }
 
   &.is-focused {
@@ -1324,6 +1179,35 @@
   &__tags {
     flex: 1 1 260px;
     min-width: 0;
+  }
+
+  /* 看答案走不同路（`D-150`①）：「答案是／答案裡有」＋答案 → 去哪，跟按鈕那一列同一個排法。
+     兩格寬度固定：下一列「其他答案」佔同樣的寬，「→」跟去哪那一格才對得齊 */
+  &__op {
+    flex: 0 0 104px;
+  }
+
+  &__value {
+    flex: 0 0 140px;
+  }
+
+  &__other {
+    flex: 0 0 calc(104px + 8px + 140px);
+  }
+
+  /* 看答案那幾列的 ✕ 固定寬；沒有 ✕ 的那一列（其他答案拿不掉）留同寬的位置，去哪那一格的右緣才跟上面對齊 */
+  &__x,
+  &__x-slot {
+    flex: 0 0 32px;
+    width: 32px;
+    padding-inline: 0;
+  }
+
+  /* 客人走不到這一題／這一段（`D-150`③）：照樣在清單上，黃字講清楚 */
+  &__unreached {
+    margin: 0;
+    font-size: 12.5px;
+    color: var(--el-color-warning-dark-2);
   }
 
   /* 卡片底下那排「＋ 再問一題」等等 */

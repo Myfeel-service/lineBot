@@ -6,8 +6,7 @@
  * 這裡只算「有哪些線、各走第幾圈、哪裡交叉、標籤放在哪一格」，座標由元件換算——
  * 跟問答清單同一份節點（toQuestionList 的看法），不另存任何東西。
  */
-import type { QuestionListView } from './script-question-list'
-import type { ScriptNode } from './types/ai-script'
+import { routesOf, type QuestionListView } from './script-question-list'
 
 export interface RouteBracket {
   from: number
@@ -22,7 +21,7 @@ export interface RouteBracket {
   labelGap: number
 }
 
-/** 一站長什麼樣（跟 RouteMap.stationIds 一一對應）：問答清單與流程圖編法各自算好交給畫面（`D-149`②） */
+/** 一站長什麼樣（跟 RouteMap.stationIds 一一對應）：畫面算好交給元件 */
 export interface RouteStation {
   id: string
   label: string
@@ -64,55 +63,38 @@ const short = (s: string) => {
 export function buildRouteMap(view: QuestionListView): RouteMap {
   const items = view.items
   const n = items.length
-  const indexOf = (id: string | undefined) => {
+  /** 第幾站；排不進清單的步驟、還沒選的不畫（-1） */
+  const indexOf = (id: string) => {
     const i = items.findIndex(it => it.id === id)
     if (i >= 0) return i
     // 不是題目＝某一種結尾（入口、存進客人資料、貼標籤、結尾本身都算那一種）
     const k = view.endings.findIndex(e => e.entryId === id || e.terminal.id === id || e.saveLead?.id === id || e.tag?.id === id)
-    return n + Math.max(k, 0)
+    return k >= 0 ? n + k : -1
   }
   const routes: RouteEdge[] = []
-  const addRoute = (from: number, targetId: string | undefined, label: string) => {
-    if (targetId) routes.push({ from, to: indexOf(targetId), label })
-  }
   items.forEach((it, i) => {
-    if (it.type === 'collect') {
-      addRoute(i, it.next, '答了')
-      if (it.skipLabel?.trim()) addRoute(i, it.skipNext, it.skipLabel)
-    }
-    else {
-      for (const o of it.options) addRoute(i, o.next, o.label || '按鈕')
+    for (const r of routesOf(view, it)) {
+      const to = r.target ? indexOf(r.target) : -1
+      if (to < 0) continue
+      // 線上的小膠囊（`D-150`：看答案的每一條標答案、其他答案標「其他」；路上貼了標籤的照樣只標去處）
+      const label = r.kind === 'answer' ? '答了'
+        : r.kind === 'skip' ? (it.type === 'collect' ? it.skipLabel ?? '' : '')
+          : r.kind === 'option' ? (it.type === 'quickReply' ? it.options[r.index]?.label || '按鈕' : '')
+            : r.kind === 'other' ? '其他'
+              : caseLabel(view, it.id, r.index)
+      if (r.kind === 'skip' && !label.trim()) continue
+      routes.push({ from: i, to, label })
     }
   })
   return layoutRoutes([...items.map(it => it.id), ...view.endings.map(e => e.entryId)], routes)
 }
 
-/**
- * 流程圖編法（只剩「依答案分路」那種，`D-149`②）的路線圖：每一步一站，照節點順序；
- * 開始那一步在上面「什麼時候開始」編，不畫。回客人／送出模組是結尾站。
- * 存進客人資料、貼標籤往下接的那條沒有標籤（照順序就是往下）。
- */
-export function buildFlowRouteMap(nodes: ScriptNode[]): RouteMap {
-  const steps = nodes.filter(n => n.type !== 'trigger')
-  const indexOf = (id: string) => steps.findIndex(s => s.id === id)
-  const routes: RouteEdge[] = []
-  const addRoute = (from: number, targetId: string | undefined, label: string) => {
-    const to = targetId ? indexOf(targetId) : -1
-    if (to >= 0) routes.push({ from, to, label })
-  }
-  steps.forEach((n, i) => {
-    if (n.type === 'collect') {
-      addRoute(i, n.next, '答了')
-      if (n.skipLabel?.trim()) addRoute(i, n.skipNext, n.skipLabel)
-    }
-    else if (n.type === 'quickReply') for (const o of n.options) addRoute(i, o.next, o.label || '按鈕')
-    else if (n.type === 'branch') {
-      n.cases.forEach((c, ci) => addRoute(i, c.next, String(c.value ?? '').trim() || `情況 ${ci + 1}`))
-      addRoute(i, n.defaultNext, '其他')
-    }
-    else if (n.type === 'tag' || n.type === 'saveLead') addRoute(i, n.next, '')
-  })
-  return layoutRoutes(steps.map(s => s.id), routes)
+/** 看答案的第幾條：填了答案標答案，「有回答」那種標「有回答」，還沒填標「第 N 條」 */
+function caseLabel(view: QuestionListView, itemId: string, index: number): string {
+  const c = view.branches.get(itemId)?.cases[index]
+  if (!c) return ''
+  if (c.op === 'exists') return '有回答'
+  return String(c.value ?? '').trim() || `第 ${index + 1} 條`
 }
 
 interface RouteEdge { from: number; to: number; label: string }

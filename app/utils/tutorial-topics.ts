@@ -691,9 +691,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'right',
       },
       {
+        // `D-150`：每一條都用問答清單（流程圖編法拿掉了），這一段一定在、不用退路
         target: '[data-tour="scr-questions"]',
-        // 一句話回一件事的那種沒有問答清單（例如手上開的是流程圖編法那種）：退去指積木選單
-        targetFallback: '[data-tour="scr-palette"]',
         title: '要先問客人的，一題一列',
         description:
           // `D-140`（2026-10-22）：照順序就是下一題、不再每題一列「答了 →」；存進客人資料勾在題目上；⠿ 拖曳換順序
@@ -735,13 +734,13 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
    * 為什麼另開一支：上面那支 8 步只教到「一句話回一件事」，而這一頁最難的那一大塊——問客人問題、
    * 答不出來的退路、依答案分路、「前往…」接線、試跑整條——一步都沒教。塞進同一支會變成 13 步，
    * 只想設「營業時間」的人要一路按到底。
-   * ⛔ 收集／分路那幾格**要先加那一步才畫得出來**，導覽不幫他加（會在他的草稿裡多塞一步），
-   *    所以那一段用置中說明卡講，只指「一定在」的東西：積木選單、試跑、存檔。
+   * ⛔ 跳題、客人說沒有、看答案分路那幾格**要先從「⋯」打開才畫得出來**，導覽不幫他開（會在他的草稿裡多塞東西），
+   *    所以那一段用置中說明卡講，只指「一定在」的東西：問答清單、試跑、存檔。
    */
   {
     id: 'ai-scripts-flow',
     category: 'ai',
-    // 「還要多做一步…」與積木選單都是 `canEditScripts`＝`scripts.write` 才畫（同上一支）
+    // 問答清單的「＋」與每一題的「⋯」都是 `canEditScripts`＝`scripts.write` 才畫（同上一支）
     requires: 'scripts.write',
     icon: Operation,
     label: '自動回應：多步驟接待',
@@ -750,10 +749,9 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     steps: [
       {
         target: '[data-tour="scr-questions"]',
-        // 手上沒開著一條就替他挑「先問資料，再交給真人」；開著的是流程圖編法那種（沒有問答清單）就退去指積木選單
+        // 手上沒開著一條就替他挑「先問資料，再交給真人」（`D-150` 起每一條都是問答清單，不用退路）
         clickBefore: '[data-tour="scr-start-handoff"]',
         clickBeforeUnless: '[data-tour="scr-trigger-mode"]',
-        targetFallback: '[data-tour="scr-palette"]',
         title: '問答清單：一題一列',
         description:
           // `D-138`④：照順序問的不用接線，以前的「還要多做一步…」＋積木選單收成這一段
@@ -771,15 +769,13 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           + '客人傳<strong>截圖</strong>回答也算答了。',
       },
       {
-        target: '[data-tour="scr-advanced"]',
-        // 手上開著的已經是流程圖編法：這顆不在，退去指加步驟那一排
-        targetFallback: '[data-tour="scr-palette"]',
+        target: '[data-tour="scr-grow"]',
         title: '要依答案走不同路',
         description:
-          // `D-149`：按不同按鈕回不同的話也用清單（「最後」可以有好幾種）；只有看客人答的內容自動分路才用流程圖編法
+          // `D-149`：按不同按鈕回不同的話也用清單（「最後」可以有好幾種）；`D-150`：看答案分路也在題目卡上，流程圖編法拿掉了
           '按不同按鈕回不同的話：在那顆按鈕的去哪選「<strong>＋ 新的結尾</strong>」，「最後」就多一種。'
-          + '要看客人<strong>答的內容</strong>自動分路（例如會員等級），按「<strong>依答案走不同路…</strong>」切到流程圖編法，'
-          + '「依答案分路」用「<strong>前往…</strong>」指定每條路接到哪一步。',
+          + '要看客人<strong>答的內容</strong>走不同路（例如會員等級）：按那一題的「<strong>⋯</strong>」選「<strong>看答案走不同路</strong>」，'
+          + '一行一條，跟按鈕同一個寫法。按了某顆按鈕要貼標籤，按那一列的「<strong>＋ 貼標籤</strong>」。',
         placement: 'top',
       },
       {

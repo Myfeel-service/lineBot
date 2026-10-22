@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addEnding, appendQuestion, endingOfNode, insertEndStep, isBackwardTarget, isOrderTarget, moveQuestion, orderNextOf, removeEndStep, removeEnding, removeQuestion, replaceTerminal, toQuestionList } from './script-question-list'
+import { addBranch, addBranchCase, addEnding, appendQuestion, endingOfNode, insertEndStep, isBackwardTarget, isOrderTarget, moveQuestion, orderNextOf, removeBranchCase, removeEndStep, removeEnding, removeQuestion, removeStray, replaceTerminal, routesOf, setRouteTags, setRouteTarget, startFirst, toQuestionList } from './script-question-list'
 import { validateScriptDoc, type ScriptNode } from './types/ai-script'
 
 /** 正式站 MYFEEL「查詢訂單」的骨架（2026-10-21 唯讀查到的節點順序） */
@@ -34,24 +34,29 @@ describe('toQuestionList（哪些流程可以用問答清單編）', () => {
     expect(v.endId).toBe('r')
   })
 
-  it('⛔ 有依答案分路的 → 不是清單，照舊用流程圖（好幾個結尾的 `D-149` 起也是清單，見下面那一組）', () => {
-    expect(toQuestionList([
-      { id: 't', type: 'trigger', keywords: ['選單'], priority: 50, next: 'q' },
-      { id: 'q', type: 'quickReply', question: '?', expireMs: 1, options: [{ label: 'a', next: 'r1' }, { label: 'b', next: 'r2' }] },
-      { id: 'r1', type: 'reply', text: '1', thenHandoff: false },
-      { id: 'r2', type: 'reply', text: '2', thenHandoff: false },
-    ], 't')?.endings).toHaveLength(2)
-    expect(toQuestionList([
+  it('`D-150`：排不進清單的步驟（看答案分路沒掛在題目上）照樣是清單，那一步列出來，不換畫面', () => {
+    const v = toQuestionList([
       { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'b' },
       { id: 'b', type: 'branch', cases: [], defaultNext: 'r' },
       { id: 'r', type: 'reply', text: '1', thenHandoff: false },
-    ], 't')).toBeNull()
+    ], 't')!
+    expect(v.items).toEqual([])
+    expect(v.strays.map(s => [s.node.id, s.reachable])).toEqual([['b', true]])
   })
 
-  it('⛔ 開頭接的不是第一題（節點順序跟走的順序對不上）→ 不是清單，免得「第 1 題」講錯', () => {
+  it('只有連開頭或結尾都沒有（資料壞掉）才不是清單', () => {
+    expect(toQuestionList([{ id: 'r', type: 'reply', text: '1', thenHandoff: false }], 't')).toBeNull()
+    expect(toQuestionList([{ id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: '' }], 't')).toBeNull()
+  })
+
+  it('開頭接的不是第一題（節點順序跟走的順序對不上）：打開時把那一題排第一，客人怎麼走不變', () => {
     const nodes = orderFlow()
     ;(nodes[0] as any).next = 'c_name'
-    expect(toQuestionList(nodes, 't')).toBeNull()
+    expect(toQuestionList(nodes, 't')).not.toBeNull()
+    const before = JSON.stringify(nodes.map(n => [n.id, (n as any).next, (n as any).skipNext, (n as any).options?.map((o: any) => o.next)]).sort())
+    startFirst(nodes, 't')
+    expect(toQuestionList(nodes, 't')!.items.map(i => i.id)).toEqual(['c_name', 'c_id', 'q_mail', 'c_mail', 'c_phone'])
+    expect(JSON.stringify(nodes.map(n => [n.id, (n as any).next, (n as any).skipNext, (n as any).options?.map((o: any) => o.next)]).sort())).toBe(before)
   })
 })
 
@@ -221,19 +226,24 @@ describe('好幾種結尾也用清單（`D-149`）', () => {
     expect(endingOfNode(v, 'tg')?.terminal.id).toBe('r2')
   })
 
-  it('⛔ 一種結尾前面有兩個步驟分岔（不是一條直線）→ 不是清單', () => {
+  it('`D-150`：兩顆按鈕各貼不同的標籤、接到同一種結尾 → 各自貼在那顆按鈕上（以前不是清單）', () => {
     const nodes = menuFlow()
-    nodes.push({ id: 'tg2', type: 'tag', addTagIds: [], next: 'r2' })
+    nodes.push({ id: 'tg2', type: 'tag', addTagIds: ['真人'], next: 'r2' })
     ;(node(nodes, 'q').options[2]).next = 'tg2'
-    expect(toQuestionList(nodes, 't')).toBeNull()
+    const v = toQuestionList(nodes, 't')!
+    expect([...v.routeTagIds].sort()).toEqual(['tg', 'tg2'])
+    expect(routesOf(v, v.items[0]!).map(r => [r.target, r.tags.map(t => t.id)])).toEqual([['r1', []], ['r2', ['tg']], ['r2', ['tg2']]])
+    expect(v.strays).toEqual([])
   })
 
-  it('⛔ 沒有題目卻有兩種結尾（第二種接不到）→ 不是清單', () => {
-    expect(toQuestionList([
+  it('`D-150`：沒有題目卻有兩種結尾 → 照樣是清單，第二種標成走不到', () => {
+    const v = toQuestionList([
       { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'r1' },
       { id: 'r1', type: 'reply', text: '1', thenHandoff: false },
       { id: 'r2', type: 'reply', text: '2', thenHandoff: false },
-    ], 't')).toBeNull()
+    ], 't')!
+    expect(v.endings).toHaveLength(2)
+    expect([...v.unreachable]).toEqual(['r2'])
   })
 
   it('最後一題是按鈕、各顆去不同結尾：加一題不動任何一顆（猜錯就是把客人帶去別的結尾）', () => {
@@ -292,6 +302,12 @@ describe('好幾種結尾也用清單（`D-149`）', () => {
     for (const id of ['save', 'save_b']) expect(node(nodes, id).fieldMap.some((m: any) => m.fromField === 'phone')).toBe(false)
   })
 
+  it('⛔ 一顆按鈕接到某一種結尾、那一種自己有標籤（沒有「貼在路上」的記號）：照舊是那一種結尾的標籤', () => {
+    const v = toQuestionList(menuFlow(), 't')!
+    expect(v.routeTagIds.size).toBe(0)
+    expect(v.endings[1]!.tag?.id).toBe('tg')
+  })
+
   it('掛貼標籤／換成送模組可以指定是哪一種結尾', () => {
     const nodes = menuFlow()
     const v = toQuestionList(nodes, 't')!
@@ -301,5 +317,151 @@ describe('好幾種結尾也用清單（`D-149`）', () => {
     replaceTerminal(nodes, v2, { id: 'x', type: 'module', moduleId: 'm1' }, v2.endings[0]!)
     expect(node(nodes, 'r1')).toEqual({ id: 'r1', type: 'module', moduleId: 'm1' })
     expect(valid(nodes)).toBeNull()
+  })
+})
+
+describe('只留一套畫面（`D-150`）：看答案走不同路、貼在路上的標籤、排不進去的步驟', () => {
+  const valid = (nodes: ScriptNode[]) => validateScriptDoc({ name: 'x', nodes, rootNodeId: 't' })
+  const node = (nodes: ScriptNode[], id: string) => nodes.find(n => n.id === id) as any
+
+  /** 示意第⑨張那條：先問會員等級、VIP 直接到 VIP 的結尾，其他人再問電話 */
+  function memberFlow(): ScriptNode[] {
+    return [
+      { id: 't', type: 'trigger', matchMode: 'semantic', keywords: [], examples: ['我是會員'], priority: 50, next: 'c_lv' },
+      { id: 'c_lv', type: 'collect', question: '請問您的會員等級？', fieldName: 'level', expireMs: 1, format: 'any', next: 'b' },
+      { id: 'b', type: 'branch', cases: [{ field: 'level', op: 'equals', value: 'VIP', next: 'r_vip' }, { field: 'level', op: 'contains', value: '金卡', next: 'r_vip' }], defaultNext: 'c_phone' },
+      { id: 'c_phone', type: 'collect', question: '請留電話', fieldName: 'phone', expireMs: 1, format: 'phone', next: 'r_all' },
+      { id: 'r_vip', type: 'reply', text: 'VIP 專屬客服馬上為您服務', thenHandoff: true },
+      { id: 'r_all', type: 'reply', text: '感謝您的詢問', thenHandoff: false },
+    ]
+  }
+
+  it('看答案走不同路掛在那一題上：那一題的路＝每一條＋其他答案（取代「答了」）', () => {
+    const v = toQuestionList(memberFlow(), 't')!
+    expect(v.items.map(i => i.id)).toEqual(['c_lv', 'c_phone'])
+    expect(v.branches.get('c_lv')?.id).toBe('b')
+    expect(routesOf(v, v.items[0]!).map(r => [r.kind, r.index, r.target])).toEqual([['case', 0, 'r_vip'], ['case', 1, 'r_vip'], ['other', -1, 'c_phone']])
+    expect(v.strays).toEqual([])
+    expect(v.unreachable.size).toBe(0)
+  })
+
+  it('⋯ → 看答案走不同路：原本答了去哪＝其他答案去哪；填好才存得了；拿光了變回「答了」', () => {
+    const nodes = orderFlow()
+    const v = toQuestionList(nodes, 't')!
+    const item = v.items[0] as any
+    addBranch(nodes, item, 'b1')
+    expect(item.next).toBe('b1')
+    expect(node(nodes, 'b1').defaultNext).toBe('save')
+    expect(valid(nodes)).not.toBeNull() // 那一條還沒填答案、去哪
+    const v2 = toQuestionList(nodes, 't')!
+    const caseRoute = routesOf(v2, item).find(r => r.kind === 'case')!
+    node(nodes, 'b1').cases[0].value = 'A123'
+    setRouteTarget(v2, item, caseRoute, 'c_phone')
+    expect(valid(nodes)).toBeNull()
+    addBranchCase(toQuestionList(nodes, 't')!, item)
+    expect(node(nodes, 'b1').cases).toHaveLength(2)
+    removeBranchCase(nodes, toQuestionList(nodes, 't')!, item, 1)
+    removeBranchCase(nodes, toQuestionList(nodes, 't')!, item, 0)
+    expect(nodes.some(n => n.id === 'b1')).toBe(false)
+    expect(item.next).toBe('save')
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('換順序：看答案的每一條照樣分「照順序」與「指定的」', () => {
+    const nodes = memberFlow()
+    nodes.splice(3, 0, { id: 'c_name', type: 'collect', question: '大名？', fieldName: 'name', expireMs: 1, format: 'any', next: 'c_phone' })
+    node(nodes, 'b').defaultNext = 'c_name' // 其他答案 → 下一題（照順序）
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 2, 1) // 電話拖到大名前面
+    expect(toQuestionList(nodes, 't')!.items.map(i => i.id)).toEqual(['c_lv', 'c_phone', 'c_name'])
+    expect(node(nodes, 'b').defaultNext).toBe('c_phone') // 照順序的跟著新順序
+    expect(node(nodes, 'b').cases.map((c: any) => c.next)).toEqual(['r_vip', 'r_vip']) // 指定去 VIP 結尾的不變
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('刪掉有看答案分路的那一題：分路一起拿掉，指到它的路改接下一題；只從那裡走得到的結尾標成走不到', () => {
+    const nodes = memberFlow()
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'c_lv')
+    expect(nodes.some(n => n.id === 'b')).toBe(false)
+    expect(node(nodes, 't').next).toBe('c_phone')
+    expect([...toQuestionList(nodes, 't')!.unreachable]).toEqual(['r_vip'])
+    expect(valid(nodes)).toContain('接不到')
+  })
+
+  it('⛔ 好幾種結尾時把最後一題往上拖：換到最後的那題接原本最後一題去的那一種，不是第一種', () => {
+    const nodes = memberFlow()
+    nodes.splice(3, 0, { id: 'c_name', type: 'collect', question: '大名？', fieldName: 'name', expireMs: 1, format: 'any', next: 'c_phone' })
+    node(nodes, 'b').defaultNext = 'c_name'
+    moveQuestion(nodes, toQuestionList(nodes, 't')!, 2, 1)
+    expect(node(nodes, 'c_phone').next).toBe('c_name')
+    expect(node(nodes, 'c_name').next).toBe('r_all') // 不是 r_vip（第一種）
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('按鈕上貼標籤：按了才貼、接同一種結尾的別顆按鈕不會一起被貼；拿掉接回原樣', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['客服選單'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '請問需要哪項服務？', expireMs: 1, options: [{ label: '出貨查詢', next: 'r' }, { label: '退換貨', next: 'r' }] },
+      { id: 'r', type: 'reply', text: '好的', thenHandoff: true },
+    ]
+    const v = toQuestionList(nodes, 't')!
+    const q = v.items[0]!
+    setRouteTags(nodes, v, q, routesOf(v, q)[1]!, ['退貨客人'], 'tg')
+    expect(node(nodes, 'q').options.map((o: any) => o.next)).toEqual(['r', 'tg'])
+    expect(node(nodes, 'tg')).toMatchObject({ addTagIds: ['退貨客人'], next: 'r', onRoute: true })
+    expect(valid(nodes)).toBeNull()
+    // 只剩這顆接這一種結尾也一樣讀成「貼在按鈕上」（有記號），不會變成那一種結尾的標籤
+    node(nodes, 'q').options[0].next = 'tg'
+    node(nodes, 'q').options[0].next = 'r'
+    const v2 = toQuestionList(nodes, 't')!
+    expect([...v2.routeTagIds]).toEqual(['tg'])
+    expect(v2.endings[0]!.tag).toBeNull()
+    setRouteTags(nodes, v2, v2.items[0]!, routesOf(v2, v2.items[0]!)[1]!, [], 'unused')
+    expect(nodes.some(n => n.id === 'tg')).toBe(false)
+    expect(node(nodes, 'q').options.map((o: any) => o.next)).toEqual(['r', 'r'])
+  })
+
+  it('路上貼了標籤的那條改去處：標籤照貼、改標籤後面接哪；刪那一題時路上的標籤一起拿掉', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '?', expireMs: 1, options: [{ label: '退換貨', next: 'tg' }] },
+      { id: 'tg', type: 'tag', addTagIds: ['退貨'], next: 'c' },
+      { id: 'c', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 1, format: 'any', next: 'r' },
+      { id: 'r', type: 'reply', text: '好', thenHandoff: false },
+    ]
+    const v = toQuestionList(nodes, 't')!
+    expect([...v.routeTagIds]).toEqual(['tg']) // 舊資料沒記號：後面接的是一題 → 貼在路上
+    setRouteTarget(v, v.items[0]!, routesOf(v, v.items[0]!)[0]!, 'r')
+    expect(node(nodes, 'q').options[0].next).toBe('tg')
+    expect(node(nodes, 'tg').next).toBe('r')
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'q')
+    expect(nodes.some(n => n.id === 'tg')).toBe(false)
+  })
+
+  it('排不進去的步驟：存進客人資料放在兩題中間 → 列出來（客人照樣走得到）；刪掉＝接到它的路改接它後面', () => {
+    const nodes = memberFlow()
+    nodes.splice(1, 0, { id: 's_mid', type: 'saveLead', fieldMap: [{ fromField: 'level', attrKey: '等級' }], next: 'c_lv' })
+    node(nodes, 't').next = 's_mid'
+    const v = toQuestionList(nodes, 't')!
+    expect(v.strays.map(s => [s.node.id, s.reachable])).toEqual([['s_mid', true]])
+    removeStray(nodes, 's_mid')
+    expect(node(nodes, 't').next).toBe('c_lv')
+    expect(toQuestionList(nodes, 't')!.strays).toEqual([])
+  })
+
+  it('接不到的題目照樣在清單上，標成走不到', () => {
+    const nodes = memberFlow()
+    node(nodes, 'b').defaultNext = 'r_all' // 其他答案直接到最後 → 電話那題沒有路接過去
+    const v = toQuestionList(nodes, 't')!
+    expect(v.items.map(i => i.id)).toEqual(['c_lv', 'c_phone'])
+    expect([...v.unreachable]).toEqual(['c_phone'])
+  })
+
+  it('最後一題有看答案分路、各條去不同結尾：加一題不動任何一條', () => {
+    const nodes = memberFlow()
+    nodes.splice(3, 1) // 拿掉電話：其他答案直接去一般結尾
+    node(nodes, 'b').defaultNext = 'r_all'
+    appendQuestion(nodes, toQuestionList(nodes, 't')!, { id: 'c_new', type: 'collect', question: '?', fieldName: 'note', expireMs: 1, format: 'any', next: '' })
+    expect(node(nodes, 'b').defaultNext).toBe('r_all')
+    expect(node(nodes, 'b').cases.map((c: any) => c.next)).toEqual(['r_vip', 'r_vip'])
   })
 })
