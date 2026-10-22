@@ -595,163 +595,90 @@
               </section>
             </template>
 
-            <!-- ── 有依答案分路、好幾個結尾的：流程圖編法（跟以前一樣）── -->
+            <!--
+              ── 流程圖編法：只剩「依答案分路」那種（好幾個結尾的 `D-149` 起也用問答清單）──
+              `D-149`②（2026-10-22 老闆「好執行」）：卡片換成跟問答清單同一套——同叫法、「⋯」刪除、勾「回完交給真人」、
+              拿掉每張卡重複的一句說明、加步驟一排「＋」；卡片上面那張縮排流程圖拿掉，全貌看右邊路線圖（同問答清單）。
+            -->
             <section v-else class="message-card scripts-section-card">
               <div class="message-card-header">
                 <div class="card-header-main">
                   <span class="section-title">流程步驟</span>
-                  <span class="text-xs text-muted">有依答案分路或好幾個結尾，用流程圖編</span>
+                  <span class="text-xs text-muted">有「依答案分路」，一步一張卡；全貌看右邊路線</span>
                 </div>
               </div>
               <div class="card-section-stack">
-          <!-- 流程圖：即時把整條流程畫出來，分支往內縮一層、一眼看懂走向。 -->
-          <div v-if="flowRows.length" class="scripts-flow-map">
-            <div class="scripts-flow-map-head">
-              <span class="scripts-flow-map-title">流程圖</span>
-              <span class="text-xs text-muted">即時預覽・點步驟可跳到下面編輯</span>
-            </div>
-            <div class="scripts-flow-rows">
-              <div
-                v-for="row in flowRows"
-                :key="row.key"
-                class="scripts-flow-row"
-                :class="[`scripts-flow-row--${row.kind}`, { 'is-indented': row.depth > 0 }]"
-                :style="row.depth ? { marginInlineStart: `${row.depth * 22}px` } : undefined"
-              >
-                <span
-                  v-if="row.kind === 'node'"
-                  class="scripts-flow-box is-clickable"
-                  :class="[nodeBadgeClass(row.type ?? 'reply'), { 'is-flagged': flaggedNodeIds.has(row.id ?? '') }]"
-                  role="button"
-                  tabindex="0"
-                  @click="focusStep(row.id)"
-                  @keydown.enter="focusStep(row.id)"
-                >
-                  <el-icon><component :is="nodeIcon(row.type ?? 'reply')" /></el-icon>
-                  <b>{{ row.title }}</b>
-                  <span v-if="row.sub" class="scripts-flow-sub">{{ row.sub }}</span>
-                  <!-- 有問題的步驟標一顆黃點，跟上面那條狀態列同一套訊號（走不完、代號撞名…） -->
-                  <span v-if="flaggedNodeIds.has(row.id ?? '')" class="scripts-flow-flag" title="這一步有要處理的問題，看上面的提醒">⚠</span>
-                </span>
-                <span v-else-if="row.kind === 'label'" class="scripts-flow-label">{{ row.title }}</span>
-                <span v-else class="scripts-flow-note">{{ row.title }}</span>
-              </div>
-            </div>
-          </div>
 
             <!-- 開始那一步在上面「什麼時候開始」編，這裡只列後面的步驟 -->
             <div class="scripts-node-list">
               <div v-for="node in flowNodes" :key="node.id" class="scripts-node-card" :class="{ 'is-focused': highlightStep === node.id }" :data-node-id="node.id">
+                <!-- 卡片頭：同問答清單——名字、（問一題的）這一題問的是、右邊「⋯」 -->
                 <div class="scripts-node-header">
                   <span class="scripts-node-badge" :class="nodeBadgeClass(node.type)">
                     <el-icon><component :is="nodeIcon(node.type)" /></el-icon> {{ nodeTypeLabel(node.type) }}
                   </span>
-                  <span v-if="nodeHeaderHint(node)" class="text-xs text-muted">{{ nodeHeaderHint(node) }}</span>
-                  <el-button
-                    v-if="canEditScripts"
-                    size="small"
-                    type="danger"
-                    plain
-                    class="scripts-node-delete"
-                    @click="removeNode(node.id)"
-                  >
-                    移除
-                  </el-button>
-                </div>
-                <p class="scripts-node-purpose">{{ nodePurpose(node.type) }}</p>
-
-                <!-- Collect -->
-                <template v-if="node.type === 'collect'">
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="問題（要問使用者的話）" tight />
-                    <!-- `D-128`：問句裡的 {{displayName}} 也會換（renderScriptTemplate），顯示成膠囊 -->
-                    <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請輸入您的訂單編號" />
-                  </div>
-                  <!-- 這一題問的是什麼：選常用欄位就自動帶好問句、格式與代號，
-                       不用開店的人自己想出 order_id 這種 snake_case 識別字 -->
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="這一題問的是" tight />
-                    <el-select :model-value="presetKeyOf(node)" placeholder="選一個" class="control-full" @change="applyFieldPreset(node, $event)">
+                  <template v-if="node.type === 'collect'">
+                    <el-select :model-value="presetKeyOf(node)" placeholder="這一題問的是…" class="scripts-q__field" @change="applyFieldPreset(node, $event)">
                       <el-option v-for="p in COMMON_COLLECT_FIELDS" :key="p.key" :label="p.label" :value="p.key" />
                       <el-option label="其他（自己命名）" value="__custom" />
                     </el-select>
                     <el-input
                       v-if="presetKeyOf(node) === '__custom'"
                       v-model="node.fieldName"
-                      placeholder="給這個答案取個代號，例：order_id"
+                      placeholder="這一題叫什麼，例：退貨原因"
+                      class="scripts-q__field"
                       @focus="fieldRenameFrom = node.fieldName"
                       @change="renameCollectField(node, fieldRenameFrom)"
                     />
-                    <p v-if="node.fieldName.trim()" class="scripts-section-hint">💡 之後在「回覆」步驟按「＋ 插入客人資料」選 <b>{{ node.fieldName }}</b>，就會帶入客人的答案</p>
-                  </div>
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="答案格式（系統會自動從客人訊息抓出答案；格式不對會再問一次）" tight />
-                    <el-select :model-value="node.format ?? 'any'" size="small" @change="node.format = $event">
-                      <el-option label="不限制（整句存）" value="any" />
-                      <el-option label="電話" value="phone" />
-                      <el-option label="Email" value="email" />
-                      <el-option label="純數字" value="number" />
-                      <el-option label="英文＋數字（例：A123456）" value="alphanumeric" />
-                      <el-option label="英文＋數字＋符號（例：OD-2024/001）" value="alphanumericSymbol" />
-                      <el-option label="自訂（進階比對規則）" value="custom" />
+                    <el-select v-if="presetKeyOf(node) === '__custom'" :model-value="node.format ?? 'any'" class="scripts-q__format" @change="node.format = $event">
+                      <el-option v-for="f in COLLECT_FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
                     </el-select>
-                  </div>
-                  <div v-if="node.format === 'custom'" class="admin-field-group">
-                    <AdminFieldLabel text="自訂格式（進階比對規則，需懂正規表達式；不確定可先用上面的預設格式）" tight>
-                      自訂格式（進階比對規則）
-                      <!-- 標籤自己寫著「需懂正規表達式」＝已經承認是術語，那就得給出口（D-33 P1） -->
-                      <AdminFieldHelp id="scriptCustomFormat" />
-                    </AdminFieldLabel>
-                    <el-input v-model="node.pattern" placeholder="例：[A-Za-z]\d{3,}（訂單編號 A123）" />
-                  </div>
-                  <div v-if="(node.format ?? 'any') !== 'any'" class="admin-field-group">
-                    <AdminFieldLabel text="格式不符時的重問話術（可留空用預設）" tight />
-                    <el-input v-model="node.reaskText" placeholder="例：訂單編號好像怪怪的，可以再確認一次嗎？" />
-                  </div>
+                    <span v-if="isCodeFormat(node)" class="scripts-q__tag" title="客人傳訂單截圖也算回答了這一題">截圖也收</span>
+                  </template>
+                  <span class="scripts-q__head-end">
+                    <AdminMoreMenu
+                      v-if="canEditScripts"
+                      variant="row"
+                      :items="flowNodeMenuItems(node)"
+                      @command="onFlowNodeMenu(node, $event)"
+                    />
+                  </span>
+                </div>
+
+                <!-- 問一題（同問答清單的題目卡：問句、自訂格式時的比對規則、客人說沒有） -->
+                <template v-if="node.type === 'collect'">
+                  <!-- `D-128`：問句裡的 {{displayName}} 也會換（renderScriptTemplate），顯示成膠囊 -->
+                  <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請問您的訂單編號是？" />
+                  <el-input v-if="node.format === 'custom'" v-model="node.pattern" placeholder="進階比對規則，例：[A-Za-z]\d{3,}（訂單編號 A123）" />
                   <!--
-                    答不出來的退路：八成的收集步驟用不到，所以沒設定時只留一顆按鈕，不永遠佔一整塊。
-                    問代碼類資料（訂單編號、序號…）又沒設時，按鈕改成帶語氣的建議——判斷用 findStuckCollects，
-                    跟小幫手異常中心同一支函式，不會出現「這裡說沒事、那裡報警」的兩套標準。
+                    客人說沒有：沒設定時收在「⋯」（同問答清單）；問代碼類資料（訂單編號、序號…）又沒設時直接露出提醒——
+                    判斷用 findStuckCollects，跟小幫手異常中心同一支函式，不會出現「這裡說沒事、那裡報警」的兩套標準。
                   -->
-                  <div v-if="isSkipOpen(node)" class="admin-field-group">
-                    <AdminFieldLabel text="答不出來的退路（選填）" tight />
-                    <div class="scripts-branch-case scripts-branch-case--route">
-                      <span class="text-xs text-muted">按鈕</span>
-                      <el-input v-model="node.skipLabel" maxlength="20" placeholder="例：我沒有訂單編號" class="scripts-branch-field" />
-                      <span class="text-xs text-muted scripts-branch-arrow">→</span>
-                      <el-select :model-value="node.skipNext ?? ''" placeholder="前往…" class="scripts-branch-next" @change="onTargetChange($event, node.skipNext ?? '', (id) => node.skipNext = id)">
-                        <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
-                        <el-option-group label="接下一步（會新增一個步驟）">
-                          <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
-                        </el-option-group>
-                      </el-select>
-                      <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除這條退路" @click="clearCollectSkip(node)">✕</el-button>
-                    </div>
-                    <p class="scripts-section-hint">
-                      問這一題時會多這顆按鈕，點了就改走你指定的那一步。
-                      想給客人「好幾個」選擇？把「前往」指到一個<b>快速回覆</b>步驟，按鈕要幾顆都行。
-                    </p>
+                  <div v-if="isSkipOpen(node)" class="scripts-q__route">
+                    <span class="scripts-q__route-label">客人說沒有 →</span>
+                    <el-input v-model="node.skipLabel" maxlength="20" placeholder="按鈕字，例：我沒有訂單編號" class="scripts-q__button-label" />
+                    <el-select :model-value="node.skipNext ?? ''" placeholder="前往…" class="scripts-q__target" @change="onTargetChange($event, node.skipNext ?? '', (id) => node.skipNext = id)">
+                      <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
+                      <el-option-group label="接下一步（會新增一個步驟）">
+                        <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                      </el-option-group>
+                    </el-select>
+                    <el-button v-if="canEditScripts" text type="danger" title="拿掉這條路" @click="clearCollectSkip(node)">✕</el-button>
                   </div>
                   <button
-                    v-else-if="canEditScripts"
+                    v-else-if="canEditScripts && isStuckCollect(node)"
                     type="button"
-                    class="scripts-skip-add"
-                    :class="{ 'is-suggested': isStuckCollect(node) }"
+                    class="scripts-skip-add is-suggested"
                     @click="openCollectSkip(node)"
                   >
-                    <template v-if="isStuckCollect(node)">
-                      ⚠ 這種編號客人手上可能根本沒有，沒退路會被一直重問　<b>＋ 加一條退路</b>
-                    </template>
-                    <template v-else>
-                      ＋ 加一條退路（客人答不出來時）
-                    </template>
+                    ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
                   </button>
                 </template>
 
-                <!-- Reply -->
+                <!-- 回客人（同問答清單的「最後」那一塊） -->
                 <template v-else-if="node.type === 'reply'">
                   <div class="admin-field-group" data-tour="scr-reply">
-                    <AdminFieldLabel text="回覆文字（可插入客人資料）" tight />
+                    <AdminFieldLabel text="回客人" tight />
                     <!-- `D-128`：{{displayName}}、{{收集欄位}} 顯示成膠囊；自動回應的欄位名可以是中文（mode="script"） -->
                     <VariableTextField
                       v-model="node.text"
@@ -801,29 +728,23 @@
                         </el-dropdown-menu>
                       </template>
                     </el-dropdown>
-                    <p class="scripts-section-hint">
-                      {{ BUILTIN_VARIABLE_HINT }}
-                    </p>
                   </div>
                   <!-- 連結按鈕（＝自動回覆的「開啟網址」）。多數回覆用不到，沒設定時只留一顆鈕 -->
                   <div v-if="node.linkUrl !== undefined" class="admin-field-group">
                     <AdminFieldLabel text="附一顆連結按鈕（選填）" tight />
                     <div class="scripts-branch-case scripts-branch-case--map">
                       <span class="text-xs text-muted">網址</span>
-                      <el-input v-model="node.linkUrl" placeholder="https://…（可用 {{ 欄位 }} 帶入答案）" class="scripts-branch-field" />
+                      <el-input v-model="node.linkUrl" placeholder="https://…（可插入客人回答的）" class="scripts-branch-field" />
                       <span class="text-xs text-muted">按鈕字</span>
                       <el-input v-model="node.linkLabel" maxlength="20" :placeholder="DEFAULT_REPLY_LINK_LABEL" class="scripts-branch-field" />
                       <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(node)">✕</el-button>
                     </div>
-                    <p class="scripts-section-hint">會在回覆文字下面多送一則帶按鈕的訊息。網址要以 https:// 開頭。</p>
+                    <p class="scripts-section-hint">會在回覆下面多送一則帶按鈕的訊息。網址要以 https:// 開頭。</p>
                   </div>
-                  <button v-else-if="canEditScripts" type="button" class="scripts-skip-add" @click="node.linkUrl = ''">
-                    ＋ 附一顆連結按鈕
-                  </button>
-
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="回覆後直接轉真人" tight />
-                    <el-switch v-model="node.thenHandoff" active-text="開" inactive-text="關" />
+                  <el-checkbox v-model="node.thenHandoff">回完交給真人</el-checkbox>
+                  <p v-if="node.thenHandoff" class="scripts-section-hint">下班時間會在同一則補上幾點起回覆，不會另外再送一則。</p>
+                  <div v-if="canEditScripts && node.linkUrl === undefined" class="scripts-q__add">
+                    <button type="button" class="scripts-skip-add" @click="node.linkUrl = ''">＋ 附一顆連結按鈕</button>
                   </div>
                 </template>
 
@@ -866,46 +787,38 @@
                   </div>
                 </template>
 
-                <!-- Quick reply -->
+                <!-- 給客人按鈕選（同問答清單的按鈕題：問句、一顆一列「按鈕字 → 去哪」） -->
                 <template v-else-if="node.type === 'quickReply'">
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="問句（出選項時一起送）" tight />
-                    <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請問需要哪項服務？" />
+                  <VariableTextField v-model="node.question" mode="script" :known-keys="scriptVariableKeys" placeholder="例：請問需要哪項服務？" />
+                  <div class="scripts-q__routes">
+                    <div v-for="(o, oi) in node.options" :key="oi" class="scripts-q__route">
+                      <el-input v-model="o.label" maxlength="20" placeholder="按鈕字" class="scripts-q__button-label" />
+                      <span class="scripts-q__route-label">→</span>
+                      <el-select :model-value="o.next" placeholder="前往…" class="scripts-q__target" @change="onTargetChange($event, o.next, (id) => o.next = id)">
+                        <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
+                        <el-option-group label="接下一步（會新增一個步驟）">
+                          <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
+                        </el-option-group>
+                      </el-select>
+                      <el-button v-if="canEditScripts" text type="danger" title="拿掉這顆按鈕" @click="removeQuickReplyOption(node, oi)">✕</el-button>
+                    </div>
+                    <div v-if="canEditScripts"><el-button size="small" plain @click="addQuickReplyOption(node)">＋ 新增按鈕</el-button></div>
                   </div>
-                  <p class="scripts-section-hint">客人點按鈕即走對應路線（按鈕文字就是送出的文字）。</p>
-                  <div v-for="(o, oi) in node.options" :key="oi" class="scripts-branch-case scripts-branch-case--route">
-                    <span class="text-xs text-muted">按鈕</span>
-                    <el-input v-model="o.label" placeholder="按鈕文字（≤20 字）" class="scripts-branch-field" />
-                    <span class="text-xs text-muted scripts-branch-arrow">→</span>
-                    <el-select :model-value="o.next" placeholder="前往…" class="scripts-branch-next" @change="onTargetChange($event, o.next, (id) => o.next = id)">
-                      <el-option v-for="t in targetOptions(node.id)" :key="t.value" :label="t.label" :value="t.value" />
-                      <el-option-group label="接下一步（會新增一個步驟）">
-                        <el-option v-for="p in newStepOptions" :key="p.value" :label="p.label" :value="p.value" />
-                      </el-option-group>
-                    </el-select>
-                    <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" @click="removeQuickReplyOption(node, oi)">✕</el-button>
-                  </div>
-                  <el-button v-if="canEditScripts" size="small" plain @click="addQuickReplyOption(node)">＋ 新增選項</el-button>
                 </template>
 
-                <!-- Tag -->
+                <!-- 貼標籤 -->
                 <template v-else-if="node.type === 'tag'">
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="替客人貼上標籤" tight />
-                    <!-- C-208：共用選標籤欄位（「＋ 新標籤」＋空狀態出口，不必離開這條還沒存的流程） -->
-                    <AdminTagPicker
-                      :model-value="node.addTagIds"
-                      :options="tagList"
-                      placeholder="選擇標籤（可多選、可打字搜尋）"
-                      @update:model-value="(ids) => (node.addTagIds = ids)"
-                    />
-                    <p class="scripts-section-hint">流程走到這裡就貼標，然後自動往下。</p>
-                  </div>
+                  <!-- C-208：共用選標籤欄位（「＋ 新標籤」＋空狀態出口，不必離開這條還沒存的流程） -->
+                  <AdminTagPicker
+                    :model-value="node.addTagIds"
+                    :options="tagList"
+                    placeholder="選擇標籤（可多選、可打字搜尋）"
+                    @update:model-value="(ids) => (node.addTagIds = ids)"
+                  />
                 </template>
 
-                <!-- Save lead -->
+                <!-- 存進客人資料 -->
                 <template v-else-if="node.type === 'saveLead'">
-                  <p class="scripts-section-hint">把這次問到的答案長期存進這位客人的資料裡，之後在後台看得到，回覆文字也能帶入使用。</p>
                   <div v-for="(m, mi) in node.fieldMap" :key="mi" class="scripts-branch-case scripts-branch-case--map">
                     <span class="text-xs text-muted">收集欄位</span>
                     <el-select :model-value="m.fromField" filterable placeholder="選欄位" class="scripts-branch-field" @change="m.fromField = $event">
@@ -918,11 +831,10 @@
                   <el-button v-if="canEditScripts" size="small" plain @click="addSaveLeadField(node)">＋ 新增欄位</el-button>
                 </template>
 
-                <!-- Module：送出某個機器人模組的訊息，然後結束 -->
+                <!-- 送出模組：送出某個機器人模組的訊息，然後結束（同問答清單「改送一個模組」） -->
                 <template v-else-if="node.type === 'module'">
-                  <p class="scripts-section-hint">送出你在「機器人模組」做好的那一組訊息，然後結束流程。若那是「真人客服」模組，會照常轉真人。</p>
                   <div class="admin-field-group">
-                    <AdminFieldLabel text="要送出哪個模組" tight />
+                    <AdminFieldLabel text="送出哪個模組" tight />
                     <div v-if="modulesLoading" class="text-xs text-muted">載入中…</div>
                     <!--
                       `D-86`：改用共用的 AdminFlowPicker。
@@ -937,42 +849,40 @@
                       placeholder="選擇模組（可打字搜尋）"
                       @update:model-value="node.moduleId = $event"
                     />
+                    <p class="scripts-section-hint">送出你在「機器人模組」做好的那一組訊息。若那是「真人客服」模組，會照常轉真人。</p>
                   </div>
                 </template>
 
-                <!-- 下一步摘要：把自動接線/結束這種看不見的去向講出來（一步的設定沒有「下一步」可講） -->
-                <p v-if="autoNextLabel(node)" class="scripts-next-hint" :class="{ 'is-unwired': isNodeUnwired(node) }">
+                <!--
+                  下一步摘要：`D-149`② 起只在「接不上」時出現（全貌看右邊路線圖）——以前每張卡都掛一行「↳ 下一步：…」，
+                  跟問答清單「照順序就是下一題、不寫出來」是兩套
+                -->
+                <p v-if="autoNextLabel(node) && isNodeUnwired(node)" class="scripts-next-hint is-unwired">
                   ↳ 下一步：<strong>{{ autoNextLabel(node) }}</strong>
                 </p>
               </div>
             </div>
 
-            <!-- `scr-palette`：「多步驟接待」那支導覽用（`D-109`） -->
-            <div v-if="canEditScripts" class="scripts-add-palette" data-tour="scr-palette">
-              <div v-for="grp in nodePalette" :key="grp.group" class="scripts-add-group">
-                <span class="scripts-add-group-title">{{ grp.group }}</span>
-                <div class="scripts-add-cards">
-                  <button
-                    v-for="it in grp.items"
-                    :key="it.type"
-                    type="button"
-                    class="scripts-add-card"
-                    @click="addNode(it.type)"
-                  >
-                    <span class="scripts-add-card-icon" :class="nodeBadgeClass(it.type)">
-                      <el-icon><component :is="nodeIcon(it.type)" /></el-icon>
-                    </span>
-                    <span class="scripts-add-card-text">
-                      <b>＋ {{ it.name }}</b>
-                      <small>{{ it.desc }}</small>
-                    </span>
-                  </button>
-                </div>
-              </div>
+            <!--
+              `scr-palette`：「多步驟接待」那支導覽用（`D-109`）。
+              `D-149`②：七張積木卡（常用／進階）→ 跟問答清單同一排「＋」，不常用的收進「更多」
+            -->
+            <div v-if="canEditScripts" class="scripts-q__add" data-tour="scr-palette">
+              <el-button plain @click="addNode('collect')">＋ 再問一題</el-button>
+              <el-button plain @click="addNode('quickReply')">＋ 給客人按鈕選</el-button>
+              <el-button plain @click="addNode('reply')">＋ 回客人</el-button>
+              <el-dropdown trigger="click" @command="addNode">
+                <el-button plain>更多 ▾</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="it in moreNodeTypes" :key="it.type" :command="it.type">{{ it.name }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
 
             <p v-if="canEditScripts" class="scripts-section-hint">
-              一般步驟會由上到下自動接下去；只有「依答案分路」和「快速回覆」要自己用「前往…」下拉，指定每條路各接到哪一步。
+              一般步驟照順序接下去；「依答案分路」和「給客人按鈕選」用「前往…」選每條路去哪。
             </p>
               </div>
             </section>
@@ -982,10 +892,10 @@
         <div class="scripts-side">
           <!-- `D-142` 路線：有岔路才畫（直線流程的清單本身就是那張圖）；點一站捲到左邊那一題 -->
           <AdminScriptRouteMap
-            v-if="qList && routeMapShown"
-            :view="qList"
-            :item-label="routeStationLabel"
-            :ending-label="endingShortLabel"
+            v-if="routeView"
+            :map="routeView.map"
+            :stations="routeView.stations"
+            :station-of="routeView.stationOf"
             :visited="tryProgress.visited"
             :current="tryProgress.current"
             :flagged="flaggedNodeIds"
@@ -1024,7 +934,6 @@ import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { v4 as uuidv4 } from 'uuid'
 import {
   BUILTIN_SCRIPT_VARIABLES,
-  BUILTIN_VARIABLE_HINT,
   FOLLOW_WELCOME_LABEL,
   followWelcomeRow,
 } from '~~/shared/follow-welcome'
@@ -1032,6 +941,7 @@ import { DISPLAY_NAME_VARIABLE_OPTION, SCRIPT_PRESET_FIELD_LABELS } from '~~/sha
 import {
   addEnding,
   appendQuestion,
+  endingOfNode,
   insertEndStep,
   isBackwardTarget,
   isOrderTarget,
@@ -1045,7 +955,7 @@ import {
   type QuestionEnding,
   type QuestionItem,
 } from '~~/shared/script-question-list'
-import { buildRouteMap } from '~~/shared/script-route-map'
+import { buildFlowRouteMap, buildRouteMap, type RouteStation } from '~~/shared/script-route-map'
 import type {
   BranchOp,
   CollectFormat,
@@ -1648,7 +1558,8 @@ const flowWarnings = computed<FlowWarning[]>(() => {
     const what = fieldLabel(s.fieldName) || s.question || '這一題'
     out.push({
       key: `stuck:${s.nodeId}`,
-      text: `客人答不出「${what}」就出不去——這種編號他手上可能根本沒有，會被一直重問。建議加一條退路。`,
+      // 叫法同那一題卡片上的「＋ 客人說沒有的話…」（`D-149`②：以前這裡叫「退路」，卡片上叫另一個名字）
+      text: `客人答不出「${what}」就出不去——這種編號他手上可能根本沒有，會被一直重問。建議在那一題設「客人說沒有」的路。`,
       nodeId: s.nodeId,
     })
   }
@@ -1753,10 +1664,11 @@ function nodeBadgeClass(type: string) {
 
 /** 給「下一步」下拉用的節點選項標籤（trigger 不能當目標） */
 function nodeOptionLabel(n: ScriptNode): string {
-  if (n.type === 'collect') return `問：${fieldLabel(n.fieldName) || '(還沒選)'}`
-  if (n.type === 'quickReply') return `快速回覆${n.question ? `「${n.question.slice(0, 8)}」` : ''}`
-  if (n.type === 'reply') return `回覆「${(n.text || '').slice(0, 8) || '空白'}」`
-  if (n.type === 'module') return `機器人模組「${moduleLabel(n.moduleId)}」`
+  // 叫法同卡片與問答清單（`D-149`②）
+  if (n.type === 'collect') return `${SCRIPT_NODE_TYPE_LABELS.collect}・${fieldLabel(n.fieldName) || '(還沒選)'}`
+  if (n.type === 'quickReply') return `${SCRIPT_NODE_TYPE_LABELS.quickReply}${n.question ? `「${n.question.slice(0, 8)}」` : ''}`
+  if (n.type === 'reply') return `${SCRIPT_NODE_TYPE_LABELS.reply}「${(n.text || '').slice(0, 8) || '空白'}」`
+  if (n.type === 'module') return `${SCRIPT_NODE_TYPE_LABELS.module}「${moduleLabel(n.moduleId)}」`
   return SCRIPT_NODE_TYPE_LABELS[n.type]
 }
 
@@ -1798,95 +1710,9 @@ function isNodeUnwired(node: ScriptNode): boolean {
   return (node.type === 'trigger' || node.type === 'collect' || node.type === 'tag' || node.type === 'saveLead') && !node.next
 }
 
-// ── 流程圖（即時預覽）──────────────────────────────────────────────
-// 從觸發節點走訪整條流程，攤平成「縮排的流程列」：線性步驟同層往下，分支/快速回覆
-// 的每條路往內縮一層並標上條件。純唯讀，跟著下面卡片即時變動；用路徑 visited 斷循環。
-interface FlowRow { key: string; kind: 'node' | 'label' | 'note'; type?: ScriptNode['type']; title: string; sub?: string; depth: number; id?: string }
+// （卡片上面那張縮排流程圖 `D-149`② 拿掉了：全貌看右邊路線圖，問答清單與流程圖編法同一張）
 
-function flowTruncate(s: string, n = 16): string {
-  const t = String(s || '').trim()
-  return t.length > n ? `${t.slice(0, n)}…` : t
-}
-function flowNodeTitle(node: ScriptNode): string {
-  if (node.type === 'collect') return `問：${fieldLabel(node.fieldName) || '還沒選'}`
-  return nodeTypeLabel(node.type)
-}
-function flowNodeSub(node: ScriptNode): string {
-  if (node.type === 'trigger') {
-    if (node.triggerEvent === 'follow') return '客人加好友時'
-    const list = ((node.matchMode ?? 'keyword') === 'semantic' ? (node.examples ?? []) : (node.keywords ?? [])).filter(Boolean)
-    return list.length ? `${list.slice(0, 3).join('、')}${list.length > 3 ? '…' : ''}` : '未設條件'
-  }
-  if (node.type === 'collect' || node.type === 'quickReply') return node.question ? `問「${flowTruncate(node.question)}」` : ''
-  if (node.type === 'reply') return node.thenHandoff ? '回覆後轉真人 → 結束' : '回覆 → 結束'
-  if (node.type === 'tag') return `${node.addTagIds.length} 個標籤`
-  if (node.type === 'saveLead') return `存 ${node.fieldMap.length} 個欄位`
-  if (node.type === 'module') return `${moduleLabel(node.moduleId)} → 結束`
-  return ''
-}
-function flowBranchLabel(c: ScriptBranchNode['cases'][number]): string {
-  const f = c.field || '欄位'
-  if (c.op === 'equals') return `若 ${f} =「${c.value || ''}」`
-  if (c.op === 'contains') return `若 ${f} 含「${c.value || ''}」`
-  return `若 ${f} 有填`
-}
-
-const flowRows = computed<FlowRow[]>(() => {
-  const nodes = form.value.nodes
-  const byId = new Map(nodes.map(n => [n.id, n]))
-  const rows: FlowRow[] = []
-  const rendered = new Set<string>()
-  const MAX = 60
-  let seq = 0
-
-  const pushNode = (node: ScriptNode, depth: number) => {
-    rendered.add(node.id)
-    rows.push({ key: `n${seq++}`, kind: 'node', type: node.type, title: flowNodeTitle(node), sub: flowNodeSub(node), depth, id: node.id })
-  }
-  const pushLabel = (title: string, depth: number) => rows.push({ key: `l${seq++}`, kind: 'label', title, depth })
-  const pushNote = (title: string, depth: number) => rows.push({ key: `x${seq++}`, kind: 'note', title, depth })
-
-  function walk(id: string, depth: number, path: Set<string>) {
-    if (rows.length >= MAX) return
-    if (!id) return pushNote('（尚未接下一步）', depth)
-    const node = byId.get(id)
-    if (!node) return pushNote('（接到不存在的步驟）', depth)
-    if (path.has(id)) return pushNote(`↩ 回到「${flowNodeTitle(node)}」`, depth)
-    const seen = new Set(path)
-    seen.add(id)
-
-    pushNode(node, depth)
-    if (node.type === 'branch') {
-      for (const c of node.cases) { pushLabel(flowBranchLabel(c), depth + 1); walk(c.next, depth + 1, seen) }
-      pushLabel('其餘情況', depth + 1)
-      walk(node.defaultNext, depth + 1, seen)
-    }
-    else if (node.type === 'quickReply') {
-      for (const o of node.options) { pushLabel(`按「${o.label || '未命名'}」`, depth + 1); walk(o.next, depth + 1, seen) }
-    }
-    else if (node.type === 'collect' && collectSkipLabel(node)) {
-      // 有跳過出口的收集：像分支一樣畫兩條路，照常回答往下、按跳過鈕走另一條
-      pushLabel('照常回答', depth + 1)
-      walk(node.next, depth + 1, seen)
-      pushLabel(`按「${collectSkipLabel(node)}」`, depth + 1)
-      walk(node.skipNext!, depth + 1, seen)
-    }
-    // reply / module 是終點，沒有下一步可走
-    else if (node.type !== 'reply' && node.type !== 'module') {
-      walk(node.next, depth, seen)
-    }
-  }
-
-  const root = nodes.find(n => n.id === form.value.rootNodeId)
-  if (root) walk(root.id, 0, new Set())
-  // 沒被走訪到的孤兒節點（觸發除外）：提醒還沒接進流程
-  for (const n of nodes) {
-    if (n.type !== 'trigger' && !rendered.has(n.id)) pushNote(`⚠「${flowNodeTitle(n)}」還沒接進流程`, 0)
-  }
-  return rows
-})
-
-// 點流程圖上的步驟 → 捲到下面對應的卡片並短暫高亮，讓「圖」和「編輯卡片」連成一個可導覽的流程
+// 點路線圖上的步驟 → 捲到下面對應的卡片並短暫高亮，讓「圖」和「編輯卡片」連成一個可導覽的流程
 const highlightStep = ref<string | null>(null)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 function focusStep(id?: string) {
@@ -1903,12 +1729,12 @@ function focusStep(id?: string) {
 // ── 「前往…」下拉裡直接「＋ 接下一步」：把「按鈕/分支可以接子流程」變成看得見的動作 ──
 // 快速回覆排第一：「這一題想給客人好幾個選擇」最常見的解法就是把路指到一個快速回覆步驟
 const newStepOptions = [
-  { value: '__new:quickReply', label: '＋ 新增：快速回覆（給客人幾顆按鈕選）' },
-  { value: '__new:collect', label: '＋ 新增：收集（問一個問題）' },
+  { value: '__new:quickReply', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.quickReply}` },
+  { value: '__new:collect', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.collect}` },
   { value: '__new:branch', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.branch}` },
   { value: '__new:tag', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.tag}` },
   { value: '__new:saveLead', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.saveLead}` },
-  { value: '__new:reply', label: '＋ 新增：回覆（結束）' },
+  { value: '__new:reply', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.reply}（結束）` },
   { value: '__new:module', label: `＋ 新增：${SCRIPT_NODE_TYPE_LABELS.module}（送出訊息並結束）` },
 ]
 
@@ -1941,20 +1767,25 @@ function onTargetChange(value: string, currentTarget: string, setNext: (id: stri
   }
 }
 
-// ── 加積木選單：分「常用 / 進階」＋一句說明，讓人一眼知道每種在做什麼 ──────
-const nodePalette: Array<{ group: string; items: Array<{ type: 'collect' | 'quickReply' | 'reply' | 'branch' | 'tag' | 'saveLead' | 'module'; name: string; desc: string }> }> = [
-  { group: '常用', items: [
-    { type: 'collect', name: '收集', desc: '問客人一個問題、記住答案' },
-    { type: 'quickReply', name: '快速回覆', desc: '給幾顆按鈕讓客人點選' },
-    { type: 'reply', name: '回覆', desc: '機器人回一句話，可結束或轉真人' },
-  ] },
-  { group: '進階', items: [
-    { type: 'branch', name: SCRIPT_NODE_TYPE_LABELS.branch, desc: '依前面的答案自動走不同路' },
-    { type: 'tag', name: SCRIPT_NODE_TYPE_LABELS.tag, desc: '自動幫這位客人貼上標籤' },
-    { type: 'saveLead', name: SCRIPT_NODE_TYPE_LABELS.saveLead, desc: '長期留存，後台看得到、之後回覆也能帶入' },
-    { type: 'module', name: SCRIPT_NODE_TYPE_LABELS.module, desc: '送出做好的一組訊息並結束' },
-  ] },
+// ── 加步驟（流程圖編法）：常用三種一排「＋」，其餘收進「更多」（`D-149`②，同問答清單那一排） ──
+const moreNodeTypes: Array<{ type: 'branch' | 'tag' | 'saveLead' | 'module'; name: string }> = [
+  { type: 'branch', name: SCRIPT_NODE_TYPE_LABELS.branch },
+  { type: 'tag', name: SCRIPT_NODE_TYPE_LABELS.tag },
+  { type: 'saveLead', name: SCRIPT_NODE_TYPE_LABELS.saveLead },
+  { type: 'module', name: SCRIPT_NODE_TYPE_LABELS.module },
 ]
+
+/** 流程圖編法每一張卡的「⋯」（同問答清單）：客人可能沒有這個資料（問一題、還沒設時）、刪除這一步 */
+function flowNodeMenuItems(node: ScriptNode) {
+  return [
+    { command: 'skip', label: '客人可能沒有這個資料', show: node.type === 'collect' && !isSkipOpen(node) },
+    { command: 'remove', label: '刪除這一步', danger: true },
+  ]
+}
+function onFlowNodeMenu(node: ScriptNode, cmd: string) {
+  if (cmd === 'skip' && node.type === 'collect') openCollectSkip(node)
+  else if (cmd === 'remove') removeNode(node.id)
+}
 
 // 試跑（「試試看」）搬到右邊的 AdminScriptTryPanel（`D-138`）：換一條時靠 :key 整個重來。
 
@@ -1974,8 +1805,55 @@ function routeStationLabel(item: QuestionItem): string {
   return item.type === 'collect' ? (fieldLabel(item.fieldName) || '（還沒選）') : '給按鈕選'
 }
 
-/** 路線圖只在有岔路時畫（跳題、客人說沒有去別題、按鈕去不同題）——直線流程的清單本身就是那張圖 */
-const routeMapShown = computed(() => Boolean(qList.value && buildRouteMap(qList.value).brackets.length))
+/** 結尾站的小字：這一種結尾做什麼 */
+function endingKindText(e: QuestionEnding): string {
+  return e.terminal.type === 'module' ? '送模組' : e.terminal.thenHandoff ? '回覆・轉真人' : '回覆'
+}
+/** 流程圖編法每一步在路線圖上的名字（同卡片上的叫法，`D-149`②） */
+function flowStationLabel(node: ScriptNode): string {
+  if (node.type === 'collect') return fieldLabel(node.fieldName) || SCRIPT_NODE_TYPE_LABELS.collect
+  if (node.type === 'reply') return node.thenHandoff ? '回客人・轉真人' : SCRIPT_NODE_TYPE_LABELS.reply
+  return SCRIPT_NODE_TYPE_LABELS[node.type] ?? '步驟'
+}
+
+/**
+ * 右邊路線圖要畫什麼（`D-142`／`D-149`）：問答清單照題目與每一種結尾；流程圖編法（依答案分路）照每一步。
+ * 問答清單只在有岔路時畫（直線的清單本身就是那張圖）；流程圖編法一定畫（取代以前卡片上面那張縮排流程圖）。
+ */
+const routeView = computed(() => {
+  const view = qList.value
+  if (view) {
+    const map = buildRouteMap(view)
+    if (!map.brackets.length) return null
+    const n = view.items.length
+    const many = view.endings.length > 1
+    const stations: RouteStation[] = [
+      ...view.items.map((it, i) => {
+        const label = routeStationLabel(it)
+        return { id: it.id, label, isEnd: false, title: `第 ${i + 1} 題・${label}`, jumpId: it.id }
+      }),
+      ...view.endings.map((e) => {
+        const label = many ? endingShortLabel(e) : '最後'
+        return { id: e.entryId, label, isEnd: true, sub: many ? '' : endingKindText(e), title: `${label}：${endingKindText(e)}`, jumpId: e.terminal.id }
+      }),
+    ]
+    const stationOf = (id: string) => {
+      const i = view.items.findIndex(it => it.id === id)
+      if (i >= 0) return i
+      const e = endingOfNode(view, id)
+      return e ? n + view.endings.indexOf(e) : -1
+    }
+    return { map, stations, stationOf }
+  }
+  const map = buildFlowRouteMap(form.value.nodes)
+  if (!map.stationIds.length) return null
+  const stations: RouteStation[] = map.stationIds.map((id, i) => {
+    const node = form.value.nodes.find(n => n.id === id)!
+    const label = flowStationLabel(node)
+    return { id, label, isEnd: node.type === 'reply' || node.type === 'module', title: `第 ${i + 1} 步・${label}`, jumpId: id }
+  })
+  return { map, stations, stationOf: (id: string) => map.stationIds.indexOf(id) }
+})
 
 /**
  * 右邊試試看拉滿編輯區（2026-10-22 老闆：「高度拉滿然後 fixed，參考其他頁面」＝推播頁 `C-251`）。
@@ -2027,25 +1905,7 @@ const collectFieldOptions = computed(() =>
     .filter((n): n is ScriptCollectNode => n.type === 'collect' && !!n.fieldName.trim())
     .map(n => ({ value: n.fieldName, label: fieldLabel(n.fieldName) })),
 )
-/** 節點標頭的用途提示（取代誤導的「節點 N」序號——分支圖裡順序≠流程） */
-function nodeHeaderHint(node: ScriptNode): string {
-  if (node.type === 'collect') return node.fieldName ? `欄位「${fieldLabel(node.fieldName)}」` : '（未命名欄位）'
-  if (node.type === 'reply') return node.thenHandoff ? '結束 → 轉真人' : '結束'
-  return ''
-}
 
-/** 每種步驟「在做什麼」的白話一句話，當步驟卡片副標，降低第一次使用的學習成本 */
-function nodePurpose(type: string): string {
-  if (type === 'trigger') return '決定客人說什麼，會啟動這條流程'
-  if (type === 'collect') return '問客人一個問題，把答案記起來（例：訂單編號）'
-  if (type === 'reply') return '機器人回一句話收尾，可選擇結束或轉真人'
-  if (type === 'branch') return '依前面收到的答案，自動走不同路（不花 AI）'
-  if (type === 'quickReply') return '給客人幾顆按鈕點選，依點哪顆走不同路'
-  if (type === 'tag') return '自動幫這位客人貼上標籤，然後往下'
-  if (type === 'saveLead') return '把收集到的答案，長期存進客人資料'
-  if (type === 'module') return '送出做好的一組訊息，然後結束流程'
-  return ''
-}
 /** 移除回覆的連結按鈕（兩格一起清，不留半套資料被存檔驗證擋下） */
 function clearReplyLink(node: ScriptReplyNode) {
   delete node.linkUrl

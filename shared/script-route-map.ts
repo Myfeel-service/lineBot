@@ -7,6 +7,7 @@
  * 跟問答清單同一份節點（toQuestionList 的看法），不另存任何東西。
  */
 import type { QuestionListView } from './script-question-list'
+import type { ScriptNode } from './types/ai-script'
 
 export interface RouteBracket {
   from: number
@@ -19,6 +20,18 @@ export interface RouteBracket {
   lane: number
   /** 標籤放在哪兩站中間：k＝第 k 站與第 k+1 站之間 */
   labelGap: number
+}
+
+/** 一站長什麼樣（跟 RouteMap.stationIds 一一對應）：問答清單與流程圖編法各自算好交給畫面（`D-149`②） */
+export interface RouteStation {
+  id: string
+  label: string
+  isEnd: boolean
+  /** 結尾站的小字（回覆・轉真人）：站夠寬才放 */
+  sub?: string
+  title: string
+  /** 點這一站要捲到哪一張卡 */
+  jumpId: string
 }
 
 export interface RouteMap {
@@ -58,17 +71,9 @@ export function buildRouteMap(view: QuestionListView): RouteMap {
     const k = view.endings.findIndex(e => e.entryId === id || e.terminal.id === id || e.saveLead?.id === id || e.tag?.id === id)
     return n + Math.max(k, 0)
   }
-  const rails = Array.from({ length: n }, () => false)
-  const merged = new Map<string, { from: number; to: number; labels: string[] }>()
+  const routes: RouteEdge[] = []
   const addRoute = (from: number, targetId: string | undefined, label: string) => {
-    if (!targetId) return
-    const to = indexOf(targetId)
-    if (to === from + 1) { rails[from] = true; return }
-    const key = `${from}>${to}`
-    const b = merged.get(key) ?? { from, to, labels: [] }
-    const l = short(label)
-    if (l && !b.labels.includes(l)) b.labels.push(l)
-    merged.set(key, b)
+    if (targetId) routes.push({ from, to: indexOf(targetId), label })
   }
   items.forEach((it, i) => {
     if (it.type === 'collect') {
@@ -79,6 +84,51 @@ export function buildRouteMap(view: QuestionListView): RouteMap {
       for (const o of it.options) addRoute(i, o.next, o.label || '按鈕')
     }
   })
+  return layoutRoutes([...items.map(it => it.id), ...view.endings.map(e => e.entryId)], routes)
+}
+
+/**
+ * 流程圖編法（只剩「依答案分路」那種，`D-149`②）的路線圖：每一步一站，照節點順序；
+ * 開始那一步在上面「什麼時候開始」編，不畫。回客人／送出模組是結尾站。
+ * 存進客人資料、貼標籤往下接的那條沒有標籤（照順序就是往下）。
+ */
+export function buildFlowRouteMap(nodes: ScriptNode[]): RouteMap {
+  const steps = nodes.filter(n => n.type !== 'trigger')
+  const indexOf = (id: string) => steps.findIndex(s => s.id === id)
+  const routes: RouteEdge[] = []
+  const addRoute = (from: number, targetId: string | undefined, label: string) => {
+    const to = targetId ? indexOf(targetId) : -1
+    if (to >= 0) routes.push({ from, to, label })
+  }
+  steps.forEach((n, i) => {
+    if (n.type === 'collect') {
+      addRoute(i, n.next, '答了')
+      if (n.skipLabel?.trim()) addRoute(i, n.skipNext, n.skipLabel)
+    }
+    else if (n.type === 'quickReply') for (const o of n.options) addRoute(i, o.next, o.label || '按鈕')
+    else if (n.type === 'branch') {
+      n.cases.forEach((c, ci) => addRoute(i, c.next, String(c.value ?? '').trim() || `情況 ${ci + 1}`))
+      addRoute(i, n.defaultNext, '其他')
+    }
+    else if (n.type === 'tag' || n.type === 'saveLead') addRoute(i, n.next, '')
+  })
+  return layoutRoutes(steps.map(s => s.id), routes)
+}
+
+interface RouteEdge { from: number; to: number; label: string }
+
+/** 共用的排法：照順序接下一站的畫成直線，其他的一條一圈 */
+function layoutRoutes(stationIds: string[], routes: RouteEdge[]): RouteMap {
+  const rails = Array.from({ length: Math.max(stationIds.length - 1, 0) }, () => false)
+  const merged = new Map<string, { from: number; to: number; labels: string[] }>()
+  for (const r of routes) {
+    if (r.to === r.from + 1) { rails[r.from] = true; continue }
+    const key = `${r.from}>${r.to}`
+    const b = merged.get(key) ?? { from: r.from, to: r.to, labels: [] }
+    const l = short(r.label)
+    if (l && !b.labels.includes(l)) b.labels.push(l)
+    merged.set(key, b)
+  }
 
   // 一條一圈：跨得短的先排、排在內圈；跟同一圈已經有的線完全不重疊才放得進去（連端點都不共用，免得兩條看起來接成一條）
   const lanes: Array<Array<[number, number]>> = []
@@ -120,5 +170,5 @@ export function buildRouteMap(view: QuestionListView): RouteMap {
     }
   }
 
-  return { stationIds: [...items.map(it => it.id), ...view.endings.map(e => e.entryId)], rails, brackets, laneCount: lanes.length, hops }
+  return { stationIds, rails, brackets, laneCount: lanes.length, hops }
 }

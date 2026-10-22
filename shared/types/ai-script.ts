@@ -1,5 +1,6 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 import { LINE_CARD_BUTTON_LABEL_URI_DEFAULT } from '../line-card-copy'
+import { SCRIPT_PRESET_FIELD_LABELS } from '../variable-tokens'
 
 // ═══════════════════════════════════════════════════════════════════
 //  Script types
@@ -15,17 +16,18 @@ export type ScriptNodeType = 'trigger' | 'collect' | 'reply' | 'branch' | 'quick
 /**
  * 步驟類型的顯示名稱：驗證訊息、編輯器節點卡、流程圖、下拉選項、積木選單共用同一份，
  * 改名只改這裡（散在四處各寫一份的時候，改一半就會出現同一個東西兩個名字）。
- * 「快速回覆」是 LINE 官方術語刻意保留原文；其餘用白話（分支→依答案分路、寫名單→存進客人資料）。
+ * 2026-10-22（`D-149`）：改成跟問答清單同一套叫法——以前流程圖編法叫「收集／快速回覆／回覆／機器人模組」，
+ * 清單叫「再問一題／給客人按鈕選／最後・回客人／改送一個模組」，同一個東西兩個名字。
  */
 export const SCRIPT_NODE_TYPE_LABELS: Record<ScriptNodeType, string> = {
-  trigger: '觸發',
-  collect: '收集',
-  reply: '回覆',
+  trigger: '什麼時候開始',
+  collect: '問一題',
+  reply: '回客人',
   branch: '依答案分路',
-  quickReply: '快速回覆',
-  tag: '貼標',
+  quickReply: '給客人按鈕選',
+  tag: '貼標籤',
   saveLead: '存進客人資料',
-  module: '機器人模組',
+  module: '送出模組',
 }
 
 /** 觸發比對方式：keyword=關鍵字子字串；semantic=意圖範例向量比對（看意思不看用字） */
@@ -454,7 +456,7 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
     // reply / module 是終點，沒有出口要驗
     if (n.type === 'reply') continue
     if (n.type === 'module') {
-      if (!n.moduleId?.trim()) return '「機器人模組」步驟請選擇要送出的模組'
+      if (!n.moduleId?.trim()) return '「送出模組」那一步請選擇要送出的模組'
       continue
     }
     const outs = outgoingNodeIds(n)
@@ -609,7 +611,7 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
   for (const n of doc.nodes) {
     if (INTERACTIVE_TYPES.has(n.type) || color.get(n.id) !== undefined) continue
     if (dfsCycle(n.id)) {
-      return '流程有繞回自己的死循環（步驟之間互指、中間卻沒有任何「收集／快速回覆」讓客人輸入），請調整'
+      return '流程有繞回自己的死循環（步驟之間互指、中間卻沒有任何「問一題／給客人按鈕選」讓客人輸入），請調整'
     }
   }
 
@@ -617,7 +619,8 @@ export function validateScriptDoc(doc: Pick<ScriptDoc, 'name' | 'nodes' | 'rootN
 }
 
 function nodeLabelOf(node: ScriptNode): string {
-  if (node.type === 'collect') return `收集 ${node.fieldName || ''}`.trim()
+  // 常用欄位講中文（「問一題 訂單編號」，不露出 order_id；同畫面上的膠囊）
+  if (node.type === 'collect') return `${SCRIPT_NODE_TYPE_LABELS.collect} ${SCRIPT_PRESET_FIELD_LABELS[node.fieldName] ?? node.fieldName ?? ''}`.trim()
   // 舊資料可能帶著對照表裡沒有的類型；沒有這個保底會讓錯誤訊息變成「步驟「undefined」…」
   return SCRIPT_NODE_TYPE_LABELS[node.type] ?? '步驟'
 }

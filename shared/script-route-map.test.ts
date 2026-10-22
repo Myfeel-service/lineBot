@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRouteMap } from './script-route-map'
+import { buildFlowRouteMap, buildRouteMap } from './script-route-map'
 import { moveQuestion, toQuestionList } from './script-question-list'
 import type { ScriptNode } from './types/ai-script'
 
@@ -91,8 +91,22 @@ describe('路線圖（D-142）', () => {
     ]
     const m = buildRouteMap(toQuestionList(nodes, 't')!)
     expect(m.stationIds).toEqual(['q', 'r1', 'tg', 'r3'])
-    expect(m.rails).toEqual([true]) // 出貨查詢＝緊接下一站
+    expect(m.rails).toEqual([true, false, false]) // 出貨查詢＝緊接下一站；結尾跟結尾之間沒有線
     expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[0, 2, '退換貨'], [0, 3, '找真人']])
+  })
+
+  it('流程圖編法（依答案分路，`D-149`②）：每一步一站，分路的條件與「其他」當標籤', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'c' },
+      { id: 'c', type: 'collect', question: '會員等級？', fieldName: 'level', expireMs: 1, format: 'any', next: 'b' },
+      { id: 'b', type: 'branch', cases: [{ field: 'level', op: 'equals', value: 'VIP', next: 'r_vip' }], defaultNext: 'r_all' },
+      { id: 'r_vip', type: 'reply', text: 'VIP', thenHandoff: true },
+      { id: 'r_all', type: 'reply', text: '一般', thenHandoff: false },
+    ]
+    const m = buildFlowRouteMap(nodes)
+    expect(m.stationIds).toEqual(['c', 'b', 'r_vip', 'r_all'])
+    expect(m.rails).toEqual([true, true, false]) // 問一題→分路、分路「VIP」→第一個結尾
+    expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[1, 3, '其他']])
   })
 
   it('標籤放在跨過的範圍正中間那一格（站與站之間）', () => {
