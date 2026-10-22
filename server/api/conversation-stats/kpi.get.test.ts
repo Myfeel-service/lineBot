@@ -279,6 +279,7 @@ describe('KPI：日結與現場算必須一致（E-29）', () => {
 
   it('投影清單要蓋住算式讀到的每一欄（新增算式忘了加欄位就會紅）', () => {
     expect([...KPI_SESSION_FIELDS].sort()).toEqual([
+      'continuesHumanSession',
       'hasHandoff',
       'hasInbound',
       'handoffRequestedAt',

@@ -65,6 +65,21 @@ export function isPreInboundSession(s: { origin?: unknown; hasInbound?: unknown 
 }
 
 /**
+ * 客服剛按「結束會話」，客人 30 分鐘內接著講、被放回待真人而開出來的這一場（`C-382`）。
+ *
+ * 它不是一段新的對話，是上一場的尾巴：上一場已經算過「誰接的」，這一場再算一次就重複了——
+ * 客服回了會變成又一筆「真人首接」，沒回會變成一筆「沒人回」，兩種都是假的。
+ * 所以跟 isPreInboundSession 一樣**不進對話統計**（統計那一支兩個都要擋）。
+ * 交還機器人那種不會開新場（還是同一場），不會有這個記號。
+ */
+export function isHumanContinuationSession(s: { continuesHumanSession?: unknown } | undefined): boolean {
+  return s?.continuesHumanSession === true
+}
+
+/** 客服怎麼放手的（`C-382`）：按「結束會話」或「交還機器人」——時間軸與通知要講得出是哪一個 */
+export type HumanReleaseKind = 'close' | 'handback'
+
+/**
  * 同 {@link isPreInboundSession}，多回「是哪一種」給畫面講人話（對話頁頂部狀態，`D-4` 交過來的那一條）：
  * 'follow'＝加好友還沒講話、'sticker'＝只傳了貼圖、''＝客人開口過（或舊資料）。
  * ⛔ 判斷一定要經過 isPreInboundSession：頂部狀態跟「待處理」分頁要是同一條規則。
@@ -99,6 +114,10 @@ export interface ConversationSessionDoc {
    * 只有晚於 humanLastRepliedAt 才算數（見 customerReturnedAtMs）：客服回了話就不再是「在等」。
    */
   customerReturnedAt?: FirebaseFirestore.Timestamp | null
+  /** 客服剛按結束、客人 30 分鐘內接著講而開的這一場（`C-382`，見 isHumanContinuationSession）：不進對話統計 */
+  continuesHumanSession?: boolean
+  /** 這次回到待真人是因為客服剛按了哪一顆（`C-382`）；只在 customerReturnedAt 還算數時有意義（逾時提醒講原因用） */
+  returnedAfterRelease?: HumanReleaseKind
   /**
    * 這場會話結束當下的最後一則訊息，給列表第二行當摘要用（見 sessionClosingPreview）。
    *
@@ -308,7 +327,10 @@ export const HUMAN_STALE_HOURS = 12
  * ⛔ 不是「時間到交回 AI」：回來的那幾句約三分之二是接著真人那件事（「廠商有回覆了嗎」），AI 接會答錯。
  *
  * 30 分鐘以內＝客服多半還在線上跟他一來一往，訊息就在他眼前，再叫一次只是吵。
- * `D-145`（按了結束之後馬上接著講的）若拍板，用同一個數字。
+ *
+ * `C-382`（`D-145`）用同一個數字、反過來用：客服按了「結束會話」／「交還機器人」之後 30 分鐘**以內**
+ * 客人接著講的，先交給真人（同事三分之二是送出最後一句 30 秒內就按結束，按完一小時內客人又回話
+ * 111 次、30 分鐘內 96 次，AI 接了的除了謝謝多半接不住）。
  */
 export const CUSTOMER_RETURN_STAFF_IDLE_MINUTES = 30
 

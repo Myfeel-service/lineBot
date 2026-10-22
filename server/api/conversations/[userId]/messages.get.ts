@@ -82,6 +82,8 @@ function eventLabel(
   moduleType?: ModuleType,
   moduleId?: string,
   reason?: string,
+  /** customer_returned 才有（`C-382`）：客服按了哪一顆、之後幾分鐘回來的 */
+  release?: { releasedBy?: unknown, afterMinutes?: unknown },
 ): string {
   if (eventType === 'conversation_opened') return '新會話開始'
   if (eventType === 'conversation_closed') {
@@ -95,7 +97,16 @@ function eventLabel(
   // 講「為什麼」而不只是「發生了什麼」：客服看到的是 AI 忽然不回話，要看得出是誰決定的
   if (eventType === 'human_lead_continued') return '延續真人對話，AI 不自動回覆'
   // `C-381`：⛔ 不寫「已通知客服」——沒人勾「客人找真人」、勿擾時段、只通知沒人接手的模式都不會當下傳，寫了是假話
-  if (eventType === 'customer_returned') return '客人又來了，回到待真人'
+  if (eventType === 'customer_returned') {
+    // `C-382`：客服剛按結束／交還、客人接著講的，講出是按了哪一顆之後幾分鐘——客服才知道「我剛結掉的那位又來了」
+    if (release?.releasedBy === 'close' || release?.releasedBy === 'handback') {
+      const button = release.releasedBy === 'close' ? '結束' : '交還機器人'
+      const n = Number(release.afterMinutes)
+      const after = Number.isFinite(n) && n >= 1 ? ` ${Math.floor(n)} 分鐘` : '不到 1 分鐘'
+      return `客人在${button}後${after}又來了，回到待真人`
+    }
+    return '客人又來了，回到待真人'
+  }
   if (eventType === 'postback_no_reply') {
     /**
      * 只會出現在舊資料上：現在「客人按了按鈕但沒回覆」改記成一筆客人動作紀錄
@@ -243,7 +254,7 @@ async function loadEventItems(
           eventType: e.eventType,
           moduleType: e.moduleType,
           moduleId: e.moduleId,
-          label: eventLabel(e.eventType, e.moduleType, e.moduleId, e.reason),
+          label: eventLabel(e.eventType, e.moduleType, e.moduleId, e.reason, e),
         })
       }
     }

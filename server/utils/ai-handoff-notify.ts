@@ -31,13 +31,19 @@ import { notifyRecipients } from '~~/shared/line-notify-list'
  * ⛔ `customer_returned` 刻意不放進 HandoffReason：那個型別是「AI 為什麼轉真人」，
  *    AI 表現頁的篩選、知識缺口、轉真人統計都吃它；客人回來不是 AI 的決定，混進去那些數字就髒了。
  */
-export type HandoffNotifyReason = HandoffReason | 'customer_returned'
+export type HandoffNotifyReason = HandoffReason | 'customer_returned' | 'customer_returned_after_release'
 
 /** 客服在手機上看到的那一行「原因：…」 */
-const CUSTOMER_RETURNED_REASON_LABEL = '客人又來了（接手後還沒結束）'
+const CUSTOMER_RETURNED_REASON_LABELS: Record<'customer_returned' | 'customer_returned_after_release', string> = {
+  customer_returned: '客人又來了（接手後還沒結束）',
+  // `C-382`：當下那一則會講「結束後 N 分鐘」（呼叫端帶 reasonLabel）；這一句給逾時提醒用（那時只剩存下來的原因代碼）
+  customer_returned_after_release: '客人又來了（剛結束不久）',
+}
 
 function notifyReasonLabel(reason: HandoffNotifyReason): string {
-  if (reason === 'customer_returned') return CUSTOMER_RETURNED_REASON_LABEL
+  if (reason === 'customer_returned' || reason === 'customer_returned_after_release') {
+    return CUSTOMER_RETURNED_REASON_LABELS[reason]
+  }
   return HANDOFF_REASON_LABELS[reason] ?? reason
 }
 
@@ -67,6 +73,8 @@ export interface HandoffNotifyParams {
   customerMessage: string
   /** null = 非 AI 護欄觸發（例如腳本設定轉真人） */
   reason: HandoffNotifyReason | null
+  /** 「原因：」那一行要講得比原因代碼更細時帶（`C-382`：「客人又來了（結束後 3 分鐘）」）；只影響這一則 */
+  reasonLabel?: string
   /** AI 生成的 2–3 句對話摘要（best-effort，可為空字串 → 不顯示該行） */
   summary?: string
   /** SLA 提醒模式：轉真人後超過 N 分鐘無人回應的再提醒（訊息格式不同） */
@@ -112,9 +120,8 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
   const now = Date.now()
   if (!markNotified(params.workspaceId, params.customerLineUserId, now)) return false
 
-  const reasonLabel = params.reason
-    ? notifyReasonLabel(params.reason)
-    : '自動回應轉真人'
+  const reasonLabel = params.reasonLabel
+    || (params.reason ? notifyReasonLabel(params.reason) : '自動回應轉真人')
   // 文案在 shared（後台「LINE 通知」頁的預覽吃同一支）。missed_only 的首次通知帶完整內容
   // （摘要/訊息由 remindOverdueHandoffs 從存檔補回）；always 模式的再提醒是短版一行。
   // `D-103`⑦：附一條直接打開這位客人對話的短網址（沒有對外網址時退回「請至後台…」）

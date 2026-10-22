@@ -17,7 +17,8 @@ export default defineEventHandler(async (event) => {
 
   const userId = session!.userId as string
   // 這份剛讀出來的資料直接交下去：不帶的話同一份文件會再被讀一次（多一趟往返）
-  await closeConversationSession(sessionId, userId, { session })
+  // byStaff：客服自己按的，接下來 30 分鐘內客人接著講的話先回到真人手上（`C-382`）
+  await closeConversationSession(sessionId, userId, { session, byStaff: true })
 
   return { ok: true }
 })

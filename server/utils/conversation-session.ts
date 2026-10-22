@@ -11,6 +11,7 @@ import {
 import type {
   ConversationEventType,
   ConversationStatus,
+  HumanReleaseKind,
   InitialHandler,
   ModuleType,
   SessionCloseReason,
@@ -114,6 +115,10 @@ interface ConversationEventExtras {
   workspaceId?: string
   /** conversation_closed 專用：系統自動收尾時帶，時間軸才講得出是誰收的 */
   reason?: SessionCloseReason
+  /** customer_returned 專用（`C-382`）：客人是在客服按了哪一顆之後回來的 */
+  releasedBy?: HumanReleaseKind
+  /** customer_returned 專用（`C-382`）：按下去之後幾分鐘回來的（時間軸寫「結束後 N 分鐘又來了」） */
+  afterMinutes?: number
 }
 
 /**
@@ -137,6 +142,8 @@ function conversationEventDoc(
     ...(extras?.moduleType ? { moduleType: extras.moduleType } : {}),
     ...(extras?.moduleId ? { moduleId: extras.moduleId } : {}),
     ...(extras?.reason ? { reason: extras.reason } : {}),
+    ...(extras?.releasedBy ? { releasedBy: extras.releasedBy } : {}),
+    ...(extras?.afterMinutes != null ? { afterMinutes: extras.afterMinutes } : {}),
     timestamp: FieldValue.serverTimestamp(),
   }
 }
@@ -217,13 +224,24 @@ function resolveHumanOwnership(
  *
  * ⚠️ 系統自動收尾（排程把太久沒動靜的場關掉）**不可以**呼叫這支：那不是真人按的，
  * 清掉就等於「時間到自動把客人交回 AI」，正是拍板要防的事。
+ *
+ * `byStaff`＝客服自己在對話頁按的那一顆（`C-382`）：順手蓋「什麼時候放手的」，接下來 30 分鐘內
+ * 客人接著講的話先回到真人手上（見 returnReleasedSessionToPending）。不是客服按的（排程自動交還）
+ * 就把舊的放手時間一起清掉——最後一次放手是誰決定的，就照誰的規則。
  */
-async function releaseHumanOwnership(convDocId: string): Promise<void> {
+async function releaseHumanOwnership(convDocId: string, byStaff: HumanReleaseKind | null): Promise<void> {
   await getDb()
     .collection('conversations')
     .doc(convDocId)
-    .set({ lastHumanActionAt: FieldValue.delete() }, { merge: true })
+    .set({ lastHumanActionAt: FieldValue.delete(), ...humanReleaseStamp(byStaff) }, { merge: true })
     .catch(e => console.warn('[session] release human ownership failed:', convDocId, e))
+}
+
+/** 放手時對話文件上那兩格（`C-382`）：客服按的就記時間與哪一顆，其他放手方式一律清掉 */
+function humanReleaseStamp(byStaff: HumanReleaseKind | null): Record<string, unknown> {
+  return byStaff
+    ? { humanReleasedAt: FieldValue.serverTimestamp(), humanReleasedBy: byStaff }
+    : { humanReleasedAt: FieldValue.delete(), humanReleasedBy: FieldValue.delete() }
 }
 
 /**
@@ -838,6 +856,8 @@ export async function returnHumanSessionToPending(
     tx.update(sessionRef, {
       status: 'pending_human' as ConversationStatus,
       customerReturnedAt: Timestamp.fromMillis(atMs),
+      // 這次是「接手後還沒結束」那種：之前「剛結束不久」留下的記號要清掉，逾時提醒才不會講錯原因（`C-382`）
+      returnedAfterRelease: FieldValue.delete(),
       slaRemindedAt: FieldValue.delete(),
       lastActivityAt: FieldValue.serverTimestamp(),
     })
@@ -850,14 +870,118 @@ export async function returnHumanSessionToPending(
   return true
 }
 
+/** 客服最近一次在對話頁按「結束會話」／「交還機器人」放手的時間（`C-382`）；沒有或讀不到回 null */
+export interface HumanRelease {
+  atMs: number
+  by: HumanReleaseKind
+}
+
+/**
+ * 讀這位客人「客服最近一次放手」的時間（`C-382`）。
+ *
+ * 每則客人訊息都會讀一次對話文件——刻意的：放手是在後台那台機器按的，收訊這台的記憶體快取不會知道，
+ * 要靠快取的話，客服按完 30 秒內客人回的那一句（最常見、也最該接住的那種）正好會漏掉。
+ * 呼叫端跟建場、讀客人資料並行發，不多等一趟；一則訊息多一筆讀取。
+ */
+export async function readHumanRelease(userId: string, workspaceId: string): Promise<HumanRelease | null> {
+  const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
+  const snap = await getDb().collection('conversations').doc(lineUserFirestoreDocId(lineUserId, workspaceId)).get()
+  const data = snap.data()
+  const atMs = data?.humanReleasedAt?.toMillis?.() || 0
+  if (!atMs) return null
+  return { atMs, by: data?.humanReleasedBy === 'handback' ? 'handback' : 'close' }
+}
+
+/**
+ * 客服剛按「結束會話」／「交還機器人」，客人在時限內接著講 → 這場回到「待真人」（`C-382`）。
+ * 回傳 null＝不是這種狀況（沒放手過、超過時限、這一刻已經被別的訊息放回去了）。
+ *
+ * 跟 returnHumanSessionToPending 是同一件事的另一個入口：客人接著講的多半是剛剛那件事
+ * （「信箱被退件了」「怎麼又延後一個月」），AI 接不住。所以：
+ *   · 按「結束會話」的：上一場已經關了，這一則開的是新的一場 → 這一場直接放回待真人，
+ *     並標記 continuesHumanSession——它是上一場的尾巴，⛔ 不算「真人首接」也不算「沒人回」
+ *     （見 isHumanContinuationSession，統計那一支會擋）。
+ *   · 按「交還機器人」的：還是同一場（機器人處理中）→ 放回待真人。
+ *   · 兩種都把「這位客人是真人的」記號蓋回去（時間用客服放手那一刻）：客人又是真人的，
+ *     直到客服再按一次結束。並把放手時間收掉——用過就沒了，同一刻進來的第二則不會再觸發一次。
+ *
+ * ⛔ 統計那一族（initialHandler／hasHandoff／handoffRequestedAt／humanFirstRepliedAt）一律不碰，理由同上一支。
+ * 判斷跟寫入在同一個交易裡（對話文件＋這一場一起讀）：兩則同時進來只有一則放得回去。
+ */
+export async function returnReleasedSessionToPending(
+  sessionId: string,
+  userId: string,
+  workspaceId: string,
+  opts: {
+    /** 客人這則訊息的時間（LINE 事件時間）；沒有就用伺服器時間 */
+    atMs?: number
+    /** 放手之後多久以內才算（毫秒） */
+    windowMs: number
+  },
+): Promise<{ by: HumanReleaseKind, afterMinutes: number } | null> {
+  const db = getDb()
+  const lineUserId = lineUserIdFromFirestoreDocId(userId, workspaceId)
+  const convRef = db.collection('conversations').doc(lineUserFirestoreDocId(lineUserId, workspaceId))
+  const sessionRef = db.collection('conversationSessions').doc(sessionId)
+  const now = Date.now()
+  const atMs = Number.isFinite(Number(opts.atMs)) && Number(opts.atMs) > 0 && Number(opts.atMs) <= now
+    ? Number(opts.atMs)
+    : now
+
+  const result = await db.runTransaction(async (tx) => {
+    const convSnap = await tx.get(convRef)
+    const sessionSnap = await tx.get(sessionRef)
+    const conv = convSnap.data() as any
+    const session = sessionSnap.data() as any
+    const releasedMs = conv?.humanReleasedAt?.toMillis?.() || 0
+    // 客人那句可能比客服按下去還早一點點（他打字時客服正好按），一樣算接著講
+    if (!releasedMs || atMs - releasedMs >= opts.windowMs) return null
+    if (conv?.currentSessionId && conv.currentSessionId !== sessionId) return null
+    if (!sessionSnap.exists || (session?.status !== 'open' && session?.status !== 'bot_handling')) return null
+
+    const by: HumanReleaseKind = conv?.humanReleasedBy === 'handback' ? 'handback' : 'close'
+    tx.update(sessionRef, {
+      status: 'pending_human' as ConversationStatus,
+      currentHandler: 'human' as InitialHandler,
+      currentModuleType: 'live_agent' as ModuleType,
+      customerReturnedAt: Timestamp.fromMillis(atMs),
+      // 逾時提醒只剩這份文件可看，要講得出是「剛結束不久又來了」而不是「接手後還沒結束」
+      returnedAfterRelease: by,
+      slaRemindedAt: FieldValue.delete(),
+      lastActivityAt: FieldValue.serverTimestamp(),
+      // 按結束的：上一場已經關了，這一場是它的尾巴（交還的還是同一場，本來就算過了）
+      ...(by === 'close' ? { continuesHumanSession: true } : {}),
+    })
+    tx.set(convRef, {
+      lastHumanActionAt: Timestamp.fromMillis(releasedMs),
+      humanReleasedAt: FieldValue.delete(),
+      humanReleasedBy: FieldValue.delete(),
+    }, { merge: true })
+    return { by, afterMinutes: Math.max(0, Math.floor((atMs - releasedMs) / 60_000)) }
+  })
+  if (!result) return null
+
+  _updateSessionStatusCache(sessionId, 'pending_human')
+  await recordConversationEvent(sessionId, lineUserId, 'customer_returned', {
+    workspaceId,
+    releasedBy: result.by,
+    afterMinutes: result.afterMinutes,
+  })
+  return result
+}
+
 /**
  * 把 pending_human / human_handling 的會話交還機器人，bot/AI 恢復接手後續訊息。
  * 觸發來源：後台「交還機器人」按鈕，或 auto-handback 排程（真人閒置過久）。
  * 回傳 false = session 不存在或目前狀態不可交還（已結束 / 本來就是 bot）。
+ *
+ * `opts.byStaff`＝客服自己按的那顆按鈕（`C-382`）：接下來 30 分鐘內客人接著講的話先回到真人手上。
+ * ⛔ 排程自動交還**不帶**：那是系統看客服太久沒動才放手，客人那時再講話不是在接客服剛講的那句。
  */
 export async function handBackSessionToBot(
   sessionId: string,
   userId: string,
+  opts: { byStaff?: boolean } = {},
 ): Promise<boolean> {
   const db = getDb()
   const sessionRef = db.collection('conversationSessions').doc(sessionId)
@@ -883,6 +1007,7 @@ export async function handBackSessionToBot(
   const wid = String(session.workspaceId ?? '') || DEFAULT_LINE_WORKSPACE_ID
   await releaseHumanOwnership(
     lineUserFirestoreDocId(lineUserIdFromFirestoreDocId(userId, wid), wid),
+    opts.byStaff ? 'handback' : null,
   )
   _updateSessionStatusCache(sessionId, 'bot_handling')
   await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId), 'returned_to_bot', { workspaceId: String(session.workspaceId ?? '') })
@@ -918,6 +1043,12 @@ export async function closeConversationSession(
      * 客服按下按鈕時等的就是這種一趟接一趟的往返。
      */
     session?: Record<string, any>
+    /**
+     * 客服在對話頁按的那一顆「結束會話」（`C-382`）：接下來 30 分鐘內客人接著講的話先回到真人手上。
+     * ⛔ 批次結束不帶：那是在清一批放了好幾天的舊對話，客人那時剛好來講話不是在接客服剛講的那句，
+     *    帶了反而把一批客人重新綁回真人身上。
+     */
+    byStaff?: boolean
   } = {},
 ): Promise<void> {
   const db = getDb()
@@ -981,7 +1112,8 @@ export async function closeConversationSession(
       convRef,
       {
         ...(isCurrent ? { currentSessionId: null } : {}),
-        ...(releaseHuman ? { lastHumanActionAt: FieldValue.delete() } : {}),
+        // 放手的同一筆寫入順手蓋（或清掉）「客服什麼時候放手的」（`C-382`，見 humanReleaseStamp）
+        ...(releaseHuman ? { lastHumanActionAt: FieldValue.delete(), ...humanReleaseStamp(opts.byStaff ? 'close' : null) } : {}),
       },
       { merge: true },
     )

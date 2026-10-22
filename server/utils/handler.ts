@@ -45,8 +45,11 @@ import {
   enterModule,
   getSessionStatusCached,
   onHumanOutgoingMessage,
+  readHumanRelease,
   returnHumanSessionToPending,
+  returnReleasedSessionToPending,
   shouldSuppressInboundBotAutomationForSession,
+  type HumanRelease,
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
 import { CUSTOMER_RETURN_STAFF_IDLE_MINUTES, SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
@@ -70,7 +73,7 @@ import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
 import { usageFromCalls, withAiCallMeter, type AiCallUsage } from './ai-usage-calls'
-import { notifyHandoffToStaff } from './ai-handoff-notify'
+import { notifyHandoffToStaff, type HandoffNotifyReason } from './ai-handoff-notify'
 import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { syncNotifyRecipientFollowState } from './line-notify-delivery'
@@ -2001,7 +2004,7 @@ export async function handleMessageEvent(
     // The claim (a Firestore write) is awaited before any side effect below; the
     // preloads are reads / idempotent so running them on a redelivery is harmless.
     // preloadedUser is passed to handleIncomingText so it skips the ensureUser call inside.
-    const [sessionId, preloadedUser, , isFirstDelivery] = await Promise.all([
+    const [sessionId, preloadedUser, , isFirstDelivery, humanRelease] = await Promise.all([
       // inboundAtMs：開新會話時用「客人這句話的時間」當開始時間，否則時間軸會切掉這第一句
       ensureConversationSession(userId, workspaceId, { inboundAtMs: lineEventTimestampMs }).catch((e) => {
         console.error('[session] ensureConversationSession error:', e)
@@ -2010,6 +2013,8 @@ export async function handleMessageEvent(
       ensureUser(userId, undefined, workspaceId).catch(() => null),
       getAiSettings(workspaceId).catch(() => null),           // warm cache; result discarded
       dedupClaim,
+      // 客服剛按結束／交還的話，這一句要先交給真人（`C-382`）；讀不到就當沒有，照常走
+      readHumanReleaseSafe(userId, workspaceId),
     ])
     if (!isFirstDelivery) {
       console.log('[webhook] duplicate message event skipped')
@@ -2043,6 +2048,20 @@ export async function handleMessageEvent(
       return
     }
 
+    // 客服剛按結束／交還、客人 30 分鐘內接著講 → 放回待真人並叫人，AI 不碰這一句（`C-382`）
+    const releasedFollowUp = await maybeHandleReleasedFollowUp({
+      sessionId,
+      lineUserId: userId,
+      workspaceId,
+      replyToken: event.replyToken,
+      kind: 'text',
+      customerMessage: textContent,
+      displayName: preloadedUser?.displayName,
+      atMs: lineEventTimestampMs,
+      release: humanRelease,
+    })
+    if (releasedFollowUp) return
+
     await handleIncomingText(userId, textContent, event.replyToken, options, preloadedUser, sessionId, workspaceId)
   } else {
     if (!(await dedupClaim)) {
@@ -2061,6 +2080,10 @@ export async function handleMessageEvent(
       console.error('[conv] save error:', e)
       return ''
     })
+    // 客服剛按結束／交還的話，這一張要先交給真人（`C-382`）：跟建場並行讀，不多等一趟。貼圖不算，不讀
+    const humanReleasePromise = NON_TEXT_INBOUND_TYPES.has(event.message.type)
+      ? readHumanReleaseSafe(userId, workspaceId)
+      : Promise.resolve(null)
     // 只傳貼圖不算開口（`D-4`）：這場不進待處理、不算沒人回，客人之後講話就照常（見 isPreInboundSession）。
     // 訊息照存、紅點照亮——客人確實傳了東西，只是沒有事情要人處理。
     const sessionId = await ensureConversationSession(userId, workspaceId, {
@@ -2074,6 +2097,28 @@ export async function handleMessageEvent(
       console.error('[ensureUser] Error:', e)
       return null
     })
+
+    /**
+     * 客人傳圖／影／音／檔時要不要把人叫回來，**一定要排在下面所有「機器人要不要回」的判斷之前**：
+     *   · 真人處理中、客服一陣子沒回（`C-381`）
+     *   · 客服剛按結束／交還、30 分鐘內接著傳（`C-382`）——這種場這一刻還是機器人在處理，
+     *     排在後面的話，截圖答題、AI 讀圖發問已經照「機器人在處理」決定好了，客人會同時收到兩邊的話。
+     * 放回待真人之後，下面每一段都會看到「等真人中」而安靜（存檔、寫描述照做）。貼圖不算（`D-4`）。
+     */
+    if (NON_TEXT_INBOUND_TYPES.has(event.message.type)) {
+      const returnParams = {
+        sessionId,
+        lineUserId: userId,
+        workspaceId,
+        replyToken: event.replyToken,
+        kind: 'media' as const,
+        customerMessage: typeLabel,
+        displayName: (await userDataPromise)?.displayName,
+        atMs: lineEventTimestampMs,
+      }
+      const returned = await maybeHandleCustomerReturn(returnParams)
+      if (!returned) await maybeHandleReleasedFollowUp({ ...returnParams, release: await humanReleasePromise })
+    }
 
     // 自動回應正在等答案（「請問您的訂單編號是？」）時客人傳了圖＝用截圖回答這一題（`D-138`②）。
     // 以前流程收不到圖：記號一直掛著、客人另外收到「收到照片，請問想了解什麼」或勿擾那句，同一刻好幾則。
@@ -2112,21 +2157,6 @@ export async function handleMessageEvent(
         .catch(() => false)
     const willReplyImage = imageReplyOn
       && !(await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false))
-
-    // 真人處理中、客服一陣子沒回，客人又傳圖／影／音／檔 → 放回待真人並叫人（`C-381`）。
-    // 貼圖不算（`D-4`：只傳貼圖不算開口）。放回去之後下面那句引導語本來就不會送（等真人期間靜默）。
-    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && !scriptImage) {
-      await maybeHandleCustomerReturn({
-        sessionId,
-        lineUserId: userId,
-        workspaceId,
-        replyToken: event.replyToken,
-        kind: 'media',
-        customerMessage: typeLabel,
-        displayName: (await userDataPromise)?.displayName,
-        atMs: lineEventTimestampMs,
-      })
-    }
 
     // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
     // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
@@ -3973,42 +4003,127 @@ async function maybeHandleCustomerReturn(params: {
     })
     if (!flipped) return false
 
-    if (params.replyToken) {
-      // 下班時間講下班時間（同轉真人那則，見 dndHandoffReplyText），不然客人半夜收到「專員會盡快回覆」然後整夜沒人
-      const dndText = await dndHandoffReplyText(params.workspaceId)
-      if (dndText) {
-        const msg: messagingApi.TextMessage = { type: 'text', text: dndText }
-        await replyMessage(params.replyToken, [msg], params.workspaceId)
-        markWaitingAckSent(params.workspaceId, params.lineUserId)
-        saveOutgoingConversationMessagesByWorkspace(params.lineUserId, [msg], params.workspaceId, {
-          sender: 'system',
-          senderName: '勿擾時段回覆',
-        }).catch(e => console.error('[customer-return] save outgoing error:', e))
-      }
-      // 狀態快取已經是待真人，這兩支照它們平常的規則送（含節流）
-      else if (params.kind === 'button') {
-        await maybeSendWaitingButtonAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
-      }
-      else {
-        await maybeSendWaitingAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
-      }
-    }
-
-    // ⛔ 要 await（Lambda 回應後容器會凍結）。勿擾時段／只通知沒人接手的模式在通知函式裡自己處理，
-    //    那兩種當下不傳，之後由逾時提醒從客人回來的時間起算再叫一次（見 remindOverdueHandoffs）
-    await notifyHandoffToStaff({
-      workspaceId: params.workspaceId,
-      customerLineUserId: params.lineUserId,
-      customerName: params.displayName || params.lineUserId,
-      customerMessage: params.customerMessage,
-      reason: 'customer_returned',
-    }).catch(e => console.error('[customer-return] notify error:', e))
+    await callStaffBack({ ...params, sessionId: params.sessionId, reason: 'customer_returned' })
     return true
   }
   catch (e) {
     console.error('[customer-return] failed:', e)
     return false
   }
+}
+
+/**
+ * 客服剛在對話頁按「結束會話」／「交還機器人」，客人 30 分鐘內接著講 → 放回待真人、叫人（`C-382`，老闆 2026-10-22「Ok」）。
+ * 回傳 true＝放回去了，這一則到此為止：AI／自動回覆不碰它，呼叫端直接結束。
+ *
+ * 為什麼要有：同事三分之二是送出最後一句 30 秒內就按結束，按完一小時內客人又回話 111 次（30 分鐘內 96 次），
+ * AI 接了的除了謝謝多半接不住（「信箱被退件了」→「不客氣！」）——按結束時「真人的」記號就清掉了，所以沒擋到。
+ *
+ * 只回好的／謝謝、只傳貼圖不算（照舊給 AI 回「不客氣」），而且**不用掉這 30 分鐘**：之後真的問了還是交給真人。
+ * 只有打字與傳圖／影／音／檔會走到這裡；按鈕不算（自助模組照舊回、「真人客服」本來就是轉真人）。
+ * 排程自動交還／自動結束不會蓋放手時間（見 releaseHumanOwnership），所以那兩種不會走到這裡。
+ */
+async function maybeHandleReleasedFollowUp(params: {
+  sessionId: string | null | undefined
+  lineUserId: string
+  workspaceId: string
+  replyToken?: string
+  kind: 'text' | 'media'
+  customerMessage: string
+  displayName?: string
+  atMs?: number
+  /** readHumanRelease 預先讀好的（跟建場並行發） */
+  release: HumanRelease | null
+}): Promise<boolean> {
+  try {
+    if (!params.sessionId || !params.release) return false
+    const windowMs = CUSTOMER_RETURN_STAFF_IDLE_MINUTES * 60_000
+    // 先在記憶體擋掉過了時限的（絕大多數訊息根本沒有放手時間，上面那行就離開了）
+    if ((params.atMs ?? Date.now()) - params.release.atMs >= windowMs) return false
+    if (params.kind === 'text' && isPleasantryOnly(params.customerMessage)) return false
+    const status = await getSessionStatusCached(params.sessionId)
+    if (status !== 'open' && status !== 'bot_handling') return false
+
+    const returned = await returnReleasedSessionToPending(params.sessionId, params.lineUserId, params.workspaceId, {
+      atMs: params.atMs,
+      windowMs,
+    })
+    if (!returned) return false
+
+    const button = returned.by === 'close' ? '結束' : '交還機器人'
+    await callStaffBack({
+      ...params,
+      sessionId: params.sessionId,
+      reason: 'customer_returned_after_release',
+      reasonLabel: `客人又來了（${button}後${returned.afterMinutes >= 1 ? ` ${returned.afterMinutes} 分鐘` : '不到 1 分鐘'}）`,
+    })
+    return true
+  }
+  catch (e) {
+    console.error('[customer-return] released follow-up failed:', e)
+    return false
+  }
+}
+
+/**
+ * readHumanRelease 的保險版：每一則客人訊息都會叫它，任何一種失敗（讀取失敗、連呼叫都丟出來）
+ * 都只能當成「客服最近沒放手」，⛔ 不可以讓客人這一則因此整個沒被處理。
+ */
+function readHumanReleaseSafe(userId: string, workspaceId: string): Promise<HumanRelease | null> {
+  return Promise.resolve()
+    .then(() => readHumanRelease(userId, workspaceId))
+    .catch((e) => {
+      console.warn('[customer-return] read release failed:', String((e as Error)?.message ?? e).slice(0, 160))
+      return null
+    })
+}
+
+/**
+ * 客人剛被放回待真人之後的那兩件事（`C-381`／`C-382` 共用）：給客人一句已收到、叫值班客服。
+ * 狀態快取在這之前已經是待真人。
+ */
+async function callStaffBack(params: {
+  sessionId: string
+  lineUserId: string
+  workspaceId: string
+  replyToken?: string
+  kind: 'text' | 'media' | 'button'
+  customerMessage: string
+  displayName?: string
+  reason: HandoffNotifyReason
+  reasonLabel?: string
+}): Promise<void> {
+  if (params.replyToken) {
+    // 下班時間講下班時間（同轉真人那則，見 dndHandoffReplyText），不然客人半夜收到「專員會盡快回覆」然後整夜沒人
+    const dndText = await dndHandoffReplyText(params.workspaceId)
+    if (dndText) {
+      const msg: messagingApi.TextMessage = { type: 'text', text: dndText }
+      await replyMessage(params.replyToken, [msg], params.workspaceId)
+      markWaitingAckSent(params.workspaceId, params.lineUserId)
+      saveOutgoingConversationMessagesByWorkspace(params.lineUserId, [msg], params.workspaceId, {
+        sender: 'system',
+        senderName: '勿擾時段回覆',
+      }).catch(e => console.error('[customer-return] save outgoing error:', e))
+    }
+    // 狀態快取已經是待真人，這兩支照它們平常的規則送（含節流）
+    else if (params.kind === 'button') {
+      await maybeSendWaitingButtonAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
+    }
+    else {
+      await maybeSendWaitingAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
+    }
+  }
+
+  // ⛔ 要 await（Lambda 回應後容器會凍結）。勿擾時段／只通知沒人接手的模式在通知函式裡自己處理，
+  //    那兩種當下不傳，之後由逾時提醒從客人回來的時間起算再叫一次（見 remindOverdueHandoffs）
+  await notifyHandoffToStaff({
+    workspaceId: params.workspaceId,
+    customerLineUserId: params.lineUserId,
+    customerName: params.displayName || params.lineUserId,
+    customerMessage: params.customerMessage,
+    reason: params.reason,
+    reasonLabel: params.reasonLabel,
+  }).catch(e => console.error('[customer-return] notify error:', e))
 }
 
 /**

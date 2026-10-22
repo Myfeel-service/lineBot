@@ -214,7 +214,7 @@ describe('趨勢圖：日結與現場算必須一致（E-29）', () => {
     const f = fakeDb()
     await runTrend(f.db)
     expect([...TREND_SESSION_FIELDS].sort()).toEqual(
-      ['hasHandoff', 'hasInbound', 'initialHandler', 'openedAt', 'origin', 'status'].sort(),
+      ['continuesHumanSession', 'hasHandoff', 'hasInbound', 'initialHandler', 'openedAt', 'origin', 'status'].sort(),
     )
     expect(f.selected).not.toContain('closingPreview')
   })

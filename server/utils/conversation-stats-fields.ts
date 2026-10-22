@@ -21,6 +21,7 @@ const SESSION_STATS_BASE = [
   'status', // 結案率
   'origin', // ↓ isPreInboundSession：客人還沒真的開口（加好友沒講話、只傳貼圖）的場不進統計
   'hasInbound',
+  'continuesHumanSession', // isHumanContinuationSession：客服剛按結束、客人接著講而開的那一場不進統計（`C-382`）
 ] as const
 
 /** 趨勢圖：只要分桶與四個分類 */

@@ -52,6 +52,8 @@ interface FakeEvent {
   sessionId: string
   ms: number
   eventType: string
+  /** 事件文件上其他欄位（`C-382` 的 releasedBy／afterMinutes） */
+  extra?: Record<string, unknown>
 }
 interface FakeBroadcast {
   id: string
@@ -253,7 +255,7 @@ function makeDb(data: {
               return {
                 docs: rows.map(e => ({
                   id: e.id,
-                  data: () => ({ sessionId: e.sessionId, eventType: e.eventType, timestamp: new Date(e.ms) }),
+                  data: () => ({ ...e.extra, sessionId: e.sessionId, eventType: e.eventType, timestamp: new Date(e.ms) }),
                 })),
                 empty: rows.length === 0,
               }
@@ -349,6 +351,23 @@ describe('對話時間軸：分段讀', () => {
     expect(res.items.at(-1)).toMatchObject({ id: 'e-close', label: '會話已結束' })
     expect(res.hasNewer).toBe(true)
     expect(res.session).toMatchObject({ sessionId: 's1', closedAtMs: closedMs })
+  })
+
+  it('客人回到待真人那一行講得出原因（`C-381`／`C-382`）：接手後又來、結束後幾分鐘、交還後不到 1 分鐘', async () => {
+    useDb({
+      messages: seriesOf(10),
+      sessions: [{ id: 's1', openedMs: T0 - MINUTE }],
+      events: [
+        { id: 'e-idle', sessionId: 's1', ms: T0 + 30_000, eventType: 'customer_returned' },
+        { id: 'e-close', sessionId: 's1', ms: T0 + 90_000, eventType: 'customer_returned', extra: { releasedBy: 'close', afterMinutes: 3 } },
+        { id: 'e-back', sessionId: 's1', ms: T0 + 150_000, eventType: 'customer_returned', extra: { releasedBy: 'handback', afterMinutes: 0 } },
+      ],
+    })
+    const res = await call({ limit: 40 })
+    const label = (id: string) => res.items.find(i => i.id === id)?.label
+    expect(label('e-idle')).toBe('客人又來了，回到待真人')
+    expect(label('e-close')).toBe('客人在結束後 3 分鐘又來了，回到待真人')
+    expect(label('e-back')).toBe('客人在交還機器人後不到 1 分鐘又來了，回到待真人')
   })
 
   it('往下讀：落在「這一段最後一則」與「下一則」之間的事件不會掉', async () => {

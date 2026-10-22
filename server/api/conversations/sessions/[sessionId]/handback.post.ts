@@ -21,7 +21,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const userId = sessionSnap.data()!.userId as string
-  const ok = await handBackSessionToBot(sessionId, userId)
+  // byStaff：客服自己按的，接下來 30 分鐘內客人接著講的話先回到真人手上（`C-382`）
+  const ok = await handBackSessionToBot(sessionId, userId, { byStaff: true })
   if (!ok) {
     throw createError({ statusCode: 400, statusMessage: '此會話目前不在真人處理狀態，無法交還機器人' })
   }

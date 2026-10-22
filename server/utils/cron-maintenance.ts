@@ -1008,8 +1008,11 @@ export async function remindOverdueHandoffs(db: Firestore) {
         const ctx = (convSnap?.data()?.handoffNotifyContext ?? null) as
           { summary?: string; message?: string; reason?: string | null; at?: unknown } | null
         const ctxFresh = Boolean(ctx && tsToMs(ctx.at) >= c.requestedMs - 10 * 60_000)
-        // 客人回來被放回待真人的（`C-381`）：「每次都通知」模式不存檔，原因也要講得出來（合併清單那一行用得到）
-        const returned = customerReturnedAtMs(c.doc.data()) > 0
+        // 客人回來被放回待真人的（`C-381`／`C-382`）：「每次都通知」模式不存檔，原因也要講得出來（合併清單那一行用得到）
+        const sessionData = c.doc.data()
+        const returnedReason: HandoffNotifyReason | null = customerReturnedAtMs(sessionData) > 0
+          ? (sessionData.returnedAfterRelease ? 'customer_returned_after_release' : 'customer_returned')
+          : null
         return {
           ...c,
           displayName,
@@ -1017,7 +1020,7 @@ export async function remindOverdueHandoffs(db: Firestore) {
           summary: ctxFresh ? String(ctx?.summary ?? '') : '',
           reason: ctxFresh
             ? ((ctx?.reason ?? null) as HandoffNotifyReason | null)
-            : (returned ? 'customer_returned' as const : null),
+            : returnedReason,
         }
       }))
 

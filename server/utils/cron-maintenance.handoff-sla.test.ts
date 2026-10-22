@@ -55,6 +55,8 @@ interface SessionSeed {
   returnedMinutesAgo?: number
   /** 真人最後一次回覆是幾分鐘前 */
   humanLastRepliedMinutesAgo?: number
+  /** 客服剛按了哪一顆、客人接著講才回到待真人的（`C-382`） */
+  returnedAfterRelease?: 'close' | 'handback'
   /**
    * 模擬「另一個排程執行者在這一輪中間搶先蓋了章」：
    * 查詢快照看不到章（跟現場一樣），交易內讀到的即時資料有章。
@@ -90,6 +92,7 @@ function makeDb(
       ...(s.humanLastRepliedMinutesAgo != null
         ? { humanLastRepliedAt: { toMillis: () => NOW - s.humanLastRepliedMinutesAgo! * 60_000 } }
         : {}),
+      ...(s.returnedAfterRelease ? { returnedAfterRelease: s.returnedAfterRelease } : {}),
     }
     // live = 交易讀到的即時資料；snapshot = 掃描那一刻的快照（兩者刻意可以不同）
     const live: Record<string, unknown> = { ...base }
@@ -385,6 +388,19 @@ describe('remindOverdueHandoffs 同輪合併', () => {
     const ret = call.items.find((i: any) => i.customerLineUserId === 'U1')
     expect(ret.waitedMs).toBe(45 * 60_000)
     expect(ret.reason).toBe('customer_returned')
+  })
+
+  it('客服剛按結束、客人接著講才回到待真人的（`C-382`）→ 一樣提醒，原因講「剛結束不久」不是「接手後還沒結束」', async () => {
+    const { db, stampedIds } = makeDb([{
+      id: 'tail', workspaceId: 'WS', userId: 'U1',
+      requestedMinutesAgo: 0,
+      returnedMinutesAgo: 40, // 尾巴那一場：沒有轉真人時間、沒有首接，只有客人回來的時間
+      returnedAfterRelease: 'close',
+    }])
+    await remindOverdueHandoffs(db)
+
+    expect(notifyHandoffToStaff.mock.calls[0]![0]).toMatchObject({ reason: 'customer_returned_after_release' })
+    expect(stampedIds()).toEqual(['tail'])
   })
 
   it('客人回來還沒到 SLA → 先不催、不蓋章', async () => {
