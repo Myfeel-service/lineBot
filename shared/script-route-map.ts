@@ -22,7 +22,7 @@ export interface RouteBracket {
 }
 
 export interface RouteMap {
-  /** 每一站的 id：題目的 id，最後一站是「最後」那一段的入口（endId） */
+  /** 每一站的 id：題目的 id，接著每一種結尾的入口（好幾種結尾時底下好幾站，`D-149`） */
   stationIds: string[]
   /** 第 i 站到第 i+1 站之間有沒有直線（照順序接下一站的路） */
   rails: boolean[]
@@ -53,7 +53,10 @@ export function buildRouteMap(view: QuestionListView): RouteMap {
   const n = items.length
   const indexOf = (id: string | undefined) => {
     const i = items.findIndex(it => it.id === id)
-    return i >= 0 ? i : n // 不是題目＝「最後」那一段（存進客人資料／貼標籤／結尾）
+    if (i >= 0) return i
+    // 不是題目＝某一種結尾（入口、存進客人資料、貼標籤、結尾本身都算那一種）
+    const k = view.endings.findIndex(e => e.entryId === id || e.terminal.id === id || e.saveLead?.id === id || e.tag?.id === id)
+    return n + Math.max(k, 0)
   }
   const rails = Array.from({ length: n }, () => false)
   const merged = new Map<string, { from: number; to: number; labels: string[] }>()
@@ -117,5 +120,5 @@ export function buildRouteMap(view: QuestionListView): RouteMap {
     }
   }
 
-  return { stationIds: [...items.map(it => it.id), view.endId], rails, brackets, laneCount: lanes.length, hops }
+  return { stationIds: [...items.map(it => it.id), ...view.endings.map(e => e.entryId)], rails, brackets, laneCount: lanes.length, hops }
 }

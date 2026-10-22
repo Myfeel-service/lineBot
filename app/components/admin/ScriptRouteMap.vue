@@ -55,12 +55,15 @@
 </template>
 
 <script setup lang="ts">
-import type { QuestionItem, QuestionListView } from '~~/shared/script-question-list'
+import type { QuestionEnding, QuestionItem, QuestionListView } from '~~/shared/script-question-list'
+import { endingOfNode } from '~~/shared/script-question-list'
 import { buildRouteMap } from '~~/shared/script-route-map'
 
 const props = defineProps<{
   view: QuestionListView
   itemLabel: (item: QuestionItem) => string
+  /** 好幾種結尾時每一站的名字（「出貨查詢」…，`D-149`）；只有一種就叫「最後」 */
+  endingLabel?: (ending: QuestionEnding) => string
   /** 試試看走過的步驟（照順序，含「最後」那一段的步驟） */
   visited: string[]
   /** 試試看現在停在哪一題 */
@@ -117,14 +120,15 @@ const geo = computed(() => {
   }
 })
 
-/** 試試看走過的步驟換成第幾站（「最後」那一段的步驟都算最後一站），連續重複的併掉 */
+/** 試試看走過的步驟換成第幾站（某一種結尾的步驟都算那一站），連續重複的併掉 */
 const walkedStations = computed(() => {
-  const last = map.value.stationIds.length - 1
+  const n = props.view.items.length
   const seq: number[] = []
   for (const id of props.visited) {
     const i = props.view.items.findIndex(it => it.id === id)
-    const s = i >= 0 ? i : last
-    if (seq.at(-1) !== s) seq.push(s)
+    const ending = i >= 0 ? null : endingOfNode(props.view, id)
+    const s = i >= 0 ? i : ending ? n + props.view.endings.indexOf(ending) : -1
+    if (s >= 0 && seq.at(-1) !== s) seq.push(s)
   }
   return seq
 })
@@ -174,23 +178,25 @@ const hopEls = computed(() => map.value.hops.map(h => ({
 
 const stationEls = computed(() => {
   const ids = map.value.stationIds
-  const last = ids.length - 1
+  const n = props.view.items.length
+  const many = props.view.endings.length > 1
   const walked = new Set(walkedStations.value)
-  const t = props.view.terminal
-  const endSub = t.type === 'module' ? '送模組' : t.thenHandoff ? '回覆・轉真人' : '回覆'
   return ids.map((id, i) => {
-    const isEnd = i === last
+    const isEnd = i >= n
+    const ending = isEnd ? props.view.endings[i - n]! : null
     const item = props.view.items[i]
-    const label = isEnd ? '最後' : props.itemLabel(item!)
+    const t = ending?.terminal
+    const endSub = !t ? '' : t.type === 'module' ? '送模組' : t.thenHandoff ? '回覆・轉真人' : '回覆'
+    const label = !ending ? props.itemLabel(item!) : many && props.endingLabel ? props.endingLabel(ending) : '最後'
     return {
       id,
       n: i + 1,
       isEnd,
       label,
-      // 站太窄（右邊那欄 300 寬時約 130px）就不放小字，不然「最後」兩個字會被擠成「最…」
-      sub: isEnd && geo.value.pillW >= 150 ? endSub : '',
-      title: isEnd ? `最後：${endSub}` : `第 ${i + 1} 題・${label}`,
-      jumpId: isEnd ? t.id : id,
+      // 站太窄（右邊那欄 300 寬時約 130px）就不放小字，不然「最後」兩個字會被擠成「最…」；好幾種結尾時名字比較長，不放
+      sub: isEnd && !many && geo.value.pillW >= 150 ? endSub : '',
+      title: isEnd ? `${label}：${endSub}` : `第 ${i + 1} 題・${label}`,
+      jumpId: t ? t.id : id,
       current: !isEnd && props.current === id,
       walked: walked.has(i),
       flagged: !isEnd && props.flagged.has(id),

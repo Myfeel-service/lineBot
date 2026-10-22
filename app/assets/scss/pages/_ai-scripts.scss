@@ -929,6 +929,54 @@
   }
 }
 
+/* ── 最後：一種結尾時就是那幾格；好幾種時每一種一張小卡（`D-149`，外觀同「先問客人」的題目卡） ── */
+.scripts-ending {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem; /* 同 .card-section-stack：一種結尾時跟以前長得一模一樣 */
+
+  &.is-many {
+    padding: 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+
+  &.is-focused {
+    border-color: var(--el-color-primary);
+    box-shadow: 0 0 0 3px var(--el-color-primary-light-8);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    b.is-orphan {
+      color: var(--el-color-warning-dark-2);
+    }
+  }
+
+  /* 黑底小方塊：跟右邊路線圖的結尾站同一個記號 */
+  &__mark {
+    flex: 0 0 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #374151;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    &::after {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 2px;
+      background: #ffffff;
+    }
+  }
+}
+
 /* 右邊那一欄：上面路線（有岔路才有）、下面試試看 */
 .scripts-side {
   flex: 1 1 300px;

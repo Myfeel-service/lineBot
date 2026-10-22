@@ -80,6 +80,21 @@ describe('路線圖（D-142）', () => {
     expect(outer.labelGap).toBe(0) // 正中間被隔壁那圈佔了，挪到旁邊
   })
 
+  it('好幾種結尾（服務分流，`D-149`）：每一種結尾一站，按鈕直接繞到各自那一站', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['客服選單'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '?', expireMs: 1, options: [{ label: '出貨查詢', next: 'r1' }, { label: '退換貨', next: 'tg' }, { label: '找真人', next: 'r3' }] },
+      { id: 'r1', type: 'reply', text: '1', thenHandoff: false },
+      { id: 'tg', type: 'tag', addTagIds: [], next: 'r2' },
+      { id: 'r2', type: 'reply', text: '2', thenHandoff: true },
+      { id: 'r3', type: 'reply', text: '3', thenHandoff: true },
+    ]
+    const m = buildRouteMap(toQuestionList(nodes, 't')!)
+    expect(m.stationIds).toEqual(['q', 'r1', 'tg', 'r3'])
+    expect(m.rails).toEqual([true]) // 出貨查詢＝緊接下一站
+    expect(m.brackets.map(b => [b.from, b.to, b.labels.join()])).toEqual([[0, 2, '退換貨'], [0, 3, '找真人']])
+  })
+
   it('標籤放在跨過的範圍正中間那一格（站與站之間）', () => {
     const m = buildRouteMap(toQuestionList(orderFlow(), 't')!)
     const gap = (from: number, to: number) => m.brackets.find(b => b.from === from && b.to === to)!.labelGap

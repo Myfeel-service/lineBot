@@ -435,16 +435,16 @@
                     <div v-if="item.type === 'collect' && (isJumpShown(item, i) || isSkipOpen(item) || (canEditScripts && isStuckCollect(item)))" class="scripts-q__routes">
                       <div v-if="isJumpShown(item, i)" class="scripts-q__route">
                         <span class="scripts-q__route-label">答了 →</span>
-                        <el-select :model-value="item.next" class="scripts-q__target" @change="item.next = $event">
+                        <el-select :model-value="item.next" class="scripts-q__target" @change="onListTarget($event, (id) => { item.next = id })">
                           <el-option v-for="t in listTargets(i, item.next)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
-                        <el-button v-if="canEditScripts" text type="danger" title="拿掉跳題，改回照順序（接下一題）" @click="resetJump(item, i)">✕</el-button>
+                        <el-button v-if="canEditScripts && canResetJump(i)" text type="danger" title="拿掉跳題，改回照順序（接下一題）" @click="resetJump(item, i)">✕</el-button>
                         <span v-if="isBackwardTarget(qList, i, item.next)" class="scripts-q__warn">會跳回前面那一題，客人要重答</span>
                       </div>
                       <div v-if="isSkipOpen(item)" class="scripts-q__route">
                         <span class="scripts-q__route-label">客人說沒有 →</span>
                         <el-input v-model="item.skipLabel" maxlength="20" placeholder="按鈕字，例：我沒有訂單編號" class="scripts-q__button-label" />
-                        <el-select :model-value="item.skipNext ?? ''" placeholder="前往…" class="scripts-q__target" @change="item.skipNext = $event">
+                        <el-select :model-value="item.skipNext ?? ''" placeholder="前往…" class="scripts-q__target" @change="onListTarget($event, (id) => { item.skipNext = id })">
                           <el-option v-for="t in listTargets(i, item.skipNext)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
                         <el-button v-if="canEditScripts" text type="danger" title="拿掉這條路" @click="clearCollectSkip(item)">✕</el-button>
@@ -463,7 +463,7 @@
                       <div v-for="(o, oi) in item.options" :key="oi" class="scripts-q__route">
                         <el-input v-model="o.label" maxlength="20" placeholder="按鈕字" class="scripts-q__button-label" />
                         <span class="scripts-q__route-label">→</span>
-                        <el-select :model-value="o.next" class="scripts-q__target" @change="o.next = $event">
+                        <el-select :model-value="o.next" class="scripts-q__target" @change="onListTarget($event, (id) => { o.next = id })">
                           <el-option v-for="t in listTargets(i, o.next)" :key="t.value" :label="t.label" :value="t.value" />
                         </el-select>
                         <el-button v-if="canEditScripts" text type="danger" title="拿掉這顆按鈕" @click="removeQuickReplyOption(item, oi)">✕</el-button>
@@ -481,30 +481,54 @@
                 </div>
               </section>
 
-              <!-- ── 最後 ── -->
+              <!--
+                ── 最後 ──
+                `D-149`：可以有好幾種結尾（服務分流那種：按不同按鈕回不同的話）。只有一種時長得跟以前一樣；
+                好幾種時每一種一張小卡，標題跟著「哪顆按鈕／哪一題」走到這裡，內容跟一種的時候一模一樣。
+              -->
               <section
                 class="message-card scripts-section-card"
-                :class="{ 'is-focused': highlightStep === qList.terminal.id }"
-                :data-node-id="qList.terminal.id"
+                :class="{ 'is-focused': qList.endings.length === 1 && highlightStep === qList.terminal.id }"
+                :data-node-id="qList.endings.length === 1 ? qList.terminal.id : undefined"
               >
                 <div class="message-card-header">
                   <div class="card-header-main">
                     <span class="section-title">最後</span>
+                    <span v-if="qList.endings.length > 1" class="text-xs text-muted">看客人怎麼走，有 {{ qList.endings.length }} 種</span>
                   </div>
                 </div>
                 <div class="card-section-stack">
-                  <template v-if="listReply">
-                    <div class="admin-field-group" data-tour="scr-reply">
+                <div
+                  v-for="(ending, ei) in qList.endings"
+                  :key="ending.terminal.id"
+                  class="scripts-ending"
+                  :class="{ 'is-many': qList.endings.length > 1, 'is-focused': qList.endings.length > 1 && highlightStep === ending.terminal.id }"
+                  :data-node-id="qList.endings.length > 1 ? ending.terminal.id : undefined"
+                >
+                  <div v-if="qList.endings.length > 1" class="scripts-ending__head">
+                    <span class="scripts-ending__mark" aria-hidden="true" />
+                    <b :class="{ 'is-orphan': !endingSources(ending).length }">{{ endingTitle(ending) }}</b>
+                    <span class="scripts-q__head-end">
+                      <AdminMoreMenu
+                        v-if="canEditScripts"
+                        variant="row"
+                        :items="[{ command: 'remove', label: '刪除這個結尾', danger: true }]"
+                        @command="removeListEnding(ending)"
+                      />
+                    </span>
+                  </div>
+                  <template v-if="ending.terminal.type === 'reply'">
+                    <div class="admin-field-group" :data-tour="ei === 0 ? 'scr-reply' : undefined">
                       <AdminFieldLabel text="回客人" tight />
                       <VariableTextField
-                        v-model="listReply.text"
+                        v-model="ending.terminal.text"
                         type="textarea"
                         mode="script"
                         :known-keys="scriptVariableKeys"
                         :rows="3"
                         placeholder="例：已收到您的資訊，我們會盡快為您處理 🙇"
                       />
-                      <el-dropdown v-if="canEditScripts" size="small" trigger="click" class="scripts-var-insert" @command="insertListReplyVar">
+                      <el-dropdown v-if="canEditScripts" size="small" trigger="click" class="scripts-var-insert" @command="insertEndingReplyVar(ending, $event)">
                         <el-button size="small" plain>＋ 插入客人資料 ▾</el-button>
                         <template #dropdown>
                           <el-dropdown-menu>
@@ -524,48 +548,49 @@
                         </template>
                       </el-dropdown>
                     </div>
-                    <div v-if="listReply.linkUrl !== undefined" class="admin-field-group">
+                    <div v-if="ending.terminal.linkUrl !== undefined" class="admin-field-group">
                       <AdminFieldLabel text="附一顆連結按鈕（選填）" tight />
                       <div class="scripts-branch-case scripts-branch-case--map">
                         <span class="text-xs text-muted">網址</span>
-                        <el-input v-model="listReply.linkUrl" placeholder="https://…（可插入客人回答的）" class="scripts-branch-field" />
+                        <el-input v-model="ending.terminal.linkUrl" placeholder="https://…（可插入客人回答的）" class="scripts-branch-field" />
                         <span class="text-xs text-muted">按鈕字</span>
-                        <el-input v-model="listReply.linkLabel" maxlength="20" :placeholder="DEFAULT_REPLY_LINK_LABEL" class="scripts-branch-field" />
-                        <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(listReply)">✕</el-button>
+                        <el-input v-model="ending.terminal.linkLabel" maxlength="20" :placeholder="DEFAULT_REPLY_LINK_LABEL" class="scripts-branch-field" />
+                        <el-button v-if="canEditScripts" type="danger" plain class="scripts-branch-remove" title="移除連結按鈕" @click="clearReplyLink(ending.terminal)">✕</el-button>
                       </div>
                       <p class="scripts-section-hint">會在回覆下面多送一則帶按鈕的訊息。網址要以 https:// 開頭。</p>
                     </div>
-                    <el-checkbox v-model="listReply.thenHandoff">回完交給真人</el-checkbox>
-                    <p v-if="listReply.thenHandoff" class="scripts-section-hint">下班時間會在同一則補上幾點起回覆，不會另外再送一則。</p>
+                    <el-checkbox v-model="ending.terminal.thenHandoff">回完交給真人</el-checkbox>
+                    <p v-if="ending.terminal.thenHandoff" class="scripts-section-hint">下班時間會在同一則補上幾點起回覆，不會另外再送一則。</p>
                   </template>
-                  <div v-else-if="listModule" class="admin-field-group">
+                  <div v-else class="admin-field-group">
                     <AdminFieldLabel text="送出哪個模組" tight />
                     <div v-if="modulesLoading" class="text-xs text-muted">載入中…</div>
-                    <AdminFlowPicker v-else :model-value="listModule.moduleId" :options="moduleOptions" placeholder="選擇模組（可打字搜尋）" @update:model-value="listModule.moduleId = $event" />
+                    <AdminFlowPicker v-else :model-value="ending.terminal.moduleId" :options="moduleOptions" placeholder="選擇模組（可打字搜尋）" @update:model-value="setEndingModule(ending, $event)" />
                     <p class="scripts-section-hint">送出你在「機器人模組」做好的那一組訊息。若那是「真人客服」模組，會照常轉真人。</p>
                   </div>
 
                   <!-- 「存進客人資料」2026-10-22 搬到每一題上（`D-140`），這裡不再列一排 -->
 
-                  <div v-if="qList.tag" class="admin-field-group">
+                  <div v-if="ending.tag" class="admin-field-group">
                     <AdminFieldLabel text="替客人貼上標籤" tight />
                     <div class="scripts-q__route">
                       <AdminTagPicker
-                        :model-value="qList.tag.addTagIds"
+                        :model-value="ending.tag.addTagIds"
                         :options="tagList"
                         placeholder="選擇標籤（可多選、可打字搜尋）"
                         class="scripts-q__tags"
-                        @update:model-value="setListTags"
+                        @update:model-value="setEndingTags(ending, $event)"
                       />
-                      <el-button v-if="canEditScripts" text type="danger" title="不貼標籤了" @click="removeListTag">✕</el-button>
+                      <el-button v-if="canEditScripts" text type="danger" title="不貼標籤了" @click="removeListTag(ending)">✕</el-button>
                     </div>
                   </div>
 
                   <div v-if="canEditScripts" class="scripts-q__add">
-                    <button v-if="listReply && listReply.linkUrl === undefined" type="button" class="scripts-skip-add" @click="listReply.linkUrl = ''">＋ 附一顆連結按鈕</button>
-                    <button v-if="!qList.tag" type="button" class="scripts-skip-add" @click="addListTag">＋ 貼標籤</button>
-                    <button type="button" class="scripts-skip-add" @click="toggleTerminalKind">{{ listReply ? '＋ 改送一個模組' : '改回一段文字' }}</button>
+                    <button v-if="ending.terminal.type === 'reply' && ending.terminal.linkUrl === undefined" type="button" class="scripts-skip-add" @click="openEndingLink(ending)">＋ 附一顆連結按鈕</button>
+                    <button v-if="!ending.tag" type="button" class="scripts-skip-add" @click="addListTag(ending)">＋ 貼標籤</button>
+                    <button type="button" class="scripts-skip-add" @click="toggleTerminalKind(ending)">{{ ending.terminal.type === 'reply' ? '＋ 改送一個模組' : '改回一段文字' }}</button>
                   </div>
+                </div>
                 </div>
               </section>
             </template>
@@ -960,6 +985,7 @@
             v-if="qList && routeMapShown"
             :view="qList"
             :item-label="routeStationLabel"
+            :ending-label="endingShortLabel"
             :visited="tryProgress.visited"
             :current="tryProgress.current"
             :flagged="flaggedNodeIds"
@@ -1004,15 +1030,19 @@ import {
 } from '~~/shared/follow-welcome'
 import { DISPLAY_NAME_VARIABLE_OPTION, SCRIPT_PRESET_FIELD_LABELS } from '~~/shared/variable-tokens'
 import {
+  addEnding,
   appendQuestion,
   insertEndStep,
   isBackwardTarget,
+  isOrderTarget,
   moveQuestion,
   orderNextOf,
   removeEndStep,
+  removeEnding,
   removeQuestion,
   replaceTerminal,
   toQuestionList,
+  type QuestionEnding,
   type QuestionItem,
 } from '~~/shared/script-question-list'
 import { buildRouteMap } from '~~/shared/script-route-map'
@@ -1174,8 +1204,61 @@ function syncEditorMode() {
 }
 /** 清單看法；流程圖模式、或改到清單看不懂時是 null（模板就退回流程圖編法，不會什麼都不畫） */
 const qList = computed(() => (editorMode.value === 'list' ? toQuestionList(form.value.nodes, form.value.rootNodeId) : null))
-const listReply = computed(() => (qList.value?.terminal.type === 'reply' ? qList.value.terminal : null))
-const listModule = computed(() => (qList.value?.terminal.type === 'module' ? qList.value.terminal : null))
+
+// ── 好幾種結尾（`D-149`）：每一種叫什麼，跟著「哪顆按鈕／哪一題」走到這裡 ──
+interface EndingSource { kind: 'answer' | 'button'; text: string }
+function endingSources(ending: QuestionEnding): EndingSource[] {
+  const out: EndingSource[] = []
+  qList.value?.items.forEach((it, i) => {
+    if (it.type === 'collect') {
+      if (it.next === ending.entryId) out.push({ kind: 'answer', text: `第 ${i + 1} 題答完` })
+      if (it.skipLabel?.trim() && it.skipNext === ending.entryId) out.push({ kind: 'button', text: it.skipLabel.trim() })
+    }
+    else {
+      for (const o of it.options) if (o.next === ending.entryId) out.push({ kind: 'button', text: o.label.trim() || '（空白按鈕）' })
+    }
+  })
+  return out
+}
+/** 短的名字（路線圖那一站、「去哪」下拉）：出貨查詢／第 2 題答完 */
+function endingShortLabel(ending: QuestionEnding): string {
+  const s = endingSources(ending)
+  if (!s.length) return '還沒有路接到這裡'
+  return s.length > 1 ? `${s[0]!.text} 等` : s[0]!.text
+}
+/** 小卡標題：按「出貨查詢」之後／第 2 題答完之後 */
+function endingTitle(ending: QuestionEnding): string {
+  const s = endingSources(ending)
+  if (!s.length) return '還沒有路接到這裡（選一顆按鈕或一題接過來）'
+  const first = s[0]!.kind === 'button' ? `按「${s[0]!.text}」之後` : `${s[0]!.text}之後`
+  return s.length > 1 ? `${first}（另有 ${s.length - 1} 條路也到這裡）` : first
+}
+
+/** 「去哪」下拉的最後一項：多一種結尾 */
+const NEW_ENDING = '__new_ending__'
+/** 「去哪」下拉改了：選「＋ 新的結尾」就先建一種結尾再接過去，捲到那張小卡 */
+function onListTarget(value: string | number | boolean | undefined, assign: (id: string) => void) {
+  const v = String(value ?? '')
+  const view = qList.value
+  if (v !== NEW_ENDING || !view) { assign(v); return }
+  const terminal = defaultReplyNode()
+  assign(addEnding(form.value.nodes, view, terminal, defaultSaveLeadNode('')))
+  focusStep(terminal.id)
+}
+
+/** 拿掉一種結尾：指到它的路改去第一種（如果拿掉的就是第一種，改去第二種）；寫了字的先問 */
+async function removeListEnding(ending: QuestionEnding) {
+  const view = qList.value
+  if (!view || view.endings.length < 2) return
+  const fallback = view.endings.find(e => e.entryId !== ending.entryId)!
+  const hasText = ending.terminal.type === 'reply' ? Boolean(ending.terminal.text.trim()) : Boolean(ending.terminal.moduleId)
+  if (hasText) {
+    const ok = await ElMessageBox.confirm(`接到這裡的路會改去「${endingShortLabel(fallback)}」那一種。`, '刪除這個結尾', { confirmButtonText: '刪除', cancelButtonText: '先不要', type: 'warning' })
+      .then(() => true).catch(() => false)
+    if (!ok) return
+  }
+  removeEnding(form.value.nodes, view, ending.entryId, fallback.entryId)
+}
 
 /** 流程圖編法裡列的步驟：開始那一步在上面「什麼時候開始」編 */
 const flowNodes = computed(() => form.value.nodes.filter(n => n.type !== 'trigger'))
@@ -1205,7 +1288,10 @@ function listTargets(index: number, current?: string): Array<{ value: string; la
     .map((it, k) => ({ it, k }))
     .filter(({ it, k }) => k > index || (current !== undefined && it.id === current))
     .map(({ it, k }) => ({ value: it.id, label: `第 ${k + 1} 題・${listItemLabel(it)}${k === index + 1 ? '（下一題）' : k <= index ? '（往回）' : ''}` }))
-  out.push({ value: view.endId, label: '直接到最後' })
+  // 一種結尾＝「直接到最後」；好幾種＝每一種一項（`D-149`）
+  if (view.endings.length === 1) out.push({ value: view.endId, label: '直接到最後' })
+  else for (const e of view.endings) out.push({ value: e.entryId, label: `最後：${endingShortLabel(e)}` })
+  if (canEditScripts.value) out.push({ value: NEW_ENDING, label: '＋ 新的結尾（這條路回不一樣的話）' })
   return out
 }
 
@@ -1213,7 +1299,12 @@ function listTargets(index: number, current?: string): Array<{ value: string; la
 const openedJumps = ref<Set<string>>(new Set())
 function isJumpShown(item: ScriptCollectNode, index: number): boolean {
   const view = qList.value
-  return Boolean(view) && (item.next !== orderNextOf(view!, index) || openedJumps.value.has(item.id))
+  return Boolean(view) && (!isOrderTarget(view!, index, item.next) || openedJumps.value.has(item.id))
+}
+/** 「答了 →」的 ✕（改回照順序）：好幾種結尾時最後一題沒有「照順序」可回（去哪一種一定是選的） */
+function canResetJump(index: number): boolean {
+  const view = qList.value
+  return Boolean(view) && isOrderTarget(view!, index, orderNextOf(view!, index))
 }
 function resetJump(item: ScriptCollectNode, index: number) {
   const view = qList.value
@@ -1316,7 +1407,8 @@ const listFields = computed(() =>
     .filter((it): it is ScriptCollectNode => it.type === 'collect' && Boolean(it.fieldName.trim()))
     .map(it => ({ value: it.fieldName, label: fieldLabel(it.fieldName) })),
 )
-const savedFields = computed(() => (qList.value?.saveLead?.fieldMap ?? []).map(m => m.fromField).filter(Boolean))
+/** 有勾「存進客人資料」的題目：好幾種結尾時每一種都有自己的那一步（`D-149`），任何一種有就算勾了 */
+const savedFields = computed(() => [...new Set((qList.value?.endings ?? []).flatMap(e => (e.saveLead?.fieldMap ?? []).map(m => m.fromField)))].filter(Boolean))
 
 /** 每一題上的「存進客人資料」勾選（`D-140` 從「最後」那一排搬上來；存法照舊走 setSavedFields） */
 function toggleSavedField(field: string, on: boolean) {
@@ -1327,57 +1419,67 @@ function toggleSavedField(field: string, on: boolean) {
 /**
  * 勾選要存的題目 ↔「存進客人資料」那一步：勾第一個時掛上去、全部取消就拿掉。
  * 已經存在的對應保留原本的名字（MYFEEL 的「訂單編號」「電話」），新勾的用這一題的中文名。
+ * 好幾種結尾（`D-149`）：每一種都掛同一份——題目上勾的是「問到就存」，不管客人最後走到哪一種。
  */
 function setSavedFields(values: Array<string | number | boolean>) {
-  const view = qList.value
-  if (!view) return
   const picked = values.map(String)
-  if (!view.saveLead) {
-    if (!picked.length) return
-    const node = defaultSaveLeadNode('')
-    node.fieldMap = picked.map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
-    insertEndStep(form.value.nodes, view, node)
-    return
+  // 一種一種改：掛上或拿掉都會讓清單重新解讀，每次重抓目前的樣子
+  const count = qList.value?.endings.length ?? 0
+  for (let k = 0; k < count; k++) {
+    const view = qList.value
+    const ending = view?.endings[k]
+    if (!view || !ending) return
+    if (!ending.saveLead) {
+      if (!picked.length) continue
+      const node = defaultSaveLeadNode('')
+      node.fieldMap = picked.map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
+      insertEndStep(form.value.nodes, view, node, ending)
+      continue
+    }
+    const kept = ending.saveLead.fieldMap.filter(m => picked.includes(m.fromField))
+    const added = picked.filter(f => !kept.some(m => m.fromField === f)).map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
+    const next = [...kept, ...added]
+    if (next.length) ending.saveLead.fieldMap = next
+    else removeEndStep(form.value.nodes, ending.saveLead.id)
   }
-  const kept = view.saveLead.fieldMap.filter(m => picked.includes(m.fromField))
-  const added = picked.filter(f => !kept.some(m => m.fromField === f)).map(f => ({ fromField: f, attrKey: fieldLabel(f) }))
-  const next = [...kept, ...added]
-  if (next.length) view.saveLead.fieldMap = next
-  else removeEndStep(form.value.nodes, view.saveLead.id)
 }
 
-function addListTag() {
+// ── 每一種結尾自己的貼標籤、模組、連結（`D-149`：以前只有一種，直接用 qList.tag／terminal） ──
+function addListTag(ending: QuestionEnding) {
   const view = qList.value
-  if (view && !view.tag) insertEndStep(form.value.nodes, view, defaultTagNode(''))
+  if (view && !ending.tag) insertEndStep(form.value.nodes, view, defaultTagNode(''), ending)
 }
-function removeListTag() {
-  const tag = qList.value?.tag
-  if (tag) removeEndStep(form.value.nodes, tag.id)
+function removeListTag(ending: QuestionEnding) {
+  if (ending.tag) removeEndStep(form.value.nodes, ending.tag.id)
 }
-function setListTags(ids: string[]) {
-  const tag = qList.value?.tag
-  if (tag) tag.addTagIds = ids
+function setEndingTags(ending: QuestionEnding, ids: string[]) {
+  if (ending.tag) ending.tag.addTagIds = ids
+}
+function setEndingModule(ending: QuestionEnding, moduleId: string) {
+  if (ending.terminal.type === 'module') ending.terminal.moduleId = moduleId
+}
+function openEndingLink(ending: QuestionEnding) {
+  if (ending.terminal.type === 'reply') ending.terminal.linkUrl = ''
+}
+function insertEndingReplyVar(ending: QuestionEnding, field: string) {
+  if (ending.terminal.type === 'reply') insertReplyVar(ending.terminal, field)
 }
 
 /** 結尾換成送一個模組／改回一段文字。回覆已經寫了字的先問一聲（換過去那段字就沒了） */
-async function toggleTerminalKind() {
+async function toggleTerminalKind(ending: QuestionEnding) {
   const view = qList.value
   if (!view) return
-  if (view.terminal.type === 'reply') {
-    if (view.terminal.text.trim()) {
+  if (ending.terminal.type === 'reply') {
+    if (ending.terminal.text.trim()) {
       const ok = await ElMessageBox.confirm('改送一個模組的話，「回客人」那段字會清掉。', '改送模組', { confirmButtonText: '改送模組', cancelButtonText: '先不要', type: 'warning' })
         .then(() => true).catch(() => false)
       if (!ok) return
     }
-    replaceTerminal(form.value.nodes, view, defaultModuleNode())
+    replaceTerminal(form.value.nodes, view, defaultModuleNode(), ending)
   }
   else {
-    replaceTerminal(form.value.nodes, view, defaultReplyNode())
+    replaceTerminal(form.value.nodes, view, defaultReplyNode(), ending)
   }
-}
-
-function insertListReplyVar(field: string) {
-  if (listReply.value) insertReplyVar(listReply.value, field)
 }
 
 /** 這條有沒有要客人回答的題目（成效卡：一句話回一件事的只講次數） */
