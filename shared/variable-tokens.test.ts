@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayTokenFor, toDisplayText, toStoredText, VAR_TOKEN_EDGE, variableTokenRanges } from './variable-tokens'
+import { displayTokenFor, toDisplayText, toStoredText, VAR_TOKEN_EDGE, variableLabel, variableSegments, variableTokenRanges } from './variable-tokens'
 
 const NAME = displayTokenFor('displayName')
 
@@ -87,5 +87,25 @@ describe('自動回應的常用欄位：膠囊上講中文、存的照舊（`D-1
 
   it('⛔ 模組／推播（send 模式）不換：那邊送出端只認英文 key，照舊顯示欄位名', () => {
     expect(toDisplayText('{{order_id}}')).toBe(`${VAR_TOKEN_EDGE}order_id${VAR_TOKEN_EDGE}`)
+  })
+})
+
+describe('只看不改的地方：存的格式切成字／變數幾段（小幫手確認卡）', () => {
+  it('{{order_id}} 切成一段「訂單編號」，前後的字原樣；接起來不露出程式碼', () => {
+    const segs = variableSegments('已收到您的訂單 {{order_id}}，{{displayName}} 謝謝您', 'script')
+    expect(segs).toEqual([
+      { text: '已收到您的訂單 ' },
+      { text: '訂單編號', key: 'order_id' },
+      { text: '，' },
+      { text: variableLabel('displayName'), key: 'displayName' },
+      { text: ' 謝謝您' },
+    ])
+    expect(segs.map(s => s.text).join('')).not.toMatch(/\{\{|order_id/)
+  })
+
+  it('沒有變數就是整段一段；send 模式不認中文欄位（跟送出端同一條規則）', () => {
+    expect(variableSegments('先填表單', 'script')).toEqual([{ text: '先填表單' }])
+    expect(variableSegments('{{訂單編號}}', 'send')).toEqual([{ text: '{{訂單編號}}' }])
+    expect(variableSegments(undefined as unknown as string)).toEqual([])
   })
 })

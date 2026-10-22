@@ -103,6 +103,23 @@ export function toDisplayText(stored: string, mode: VariableKeyMode = 'send'): s
 }
 
 /**
+ * 存的格式切成「字／變數」幾段（`{{order_id}}` → 一段「訂單編號」、帶 key）：只看不改的地方用（小幫手確認卡）。
+ * 規則跟 `toDisplayText` 同一條：那邊顯示成膠囊的，這裡也是。
+ */
+export function variableSegments(stored: string, mode: VariableKeyMode = 'send'): Array<{ text: string, key?: string }> {
+  const text = typeof stored === 'string' ? stored : ''
+  const out: Array<{ text: string, key?: string }> = []
+  let at = 0
+  for (const m of text.matchAll(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'))) {
+    if (m.index! > at) out.push({ text: text.slice(at, m.index) })
+    out.push({ text: variableLabel(m[1]!, mode), key: m[1]! })
+    at = m.index! + m[0].length
+  }
+  if (at < text.length) out.push({ text: text.slice(at) })
+  return out
+}
+
+/**
  * 顯示用的字 → 存的格式。
  * extraKeys：這一頁「打括號也算」的欄位（例如這個模組收集得到的 phone）；LINE 名稱永遠算。
  */

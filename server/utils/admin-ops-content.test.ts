@@ -324,7 +324,7 @@ describe('補一張知識卡（只放進「等你看過」）', () => {
     fetchImpl = () => ({ id: 'c2', status: 'indexed' })
     const live = await ops.knowledgeDraftCreate.execute(ctx, args)
     const said = [
-      preview.summary, preview.warning, ...preview.items.map((i: any) => i.note),
+      preview.summary, preview.warning, ...preview.items.flatMap((i: any) => [i.heading, i.note]),
       res.message, live.message, ...auditLogs.map(a => a.note),
     ].join('\n')
     expect(said).toContain('AI 知識量')
@@ -437,5 +437,72 @@ describe('改自動回應的關鍵字／回覆字', () => {
     multi.data.nodes.push({ id: 'n3', type: 'reply', text: '另一段', thenHandoff: false } as any)
     scriptDocs = [multi]
     await expect(propose(ops.scriptUpdateReply, { name: '營業時間', text: 'x x' })).rejects.toThrow('2 段回覆')
+  })
+
+  // 2026-10-22 老闆截圖「使用者看不太懂，我也看不太懂」：「現在／改成」掛在內容下面、停用的提醒排成第三格，
+  // 底下又寫「客人下次打中這條，收到的就是新的這段話」（停用的根本收不到）、{{order_id}} 原樣露出
+  it('🔴 改回覆字的卡（截圖那張）：主句講哪一條＋客人什麼時候收到；現在／改成是小標；停用只講停用', async () => {
+    scriptDocs = [{
+      id: 's2',
+      data: {
+        name: '退換貨查詢',
+        enabled: false,
+        priority: 50,
+        rootNodeId: 't',
+        nodes: [
+          { id: 't', type: 'trigger', keywords: ['退貨', '換貨'], matchMode: 'keyword', keywordMatch: 'any', priority: 50, next: 'c' },
+          { id: 'c', type: 'collect', question: '好的，請提供您的訂單編號', fieldName: 'order_id', expireMs: 600000, format: 'any', next: 'r' },
+          { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', thenHandoff: true },
+        ],
+      },
+    }]
+    const { preview } = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '先填表單' })
+    // 前面先問了訂單編號：⛔ 不可以講成「客人打了字就收到」
+    expect(preview.summary).toBe('「退換貨查詢」裡，客人回答完「訂單編號」之後會收到的話：')
+    expect(preview.items).toEqual([
+      { heading: '現在', label: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', tone: 'before', verbatim: true, vars: 'script' },
+      { heading: '改成', label: '先填表單', tone: 'after', verbatim: true, vars: 'script' },
+    ])
+    expect(preview.warning).toBe('這條目前是停用的，要啟用後客人才收得到。')
+
+    // 啟用中、沒有先問問題的：講客人傳什麼字
+    scriptDocs = [baseScript()]
+    const live = (await propose(ops.scriptUpdateReply, { name: '營業時間', text: '每天 11:00–20:00' })).preview
+    expect(live.summary).toBe('「營業時間」裡，客人傳「營業時間」「幾點開」時會收到的話：')
+    expect(live.warning).toContain('改完馬上生效')
+    expect(live.warning).not.toContain('停用')
+  })
+
+  it('改關鍵字的卡：停用的時候不講「之後客人講到就會走這條」；一個字的提醒照樣在', async () => {
+    const off = baseScript()
+    off.data.enabled = false
+    scriptDocs = [off]
+    const { preview } = await propose(ops.scriptUpdateKeyword, { name: '營業時間', action: 'add', keyword: '開' })
+    expect(preview.items.map((i: any) => [i.heading, i.tone])).toEqual([['現在的關鍵字', 'before'], ['改成', 'after']])
+    expect(preview.warning).toContain('這條目前是停用的')
+    expect(preview.warning).toContain('只有一個字')
+    expect(preview.warning).not.toContain('之後客人講到')
+  })
+})
+
+describe('確認卡的每一格：「這是什麼」畫在內容上面', () => {
+  it('⛔ 「現在／改成」不再寫在 note（note 畫在內容下面，讀完一整段才知道是哪一個）', async () => {
+    settingsStore = { ...settingsStore, enabled: true, handbackIdleMinutes: 30, humanSessionMaxIdleHours: 48 }
+    scriptDocs = [{ id: 's1', data: { name: '營業時間', enabled: true, priority: 50, rootNodeId: 'n1', nodes: [
+      { id: 'n1', type: 'trigger', keywords: ['營業時間'], matchMode: 'keyword', keywordMatch: 'any', priority: 50, next: 'n2' },
+      { id: 'n2', type: 'reply', text: '每天 10:00–19:00', thenHandoff: false },
+    ] } }]
+    const previews = await Promise.all([
+      propose(ops.aiSettingsEnabled, { enabled: false }),
+      propose(ops.aiSettingsHandbackIdle, { minutes: 10 }),
+      propose(ops.aiSettingsAutoClose, { hours: 24 }),
+      propose(ops.aiSettingsToneTemplate, { template: 'friendly' }),
+      propose(ops.scriptUpdateKeyword, { name: '營業時間', action: 'add', keyword: '幾點' }),
+      propose(ops.scriptUpdateReply, { name: '營業時間', text: '每天 11:00 開' }),
+    ])
+    for (const { preview } of previews) {
+      for (const it of preview.items) expect(it.note ?? '').not.toMatch(/^(現在|改成)/)
+      expect(preview.items.filter((i: any) => i.tone).map((i: any) => i.tone)).toEqual(['before', 'after'])
+    }
   })
 })

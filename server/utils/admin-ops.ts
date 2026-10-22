@@ -23,6 +23,7 @@ import {
   ADMIN_OP_RISK,
   adminOpAuditAction,
   type AdminOpId,
+  type AdminOpPreviewItem,
 } from '~~/shared/types/admin-ops'
 import { Timestamp } from 'firebase-admin/firestore'
 import { describeScriptSteps } from '~~/shared/script-plain-summary'
@@ -140,7 +141,7 @@ const aiSettingsServiceHours: AdminOpDef = {
       return {
         opId: 'ai-settings-service-hours',
         summary: '我會把勿擾時段整個關掉：以後不分時間，客人要找真人都會立刻通知你們。',
-        items: [{ label: serviceSentence(before), note: '現在的服務時間' }],
+        items: [{ heading: '現在的服務時間', label: serviceSentence(before) }],
         warning: '關掉之後，半夜有人找真人也會通知——確定要全天候接嗎？',
         confirmLabel: '確定關掉',
       }
@@ -158,8 +159,8 @@ const aiSettingsServiceHours: AdminOpDef = {
       opId: 'ai-settings-service-hours',
       summary: '我會把服務時間改成下面這樣（勿擾時段就是服務時間以外的那段）。',
       items: [
-        { label: serviceSentence(before), note: `現在（勿擾：${dndSentence(before)}）` },
-        { label: serviceSentence(after), note: `改成（勿擾：${dndSentence(after)}）` },
+        { heading: '現在', label: serviceSentence(before), note: `勿擾時段：${dndSentence(before)}`, tone: 'before' },
+        { heading: '改成', label: serviceSentence(after), note: `勿擾時段：${dndSentence(after)}`, tone: 'after' },
       ],
       // 老闆最在意的是「客人會怎樣」：這裡講清楚它只管找真人這條路
       warning: '這只影響「客人要找真人」的時候——勿擾時段內他會先收到一句稍後回覆的訊息，你們不會被叫醒。AI 該回答的問題照常回答。',
@@ -334,7 +335,8 @@ const scriptSetEnabled: AdminOpDef = {
 
     const items = [
       { label: row.name, note: row.enabled ? '現在：啟用中' : '現在：已停用' },
-      { label: trigger, note: '觸發方式' },
+      // 這句本身就講「客人打什麼會走這條」，⛔ 不再掛「觸發方式」（後台詞，而且掛在下面＝讀完才知道是什麼）
+      { label: trigger },
       // 「開了等於沒開」比任何影響都該先講
       ...(impact.selfStillBlocked ? [{ label: '⚠️ 開了也還是輪不到', note: impact.selfStillBlocked.detail }] : []),
       ...impact.newlyBlocked.map(i => ({ label: `「${i.scriptName}」會被蓋掉`, note: i.detail })),
@@ -440,8 +442,8 @@ const aiSettingsHandoffSla: AdminOpDef = {
       ...base,
       summary: '我會改「客人被轉給真人之後，等多久還沒人回就提醒客服」。',
       items: [
-        { label: say(before), note: '現在' },
-        { label: say(args.minutes), note: '改成' },
+        { heading: '現在', label: say(before), tone: 'before' },
+        { heading: '改成', label: say(args.minutes), tone: 'after' },
       ],
       // 名單上沒有人的話，改這個數字不會有任何效果——這種「改了也沒用」要當場講
       // （2026-09-27 `C-270`：總開關拿掉了，「有沒有人在收」＝名單有沒有人；舊資料 normalize 已收掉）
@@ -527,7 +529,7 @@ const aiSettingsSensitiveTopic: AdminOpDef = {
         ? `我會把「${args.word}」加進「一提到就轉真人」的清單。`
         : `我會把「${args.word}」從「一提到就轉真人」的清單拿掉。`,
       items: [
-        { label: list.length ? list.join('、') : '（目前是空的）', note: '現在的清單' },
+        { heading: '現在的清單', label: list.length ? list.join('、') : '（目前是空的）' },
         { label: `共 ${list.length} 個字`, note: args.action === 'add' ? `加完會變成 ${list.length + 1} 個` : `拿掉會變成 ${list.length - 1} 個` },
       ],
       // 加字是往保守的方向動、拿掉字是放寬——兩者的後果完全不同，⛔不能用同一句話帶過
@@ -661,9 +663,9 @@ const aiSettingsReplyMode: AdminOpDef = {
         ? '我會把 AI 改成**直接回客人**。這是影響最大的一個設定，先看一下它最近的表現再決定。'
         : '我會把 AI 改回**只給草稿**：之後客人的訊息一律等真人回，AI 只在旁邊給建議。',
       items: [
-        { label: say(before), note: '現在' },
-        { label: say(args.mode), note: '改成' },
-        { label: perf, note: 'AI 最近的表現' },
+        { heading: '現在', label: say(before), tone: 'before' },
+        { heading: '改成', label: say(args.mode), tone: 'after' },
+        { heading: 'AI 最近的表現', label: perf },
         ...(s.enabled === false ? [{ label: 'AI 目前整個是關的', note: '改了這一格也不會有動作，要先把 AI 打開' }] : []),
       ],
       warning: args.mode === 'auto'
@@ -912,9 +914,10 @@ const broadcastDraftCreate: AdminOpDef = {
 
   async preview(ctx, raw) {
     const args = raw as unknown as BroadcastDraftArgs
-    const items = [
-      { label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), note: '客人會看到的內容', verbatim: true },
+    const items: AdminOpPreviewItem[] = [
+      { heading: '客人會看到的內容', label: args.text.slice(0, 120) + (args.text.length > 120 ? '…' : ''), verbatim: true, vars: 'send' },
       {
+        heading: '發給誰',
         label: args.tagName ? `只發給貼了「${args.tagName}」的人` : '全部好友',
         note: args.estimated == null
           ? '這次算不出大概幾個人（不影響建立）'

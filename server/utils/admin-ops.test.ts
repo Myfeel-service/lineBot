@@ -524,7 +524,7 @@ describe('op：AI 直接回客人／只給草稿（D-80 老闆拍板 C 案）', 
     // 撈到上限＝更早的看不到；這一格是「要不要讓 AI 直接對所有客人說話」的判斷依據
     fullFeedbackPage = true
     const preview = await op.preview(ctx, op.normalize({ mode: 'auto' }))
-    const perf = preview.items.find(i => i.note === 'AI 最近的表現')!.label
+    const perf = preview.items.find(i => i.heading === 'AI 最近的表現')!.label
     expect(perf).toContain('只看得到最近 100 筆')
     expect(perf).not.toContain('沒有人標過它答錯')
     fullFeedbackPage = false

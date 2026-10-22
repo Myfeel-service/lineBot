@@ -1154,12 +1154,13 @@ export function plainReply(text: string): string {
  * 確認卡上的字:粗體與 ⛔ 拿掉;警告每一行開頭的 ⚠️ 拿掉(卡片自己會在最前面加一顆)。
  * ⛔ 「」裡的字、標了 `verbatim` 的那一格(使用者給的原文)一個字都不動——卡片要講的正是「客人會看到什麼」。
  */
-export function cardTextOf<T extends { summary: string, items: { label: string, note?: string, verbatim?: boolean }[], warning?: string }>(p: T): T {
+export function cardTextOf<T extends { summary: string, items: { heading?: string, label: string, note?: string, verbatim?: boolean }[], warning?: string }>(p: T): T {
   return {
     ...p,
     summary: stripMarksOutsideQuotes(p.summary),
     items: p.items.map(i => ({
       ...i,
+      ...(i.heading !== undefined ? { heading: stripMarksOutsideQuotes(i.heading) } : {}),
       label: i.verbatim ? i.label : stripMarksOutsideQuotes(i.label),
       ...(i.note !== undefined ? { note: stripMarksOutsideQuotes(i.note) } : {}),
     })),
@@ -1499,7 +1500,7 @@ export async function runAdminAgentChat(params: {
         // ⚠️ 允許換算:把 23:00 講成「晚上 11 點」是好事,那支函式兩種寫法都認。
         const strayNumbers = text ? numbersWithoutSource(text, [
           preview.summary,
-          ...preview.items.flatMap(i => [i.label, i.note ?? '']),
+          ...preview.items.flatMap(i => [i.heading ?? '', i.label, i.note ?? '']),
           preview.warning ?? '',
           preview.confirmLabel,
         ]) : []

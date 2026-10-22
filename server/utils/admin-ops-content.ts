@@ -27,6 +27,7 @@ import {
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
 import { MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
+import { variableLabel } from '~~/shared/variable-tokens'
 // ⛔ 從 admin-op-def 拿、不從 admin-ops 拿：admin-ops 的註冊表 import 這支，反過來就是循環相依
 import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import { getAiSettings, setAiSettings } from './ai-settings'
@@ -92,7 +93,7 @@ export const aiSettingsEnabled: AdminOpDef = {
       return {
         ...base,
         summary: '我會把 AI 自動回覆**關掉**。',
-        items: [{ label: say(true), note: '現在' }, { label: say(false), note: '改成' }],
+        items: [{ heading: '現在', label: say(true), tone: 'before' }, { heading: '改成', label: say(false), tone: 'after' }],
         warning: '關掉之後 AI 一句都不會回，客人的訊息改由真人處理。自動回應不受影響，照常運作。',
         confirmLabel: '確定關掉 AI',
       }
@@ -103,9 +104,9 @@ export const aiSettingsEnabled: AdminOpDef = {
       ...base,
       summary: '我會把 AI 自動回覆**打開**。',
       items: [
-        { label: say(false), note: '現在' },
-        { label: say(true), note: '改成' },
-        { label: auto ? 'AI 直接回客人' : 'AI 只給客服草稿（客人收不到）', note: '打開之後的回覆模式（沒有要改它）' },
+        { heading: '現在', label: say(false), tone: 'before' },
+        { heading: '改成', label: say(true), tone: 'after' },
+        { heading: '打開之後的回覆模式', label: auto ? 'AI 直接回客人' : 'AI 只給客服草稿（客人收不到）', note: '這一格沒有要改' },
       ],
       warning: auto
         ? '⚠️ 目前的回覆模式是「直接回客人」：打開之後，客人傳來的訊息 AI 會直接回覆，你不會先看到。想先看看它怎麼答，可以先叫我改成「只給草稿」。'
@@ -183,7 +184,7 @@ export const aiSettingsHandbackIdle: AdminOpDef = {
     return {
       ...base,
       summary: '我會改「客服接手之後，忘了交還時要不要自動交還給機器人」。',
-      items: [{ label: say(before), note: '現在' }, { label: say(args.minutes), note: '改成' }],
+      items: [{ heading: '現在', label: say(before), tone: 'before' }, { heading: '改成', label: say(args.minutes), tone: 'after' }],
       warning: args.minutes > 0
         ? '客服按了「我接手」之後，超過這段時間沒有再回覆，這位客人就會交回給機器人和 AI 接著回。'
         : '⚠️ 關掉之後，客服接手後忘了按「交還機器人」，這位客人就不會再被 AI 回答。',
@@ -260,7 +261,7 @@ export const aiSettingsAutoClose: AdminOpDef = {
     return {
       ...base,
       summary: '我會改「真人接手的對話，太久沒動靜要不要自動結束」。',
-      items: [{ label: say(before), note: '現在' }, { label: say(args.hours), note: '改成' }],
+      items: [{ heading: '現在', label: say(before), tone: 'before' }, { heading: '改成', label: say(args.hours), tone: 'after' }],
       warning: args.hours > 0
         ? '只影響「真人接手中」的對話：太久沒人說話就把那一場結掉，客人下次傳訊息會從頭開始（先由機器人或 AI 接）。'
         : '關掉之後，真人接手的對話要有人按「結束會話」才會結束。',
@@ -344,8 +345,8 @@ export const aiSettingsToneTemplate: AdminOpDef = {
       ...base,
       summary: `我會把「給 AI 的指示」換成「${tpl.label}」範本。`,
       items: [
-        { label: currentIsTemplate ? `「${currentIsTemplate.label}」範本` : promptHead(current), note: '現在', ...(currentIsTemplate ? {} : { verbatim: true }) },
-        { label: promptHead(tpl.text), note: `改成「${tpl.label}」` },
+        { heading: '現在', label: currentIsTemplate ? `「${currentIsTemplate.label}」範本` : promptHead(current), tone: 'before', ...(currentIsTemplate ? {} : { verbatim: true }) },
+        { heading: `改成「${tpl.label}」`, label: promptHead(tpl.text), tone: 'after' },
       ],
       // 自己寫過的內容會整段不見——這件事要在按下去之前講
       warning: currentIsTemplate
@@ -436,8 +437,8 @@ export const tagCreate: AdminOpDef = {
       opId: 'tag-create',
       summary: `我會建一個叫「${args.name}」的標籤。`,
       items: [
-        { label: args.name, note: '顯示名稱（客人看不到）', verbatim: true },
-        { label: args.code ?? '', note: '英文代號（系統自動取，建好就不能改）' },
+        { heading: '顯示名稱', label: args.name, note: '客人看不到', verbatim: true },
+        { heading: '英文代號', label: args.code ?? '', note: '系統自動取，建好就不能改' },
       ],
       warning: '建好之後是空的，不會自動貼到任何人身上——要在對話、好友頁或自動回應裡貼，或到標籤管理打開「讓 AI 判斷」。',
       confirmLabel: '確定建立標籤',
@@ -612,7 +613,7 @@ export const knowledgeDraftCreate: AdminOpDef = {
       return { ...base, summary: '知識庫裡已經有一條一模一樣的了（同一句問法、同樣的回答），不用再放一次。', items: [], confirmLabel: '知道了', noop: true }
 
     const similarItem = args.similar?.length
-      ? [{ label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 客人這樣問時，AI 現在會拿這幾條來回答——採用前先看一下會不會重複' }]
+      ? [{ heading: '知識庫裡已經有相近的', label: args.similar.map(t => `「${t}」`).join('、'), note: '⚠️ 客人這樣問時，AI 現在會拿這幾條來回答——採用前先看一下會不會重複' }]
       : args.similarChecked === false
         ? [{ label: '這次沒查成', note: '⚠️ 沒辦法先確認知識庫裡有沒有講同一件事的知識，採用前自己看一下' }]
         : []
@@ -620,8 +621,8 @@ export const knowledgeDraftCreate: AdminOpDef = {
       ...base,
       summary: '我會把這條知識放進知識庫的「等你看過」：',
       items: [
-        { label: args.question, note: '客人會這樣問', verbatim: true },
-        { label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, note: '要回答的內容', verbatim: true },
+        { heading: '客人會這樣問', label: args.question, verbatim: true },
+        { heading: '要回答的內容', label: args.answer.length > 120 ? `${args.answer.slice(0, 120)}…` : args.answer, verbatim: true },
         ...similarItem,
       ],
       warning: '放進去之後**還不會**拿來回答客人：到知識庫的「等你看過」按「採用」才會上線（採用了才算進 AI 知識量）。測試對話裡可以先試問看看。',
@@ -787,21 +788,24 @@ export const scriptUpdateKeyword: AdminOpDef = {
       throw new AdminOpUserError(`「${row.name}」已經有 ${list.length} 個關鍵字，一條最多 ${MAX_TRIGGER_KEYWORDS} 個，加不進去了——要先拿掉一個（可以叫我拿掉），或到自動回應頁另開一條。（請照實告訴他。）`)
 
     const after = args.action === 'add' ? [...list, args.keyword] : list.filter(k => k.trim().toLowerCase() !== args.keyword.toLowerCase())
+    const oneChar = args.action === 'add' && args.keyword.length <= 1
+      ? `「${args.keyword}」只有一個字，客人很多句話裡都會出現它，這條可能會被誤觸。`
+      : ''
     return {
       ...base,
       summary: args.action === 'add'
         ? `我會在「${row.name}」加上關鍵字「${args.keyword}」。`
         : `我會把「${args.keyword}」從「${row.name}」的關鍵字拿掉。`,
       items: [
-        { label: list.join('、'), note: '現在的關鍵字', verbatim: true },
-        { label: after.join('、'), note: '改成', verbatim: true },
-        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
+        { heading: '現在的關鍵字', label: list.join('、'), tone: 'before', verbatim: true },
+        { heading: '改成', label: after.join('、'), tone: 'after', verbatim: true },
       ],
-      warning: args.action === 'add'
-        ? (args.keyword.length <= 1
-            ? `⚠️「${args.keyword}」只有一個字，客人很多句話裡都會出現它，這條可能會被誤觸。`
-            : `之後客人講到「${args.keyword}」就會走這條，AI 不會再回答那幾句話。`)
-        : `之後客人講「${args.keyword}」不會再走這條，改由 AI 或其他設定接手。`,
+      // ⛔ 停用的時候不講「之後客人講到就會走這條」（同改回覆字那張：以前停用的提醒排成第三格，跟這句互相打架）
+      warning: !row.enabled
+        ? `這條目前是停用的，要啟用後才會生效。${oneChar}`
+        : args.action === 'add'
+          ? (oneChar ? `⚠️${oneChar}` : `之後客人講到「${args.keyword}」就會走這條，AI 不會再回答那幾句話。`)
+          : `之後客人講「${args.keyword}」不會再走這條，改由 AI 或其他設定接手。`,
       confirmLabel: args.action === 'add' ? '確定加關鍵字' : '確定拿掉關鍵字',
     }
   },
@@ -852,6 +856,26 @@ export const scriptUpdateKeyword: AdminOpDef = {
 
 interface ScriptReplyArgs { name: string, text: string }
 
+/**
+ * 客人做了什麼才會收到這段回覆（改回覆字的確認卡用）。
+ * ⛔ 不講「打中這條」：店家要知道的是客人那一側發生什麼——前面先問了問題的，客人要答完才收到
+ *    （範本「退換貨查詢」先問訂單編號，「客人打了字就收到」是錯的）。
+ */
+function whenCustomerGetsReply(row: ScriptDocRow): string {
+  const asks = row.nodes.filter(n => n?.type === 'collect' || n?.type === 'quickReply')
+  if (asks.length === 1 && asks[0]!.type === 'collect' && asks[0]!.fieldName)
+    return `回答完「${variableLabel(String(asks[0]!.fieldName), 'script')}」之後`
+  if (asks.length === 1) return '選完按鈕之後'
+  if (asks.length) return '回答完前面的問題之後'
+  if (scriptTriggerEvent({ nodes: row.nodes as never, rootNodeId: row.rootNodeId }) === 'follow') return '加好友時'
+  const trig = triggerOf(row)
+  if ((trig?.matchMode ?? 'keyword') === 'semantic') return '問到這件事時'
+  if (trig?.keywordMatch === 'anyText') return '傳任何訊息時'
+  const kws: string[] = Array.isArray(trig?.keywords) ? trig.keywords.map(String).filter(Boolean) : []
+  if (!kws.length) return ''
+  return `傳「${kws.slice(0, 2).join('」「')}」${kws.length > 2 ? '這類字' : ''}時`
+}
+
 export const scriptUpdateReply: AdminOpDef = {
   capability: 'scripts.write',
   targetField: 'name',
@@ -894,15 +918,20 @@ export const scriptUpdateReply: AdminOpDef = {
     if (before.trim() === args.text.trim())
       return { ...base, summary: `「${row.name}」回的本來就是這段話，不用改。`, items: [], confirmLabel: '知道了', noop: true }
 
+    // 2026-10-22 老闆截圖「使用者看不太懂，我也看不太懂」：標題、主句、泡泡講同一句；「現在／改成」掛在內容下面；
+    // 停用的提醒排成第三格、跟「客人下次打中這條就會收到」互相打架；{{order_id}} 原樣露出
+    const when = whenCustomerGetsReply(row)
     return {
       ...base,
-      summary: `我會把「${row.name}」回給客人的話改成下面這段。`,
+      summary: when ? `「${row.name}」裡，客人${when}會收到的話：` : `「${row.name}」回給客人的話：`,
       items: [
-        { label: before || '（空的）', note: '現在', ...(before ? { verbatim: true } : {}) },
-        { label: args.text, note: '改成', verbatim: true },
-        ...(row.enabled ? [] : [{ label: '這條目前是停用的', note: '改完也不會生效，要啟用才會' }]),
+        { heading: '現在', label: before || '（空的）', tone: 'before', ...(before ? { verbatim: true, vars: 'script' } : {}) },
+        { heading: '改成', label: args.text, tone: 'after', verbatim: true, vars: 'script' },
       ],
-      warning: '客人下次打中這條，收到的就是新的這段話。',
+      // ⛔ 停用的時候不可以講「客人會收到新的」：只講一件事，講真的那件
+      warning: row.enabled
+        ? '改完馬上生效：之後的客人收到的就是新的這段。'
+        : '這條目前是停用的，要啟用後客人才收得到。',
       confirmLabel: '確定改回覆內容',
     }
   },

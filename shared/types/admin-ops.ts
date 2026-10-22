@@ -17,6 +17,7 @@
  * 加一個 op ＝ 這裡加 id ＋ `server/utils/admin-ops.ts` 加一筆 ＋
  * `shared/types/audit.ts` 補 `agent-op/<id>` 的白話說明（測試會釘住三處一致）。
  */
+import type { VariableKeyMode } from '../variable-tokens'
 
 /** op id → 人看得懂的動作名（給模型的說明、確認卡標題、操作紀錄同源） */
 export const ADMIN_OP_LABELS = {
@@ -91,10 +92,23 @@ export function adminOpAuditAction(opId: AdminOpId): string {
 }
 
 export interface AdminOpPreviewItem {
+  /**
+   * 小標，畫在內容**上面**（「現在」「改成」「客人會這樣問」）。
+   * ⛔ 「這一段是什麼」不要寫進 `note`：note 畫在內容下面，人由上往下讀，
+   *    讀完一整段才看到「現在」兩個字（2026-10-22 老闆截圖：店家跟他自己都看不懂）。
+   */
+  heading?: string
   /** 會被動到的那一筆（或現況的一行） */
   label: string
-  /** 補充：會怎麼變、或為什麼是這樣 */
+  /** 補充說明，畫在內容下面：會怎麼變、或為什麼是這樣 */
   note?: string
+  /** 「現在 → 改成」那兩格：before 灰底、after 上色，一眼分得出哪個是舊的 */
+  tone?: 'before' | 'after'
+  /**
+   * `label` 裡的 `{{order_id}}` 畫成膠囊「訂單編號」（跟編輯頁同一個名字）；值＝送出端用哪一套變數規則。
+   * 只換畫法，存的字不動（跟 `verbatim` 不衝突）。
+   */
+  vars?: VariableKeyMode
   /**
    * `label` 是**使用者給的原文**（推播內容、知識卡的問答、回覆字、關鍵字）：送上畫面時一個字都不動。
    * ⛔ 卡片的字原本會統一拿掉 `**`、⛔、把「您」換成「你」——套到原文上，卡片就跟存進去、送給客人的不一樣了

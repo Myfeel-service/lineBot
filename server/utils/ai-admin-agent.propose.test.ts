@@ -860,7 +860,7 @@ describe('畫面上的字（D-116）', () => {
     const { ADMIN_OPS } = await import('./admin-ops')
     const def = (ADMIN_OPS as any)['broadcast-draft-create']
     const preview = await def.preview({ db: {}, workspaceId: 'w1' }, { name: '週年慶', text: '**限時**優惠⛔售完為止，您好' })
-    const item = preview.items.find((i: any) => i.note === '客人會看到的內容')
+    const item = preview.items.find((i: any) => i.heading === '客人會看到的內容')
     expect(item).toMatchObject({ label: '**限時**優惠⛔售完為止，您好', verbatim: true })
   })
 })

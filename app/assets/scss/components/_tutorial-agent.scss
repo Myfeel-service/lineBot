@@ -1923,17 +1923,19 @@
     margin: 0 0 6px;
   }
 
+  /* 一格＝小標（上）→ 內容 → 補充（下）。格與格之間要比格內寬，不然「改成」會被讀成上一格的補充 */
   &__items {
     list-style: none;
-    margin: 0 0 6px;
+    margin: 0 0 8px;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 8px;
 
     li {
       display: flex;
       flex-direction: column;
+      gap: 2px;
       font-size: 12px;
       line-height: 1.5;
       /* 可壓縮欄位一律容得下換行：長網址與長流程名撐破小面板是這個後台踩過的版型坑 */
@@ -1941,8 +1943,57 @@
     }
   }
 
-  &__item-label { font-weight: 600; }
+  &__item-heading {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__item-body {
+    display: flex;
+    flex-direction: column;
+
+    /* 「現在 → 改成」：各自一個框。舊的灰底、新的上色——不用讀字就知道哪個是改完的樣子 */
+    &.is-before,
+    &.is-after {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--el-border-color-lighter);
+
+      .aa-op__item-label { font-weight: 400; }
+    }
+
+    &.is-before {
+      background: var(--el-fill-color-light);
+      color: var(--el-text-color-regular);
+    }
+
+    &.is-after {
+      background: var(--el-color-primary-light-9);
+      border-color: var(--el-color-primary-light-7);
+    }
+  }
+
+  &__item-label {
+    font-weight: 600;
+
+    /* 原文（回給客人的話、推播內容）：照存的樣子換行，客人收到幾行這裡就幾行 */
+    &.is-verbatim { white-space: pre-wrap; }
+  }
+
   &__item-note { color: var(--el-text-color-secondary); }
+
+  /* 原文裡的變數（`{{order_id}}`）：跟編輯頁輸入框裡那顆膠囊同一個樣子 */
+  &__var {
+    display: inline-block;
+    padding: 0 6px;
+    margin: 0 1px;
+    border-radius: 999px;
+    line-height: 1.5;
+    white-space: nowrap;
+    background: color-mix(in srgb, var(--el-color-primary) 16%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--el-color-primary) 38%, transparent);
+  }
 
   &__warning {
     font-size: 12px;

@@ -11,10 +11,14 @@
     </div>
     <p v-else class="aa-op__summary">{{ pending.preview.summary }}</p>
 
+    <!-- 每一格由上而下：小標（這是什麼）→ 內容 → 補充。「現在／改成」兩格各自一個框，舊的灰、新的上色 -->
     <ul v-if="pending.preview.items.length" class="aa-op__items">
       <li v-for="(it, i) in pending.preview.items" :key="i">
-        <span class="aa-op__item-label">{{ it.label }}</span>
-        <span v-if="it.note" class="aa-op__item-note">{{ it.note }}</span>
+        <span v-if="it.heading" class="aa-op__item-heading">{{ it.heading }}</span>
+        <div class="aa-op__item-body" :class="it.tone && `is-${it.tone}`">
+          <span class="aa-op__item-label" :class="{ 'is-verbatim': it.verbatim }"><template v-for="(seg, j) in segmentsOf(it)" :key="j"><span v-if="seg.key" class="aa-op__var">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template></span>
+          <span v-if="it.note" class="aa-op__item-note">{{ it.note }}</span>
+        </div>
       </li>
     </ul>
 
@@ -57,7 +61,8 @@
  * - 按下確定之前，什麼都還沒有發生；標題旁的「還沒執行」就是在講這件事。
  * - 按過一次就不再給第二顆按鈕：同一張卡重複執行是使用者最容易誤觸的路。
  */
-import type { AdminOpPending } from '~~/shared/types/admin-ops'
+import type { AdminOpPending, AdminOpPreviewItem } from '~~/shared/types/admin-ops'
+import { variableSegments } from '~~/shared/variable-tokens'
 
 const props = withDefaults(defineProps<{
   pending: AdminOpPending
@@ -80,6 +85,9 @@ const emit = defineEmits<{
 
 const { apiFetch } = useWorkspace()
 const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
+
+/** 一格內容切成字／膠囊：`{{order_id}}` 是程式碼，店家在編輯頁看到的是「訂單編號」 */
+const segmentsOf = (it: AdminOpPreviewItem) => (it.vars ? variableSegments(it.label, it.vars) : [{ text: it.label }])
 
 /** 這張卡還作不作數（被取代、或使用者已經收回） */
 const retired = computed(() => props.superseded || props.cancelledByUser)
