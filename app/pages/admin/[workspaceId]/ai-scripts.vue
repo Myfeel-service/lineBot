@@ -402,7 +402,7 @@
                           @focus="fieldRenameFrom = item.fieldName"
                           @change="renameCollectField(item, fieldRenameFrom)"
                         />
-                        <el-select v-if="presetKeyOf(item) === '__custom'" :model-value="item.format ?? 'any'" class="scripts-q__format" @change="item.format = $event">
+                        <el-select v-if="isFormatShown(item)" :model-value="item.format ?? 'any'" class="scripts-q__format" @change="item.format = $event">
                           <el-option v-for="f in COLLECT_FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
                         </el-select>
                       </template>
@@ -431,8 +431,8 @@
                     />
                     <el-input v-if="item.type === 'collect' && item.format === 'custom'" v-model="item.pattern" placeholder="進階比對規則，例：[A-Za-z]\d{3,}（訂單編號 A123）" />
 
-                    <!-- 照順序的路不寫出來；只有設了跳題、客人說沒有、或要提醒的才多一行 -->
-                    <div v-if="item.type === 'collect' && (isJumpShown(item, i) || isSkipOpen(item) || (canEditScripts && isStuckCollect(item)))" class="scripts-q__routes">
+                    <!-- 照順序的路不寫出來；只有設了跳題、客人說沒有、格式不對時的話、或要提醒的才多一行 -->
+                    <div v-if="item.type === 'collect' && (isJumpShown(item, i) || isSkipOpen(item) || isReaskShown(item) || (canEditScripts && isStuckCollect(item)))" class="scripts-q__routes">
                       <div v-if="isJumpShown(item, i)" class="scripts-q__route">
                         <span class="scripts-q__route-label">答了 →</span>
                         <el-select :model-value="item.next" class="scripts-q__target" @change="onListTarget($event, (id) => { item.next = id })">
@@ -458,6 +458,11 @@
                       >
                         ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
                       </button>
+                      <div v-if="isReaskShown(item)" class="scripts-q__route">
+                        <span class="scripts-q__route-label">格式不對 →</span>
+                        <el-input v-model="item.reaskText" :placeholder="`再問這句（留空：${DEFAULT_COLLECT_REASK}）`" class="scripts-q__reask" />
+                        <el-button v-if="canEditScripts" text type="danger" title="拿掉，改用預設那句" @click="clearReask(item)">✕</el-button>
+                      </div>
                     </div>
                     <div v-else-if="item.type === 'quickReply'" class="scripts-q__routes">
                       <div v-for="(o, oi) in item.options" :key="oi" class="scripts-q__route">
@@ -630,7 +635,7 @@
                       @focus="fieldRenameFrom = node.fieldName"
                       @change="renameCollectField(node, fieldRenameFrom)"
                     />
-                    <el-select v-if="presetKeyOf(node) === '__custom'" :model-value="node.format ?? 'any'" class="scripts-q__format" @change="node.format = $event">
+                    <el-select v-if="isFormatShown(node)" :model-value="node.format ?? 'any'" class="scripts-q__format" @change="node.format = $event">
                       <el-option v-for="f in COLLECT_FORMAT_OPTIONS" :key="f.value" :label="f.label" :value="f.value" />
                     </el-select>
                     <span v-if="isCodeFormat(node)" class="scripts-q__tag" title="客人傳訂單截圖也算回答了這一題">截圖也收</span>
@@ -673,6 +678,11 @@
                   >
                     ⚠ 這種編號客人手上可能根本沒有，沒給路會被一直重問　<b>＋ 客人說沒有的話…</b>
                   </button>
+                  <div v-if="isReaskShown(node)" class="scripts-q__route">
+                    <span class="scripts-q__route-label">格式不對 →</span>
+                    <el-input v-model="node.reaskText" :placeholder="`再問這句（留空：${DEFAULT_COLLECT_REASK}）`" class="scripts-q__reask" />
+                    <el-button v-if="canEditScripts" text type="danger" title="拿掉，改用預設那句" @click="clearReask(node)">✕</el-button>
+                  </div>
                 </template>
 
                 <!-- 回客人（同問答清單的「最後」那一塊） -->
@@ -971,7 +981,7 @@ import type {
   ScriptTriggerNode,
   TriggerMatchMode,
 } from '~~/shared/types/ai-script'
-import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, MAX_TRIGGER_EXCLUDES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, findPlaceholderTexts, findStuckCollects, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
+import { DEFAULT_COLLECT_EXPIRE_MS, DEFAULT_COLLECT_REASK, DEFAULT_REPLY_LINK_LABEL, DEFAULT_SCRIPT_PRIORITY, MAX_TRIGGER_EXAMPLES, MAX_TRIGGER_EXCLUDES, SCRIPT_NODE_TYPE_LABELS, collectSkipLabel, findPlaceholderTexts, findStuckCollects, scriptTriggerEvent, validateScriptDoc } from '~~/shared/types/ai-script'
 import type { ScriptForReachability } from '~~/shared/types/ai-script-reachability'
 import { findUnreachableScripts } from '~~/shared/types/ai-script-reachability'
 import { SCRIPT_TEMPLATES, type ScriptTemplate } from '~~/shared/types/ai-script-templates'
@@ -1232,6 +1242,8 @@ function questionMenuItems(item: QuestionItem, index: number) {
   return [
     { command: 'jump', label: '答了改跳到別題', show: isCollect && !isJumpShown(item, index) },
     { command: 'skip', label: '客人可能沒有這個資料', show: isCollect && !isSkipOpen(item) },
+    { command: 'format', label: '改答案格式', show: isCollect && !isFormatShown(item) },
+    { command: 'reask', label: '格式不對時怎麼問', show: isCollect && canReask(item) && !isReaskShown(item) },
     { command: 'up', label: '上移', show: index > 0 },
     { command: 'down', label: '下移', show: index < last },
     { command: 'remove', label: '刪除這一題', danger: true },
@@ -1240,6 +1252,7 @@ function questionMenuItems(item: QuestionItem, index: number) {
 function onQuestionMenu(item: QuestionItem, index: number, cmd: string) {
   if (cmd === 'jump' && item.type === 'collect') openedJumps.value = new Set(openedJumps.value).add(item.id)
   else if (cmd === 'skip' && item.type === 'collect') openCollectSkip(item, index)
+  else if ((cmd === 'format' || cmd === 'reask') && item.type === 'collect') openCollectExtra(item, cmd)
   else if (cmd === 'up') moveListItem(index, index - 1)
   else if (cmd === 'down') moveListItem(index, index + 1)
   else if (cmd === 'remove') removeListItem(item.id)
@@ -1286,7 +1299,7 @@ function isCodeFormat(item: ScriptCollectNode): boolean {
   return ['alphanumeric', 'alphanumericSymbol', 'number', 'custom'].includes(item.format ?? 'any')
 }
 
-/** 答案格式（自己命名的那題才給選；常用欄位挑了就帶好） */
+/** 答案格式（自己命名的那題直接給選；常用欄位挑了就帶好，要改從「⋯」） */
 const COLLECT_FORMAT_OPTIONS: Array<{ value: CollectFormat; label: string }> = [
   { value: 'any', label: '不限制（整句存）' },
   { value: 'phone', label: '電話' },
@@ -1779,11 +1792,14 @@ const moreNodeTypes: Array<{ type: 'branch' | 'tag' | 'saveLead' | 'module'; nam
 function flowNodeMenuItems(node: ScriptNode) {
   return [
     { command: 'skip', label: '客人可能沒有這個資料', show: node.type === 'collect' && !isSkipOpen(node) },
+    { command: 'format', label: '改答案格式', show: node.type === 'collect' && !isFormatShown(node) },
+    { command: 'reask', label: '格式不對時怎麼問', show: node.type === 'collect' && canReask(node) && !isReaskShown(node) },
     { command: 'remove', label: '刪除這一步', danger: true },
   ]
 }
 function onFlowNodeMenu(node: ScriptNode, cmd: string) {
   if (cmd === 'skip' && node.type === 'collect') openCollectSkip(node)
+  else if ((cmd === 'format' || cmd === 'reask') && node.type === 'collect') openCollectExtra(node, cmd)
   else if (cmd === 'remove') removeNode(node.id)
 }
 
@@ -2101,6 +2117,37 @@ function clearCollectSkip(node: ScriptCollectNode) {
   const next = new Set(openedSkips.value)
   next.delete(node.id)
   openedSkips.value = next
+}
+
+// ── 收集步驟：答案格式、格式不對時再問的那句 ─────────────────────────────
+// 2026-10-22 補回：`C-366` 改版時這兩格從畫面上消失（報告沒有要拿掉），MYFEEL 開著的三條每一題都設了自己的那句，
+// 客人照樣收得到、後台卻看不到也改不了。照 `D-140` 的規矩收在「⋯」：有設定的（或常用欄位的格式被改過）打開就露出來。
+const openedFormats = ref<Set<string>>(new Set())
+const openedReasks = ref<Set<string>>(new Set())
+
+/** 答案格式那格：自己命名的一直在；常用欄位只在格式跟預設不同、或從「⋯」按開時出現 */
+function isFormatShown(node: ScriptCollectNode): boolean {
+  const key = presetKeyOf(node)
+  if (key === '__custom' || openedFormats.value.has(node.id)) return true
+  const preset = COMMON_COLLECT_FIELDS.find(p => p.key === key)
+  return Boolean(preset) && (node.format ?? 'any') !== preset!.format
+}
+/** 不限制格式就不會重問（什麼都收），這一句用不到 */
+function canReask(node: ScriptCollectNode): boolean {
+  return (node.format ?? 'any') !== 'any'
+}
+function isReaskShown(node: ScriptCollectNode): boolean {
+  return canReask(node) && (Boolean(node.reaskText?.trim()) || openedReasks.value.has(node.id))
+}
+function openCollectExtra(node: ScriptCollectNode, kind: 'format' | 'reask') {
+  const opened = kind === 'format' ? openedFormats : openedReasks
+  opened.value = new Set(opened.value).add(node.id)
+}
+function clearReask(node: ScriptCollectNode) {
+  node.reaskText = ''
+  const next = new Set(openedReasks.value)
+  next.delete(node.id)
+  openedReasks.value = next
 }
 
 /** 多一顆按鈕；清單編法帶「直接到最後」當預設去向（流程圖編法照舊留空、讓他自己接） */
