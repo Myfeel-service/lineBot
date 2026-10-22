@@ -1454,6 +1454,20 @@ export async function runAdminAgentChat(params: {
         const guard = await op.fingerprint(ctx, args)
         const rawPreview = await op.preview(ctx, args)
 
+        // 還不知道他要改成什麼（needsInput）：先問他——⛔ 不出卡、不簽憑證（老闆 10-22：「說要改就直接做，也不知道使用者要改什麼」）。
+        // 問話整段由後端寫（含現在那句），⛔ 不採用模型寫的：它會漏講現況，甚至自己編一句。他回了之後模型照對話接著提議
+        if (rawPreview.needsInput) {
+          const answer = String(data?.answer ?? '').trim()
+          return {
+            reply: say([answer, rawPreview.needsInput].filter(Boolean).join('\n\n')),
+            toolCalls,
+            messages: [],
+            inputTokens,
+            outputTokens,
+            calls,
+          }
+        }
+
         // ⛔ 上一個提議**沒有被執行過**,而這一次不會連它一起做——這件事一定要講出來。
         // 2026-09-16 實測(`C-192`):提議加「退費」之後使用者說「順便把客訴也加進去」,
         // 結果只會加「客訴」,而「退費」那件事再也沒有人提過——使用者以為兩個都在隊列裡。
@@ -1491,8 +1505,7 @@ export async function runAdminAgentChat(params: {
           : ''
 
         // 方案做不到的卡（`C-352`）沒有確認鈕：「按這張不會連它一起做」那類提醒講的是按下去之後，在這張上沒有意義
-        // 「先給你看現在那句」的卡（needsInput）也沒有確認鈕
-        const extras = (rawPreview.planLocked || rawPreview.needsInput) ? '' : [supersede, extraWarn].filter(Boolean).join('\n')
+        const extras = rawPreview.planLocked ? '' : [supersede, extraWarn].filter(Boolean).join('\n')
         const preview = cardTextOf(extras
           ? { ...rawPreview, warning: [extras, rawPreview.warning].filter(Boolean).join('\n') }
           : rawPreview)
@@ -1523,8 +1536,7 @@ export async function runAdminAgentChat(params: {
         const answer = String(data?.answer ?? '').trim()
         // `C-352`：方案做不到（planLocked）也一律用後端那句——模型寫的多半是「我幫你建一則…」，跟卡片講反。
         // 泡泡講「先不做」、原因留在卡片上（`bubble`），⛔ 不讓同一句話在泡泡跟卡片各出現一次
-        // needsInput（還缺他要講的那句）同一招：模型寫的多半是「請問要改成什麼」，問句已經在卡片最底下
-        const proposeLine = (preview.planLocked || preview.needsInput)
+        const proposeLine = preview.planLocked
           ? (preview.bubble || preview.summary)
           : (preview.noop || strayNumbers.length || !text) ? preview.summary : text
 

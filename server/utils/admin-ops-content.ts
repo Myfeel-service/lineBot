@@ -27,7 +27,7 @@ import {
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
 import { MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
-import { toStoredText, variableLabel } from '~~/shared/variable-tokens'
+import { toBracketText, toStoredText, variableLabel } from '~~/shared/variable-tokens'
 // ⛔ 從 admin-op-def 拿、不從 admin-ops 拿：admin-ops 的註冊表 import 這支，反過來就是循環相依
 import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import { getAiSettings, setAiSettings } from './ai-settings'
@@ -889,8 +889,8 @@ export const scriptUpdateReply: AdminOpDef = {
     + 'text＝客人收到的就是這整段字。'
     // 2026-10-22：範例「把「退換貨」的回覆改成「先填表單」」照送，客人只會收到「先填表單」四個字——不知道填哪一份、去哪裡填
     + '⛔ 他沒講要改成哪一句，或講的像是要你做的事（例：「改成先問電話」）而不是一句客人看得懂的話：'
-    + '照樣提議，text 給空字串 ""——卡片會把現在那句給他看、請他打一句完整的話；⛔ 不要自己轉述現在那句，也不要自己反問。'
-    + '他提到表單、問卷（例：「先填表單」）：text 照他講的那幾個字放——系統會一樣先給他看現在那句，並告訴他在這條多問一題就好。'
+    + '照樣提議，text 給空字串 ""——系統會先問他要怎麼改（附上現在那句），不會出確認卡；⛔ 不要自己轉述現在那句，也不要自己反問。'
+    + '他提到表單、問卷（例：「先填表單」）：text 照他講的那幾個字放——系統一樣先問他，並告訴他在這條多問一題就好。'
     + '他接著講了那一句，再用同一個 name 提議一次。'
     // 2026-10-22 老闆：「為什麼還要退貨表單，我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」
     + '⛔ 不要建議把客人帶去外面填表單或看網頁：自動回應本來就在 LINE 上問客人；要多問客人資料，是到自動回應頁在這條多加一題。'
@@ -946,20 +946,21 @@ export const scriptUpdateReply: AdminOpDef = {
     const beforeItem = { heading: '現在', label: before || '（空的）', tone: 'before' as const, ...(before ? { verbatim: true, vars: 'script' as const } : {}) }
     const offLine = '這條目前是停用的，要啟用後客人才收得到。'
 
-    // 還沒講要改成哪一句：系統把現在那句給他看、請他打新的（⛔ 不交給模型轉述——它會漏講，甚至自己編一句）
+    // 還沒講要改成哪一句：先問他要怎麼改——⛔ 不出卡（老闆 10-22：「說要改就直接做，也不知道使用者要改什麼」，
+    // 一張「改一條自動回應…」的卡看起來就是要動手了）。現在那句由系統照抄（⛔ 不交給模型轉述——它會漏講，甚至自己編一句）
     if (!args.text) {
-      return {
-        ...base,
-        summary,
-        items: [beforeItem],
-        ...(row.enabled ? {} : { warning: offLine }),
-        bubble: '好，先給你看現在這句。',
+      const ask = [
+        when ? `「${row.name}」裡，客人${when}會收到的話是：` : `「${row.name}」現在回給客人的話是：`,
+        before ? `「${toBracketText(before, 'script')}」` : '（現在是空的）',
+        ...(row.enabled ? [] : ['（這條目前是停用的，客人現在收不到。）']),
+        '',
+        '你想改成怎麼說？直接把新的那句打給我。',
         // ⛔ 不提「附上網址」「填表單」：這個流程就是要客人在 LINE 上完成（老闆 10-22）
-        needsInput: args.wantsForm
-          ? '要改成哪一句？直接在下面打給我。想讓客人多留一些資料（例如要退哪一件、為什麼退），不用另外做表單：到「自動回應」頁在這條多加一題，客人直接在 LINE 上回答。'
-          : '要改成哪一句？直接在下面打給我。',
-        confirmLabel: '',
-      }
+        ...(args.wantsForm
+          ? ['想讓客人多留一些資料（例如要退哪一件、為什麼退），不用另外做表單：到「自動回應」頁在這條多加一題，客人直接在 LINE 上回答。']
+          : []),
+      ].join('\n')
+      return { ...base, summary: ask, items: [], needsInput: ask, confirmLabel: '' }
     }
 
     if (before.trim() === args.text.trim())

@@ -32,11 +32,6 @@
       {{ cancelledByUser ? '你在對話裡說不用了，這張就不做了。' : '這個提議已經被後面那一個取代，不會執行。' }}
     </p>
 
-    <!-- 還缺他要講的那句（needsInput）：沒有按鈕，最底下問他——他在對話裡回了才出真的確認卡 -->
-    <p v-else-if="state === 'idle' && pending.preview.needsInput" class="aa-op__ask" data-op-needs-input>
-      <strong>{{ askParts.head }}</strong>{{ askParts.rest }}
-    </p>
-
     <div v-else-if="state === 'idle'" class="aa-op__actions">
       <!-- `C-352`①：方案做不到也只給「知道了」——⛔ 不給確認鈕，按了只會得到一份送不出去的草稿 -->
       <template v-if="pending.preview.noop || planLocked">
@@ -94,13 +89,6 @@ const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
 /** 一格內容切成字／膠囊：`{{order_id}}` 是程式碼，店家在編輯頁看到的是「訂單編號」 */
 const segmentsOf = (it: AdminOpPreviewItem) => (it.vars ? variableSegments(it.label, it.vars) : [{ text: it.label }])
 
-/** 「要改成哪一句？直接在下面打給我。」粗體，後面的補充（「不用另外做表單…」）一般字重：整段粗體讀起來很重 */
-const askParts = computed(() => {
-  const text = String(props.pending.preview.needsInput ?? '')
-  const cut = text.indexOf('。') + 1
-  return cut > 0 ? { head: text.slice(0, cut), rest: text.slice(cut) } : { head: text, rest: '' }
-})
-
 /** 這張卡還作不作數（被取代、或使用者已經收回） */
 const retired = computed(() => props.superseded || props.cancelledByUser)
 /** 方案做不到（`C-352`）：沒有東西等他決定，只是講清楚為什麼不做 */
@@ -111,7 +99,6 @@ const badge = computed(() => {
   if (props.cancelledByUser) return '你已經說不用了'
   if (planLocked.value) return '不會執行'
   if (props.superseded) return '已被下面那個取代'
-  if (props.pending.preview.needsInput) return '等你回覆'
   if (!props.stale || !props.proposedAt) return '還沒執行'
   const mins = Math.floor((Date.now() - props.proposedAt) / 60_000)
   return mins < 1 ? '還沒執行（剛剛提的）' : `還沒執行（${mins} 分鐘前提的）`

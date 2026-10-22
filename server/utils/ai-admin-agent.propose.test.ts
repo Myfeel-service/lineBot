@@ -83,6 +83,32 @@ beforeEach(() => {
 })
 
 describe('提議一個操作', () => {
+  // 老闆 10-22：「使用者說要改，應該先問他要怎麼改、改什麼再做」——以前沒講改成什麼也出一張「改一條自動回應…」的卡
+  it('🔴 說要改回覆、沒講改成什麼：先問他（附上現在那句），⛔ 不出卡、不簽憑證、問話不用模型寫的', async () => {
+    scripts.push({ name: '退換貨查詢', enabled: true, rootNodeId: 't', nodes: [
+      { id: 't', type: 'trigger', keywords: ['退貨'], matchMode: 'keyword', next: 'r' },
+      { id: 'r', type: 'reply', text: '已收到，專人會盡快為您處理' },
+    ] } as any)
+    try {
+      generateJson.mockResolvedValueOnce(step({
+        action: 'propose',
+        op: 'script-update-reply',
+        args: { name: '退換貨查詢', text: '' },
+        text: '請問要改成什麼？',
+      }))
+      const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '改「退換貨」回給客人的話' })
+      expect(res.pendingOp).toBeUndefined()
+      // 現在那句是系統照抄的（「」裡的您不換成你）
+      expect(res.reply).toContain('「已收到，專人會盡快為您處理」')
+      expect(res.reply).toContain('你想改成怎麼說？直接把新的那句打給我。')
+      expect(res.reply).not.toContain('請問要改成什麼')
+      expect(updates).toHaveLength(0)
+    }
+    finally {
+      scripts.pop()
+    }
+  })
+
   it('提議＝給一張待確認的卡，⛔這一輪什麼都沒被改', async () => {
     generateJson.mockResolvedValueOnce(step({
       action: 'propose',

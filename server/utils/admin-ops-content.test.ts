@@ -472,20 +472,24 @@ describe('改自動回應的關鍵字／回覆字', () => {
     expect(copied.preview.items[1].label).toBe(copied.args.text)
     expect(copied.preview.warning).not.toContain('這幾個字')
 
-    // 還沒講要改成哪一句（新的範例句「改「退換貨」回給客人的話」）：系統把現在那句給他看、問他要改成什麼，⛔ 沒有確認鈕
+    // 還沒講要改成哪一句（新的範例句「改「退換貨」回給客人的話」）：先問他要怎麼改，現在那句由系統照抄（⛔ 不出卡，見 propose 測試）
     const ask = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '' })
+    expect(ask.preview.needsInput).toBe([
+      '「退換貨查詢」裡，客人回答完「訂單編號」之後會收到的話是：',
+      '「已收到您的訂單 ［訂單編號］，將由專人盡快為您處理退換貨，謝謝您 🙇」',
+      '（這條目前是停用的，客人現在收不到。）',
+      '',
+      '你想改成怎麼說？直接把新的那句打給我。',
+    ].join('\n'))
     // ⛔ 不叫他附網址、做表單（老闆 10-22：這個流程就是要在 LINE 上完成）
-    expect(ask.preview.needsInput).toBe('要改成哪一句？直接在下面打給我。')
-    expect(ask.preview.items).toEqual([preview.items[0]])
-    expect(ask.preview.summary).toBe(preview.summary)
-    expect(ask.preview.warning).toBe('這條目前是停用的，要啟用後客人才收得到。')
+    expect(ask.preview.needsInput).not.toMatch(/網址|表單/)
     expect(ask.preview.noop).toBeUndefined()
 
     // 「先填表單」（以前我們自己的範例）：他要的是讓客人多留資料——不出確認卡，跟沒講一樣先給他看現在那句，
     // 多一句「不用另外做表單，在這條多加一題，客人直接在 LINE 上回答」
     const form = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '先填表單' })
     expect(form.args.text).toBe('')
-    expect(form.preview.items).toEqual([preview.items[0]])
+    expect(form.preview.needsInput).toContain('「已收到您的訂單 ［訂單編號］')
     expect(form.preview.needsInput).toContain('不用另外做表單')
     expect(form.preview.needsInput).toContain('在 LINE 上回答')
     expect(form.preview.needsInput).not.toContain('網址')
