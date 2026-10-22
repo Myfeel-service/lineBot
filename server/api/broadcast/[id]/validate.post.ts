@@ -2,6 +2,7 @@ import { getDb, getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { resolveAudienceUserIds } from '~~/server/utils/audience'
 import { broadcastPlanBlockFor } from '~~/server/utils/broadcast-plan-gate'
+import { getLineMessageQuota } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
 
@@ -15,6 +16,7 @@ import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast
  *   errors: string[]
  *   estimatedCount: number     // 預估發送人數
  *   previewUserIds: string[]   // 前 5 筆預覽
+ *   lineQuota: LineMessageQuota | null  // LINE 這個月還剩幾則（`C-380`）；讀不到是 null
  * }
  */
 export default defineEventHandler(async (event) => {
@@ -31,6 +33,11 @@ export default defineEventHandler(async (event) => {
   if (data.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: 'Broadcast not found' })
   }
+  /**
+   * `C-380`：視窗上並排「預估發送人數」與「LINE 這個月還剩約」，人數比剩下的多就警告（句子在 `shared/line-quota.ts`）。
+   * 先起跑、最後才等，跟下面算受眾並行；讀不到是 null（它自己吞錯，不會讓確認失敗）。
+   */
+  const lineQuotaP = getLineMessageQuota(workspaceId)
   const errors: string[] = []
 
   // 檢查訊息內容
@@ -83,21 +90,27 @@ export default defineEventHandler(async (event) => {
     errors.push('此推播正在發送中')
   }
 
-  // 解析受眾
+  /**
+   * 解析受眾。
+   * `C-380`：全部好友、依標籤這兩種**跟送出端一樣不算封鎖的人**（`broadcast-send.ts`）。
+   * ⛔ 以前這裡連封鎖的一起數，「預估發送人數」比真的送出去的多，跟 LINE 剩下的則數一比會誤報「不夠送」。
+   */
   let resolvedUserIds: string[] = []
   try {
     if (data.audienceSource.type === 'all') {
-      let query = db.collection('users').select() as FirebaseFirestore.Query
+      let query = db.collection('users').select('isBlocked') as FirebaseFirestore.Query
       query = query.where('workspaceId', '==', workspaceId)
       const usersSnap = await query.get()
-      resolvedUserIds = usersSnap.docs.map((d) => d.id)
+      resolvedUserIds = usersSnap.docs
+        .filter((d) => d.data().isBlocked !== true)
+        .map((d) => d.id)
     }
     else if (data.audienceSource.type === 'tags' && data.audienceSource.tagIds?.length) {
       const filter: AudienceFilter = {
         conditions: [{ type: 'includeAny', tagIds: data.audienceSource.tagIds }],
         joinedAfter: null,
         joinedBefore: null,
-        isBlocked: null,
+        isBlocked: false,
       }
       resolvedUserIds = await resolveAudienceUserIds(filter, workspaceId)
     }
@@ -127,5 +140,6 @@ export default defineEventHandler(async (event) => {
     errors,
     estimatedCount: resolvedUserIds.length,
     previewUserIds: resolvedUserIds.slice(0, 5),
+    lineQuota: await lineQuotaP,
   }
 })

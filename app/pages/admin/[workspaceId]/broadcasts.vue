@@ -30,6 +30,10 @@
         <span v-else>📝 草稿都處理完了</span>
         <span class="bc-draft-hint__act">{{ draftFilterOn ? '顯示全部' : '只看草稿' }}</span>
       </button>
+      <!-- `C-380`：LINE 這個月還剩幾則（讀不到整行不顯示）。只有快用完／用完才換提醒色 -->
+      <p v-if="lineQuotaRow" class="bc-quota-hint" :class="{ 'is-warn': lineQuotaRow.warn }" :title="lineQuotaRow.title" data-testid="bc-quota-hint">
+        {{ lineQuotaRow.text }}
+      </p>
       <div v-if="loading && !broadcasts.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
@@ -646,8 +650,16 @@
         <div class="bc-stats-row">
           <div class="bc-stat-box">
             <div class="bc-stat-label">預估發送人數</div>
-            <div class="bc-stat-value">{{ validateResult.estimatedCount }}</div>
+            <!-- 千分位跟旁邊「LINE 這個月還剩約」那格一致（`C-380`） -->
+            <div class="bc-stat-value">{{ Number(validateResult.estimatedCount || 0).toLocaleString('en-US') }}</div>
           </div>
+          <div v-if="dialogLineQuota" class="bc-stat-box" data-testid="bc-validate-quota">
+            <div class="bc-stat-label">LINE 這個月還剩約</div>
+            <div class="bc-stat-value">{{ dialogLineQuota.remaining?.toLocaleString('en-US') }}</div>
+          </div>
+        </div>
+        <div v-if="dialogQuotaWarning" class="admin-alert admin-alert--warn" data-testid="bc-validate-quota-warn">
+          {{ dialogQuotaWarning }}
         </div>
         <div v-if="validateResult.previewUserIds?.length" class="bc-preview-ids">
           <AdminFieldLabel text="名單預覽（前幾筆）" tight />
@@ -720,7 +732,8 @@ import {
 import { parseFirestoreDate } from '~~/shared/firestore-date'
 // `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
 import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
-import { taipeiDate, taipeiDateTime } from '~~/shared/time'
+import { taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
+import { lineQuotaHint, lineQuotaWarning, type LineMessageQuota } from '~~/shared/line-quota'
 import { festivalHint } from '~/utils/festival-hint'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
@@ -836,16 +849,24 @@ const planBroadcastTier = ref<BroadcastTier | null>(null)
  * 等級還沒問到（null）＝照舊（fail-open）。
  */
 const festival = computed(() => festivalHint(taipeiDate(), { canBroadcast: planBroadcastTier.value !== 'none' }))
+/**
+ * `C-380`：LINE 這個月還剩幾則（也跟草稿總數同一趟問：`withLineQuota=1`）。
+ * 清單每次重載（發送後）跟著刷新，剛送出去的那批就扣掉了。null＝還沒問到或讀不到（整行不顯示）。
+ */
+const lineQuota = ref<LineMessageQuota | null>(null)
+const lineQuotaRow = computed(() => lineQuotaHint(lineQuota.value))
 async function loadDraftTotal() {
   try {
-    const res = await apiFetch<{ total?: number, broadcastTier?: BroadcastTier | null }>('/api/broadcast/list', {
-      params: { status: 'draft', page: 1, limit: 1, withPlan: 1 },
+    const res = await apiFetch<{ total?: number, broadcastTier?: BroadcastTier | null, lineQuota?: LineMessageQuota | null }>('/api/broadcast/list', {
+      params: { status: 'draft', page: 1, limit: 1, withPlan: 1, withLineQuota: 1 },
     })
     draftTotal.value = typeof res?.total === 'number' ? res.total : null
     planBroadcastTier.value = res?.broadcastTier ?? null
+    lineQuota.value = res?.lineQuota ?? null
   }
   catch {
     draftTotal.value = null
+    lineQuota.value = null
   }
 }
 
@@ -968,6 +989,21 @@ const dialogIsSchedule = computed(() =>
 )
 const validateDialogTitle = computed(() => (dialogIsSchedule.value ? '排程前確認' : '發送前確認'))
 const confirmSubmitLabel = computed(() => (dialogIsSchedule.value ? '確認排程' : '確認發送'))
+/**
+ * `C-380`：確認視窗那一格「LINE 這個月還剩約」用**按下當下**問到的（驗證端點一起回），不用左邊那一行可能舊了的。
+ * 不顯示的三種：讀不到、沒設上限（沒有「不夠送」這回事）、排到下個月以後（到時候額度已經重算，這個月剩多少不相干）。
+ */
+const dialogLineQuota = computed<LineMessageQuota | null>(() => {
+  const q = (validateResult.value?.lineQuota ?? null) as LineMessageQuota | null
+  if (!q || q.remaining === null) return null
+  if (dialogIsSchedule.value) {
+    const at = new Date(pendingScheduleAtLocal.value)
+    if (Number.isNaN(at.getTime()) || taipeiYyyyMm(at) !== taipeiYyyyMm()) return null
+  }
+  return q
+})
+const dialogQuotaWarning = computed(() =>
+  lineQuotaWarning(dialogLineQuota.value, Number(validateResult.value?.estimatedCount) || 0))
 const headerSubmitLabel = computed(() => (isScheduleSubmit.value ? '驗證並排程' : '驗證並發送'))
 
 // ── 工具函式 ─────────────────────────────────────────────────────────

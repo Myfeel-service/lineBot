@@ -2,6 +2,7 @@ import { listDocs } from '~~/server/utils/firebase'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
+import { getLineMessageQuota } from '~~/server/utils/line'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -24,6 +25,13 @@ export default defineEventHandler(async (event) => {
   }
 
   const statusFilter = query.status as string | undefined
+
+  /**
+   * `withLineQuota=1`（要配分頁參數）：順便回 LINE 這個月還剩幾則（`C-380`），推播頁左邊那一行。
+   * 跟 `withPlan` 同一趟問、不另開端點（多一支路由 typecheck 會在不相干的地方爆型別太深）。
+   * 先起跑、最後才等：跟讀清單並行。讀不到是 null（它自己吞錯，不會讓清單失敗）。
+   */
+  const lineQuotaP = query.withLineQuota ? getLineMessageQuota(workspaceId) : null
 
   const broadcasts = await listDocs<BroadcastDoc>('broadcasts', ref =>
     ref.where('workspaceId', '==', workspaceId).orderBy('createdAt', 'desc'),
@@ -55,8 +63,16 @@ export default defineEventHandler(async (event) => {
    * 不要等按了送出才失敗。放在推播自己的端點而不是方案摘要：客服（agent）也會發推播、也要知道哪些選不了，
    * 而方案摘要要管理員權限。⛔ 只回等級、不回方案名（方案名屬計費資訊，`G-103`）。null＝讀不到訂閱（畫面不鎖，送出端照擋）。
    */
-  if (query.withPlan && !Array.isArray(result)) {
-    return { ...result, broadcastTier: await workspaceBroadcastTier(workspaceId) }
+  if ((query.withPlan || lineQuotaP) && !Array.isArray(result)) {
+    const [broadcastTier, lineQuota] = await Promise.all([
+      query.withPlan ? workspaceBroadcastTier(workspaceId) : undefined,
+      lineQuotaP ?? undefined,
+    ])
+    return {
+      ...result,
+      ...(query.withPlan ? { broadcastTier } : {}),
+      ...(lineQuotaP ? { lineQuota } : {}),
+    }
   }
   return result
 })

@@ -263,6 +263,23 @@
   text-underline-offset: 2px;
 }
 
+/* LINE 這個月還剩幾則（`C-380`）——側欄清單頂上的一行，跟上面兩行同一族。
+   平常不用警示色；剩不到一成或用完了才換成跟發送確認視窗那句警告同一組黃（.admin-alert--warn）。 */
+.bc-quota-hint {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  &.is-warn {
+    background: #f8efc7;
+    color: #5f4c16;
+  }
+}
+
 /* 表單本體（外層 padding 由 .ar-editor-body，定義在 admin/_shared.scss 收容區） */
 .bc-editor-form {
   display: flex;
@@ -345,6 +362,12 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+
+  /* 視窗只有 440px：照報表那樣分五欄，一格不到 80px、標籤會斷成三行。
+     「預估發送人數」與「LINE 這個月還剩約」（`C-380`）兩格並排各佔一半，一眼比得出夠不夠送。 */
+  .bc-stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .bc-dialog-footer {

@@ -18,6 +18,8 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
 vi.mock('~~/server/utils/audience', () => ({ resolveAudienceUserIds: vi.fn(async () => []) }))
 // 方案：預設讀不到（fail-open），方案那一組才換成真的方案（走真的 broadcast-plan-gate 判斷）
 vi.mock('~~/server/utils/billing', () => ({ getWorkspacePlan: vi.fn(async () => null) }))
+// LINE 這個月還剩幾則（`C-380`）：預設讀不到，則數那一組才給數字
+vi.mock('~~/server/utils/line', () => ({ getLineMessageQuota: vi.fn(async () => null) }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getRouterParam', () => 'bc1')
@@ -27,6 +29,8 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 const { default: handler } = await import('./validate.post')
 const { getDb, getDoc } = await import('~~/server/utils/firebase')
 const { getWorkspacePlan } = await import('~~/server/utils/billing')
+const { getLineMessageQuota } = await import('~~/server/utils/line')
+const { resolveAudienceUserIds } = await import('~~/server/utils/audience')
 const { BILLING_PLANS, broadcastLockText } = await import('~~/shared/billing/plans')
 const mockGetDb = vi.mocked(getDb)
 const mockGetDoc = vi.mocked(getDoc)
@@ -190,5 +194,67 @@ describe('發送前確認：用了客人名字不再提醒「會是空白」', (
     const textRes = await (handler as any)({})
     expect(textRes.valid).toBe(true)
     expect(JSON.stringify(textRes)).not.toContain('空白')
+  })
+})
+
+/**
+ * `C-380`：確認視窗並排「預估發送人數」與「LINE 這個月還剩約」，人數比剩下的多就警告。
+ * 兩件事要對：①則數用**按下當下**問到的；②預估人數跟送出端一樣**不算封鎖的人**——
+ * 以前連封鎖的一起數，預估比真的送出去的多，一比就會誤報「不夠送」。
+ */
+describe('發送前確認：LINE 剩幾則、預估人數不算封鎖的人', () => {
+  /** 推播本身＋users 集合（全部好友那條路會去數） */
+  function makeDbWithUsers(broadcast: Record<string, any>, users: Array<{ id: string, isBlocked?: boolean }>) {
+    const selected: unknown[][] = []
+    const db = {
+      collection: vi.fn((name: string) => {
+        if (name === 'users') {
+          const q = {
+            select: vi.fn((...fields: unknown[]) => { selected.push(fields); return q }),
+            where: vi.fn(() => q),
+            get: vi.fn(async () => ({ docs: users.map(u => ({ id: u.id, data: () => ({ isBlocked: u.isBlocked }) })) })),
+          }
+          return q
+        }
+        return { doc: vi.fn(() => ({ get: vi.fn(async () => ({ exists: true, data: () => broadcast })) })) }
+      }),
+    }
+    mockGetDb.mockReturnValue(db as any)
+    return { selected }
+  }
+
+  it('則數照 LINE 當下回的帶回去，問的是這個帳號', async () => {
+    vi.mocked(getLineMessageQuota).mockResolvedValueOnce({ limit: 3000, used: 2200, remaining: 800 })
+    makeDb(broadcastDoc([{ type: 'text', text: '今天公休' }]))
+    const res = await (handler as any)({})
+    expect(res.lineQuota).toEqual({ limit: 3000, used: 2200, remaining: 800 })
+    expect(getLineMessageQuota).toHaveBeenCalledWith(WS)
+  })
+
+  it('讀不到 → lineQuota 是 null，照樣可以送（不擋）', async () => {
+    makeDb(broadcastDoc([{ type: 'text', text: '今天公休' }]))
+    const res = await (handler as any)({})
+    expect(res.lineQuota).toBeNull()
+    expect(res.valid).toBe(true)
+  })
+
+  it('⭐ 全部好友：封鎖的不算進預估人數（送出端也跳過他們）', async () => {
+    const { selected } = makeDbWithUsers(
+      { ...broadcastDoc([{ type: 'text', text: '今天公休' }]), audienceSource: { type: 'all' } },
+      [{ id: 'a' }, { id: 'b', isBlocked: true }, { id: 'c', isBlocked: false }],
+    )
+    const res = await (handler as any)({})
+    expect(res.estimatedCount).toBe(2)
+    expect(res.previewUserIds).toEqual(['a', 'c'])
+    // 要讀得到封鎖那一欄才濾得掉（以前是 select() 什麼欄位都不拿）
+    expect(selected).toEqual([['isBlocked']])
+  })
+
+  it('⭐ 依標籤：跟送出端一樣只算沒封鎖的', async () => {
+    vi.mocked(resolveAudienceUserIds).mockResolvedValueOnce(['a', 'c'])
+    makeDb({ ...broadcastDoc([{ type: 'text', text: '今天公休' }]), audienceSource: { type: 'tags', tagIds: ['t1'] } })
+    const res = await (handler as any)({})
+    expect(res.estimatedCount).toBe(2)
+    expect(vi.mocked(resolveAudienceUserIds).mock.calls.at(-1)?.[0]).toMatchObject({ isBlocked: false })
   })
 })

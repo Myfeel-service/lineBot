@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto'
 import { v5 as uuidv5 } from 'uuid'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { describeLineSendFailure, lineSendFailureKind } from './line-send-error'
+import { lineQuotaFromLine, type LineMessageQuota } from '~~/shared/line-quota'
 
 function lineMulticastErrorDetail(err: unknown): string {
   if (err instanceof HTTPFetchError && err.body) return `${err.message} | ${err.body}`
@@ -113,6 +114,39 @@ export async function showLoadingAnimation(
 ) {
   const { client } = await getMessagingBundle(workspaceId)
   return client.showLoadingAnimation({ chatId, loadingSeconds })
+}
+
+const LINE_QUOTA_TIMEOUT_MS = 4000
+
+/**
+ * LINE 這個月還能送幾則（`C-380`，數字的意思見 `shared/line-quota.ts`）。
+ * 讀不到（還沒接 LINE、憑證失效、LINE 沒回）回 null，畫面整行不顯示。
+ * ⛔ 不讓它拖住呼叫它的端點：推播清單與發送前確認都會順便問，LINE 慢的時候最多等 4 秒就放棄。
+ */
+export async function getLineMessageQuota(workspaceId: string): Promise<LineMessageQuota | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const { client } = await getMessagingBundle(workspaceId)
+    const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), LINE_QUOTA_TIMEOUT_MS) })
+    const res = await Promise.race([
+      Promise.all([client.getMessageQuota(), client.getMessageQuotaConsumption()]),
+      timeout,
+    ])
+    if (!res) {
+      console.warn(`[getLineMessageQuota] ${workspaceId} LINE 超過 ${LINE_QUOTA_TIMEOUT_MS}ms 沒回，這次不顯示`)
+      return null
+    }
+    const q = lineQuotaFromLine(res[0], res[1])
+    if (!q) console.warn(`[getLineMessageQuota] ${workspaceId} LINE 回的格式看不懂：`, JSON.stringify(res))
+    return q
+  }
+  catch (err) {
+    console.warn(`[getLineMessageQuota] ${workspaceId} 讀不到 LINE 則數：`, lineMulticastErrorDetail(err))
+    return null
+  }
+  finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 /** Push a message to a LINE userId */
