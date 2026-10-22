@@ -89,7 +89,7 @@ async function settleEmailOutcome(p: {
   }
 }
 
-function brandName(): string {
+export function brandName(): string {
   const c = useRuntimeConfig()
   return String((c.public as Record<string, unknown>)?.brandName ?? '').trim() || 'MiniMe'
 }

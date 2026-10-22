@@ -7,6 +7,7 @@ import {
   renewalReminderEmail,
   quotaEmail,
   testEmail,
+  lineQuotaExhaustedEmail,
 } from './email-content'
 
 describe('escapeHtml', () => {
@@ -169,6 +170,39 @@ describe('quotaEmail', () => {
     const { subject, text } = quotaEmail({ ...base, used: 170, kind: 'near' })
     expect(subject).toContain('即將用完')
     expect(text).toContain('自動回應不受影響')
+  })
+})
+
+/**
+ * `D-146`③：LINE 訊息用完了那封（LINE 通知那時也送不出去，只能寄信）。
+ * ⛔ 跟 quotaEmail（AI 回覆額度）是兩回事：主旨一律叫「LINE 訊息」。
+ */
+describe('lineQuotaExhaustedEmail', () => {
+  const base = { brandName: 'MiniMe', workspaceName: 'MYFEEL 官方帳號', limit: 3000, resetLabel: '11/1', lineManagerUrl: 'https://manager.line.biz/' }
+
+  it('主旨講「LINE 這個月的訊息用完了」、不是 AI 回覆額度', () => {
+    const { subject } = lineQuotaExhaustedEmail(base)
+    expect(subject).toBe('[MiniMe] 「MYFEEL 官方帳號」LINE 這個月的訊息用完了')
+    expect(subject).not.toContain('AI')
+  })
+
+  it('⭐ 講送不出去的三件事＋AI 回客人不受影響、幾號恢復、按鈕到 LINE 官方帳號後台、為什麼寄信', () => {
+    const { html, text } = lineQuotaExhaustedEmail(base)
+    for (const body of [html, text]) {
+      expect(body).toContain('3,000 則')
+      expect(body).toContain('推播、你在後台回客人的訊息、傳給你的 LINE 通知')
+      expect(body).toContain('AI 回客人、自動回應')
+      expect(body).toContain('11/1 會自動恢復')
+      expect(body).toContain('https://manager.line.biz/')
+      expect(body).toContain('LINE 通知這時也送不出去')
+    }
+  })
+
+  it('上限讀不到就不寫數字；帳號名稱要跳脫', () => {
+    const { html, text } = lineQuotaExhaustedEmail({ ...base, limit: null, workspaceName: '<b>店</b>' })
+    expect(text).toContain('這個月的 LINE 訊息已經用完了')
+    expect(html).toContain('&lt;b&gt;店&lt;/b&gt;')
+    expect(html).not.toContain('<b>店</b>')
   })
 })
 

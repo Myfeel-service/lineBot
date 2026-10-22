@@ -25,6 +25,7 @@ import { scanTagDiscovery } from '~~/server/utils/tag-discovery'
 import { rollupConversationStats } from '~~/server/utils/conversation-stats-rollup'
 import { cleanupExpiredNotifyLinks } from '~~/server/utils/notify-links'
 import { snapshotBroadcastLineStats } from '~~/server/utils/broadcast-line-stats'
+import { notifyLineQuotaLevels } from '~~/server/utils/line-quota-notify'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -109,6 +110,10 @@ export default defineEventHandler(async (event) => {
     // Cloud Scheduler 建第三個任務（兩個租戶各一次的手動工）；內部有節流：
     // 台北時間 09–21 點外整支早退，每個帳號一小時才真的查一次。
     { name: 'alerts:critical-push', run: () => pushCriticalAlerts(db) },
+    // LINE 訊息用到八成傳一則（勾「出大事」的人、台北 09–21 點）、用完寄信給帳號負責人（`D-146`③）。
+    // ⛔ 不併進上面那支：那支只掃有人勾「出大事」的帳號，而用完那封信沒人收 LINE 通知也要寄。
+    // 每個帳號一小時才問一次 LINE（兩個數字）；這個月傳過／寄過記在 lineQuotaAlerts，不重發
+    { name: 'line:quota-notices', run: () => notifyLineQuotaLevels(db) },
     { name: 'webhook:cleanup-event-locks', run: () => cleanupExpiredWebhookEventLocks(db) },
     // LINE 通知裡的短網址（`C-270`）：90 天前的清掉，每輪最多 500 筆；平常是一個空查詢
     { name: 'notify:cleanup-links', run: () => cleanupExpiredNotifyLinks(db) },

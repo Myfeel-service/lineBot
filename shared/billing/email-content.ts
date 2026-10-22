@@ -286,3 +286,38 @@ export function quotaEmail(p: {
     text: ['AI 回覆額度即將用完', `「${p.workspaceName}」本期的 AI 回覆額度即將用完（已用 ${usage}）。`, consequence, '', `查看方案：${p.manageUrl}`].join('\n'),
   }
 }
+
+// ── 5. LINE 訊息用完了（`D-146`③；`C-90` 的第一件）──────────────────
+// 用完那一刻，傳給店家的 LINE 通知也送不出去（用店家自己的官方帳號送、吃同一份則數），能講的只剩信。
+// ⛔ 跟上面那封「AI 回覆額度」是兩回事：這是 LINE 官方帳號的則數，標題一律叫「LINE 訊息」。
+// 後果那兩格跟後台每一頁的紅條同一件事（shared/line-quota.ts 的 lineQuotaConsequence），AI 回客人那半不能拿掉。
+export function lineQuotaExhaustedEmail(p: {
+  brandName: string
+  workspaceName: string
+  /** LINE 這個月的上限（則）；讀不到就不寫數字 */
+  limit: number | null
+  /** 幾號恢復（「11/1」，台灣時間下個月 1 號） */
+  resetLabel: string
+  /** LINE 官方帳號後台（加購、升級要去的地方） */
+  lineManagerUrl: string
+}): EmailContent {
+  const title = 'LINE 這個月的訊息用完了'
+  const what = p.limit != null
+    ? `「${p.workspaceName}」這個月的 LINE 訊息（${p.limit.toLocaleString('en-US')} 則）已經用完了。`
+    : `「${p.workspaceName}」這個月的 LINE 訊息已經用完了。`
+  const blocked = '推播、你在後台回客人的訊息、傳給你的 LINE 通知'
+  const unaffected = 'AI 回客人、自動回應'
+  const recover = `${p.resetLabel} 會自動恢復；要現在恢復，請到 LINE 官方帳號後台升級方案或加購。`
+  const why = 'LINE 通知這時也送不出去，所以改用 Email 告訴你。'
+  const body
+    = paragraph(what)
+    + table([['現在送不出去', blocked], ['不受影響', unaffected]])
+    + paragraph(recover)
+    + button('前往 LINE 官方帳號後台', p.lineManagerUrl)
+    + paragraph(why)
+  return {
+    subject: `[${p.brandName}] 「${p.workspaceName}」${title}`,
+    html: shell(p.brandName, title, body),
+    text: [title, what, `現在送不出去：${blocked}`, `不受影響：${unaffected}`, recover, '', `前往 LINE 官方帳號後台：${p.lineManagerUrl}`, '', why].join('\n'),
+  }
+}
