@@ -29,6 +29,37 @@ export function isAcknowledgementOnly(text: string): boolean {
   return ACK_RE.test(words)
 }
 
+/**
+ * 道謝／道別的字（給 isPleasantryOnly 用）。
+ *
+ * 比 ai-answer.ts 的 THANKS_RE 寬：那邊一整句只能是一個詞（「謝謝」），這裡要認得出客人實際會打的
+ * 組合——「好的謝謝」「了解，謝謝」「謝謝您～～～」「好、謝謝你們」（MYFEEL 2026-10-22 唯讀查：
+ * 客服回完之後客人回的道謝，幾乎都是這種接在「好的」後面的）。
+ */
+const THANKS_WORD = '非常謝謝|謝謝(?:你們|你|您|妳)?|感謝(?:你們|你|您|妳)?|感恩|多謝|辛苦了|thanks?|thankyou|thx|3q'
+const FAREWELL_WORD = '掰掰|拜拜|再見|bye+|byebye'
+const PLEASANTRY_RE = new RegExp(
+  `^(?:${ACK_WORD}|${THANKS_WORD}|${FAREWELL_WORD})+(?:了|啦|囉|喔|哦|唷|耶|欸|呦|哈)*$`,
+  'i',
+)
+
+/**
+ * 整句只有「好的／收到／謝謝／掰掰」這類客套（可以混在一起：「好的謝謝」「了解，感謝！」）。
+ *
+ * 給 `C-381` 用：真人處理中客人回這種話，不必把他放回待真人、也不必叫客服——事情多半已經講完，
+ * 叫了只會讓客服的手機一直響「好的謝謝」。訊息照存、紅點照亮，客服打開對話照樣看得到。
+ * 帶問號、帶任何其他字（「好的那運費呢」「謝謝 以後買不到便宜的濾芯了」）都不算。
+ */
+export function isPleasantryOnly(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || /[?？]/.test(t)) return false
+  const core = t.replace(/[\s!！。.~～、,，()（）…]+/g, '')
+  if (!core || core.length > 16) return false
+  const words = core.replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]/gu, '')
+  if (!words) return true
+  return PLEASANTRY_RE.test(words)
+}
+
 /** 注音鍵盤（標準排列）：聲母／介音／韻母各在哪幾個鍵，聲調是 3 4 6 7（一聲＝空白鍵） */
 const ZHUYIN_INITIAL_KEYS = new Set('1qaz2wsxedcrfv5tgbyhn')
 const ZHUYIN_MEDIAL_KEYS = new Set('ujm')

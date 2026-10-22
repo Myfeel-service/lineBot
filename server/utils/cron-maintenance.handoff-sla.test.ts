@@ -51,6 +51,10 @@ interface SessionSeed {
   requestedMinutesAgo: number
   slaRemindedAt?: unknown
   humanFirstRepliedAt?: unknown
+  /** 客人回來、被放回待真人是幾分鐘前（`C-381`） */
+  returnedMinutesAgo?: number
+  /** 真人最後一次回覆是幾分鐘前 */
+  humanLastRepliedMinutesAgo?: number
   /**
    * 模擬「另一個排程執行者在這一輪中間搶先蓋了章」：
    * 查詢快照看不到章（跟現場一樣），交易內讀到的即時資料有章。
@@ -80,6 +84,12 @@ function makeDb(
       handoffRequestedAt: { toMillis: () => NOW - s.requestedMinutesAgo * 60_000 },
       slaRemindedAt: s.slaRemindedAt,
       humanFirstRepliedAt: s.humanFirstRepliedAt,
+      ...(s.returnedMinutesAgo != null
+        ? { customerReturnedAt: { toMillis: () => NOW - s.returnedMinutesAgo! * 60_000 } }
+        : {}),
+      ...(s.humanLastRepliedMinutesAgo != null
+        ? { humanLastRepliedAt: { toMillis: () => NOW - s.humanLastRepliedMinutesAgo! * 60_000 } }
+        : {}),
     }
     // live = 交易讀到的即時資料；snapshot = 掃描那一刻的快照（兩者刻意可以不同）
     const live: Record<string, unknown> = { ...base }
@@ -327,6 +337,84 @@ describe('remindOverdueHandoffs 同輪合併', () => {
     const call = notifyOverdueHandoffBatch.mock.calls[0]![0] as any
     expect(call.items.map((i: any) => i.customerLineUserId).sort()).toEqual(['U2', 'U3'])
     expect(tally).toMatchObject({ reminded: 2, messages: 1, skipped: 1 })
+  })
+
+  // ── `C-381`：真人處理中客人又來、被放回待真人的場 ──────────────────────────
+  // 這種場真人早就回過話（有 humanFirstRepliedAt），原本的規則一看到就跳過＝永遠不會再提醒。
+
+  it('客人回來被放回待真人、超過 SLA 沒人回 → 提醒一次，原因講得出是「客人又來了」', async () => {
+    const { db, stampedIds } = makeDb(
+      [{
+        id: 'ret', workspaceId: 'WS', userId: 'U1',
+        requestedMinutesAgo: 5 * 24 * 60, // 五天前轉的真人
+        humanFirstRepliedAt: { __ts: 1 },
+        humanLastRepliedMinutesAgo: 3 * 24 * 60,
+        returnedMinutesAgo: 45,
+      }],
+      { WS_U1: '小美' },
+    )
+    const tally = await remindOverdueHandoffs(db)
+
+    expect(notifyHandoffToStaff).toHaveBeenCalledTimes(1)
+    expect(notifyHandoffToStaff.mock.calls[0]![0]).toMatchObject({
+      customerName: '小美', reason: 'customer_returned', slaReminderMinutes: 30,
+    })
+    expect(stampedIds()).toEqual(['ret'])
+    expect(tally).toMatchObject({ reminded: 1, messages: 1 })
+
+    // 同一輪再跑一次：章已經蓋了，不會再發第二次
+    notifyHandoffToStaff.mockClear()
+    await remindOverdueHandoffs(db)
+    expect(notifyHandoffToStaff).not.toHaveBeenCalled()
+  })
+
+  it('等待時間從客人回來那一刻算，不是五天前轉真人那一刻（合併清單的「等了多久」）', async () => {
+    const { db } = makeDb([
+      {
+        id: 'ret', workspaceId: 'WS', userId: 'U1',
+        requestedMinutesAgo: 5 * 24 * 60,
+        humanFirstRepliedAt: { __ts: 1 },
+        humanLastRepliedMinutesAgo: 3 * 24 * 60,
+        returnedMinutesAgo: 45,
+      },
+      { id: 'new', workspaceId: 'WS', userId: 'U2', requestedMinutesAgo: 40 },
+    ])
+    await remindOverdueHandoffs(db)
+
+    const call = notifyOverdueHandoffBatch.mock.calls[0]![0] as any
+    const ret = call.items.find((i: any) => i.customerLineUserId === 'U1')
+    expect(ret.waitedMs).toBe(45 * 60_000)
+    expect(ret.reason).toBe('customer_returned')
+  })
+
+  it('客人回來還沒到 SLA → 先不催、不蓋章', async () => {
+    const { db, stampedIds } = makeDb([{
+      id: 'ret', workspaceId: 'WS', userId: 'U1',
+      requestedMinutesAgo: 5 * 24 * 60,
+      humanFirstRepliedAt: { __ts: 1 },
+      humanLastRepliedMinutesAgo: 3 * 24 * 60,
+      returnedMinutesAgo: 10,
+    }])
+    await remindOverdueHandoffs(db)
+
+    expect(notifyHandoffToStaff).not.toHaveBeenCalled()
+    expect(notifyOverdueHandoffBatch).not.toHaveBeenCalled()
+    expect(stampedIds()).toEqual([])
+  })
+
+  it('客人回來之後客服已經回了（回來的時間早於真人最後回覆）→ 不催', async () => {
+    const { db, stampedIds } = makeDb([{
+      id: 'ret', workspaceId: 'WS', userId: 'U1',
+      requestedMinutesAgo: 5 * 24 * 60,
+      humanFirstRepliedAt: { __ts: 1 },
+      humanLastRepliedMinutesAgo: 5,
+      returnedMinutesAgo: 45,
+    }])
+    const tally = await remindOverdueHandoffs(db)
+
+    expect(notifyHandoffToStaff).not.toHaveBeenCalled()
+    expect(stampedIds()).toEqual([])
+    expect(tally).toMatchObject({ reminded: 0, skipped: 1 })
   })
 
   it('交易期間真人剛接手 → 不再催（快照還是 pending）', async () => {

@@ -1,3 +1,5 @@
+import { parseFirestoreDate } from '../firestore-date'
+
 export type ModuleType = 'welcome' | 'bot_flow' | 'system_notice' | 'live_agent' | 'ai'
 export type InitialHandler = 'bot' | 'ai' | 'human' | 'unhandled'
 export type ConversationStatus =
@@ -19,6 +21,11 @@ export type ConversationEventType =
    * 沒有這一筆的話，客服只會看到「AI 忽然不回話了」而找不到原因。
    */
   | 'human_lead_continued'
+  /**
+   * 真人接手還沒結束、客服又已經一陣子沒回，客人這時又來講話 → 這場回到「待真人」（`C-381`）。
+   * 客人仍是真人的、AI 不插手；只是把人叫回來（給客人一句已收到、通知值班客服）。
+   */
+  | 'customer_returned'
   | 'conversation_closed'
   /**
    * 客人按了按鈕、但系統一則訊息都沒回（按鈕指向的模組被刪／停用，或找不到對應回覆）。
@@ -87,6 +94,11 @@ export interface ConversationSessionDoc {
   humanLastRepliedAt?: FirebaseFirestore.Timestamp | null
   /** SLA 提醒已發送的時間（每場會話只提醒一次） */
   slaRemindedAt?: FirebaseFirestore.Timestamp | null
+  /**
+   * 客人在「真人處理中、客服一陣子沒回」時又來講話的時間（`C-381`）——這場因此回到待真人。
+   * 只有晚於 humanLastRepliedAt 才算數（見 customerReturnedAtMs）：客服回了話就不再是「在等」。
+   */
+  customerReturnedAt?: FirebaseFirestore.Timestamp | null
   /**
    * 這場會話結束當下的最後一則訊息，給列表第二行當摘要用（見 sessionClosingPreview）。
    *
@@ -286,3 +298,41 @@ export const BOT_SESSION_MAX_IDLE_DAYS = 7
  * cron 的每日積壓提醒與後台異常中心共用同一個門檻，兩邊講的數字才會一致。
  */
 export const HUMAN_STALE_HOURS = 12
+
+/**
+ * 真人處理中，客服上一則超過這麼多分鐘、客人又來講話 → 這場回到「待真人」（`C-381`，老闆 2026-10-22「1. Ok」）。
+ *
+ * 為什麼要有這條：真人處理中客人又來＝全靜音——AI 不回（真人還沒放手）、客人收不到「已收到」
+ * （只給待真人）、客服手機也收不到（LINE 通知只管待真人）。MYFEEL 近 60 天客人隔 12 小時以上
+ * 又來 63 次，真人回覆中位等 4.1 小時、17 次一直沒人回。
+ * ⛔ 不是「時間到交回 AI」：回來的那幾句約三分之二是接著真人那件事（「廠商有回覆了嗎」），AI 接會答錯。
+ *
+ * 30 分鐘以內＝客服多半還在線上跟他一來一往，訊息就在他眼前，再叫一次只是吵。
+ * `D-145`（按了結束之後馬上接著講的）若拍板，用同一個數字。
+ */
+export const CUSTOMER_RETURN_STAFF_IDLE_MINUTES = 30
+
+/**
+ * 這場「客人回來、還沒有真人回他」的那個時間（毫秒）；不是這種狀況回 0。
+ *
+ * customerReturnedAt 要**晚於**真人最後一次回覆才算數：客服回了話，這個時間就只是歷史。
+ * 刻意用比的、不靠「回話時把欄位清掉」——交還機器人、重新轉真人這些路不一定都會清它，
+ * 留下來的舊值不可以讓下一次轉真人一進來就被當成「等很久了」。
+ */
+export function customerReturnedAtMs(s: {
+  customerReturnedAt?: unknown
+  humanLastRepliedAt?: unknown
+  humanFirstRepliedAt?: unknown
+} | null | undefined): number {
+  const returned = timeFieldMs(s?.customerReturnedAt)
+  if (!returned) return 0
+  const lastHuman = timeFieldMs(s?.humanLastRepliedAt) || timeFieldMs(s?.humanFirstRepliedAt)
+  return returned > lastHuman ? returned : 0
+}
+
+/** Firestore 時間欄位 → 毫秒（讀不出來 0）。先認 toMillis（伺服器端拿到的 Timestamp），其餘交給 parseFirestoreDate */
+function timeFieldMs(raw: unknown): number {
+  const v = raw as { toMillis?: () => number } | null | undefined
+  if (v && typeof v.toMillis === 'function') return v.toMillis()
+  return parseFirestoreDate(raw)?.getTime() ?? 0
+}

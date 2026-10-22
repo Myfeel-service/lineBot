@@ -796,6 +796,61 @@ export async function recordHumanFirstReply(sessionId: string, userId: string): 
 }
 
 /**
+ * 真人處理中、客服已經一陣子沒回，客人又來講話 → 這場回到「待真人」（`C-381`）。
+ * 回傳 true＝這一次真的把它放回去了（呼叫端接著給客人一句已收到、通知值班客服）；
+ * false＝不是這種狀況（不是真人處理中、客服剛回過話、已經被別的訊息放回去了）。
+ *
+ * ⛔ 只動「現在誰在等誰」這一族（status、customerReturnedAt、slaRemindedAt）：
+ *   統計那一族（initialHandler／hasHandoff／handoffRequestedAt／humanFirstRepliedAt）一律不碰——
+ *   客人回來不是又一次轉真人，記成轉真人會讓「AI 轉真人幾次」「多久接手」憑空多一筆。
+ *   currentHandler 也留著 human：客人還是真人的，AI 照樣不插手。
+ * slaRemindedAt 要拆掉：上一次等真人時蓋過章的話，這次就永遠不會再提醒。
+ *
+ * 判斷跟寫入在同一個交易裡：客人一次傳五張圖是五個同時進來的 webhook，只能有一個放得回去
+ * （放回去的那一個負責叫人，其他四個看到已經是待真人就什麼都不做）。
+ */
+export async function returnHumanSessionToPending(
+  sessionId: string,
+  userId: string,
+  workspaceId: string,
+  opts: {
+    /** 客人這則訊息的時間（LINE 事件時間）；沒有就用伺服器時間 */
+    atMs?: number
+    /** 客服最後一次回覆要早於這麼久才算（毫秒） */
+    minStaffIdleMs: number
+  },
+): Promise<boolean> {
+  const db = getDb()
+  const sessionRef = db.collection('conversationSessions').doc(sessionId)
+  const now = Date.now()
+  const atMs = Number.isFinite(Number(opts.atMs)) && Number(opts.atMs) > 0 && Number(opts.atMs) <= now
+    ? Number(opts.atMs)
+    : now
+
+  const flipped = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(sessionRef)
+    const session = snap.data() as any
+    if (!snap.exists || session?.status !== 'human_handling') return false
+    // 「客服最後一次回覆」：延續真人開場的場沒有首接時間，但開場時就把真人那次動作寫進了 humanLastRepliedAt。
+    // 兩個都沒有（舊資料）＝看不出客服多久沒動 → 當成很久了：寧可多叫一次人，也不要讓客人晾著。
+    const lastHumanMs = session.humanLastRepliedAt?.toMillis?.() || session.humanFirstRepliedAt?.toMillis?.() || 0
+    if (lastHumanMs && atMs - lastHumanMs < opts.minStaffIdleMs) return false
+    tx.update(sessionRef, {
+      status: 'pending_human' as ConversationStatus,
+      customerReturnedAt: Timestamp.fromMillis(atMs),
+      slaRemindedAt: FieldValue.delete(),
+      lastActivityAt: FieldValue.serverTimestamp(),
+    })
+    return true
+  })
+  if (!flipped) return false
+
+  _updateSessionStatusCache(sessionId, 'pending_human')
+  await recordConversationEvent(sessionId, lineUserIdFromFirestoreDocId(userId, workspaceId), 'customer_returned', { workspaceId })
+  return true
+}
+
+/**
  * 把 pending_human / human_handling 的會話交還機器人，bot/AI 恢復接手後續訊息。
  * 觸發來源：後台「交還機器人」按鈕，或 auto-handback 排程（真人閒置過久）。
  * 回傳 false = session 不存在或目前狀態不可交還（已結束 / 本來就是 bot）。
@@ -817,6 +872,8 @@ export async function handBackSessionToBot(
     currentHandler: 'bot' as InitialHandler,
     currentModuleType: 'bot_flow' as ModuleType,
     lastActivityAt: FieldValue.serverTimestamp(),
+    // 客人回來在等的那個時間跟著放手一起收掉（`C-381`）：交還之後又轉真人時，不可以拿舊的當等待起點
+    customerReturnedAt: FieldValue.delete(),
   })
   /**
    * 「交還機器人」＝真人明確放手，所以連「這位客人是真人的」記號一起清掉。
@@ -1016,6 +1073,24 @@ export async function onHumanOutgoingMessage(userId: string, workspaceId: string
             }),
       })
       return { isFirstHumanReply: true, newHandoff: false }
+    }
+
+    /**
+     * 待真人、但這場真人早就回過話＝客人回來了被放回待真人的（`C-381`），或交還之後又轉真人的。
+     * 客服這一回就是接回去：回到真人處理中、蓋真人最後回覆時間，**其他什麼都不記**——
+     * 首接早就記過了；也不可以落到下面「直接在收件匣接手」那段：那段看到 hasHandoff 是 false
+     * （客服直接接手、從沒轉過真人的場）會補記一次轉真人，「轉真人幾次」憑空多一筆。
+     */
+    if (session.status === 'pending_human' && session.humanFirstRepliedAt) {
+      tx.update(sessionRef, {
+        status: 'human_handling' as ConversationStatus,
+        currentHandler: 'human' as InitialHandler,
+        currentModuleType: 'live_agent' as ModuleType,
+        lastActivityAt: FieldValue.serverTimestamp(),
+        humanLastRepliedAt: FieldValue.serverTimestamp(),
+        customerReturnedAt: FieldValue.delete(),
+      })
+      return { isFirstHumanReply: false, newHandoff: false }
     }
 
     // 已在真人處理中 → 只更新「真人最後回覆時間」（auto-handback 用；與 lastActivityAt 分開，

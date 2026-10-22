@@ -94,6 +94,8 @@ function eventLabel(
   if (eventType === 'returned_to_bot') return '已交還機器人'
   // 講「為什麼」而不只是「發生了什麼」：客服看到的是 AI 忽然不回話，要看得出是誰決定的
   if (eventType === 'human_lead_continued') return '延續真人對話，AI 不自動回覆'
+  // `C-381`：⛔ 不寫「已通知客服」——沒人勾「客人找真人」、勿擾時段、只通知沒人接手的模式都不會當下傳，寫了是假話
+  if (eventType === 'customer_returned') return '客人又來了，回到待真人'
   if (eventType === 'postback_no_reply') {
     /**
      * 只會出現在舊資料上：現在「客人按了按鈕但沒回覆」改記成一筆客人動作紀錄

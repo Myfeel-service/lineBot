@@ -25,6 +25,22 @@ import type { HandoffReason } from '~~/shared/types/ai-knowledge'
 import { capMapSize } from './bounded-cache'
 import { notifyRecipients } from '~~/shared/line-notify-list'
 
+/**
+ * 通知上寫的原因：AI／流程轉真人的那幾種（HandoffReason），再加「客人又來了」（`C-381`）。
+ *
+ * ⛔ `customer_returned` 刻意不放進 HandoffReason：那個型別是「AI 為什麼轉真人」，
+ *    AI 表現頁的篩選、知識缺口、轉真人統計都吃它；客人回來不是 AI 的決定，混進去那些數字就髒了。
+ */
+export type HandoffNotifyReason = HandoffReason | 'customer_returned'
+
+/** 客服在手機上看到的那一行「原因：…」 */
+const CUSTOMER_RETURNED_REASON_LABEL = '客人又來了（接手後還沒結束）'
+
+function notifyReasonLabel(reason: HandoffNotifyReason): string {
+  if (reason === 'customer_returned') return CUSTOMER_RETURNED_REASON_LABEL
+  return HANDOFF_REASON_LABELS[reason] ?? reason
+}
+
 const NOTIFY_THROTTLE_MS = 10 * 60 * 1000
 const NOTIFY_MAP_MAX_ENTRIES = 5000
 const lastNotifiedAt = new Map<string, number>()
@@ -50,7 +66,7 @@ export interface HandoffNotifyParams {
   /** 觸發 handoff 的那則客人訊息（腳本流程可為空） */
   customerMessage: string
   /** null = 非 AI 護欄觸發（例如腳本設定轉真人） */
-  reason: HandoffReason | null
+  reason: HandoffNotifyReason | null
   /** AI 生成的 2–3 句對話摘要（best-effort，可為空字串 → 不顯示該行） */
   summary?: string
   /** SLA 提醒模式：轉真人後超過 N 分鐘無人回應的再提醒（訊息格式不同） */
@@ -97,7 +113,7 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
   if (!markNotified(params.workspaceId, params.customerLineUserId, now)) return false
 
   const reasonLabel = params.reason
-    ? (HANDOFF_REASON_LABELS[params.reason] ?? params.reason)
+    ? notifyReasonLabel(params.reason)
     : '自動回應轉真人'
   // 文案在 shared（後台「LINE 通知」頁的預覽吃同一支）。missed_only 的首次通知帶完整內容
   // （摘要/訊息由 remindOverdueHandoffs 從存檔補回）；always 模式的再提醒是短版一行。
@@ -150,7 +166,7 @@ export interface OverdueHandoffItem {
   /** 已等待毫秒（排序與文案用） */
   waitedMs: number
   /** null = 非 AI 護欄觸發（例如腳本設定轉真人），或存檔內容已過期 */
-  reason: HandoffReason | null
+  reason: HandoffNotifyReason | null
 }
 
 /**
@@ -194,7 +210,7 @@ export async function notifyOverdueHandoffBatch(params: {
       items: listed.map(item => ({
         customerName: item.customerName,
         waitedMs: item.waitedMs,
-        reasonLabel: item.reason ? (HANDOFF_REASON_LABELS[item.reason] ?? item.reason) : '',
+        reasonLabel: item.reason ? notifyReasonLabel(item.reason) : '',
       })),
       rest,
       link,

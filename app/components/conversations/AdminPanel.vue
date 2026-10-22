@@ -3318,6 +3318,7 @@ const ALWAYS_SHOWN_EVENT_TYPES = new Set([
   'handoff_request',       // 為什麼轉真人
   'returned_to_bot',       // 為什麼 AI 又開始回話
   'human_lead_continued',  // 為什麼這場一開始就是真人（否則看起來像 AI 壞了）
+  'customer_returned',     // 為什麼這場又跑回待真人（`C-381`）
   'conversation_closed',   // 這場結束了
   'postback_no_reply',     // 客人按了按鈕卻沒人回＝故障訊號
 ])
@@ -3405,6 +3406,7 @@ const SESSION_FLOW_STAGE_LABELS: Record<string, string> = {
   handoff_request: '轉真人',
   returned_to_bot: '交還機器人',
   human_lead_continued: '真人續接',
+  customer_returned: '客人又來了',
   conversation_closed: '結束',
 }
 

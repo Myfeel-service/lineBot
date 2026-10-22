@@ -45,10 +45,11 @@ import {
   enterModule,
   getSessionStatusCached,
   onHumanOutgoingMessage,
+  returnHumanSessionToPending,
   shouldSuppressInboundBotAutomationForSession,
 } from './conversation-session'
 import type { ModuleType } from '~~/shared/types/conversation-stats'
-import { SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
+import { CUSTOMER_RETURN_STAFF_IDLE_MINUTES, SYSTEM_MODULE_IDS } from '~~/shared/types/conversation-stats'
 import { answerWithAi, productsInConversation, routeMessage, summarizeHandoffContext, truncateLabel, type AiChatTurn, type RouteResult } from './ai-answer'
 import { isShipTimingQuestion, isSingleProductContext } from '~~/shared/ship-timing-question'
 import { chatSpeakerOf } from '~~/shared/chat-speaker'
@@ -63,7 +64,7 @@ import {
   type OrderInfoRecentMessage,
 } from '~~/shared/order-info-only'
 import { storeBizTypeOf } from '~~/shared/store-profile-biz'
-import { quietReplyReasonOf } from '~~/shared/quiet-reply'
+import { isPleasantryOnly, quietReplyReasonOf } from '~~/shared/quiet-reply'
 import { getStoreProfile } from './store-profile'
 import { describeGeminiError } from './gemini'
 import { getAiSettings } from './ai-settings'
@@ -2112,6 +2113,21 @@ export async function handleMessageEvent(
     const willReplyImage = imageReplyOn
       && !(await shouldSuppressInboundBotAutomationForSession(sessionId).catch(() => false))
 
+    // 真人處理中、客服一陣子沒回，客人又傳圖／影／音／檔 → 放回待真人並叫人（`C-381`）。
+    // 貼圖不算（`D-4`：只傳貼圖不算開口）。放回去之後下面那句引導語本來就不會送（等真人期間靜默）。
+    if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && !scriptImage) {
+      await maybeHandleCustomerReturn({
+        sessionId,
+        lineUserId: userId,
+        workspaceId,
+        replyToken: event.replyToken,
+        kind: 'media',
+        customerMessage: typeLabel,
+        displayName: (await userDataPromise)?.displayName,
+        atMs: lineEventTimestampMs,
+      })
+    }
+
     // 有內容的非文字訊息(圖/影/音/檔):AI 讀不懂,完全沉默會像被已讀不回 → 回一句引導。
     // 貼圖刻意不回(多半是裝飾/情緒,回「我看不懂」反而突兀)。
     if (NON_TEXT_INBOUND_TYPES.has(event.message.type) && event.replyToken && !willReplyImage && !scriptImage) {
@@ -2927,9 +2943,22 @@ async function handleIncomingText(
     }
   }
 
+  // 真人處理中、客服一陣子沒回，客人又來講話 → 放回待真人並叫人（`C-381`）；放回去的話安撫語由它送
+  const customerReturned = !handledByInput && suppressBotAutomation
+    ? await maybeHandleCustomerReturn({
+        sessionId,
+        lineUserId,
+        workspaceId: wid,
+        replyToken,
+        kind: 'text',
+        customerMessage: textContent,
+        displayName: userAttributes.displayName,
+      })
+    : false
+
   // 等待真人期間（pending_human）的輕量 ack：所有自動回覆都被抑制，客人傳訊息會
   // 完全已讀不回。給一個節流過的「已收到」回饋。human_handling（真人對話中）不插話。
-  if (!handledByInput && suppressBotAutomation && replyToken) {
+  if (!handledByInput && suppressBotAutomation && replyToken && !customerReturned) {
     await maybeSendWaitingAck(sessionId ?? null, lineUserId, replyToken, wid)
   }
 
@@ -3904,6 +3933,81 @@ async function maybeSendWaitingButtonAck(
   }
   catch (e) {
     console.error('[waiting-button-ack] failed:', e)
+  }
+}
+
+/**
+ * 真人處理中、客服已經一陣子沒回，客人又來講話 → 放回待真人、給客人一句已收到、叫值班客服（`C-381`）。
+ * 回傳 true＝放回去了，這一則的安撫語由這裡送（回覆權杖已用掉），呼叫端不要再送等待中的那句。
+ *
+ * 為什麼要有：真人處理中客人又來＝全靜音——AI 不回（真人還沒放手）、等待中的安撫語只給待真人、
+ * LINE 通知只管待真人。客服回完忘了按結束、或在等廠商回覆，客人隔幾天回來問就石沉大海
+ * （MYFEEL 近 60 天 63 次、真人回覆中位等 4.1 小時、17 次一直沒人回）。
+ * ⛔ 不交回 AI：回來的話約三分之二接著真人那件事（「廠商有回覆了嗎」），AI 接會答錯（`D-144`）。
+ *
+ * 只傳「好的／謝謝」不叫人（isPleasantryOnly）；貼圖呼叫端就不會傳進來（同 `D-4`：只傳貼圖不算開口）。
+ * 整支吞錯：叫人這一段失敗，不可以拖累客人這一則訊息本來的處理（存檔、紅點）。
+ */
+async function maybeHandleCustomerReturn(params: {
+  sessionId: string | null | undefined
+  lineUserId: string
+  workspaceId: string
+  replyToken?: string
+  /** text＝打字（含按鈕代送的字）、media＝圖／影／音／檔、button＝按了不會照樣回的模組（多半是又按一次「真人客服」） */
+  kind: 'text' | 'media' | 'button'
+  /** 給客服看的那一句：客人打的字、[圖片]、（客人按了「真人客服」） */
+  customerMessage: string
+  displayName?: string
+  /** 客人這一則的時間（LINE 事件時間） */
+  atMs?: number
+}): Promise<boolean> {
+  try {
+    if (!params.sessionId) return false
+    // 先用快取擋：絕大多數訊息不在真人處理中，這裡不多讀任何東西就離開
+    if (await getSessionStatusCached(params.sessionId) !== 'human_handling') return false
+    if (params.kind === 'text' && isPleasantryOnly(params.customerMessage)) return false
+
+    const flipped = await returnHumanSessionToPending(params.sessionId, params.lineUserId, params.workspaceId, {
+      atMs: params.atMs,
+      minStaffIdleMs: CUSTOMER_RETURN_STAFF_IDLE_MINUTES * 60_000,
+    })
+    if (!flipped) return false
+
+    if (params.replyToken) {
+      // 下班時間講下班時間（同轉真人那則，見 dndHandoffReplyText），不然客人半夜收到「專員會盡快回覆」然後整夜沒人
+      const dndText = await dndHandoffReplyText(params.workspaceId)
+      if (dndText) {
+        const msg: messagingApi.TextMessage = { type: 'text', text: dndText }
+        await replyMessage(params.replyToken, [msg], params.workspaceId)
+        markWaitingAckSent(params.workspaceId, params.lineUserId)
+        saveOutgoingConversationMessagesByWorkspace(params.lineUserId, [msg], params.workspaceId, {
+          sender: 'system',
+          senderName: '勿擾時段回覆',
+        }).catch(e => console.error('[customer-return] save outgoing error:', e))
+      }
+      // 狀態快取已經是待真人，這兩支照它們平常的規則送（含節流）
+      else if (params.kind === 'button') {
+        await maybeSendWaitingButtonAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
+      }
+      else {
+        await maybeSendWaitingAck(params.sessionId, params.lineUserId, params.replyToken, params.workspaceId)
+      }
+    }
+
+    // ⛔ 要 await（Lambda 回應後容器會凍結）。勿擾時段／只通知沒人接手的模式在通知函式裡自己處理，
+    //    那兩種當下不傳，之後由逾時提醒從客人回來的時間起算再叫一次（見 remindOverdueHandoffs）
+    await notifyHandoffToStaff({
+      workspaceId: params.workspaceId,
+      customerLineUserId: params.lineUserId,
+      customerName: params.displayName || params.lineUserId,
+      customerMessage: params.customerMessage,
+      reason: 'customer_returned',
+    }).catch(e => console.error('[customer-return] notify error:', e))
+    return true
+  }
+  catch (e) {
+    console.error('[customer-return] failed:', e)
+    return false
   }
 }
 
@@ -4950,9 +5054,21 @@ export async function handlePostbackEvent(
       moduleId: trigger.moduleId,
       lineEventTimestampMs: postbackTs,
     })
+    // 真人處理中、客服一陣子沒回，客人又按「真人客服」→ 放回待真人並叫人（`C-381`）。
+    // 以前只記上面那一行：客人明講要找人，同事手機卻不會響。
+    const customerReturned = await maybeHandleCustomerReturn({
+      sessionId,
+      lineUserId: userId,
+      workspaceId,
+      replyToken: event.replyToken,
+      kind: 'button',
+      customerMessage: preloadedFlow?.name ? `（客人按了「${preloadedFlow.name}」）` : '（客人按了按鈕）',
+      displayName: preloadedUserData?.displayName,
+      atMs: postbackTs,
+    })
     // 記一行給同事看還不夠——客人那邊仍是一片空白。等真人時給他一句節流過的回饋，
     // 說清楚「已經在排隊／可以先把問題打下來」，否則他只會一直按（`H-19`）。
-    if (event.replyToken) {
+    if (event.replyToken && !customerReturned) {
       await maybeSendWaitingButtonAck(sessionId, userId, event.replyToken, workspaceId)
     }
     return

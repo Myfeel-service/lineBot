@@ -31,7 +31,7 @@ import { closeConversationSession, handBackSessionToBot } from './conversation-s
 import { getAiSettings } from './ai-settings'
 import { buildWeeklyInsights } from './weekly-insights'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasAiCallCeilingNotified, wasQuotaExhaustedNotified } from './ai-handoff-notify'
-import type { HandoffReason } from '~~/shared/types/ai-knowledge'
+import type { HandoffNotifyReason } from './ai-handoff-notify'
 import { pushToNotifyList } from './line-notify-delivery'
 import { adminHomePath, createNotifyLink } from './notify-links'
 import { buildCriticalAlertText } from '~~/shared/line-notify-messages'
@@ -60,7 +60,7 @@ import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-
 import { getStoreProfile } from './store-profile'
 import { tailorFestivalAngle } from './festival-tailor'
 import { decideSourceChange, normalizeVolatileNumbers } from '~~/shared/knowledge-fingerprint'
-import { BOT_SESSION_MAX_IDLE_DAYS, HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
+import { BOT_SESSION_MAX_IDLE_DAYS, HUMAN_STALE_HOURS, customerReturnedAtMs } from '~~/shared/types/conversation-stats'
 import type { ConversationStatus } from '~~/shared/types/conversation-stats'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
@@ -876,7 +876,7 @@ export async function autoCloseIdleBotSessions(db: Firestore) {
  *  與 Amplify 上的 Cloud Scheduler 同時打同一份正式庫，13:40 與 14:30 兩則各重複一次。
  *  Cloud Scheduler 逾時重試、Lambda 併發也是同一個坑，所以修在這裡而不是叫人關 dev。）
  *
- * humanFirstRepliedAt 在交易內再確認一次：這一輪跑到一半真人剛接手，就不該再催了。
+ * 「還在等真人」在交易內再確認一次：這一輪跑到一半真人剛接手，就不該再催了。
  */
 async function claimSlaReminder(
   db: Firestore,
@@ -885,13 +885,31 @@ async function claimSlaReminder(
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref)
     const data = snap.data() as any
-    if (!snap.exists || data?.slaRemindedAt || data?.humanFirstRepliedAt) return false
+    if (!snap.exists || data?.slaRemindedAt || !slaWaitStartMs(data)) return false
     tx.update(ref, { slaRemindedAt: FieldValue.serverTimestamp() })
     return true
   }).catch((err) => {
     console.warn('[handoff-sla] claim failed:', ref.id, err)
     return false
   })
+}
+
+/**
+ * 這場待真人的客人從什麼時候開始等（毫秒）；0＝不用催（真人已經回過他、或不是待真人）。
+ *
+ * 兩種「在等」：
+ *   · 轉真人之後還沒有人回過話 → 從轉真人那一刻算（原本的規則）
+ *   · 真人處理中客人又來、被放回待真人（`C-381`）→ 從客人回來那一刻算。
+ *     這種場真人早就回過話（有 humanFirstRepliedAt），原本的規則一看到就跳過＝永遠不會提醒，
+ *     而它正是最容易被晾著的那種（客服以為事情談完了）。
+ */
+function slaWaitStartMs(data: Record<string, unknown> | undefined): number {
+  if (!data) return 0
+  // 客服回了話 humanLastRepliedAt 就會晚於客人回來的時間，這一格自然歸 0（不必另外看 status）
+  const returnedMs = customerReturnedAtMs(data)
+  if (returnedMs) return returnedMs
+  if (data.humanFirstRepliedAt) return 0
+  return tsToMs(data.handoffRequestedAt)
 }
 
 /** 推播沒送出去 → 把章拆掉，讓下一輪重試（否則這一場的提醒永遠補不回來） */
@@ -932,12 +950,16 @@ export async function remindOverdueHandoffs(db: Firestore) {
     const workspaceId = String(data?.workspaceId ?? '')
     const lineUserId = String(data?.userId ?? '')
     if (!workspaceId || !lineUserId) continue
-    if (data.slaRemindedAt || data.humanFirstRepliedAt) {
+    if (data.slaRemindedAt) {
       skipped++
       continue
     }
-    const requestedMs = tsToMs(data.handoffRequestedAt)
-    if (!requestedMs) continue
+    // 真人回過話的（等待起點 0）原本就算在 skipped 裡，口徑不變
+    const requestedMs = slaWaitStartMs(data)
+    if (!requestedMs) {
+      if (data.humanFirstRepliedAt) skipped++
+      continue
+    }
     const list = byWs.get(workspaceId) ?? []
     list.push({ doc, lineUserId, requestedMs })
     byWs.set(workspaceId, list)
@@ -986,12 +1008,16 @@ export async function remindOverdueHandoffs(db: Firestore) {
         const ctx = (convSnap?.data()?.handoffNotifyContext ?? null) as
           { summary?: string; message?: string; reason?: string | null; at?: unknown } | null
         const ctxFresh = Boolean(ctx && tsToMs(ctx.at) >= c.requestedMs - 10 * 60_000)
+        // 客人回來被放回待真人的（`C-381`）：「每次都通知」模式不存檔，原因也要講得出來（合併清單那一行用得到）
+        const returned = customerReturnedAtMs(c.doc.data()) > 0
         return {
           ...c,
           displayName,
           message: ctxFresh ? String(ctx?.message ?? '') : '',
           summary: ctxFresh ? String(ctx?.summary ?? '') : '',
-          reason: ctxFresh ? ((ctx?.reason ?? null) as HandoffReason | null) : null,
+          reason: ctxFresh
+            ? ((ctx?.reason ?? null) as HandoffNotifyReason | null)
+            : (returned ? 'customer_returned' as const : null),
         }
       }))
 
@@ -1264,7 +1290,8 @@ async function loadDigestWaiting(
 
   const rows = pendingSnap.docs.map((doc) => {
     const d = doc.data() as any
-    const sinceMs = tsToMs(d.handoffRequestedAt) || tsToMs(d.lastActivityAt)
+    // 客人回來被放回待真人的（`C-381`）從回來那一刻算，不然會寫「等了 5 天」——那 5 天是同事在處理
+    const sinceMs = customerReturnedAtMs(d) || tsToMs(d.handoffRequestedAt) || tsToMs(d.lastActivityAt)
     return {
       userId: String(d.userId ?? ''),
       sinceMs,

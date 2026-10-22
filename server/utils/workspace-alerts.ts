@@ -28,7 +28,7 @@ import { isUrlReachable } from './url-reachable'
 import { PAYMENT_ORDERS_COLLECTION } from './payment'
 import { derivePlanState, deriveUsageState, type PlanUsageState } from '~~/shared/billing/plan-state'
 import { monthDayText, plainChargeError } from '~~/shared/billing/dunning'
-import { HUMAN_STALE_HOURS } from '~~/shared/types/conversation-stats'
+import { HUMAN_STALE_HOURS, customerReturnedAtMs } from '~~/shared/types/conversation-stats'
 import { isUndeliverable, readNotifyDelivery, recipientDeliveryState, type NotifyRecipientDelivery } from './line-notify-delivery'
 import { normalizeLineUserId, notifyRecipients } from '~~/shared/line-notify-list'
 import { isAutoRetryExhausted } from '~~/shared/knowledge-relearn'
@@ -375,7 +375,7 @@ async function readHumanQueue(db: Firestore, wid: string): Promise<HumanQueue> {
   const [pendingSnap, humanSnap] = await Promise.all([
     pendingCount.data().count
       ? sessions.where('status', '==', 'pending_human')
-          .select('handoffRequestedAt', 'lastActivityAt')
+          .select('handoffRequestedAt', 'lastActivityAt', 'customerReturnedAt', 'humanLastRepliedAt', 'humanFirstRepliedAt')
           .limit(SESSION_SCAN_LIMIT)
           .get()
       : null,
@@ -391,7 +391,8 @@ async function readHumanQueue(db: Firestore, wid: string): Promise<HumanQueue> {
   let oldestH = 0
   for (const d of pendingSnap?.docs ?? []) {
     const s = d.data() as Record<string, unknown>
-    const sinceMs = tsToMs(s.handoffRequestedAt) || tsToMs(s.lastActivityAt)
+    // 客人回來被放回待真人的（`C-381`）從回來那一刻算（同每日摘要）
+    const sinceMs = customerReturnedAtMs(s) || tsToMs(s.handoffRequestedAt) || tsToMs(s.lastActivityAt)
     if (!sinceMs) continue
     const h = (now - sinceMs) / 3600_000
     if (h >= PENDING_WAIT_ALERT_HOURS) {
