@@ -65,14 +65,14 @@ export interface HandoffNotifyParams {
 export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise<boolean> {
   const settings = await getAiSettings(params.workspaceId).catch(() => null)
   const cfg = settings?.handoffNotify
-  // 沒有人勾「客人找真人」＝跟名單是空的一樣（`D-143`）：連 missed_only 的存檔都不必做，反正沒有人會收到
   const to = cfg ? notifyRecipients(cfg, 'handoff') : []
-  if (!cfg || !to.length) return false
+  if (!cfg?.lineUserIds.length) return false
 
   // missed_only 模式：轉真人當下不推播,把通知內容存到 conversations doc;
   // 超時仍沒人接手時 remindOverdueHandoffs 會撈回來,發成一則完整的請求通知。
   // 存檔不算打擾,所以放在勿擾檢查之前——勿擾時段轉真人的內容也要留下來,
   // 否則上班後發的那一則會缺摘要。
+  // 這一刻沒有人勾「客人找真人」（`D-143`）也照存：有人在逾時前勾回來，那一則才帶得到客人原話與摘要。
   if (cfg.mode === 'missed_only' && !params.slaReminderMinutes) {
     const docId = lineUserFirestoreDocId(params.customerLineUserId, params.workspaceId)
     await getDb().collection('conversations').doc(docId).set({
@@ -85,6 +85,9 @@ export async function notifyHandoffToStaff(params: HandoffNotifyParams): Promise
     }, { merge: true }).catch(e => console.warn('[handoff-notify] context save failed:', e))
     return false
   }
+
+  // 沒有人勾「客人找真人」＝跟名單是空的一樣（`D-143`）
+  if (!to.length) return false
 
   // 勿擾時段內不推播（含腳本/AI 觸發與 SLA 再提醒）：轉真人照常發生,只是不吵客服;
   // 客服上班回來看「對話」佇列即可。這是所有 handoff 通知的單一收斂點。

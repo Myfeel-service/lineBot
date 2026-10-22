@@ -448,14 +448,34 @@ describe('每個人勾自己收哪幾種（`D-143`）', () => {
     expect(pushMessage.mock.calls.map(c => c[0])).toEqual(['Sa'])
   })
 
-  it('沒有人勾「客人找真人」＝跟名單空的一樣：不推、missed_only 也不存檔，回 false', async () => {
-    getAiSettings.mockResolvedValue(withOptOut('missed_only', { Sa: ['handoff'], Sb: ['handoff', 'digest'] }))
+  it('沒有人勾「客人找真人」＝跟名單空的一樣：不推，回 false', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('always', { Sa: ['handoff'], Sb: ['handoff', 'digest'] }))
     const sent = await notifyHandoffToStaff({
       workspaceId: 'WS', customerLineUserId: 'U-kind-2', customerName: '小明', customerMessage: '我要找人', reason: 'user_request',
     })
     expect(sent).toBe(false)
     expect(pushMessage).not.toHaveBeenCalled()
     expect(convSet).not.toHaveBeenCalled()
+  })
+
+  it('🔴 missed_only 這一刻沒人勾也照存客人原話與摘要：逾時前有人勾回來，那一則才不會只剩名字', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('missed_only', { Sa: ['handoff'], Sb: ['handoff', 'digest'] }))
+    const sent = await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-kind-2b', customerName: '小明', customerMessage: '訂單卡住了', reason: 'user_request', summary: '訂單問題',
+    })
+    expect(sent).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
+    expect(convSet).toHaveBeenCalledTimes(1)
+    expect((convSet.mock.calls[0]! as any[])[2].handoffNotifyContext).toMatchObject({ message: '訂單卡住了', summary: '訂單問題' })
+  })
+
+  it('missed_only 的逾時再提醒（slaReminderMinutes）沒人勾就不推', async () => {
+    getAiSettings.mockResolvedValue(withOptOut('missed_only', { Sa: ['handoff'], Sb: ['handoff'] }))
+    const sent = await notifyHandoffToStaff({
+      workspaceId: 'WS', customerLineUserId: 'U-kind-2c', customerName: '小明', customerMessage: '', reason: null, slaReminderMinutes: 30,
+    })
+    expect(sent).toBe(false)
+    expect(pushMessage).not.toHaveBeenCalled()
   })
 
   it('逾時提醒合併那則也只傳給勾了「客人找真人」的人', async () => {
