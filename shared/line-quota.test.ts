@@ -39,6 +39,7 @@ describe('推播頁左邊那一行', () => {
     expect(t).toContain('上限 306,000 則')
     expect(t).toContain('方案內含＋加購')
     expect(t).toContain('已送約 6,810 則')
+    expect(t).toContain('活動頁加好友後送的那則')
     expect(t).toContain('AI 回客人不算')
   })
 
