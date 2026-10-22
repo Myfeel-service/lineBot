@@ -45,7 +45,7 @@ import { AUDIT_LOGS_COLLECTION } from './audit-log'
 import { getFirebaseAuth } from './firebase'
 import { agentDestinationCatalogueForPrompt, resolveAgentDestinations } from '~~/shared/agent-destinations'
 import { agentTeachingCatalogueForPrompt, resolveAgentTeaching } from '~~/shared/agent-teachings'
-import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpPending } from '~~/shared/types/admin-ops'
+import { ADMIN_OP_LABELS, ADMIN_OP_RISK, type AdminOpId, type AdminOpPending } from '~~/shared/types/admin-ops'
 import { adminOpCatalogueForPrompt, getAdminOp } from './admin-ops'
 import { AdminOpAskFirst, AdminOpUserError } from './admin-op-def'
 import { checkArgProvenance } from '~~/shared/agent-arg-provenance'
@@ -984,6 +984,8 @@ ${agentTeachingCatalogueForPrompt(role)}
   AI 沒開或額度用完、轉真人之後沒人接(「有客人在等真人回覆」)、草稿模式擬好沒人送出。先確認這幾件、講出哪幾件是正常的,再問是哪一位客人。
   ⛔ 其他設定(「認識你的店」、加好友歡迎訊息、同事接手沒按結束)都**不是**這件事的原因,不可以列成原因。
 - 問到**某一位客人**(講名字、稱呼):用 find_customer_conversations 找;⛔ 不可以拿全店的統計回答某一位客人的事。
+  ⛔ 但他是要你**代回**某一位客人(「幫我回王小姐說…」):你本來就不能回,照實說、附客服對話的連結就好——
+  ⛔ 不用查、也不用問是哪一位(2026-10-23 實測:查到 162 位姓王的還反問是哪一位,問了也做不了)。
 - AI 答錯／價格講錯:看 get_current_alerts 有沒有「資料內容變了還沒重新學」「有資料抓不到內容」這類——那常常就是原因;
   也可以提議補一條知識(他要講正確的內容),補完請他到「測試對話」問一次確認。
 - 講到 AI 設定的**現況**(語氣、回覆模式、服務時間／勿擾、提醒幾分鐘、自動交還、自動結束)之前,這一輪一定要查過 get_ai_settings;
@@ -1166,6 +1168,57 @@ function internalIds(): RegExp {
   return internalIdRe
 }
 
+/** 一句在問「幾分鐘／幾點／多久」的話（問號結尾） */
+const TIME_QUESTION = /(幾分鐘|幾點|多久|幾小時|幾天)[^。！!\n]*[？?]/
+
+/** 改時間的那四件各自的話題（`C-394`） */
+const TIME_SETTING_TOPICS: Array<[RegExp, AdminOpId]> = [
+  [/客人等太久|提醒/, 'ai-settings-handoff-sla'],
+  [/自動交還|交還給機器人|交還機器人/, 'ai-settings-handback-idle'],
+  [/自動結束/, 'ai-settings-auto-close'],
+  [/服務時間|勿擾/, 'ai-settings-service-hours'],
+]
+
+/**
+ * 它沒提議、自己在問「要改成幾分鐘／幾點／多久」：是哪一件改時間的（`C-394`）——小幫手換成系統寫好、附上現在值的那句。
+ * 為什麼：`C-392` 題庫最後一輪它自己寫的兩句是「改成幾分鐘提醒一次」（其實是等多久提醒）、「設定為 0 則表示不自動交還」。
+ * ⚠️ 只認一件：一句話同時講到兩件（「勿擾時段內不會提醒你們」）就不換，照它寫的。
+ */
+export function timeSettingAskedFor(text: string): AdminOpId | null {
+  const t = String(text ?? '')
+  if (!TIME_QUESTION.test(t)) return null
+  const hits = TIME_SETTING_TOPICS.filter(([re]) => re.test(t))
+  return hits.length === 1 ? hits[0]![1] : null
+}
+
+/**
+ * 他沒說要「發」，它照樣講「草稿…發送要你自己按」：那句拿掉（`C-394`；確認卡上本來就寫了不會發出去）。
+ * ⚠️ 只拿講**草稿**的那一句：「這則推播發送失敗，需要你到推播頁重送」這種講狀況的不能動。
+ * ⛔ 他說了「幫我發」「發出去」就留著——那時候這句正是要講的。
+ */
+export function withoutSendDisclaimer(reply: string, userMessage: string): string {
+  if (/(發送|發出|發掉|幫我發|直接發|發一則|發推播)/.test(String(userMessage ?? ''))) return reply
+  // 一句一句看（字的先後不一定：「自行發送」「發送時要你自己按」都有）
+  const out = (String(reply ?? '').match(/[^。！？!?\n]+[。！？!?]?|\n/g) ?? [])
+    .filter(s => !(/草稿/.test(s) && /(發送|發出)/.test(s) && /(自己|自行|手動)/.test(s)))
+    .join('')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return out || reply
+}
+
+/**
+ * 他要你**代回某一位客人**（「幫我回王小姐說訂單已經寄出了」）時，講到「知識」的段落拿掉（`C-394`）。
+ * 為什麼是機制：規則寫了「不可以建議補成知識」，四輪裡還是有一輪建議把「訂單已經寄出」補進知識庫——
+ * 那樣 AI 會跟每一個客人說他的訂單寄出了。
+ * ⚠️「幫我回答客人問運費」不算（那是要補知識）；拿完沒東西就照原樣（不讓他看到一句空話）。
+ */
+export function withoutKnowledgeForOneCustomer(reply: string, userMessage: string): string {
+  if (!/(幫我|替我|幫忙)(回(?!答)覆?|跟|告訴)[^，,。！？!?\n]{0,6}(小姐|先生|太太|她|他|這位|那位)/.test(String(userMessage ?? ''))) return reply
+  const kept = String(reply ?? '').split(/\n{2,}/).filter(p => !/知識/.test(p)).join('\n\n').trim()
+  return kept || reply
+}
+
 /**
  * 模型的 answer 裡，**不是**在重講系統問話的那幾段（`D-151`）。
  * 重講＝跟問話有四成以上的字兩兩相同（把現況再念一次），或是在問「要改成什麼」（問話本來就在問）。
@@ -1181,6 +1234,8 @@ export function otherThanAsk(answer: string, ask: string): string {
   return String(answer ?? '').split(/\n{2,}/).map(p => p.trim()).filter((p) => {
     if (!p) return false
     if (/(要改成|改成什麼|改為什麼|希望改|要調整|想改成)/.test(p)) return false
+    // 自己在問「幾分鐘／幾點／多久」（`C-394`：「請問要設定幾分鐘後自動交還？」）——問話本來就在問
+    if (TIME_QUESTION.test(p)) return false
     const g = grams(p)
     if (!g.size) return false
     let hit = 0
@@ -1193,7 +1248,11 @@ export function otherThanAsk(answer: string, ask: string): string {
  * 店家聽起來像機器的兩個詞，換成講話的說法（`D-151` 第三輪：提示裡寫了「不講觸發、不說我無法」照樣出現 → 收在送上畫面這一關）。
  * ⛔ 只換引號外面：引號裡是他自己的字或客人會看到的原文。
  */
-const plainWordsOutsideQuotes = (s: string) => mapOutsideQuotes(s, p => p.replace(/我無法/g, '我沒辦法').replace(/觸發/g, '啟動'))
+const plainWordsOutsideQuotes = (s: string) => mapOutsideQuotes(s, p => p
+  .replace(/我無法/g, '我沒辦法')
+  .replace(/觸發/g, '啟動')
+  // 頁面上叫「一提到就轉真人」（`C-394`：它講成「加到敏感詞清單」）
+  .replace(/敏感詞清單/g, '「一提到就轉真人」的清單'))
 
 /**
  * 小幫手泡泡裡的一段話:粗體與 ⛔ 拿掉、清單符號換成「・」、括號裡的英文代號拿掉、統一用「你」(面板其他地方都是「你」)、
@@ -1420,8 +1479,19 @@ export async function runAdminAgentChat(params: {
         seenCards.add(key)
         return true
       })
+
+      // 它自己在問「要改成幾分鐘／幾點／多久」：換成系統寫好、附現值的那句（`C-394`：它自己寫成「幾分鐘提醒一次」「設定為 0」）
+      let answerText = withoutKnowledgeForOneCustomer(withoutSendDisclaimer(text, message), message)
+      const timeOpId = timeSettingAskedFor(answerText)
+      if (timeOpId) {
+        const timeOp = getAdminOp(timeOpId).op
+        if (timeOp.askForNumber && can(role, timeOp.capability)) {
+          const ask = await timeOp.askForNumber({ db, workspaceId, uid, authHeader }).catch(() => '')
+          if (ask) answerText = [otherThanAsk(answerText, ask), ask].filter(Boolean).join('\n\n')
+        }
+      }
       return {
-        reply: say(text || '(助理沒有給出回答,請換個問法再試一次)'),
+        reply: say(answerText || '(助理沒有給出回答,請換個問法再試一次)'),
         toolCalls,
         messages,
         // 只有真的有一張卡在等的時候才傳:沒有提議可收回時這一格沒有意義
@@ -1607,7 +1677,8 @@ export async function runAdminAgentChat(params: {
           // 泡泡卻說「我會將『新增備註』重新啟用」。noop 連確認鈕都沒有,
           // 畫面上只剩那句「我會…」,人只會以為它做了。
           // ⛔ 數字對不上時**整句換掉**,不要把數字挖掉改寫——被動過手腳的句子更難察覺。
-          reply: say([answer, proposeLine].filter(Boolean).join('\n\n')),
+          // 「草稿…發送要你自己按」：確認卡上本來就寫了，他沒說要發就不再講一次（`C-394`）
+          reply: say(withoutSendDisclaimer([answer, proposeLine].filter(Boolean).join('\n\n'), message)),
           toolCalls,
           messages: [],
           pendingOp: {

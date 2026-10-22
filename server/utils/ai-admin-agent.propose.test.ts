@@ -459,6 +459,61 @@ describe('當使用者的話不足以決定要動什麼', () => {
   })
 })
 
+// `C-394`（2026-10-23 老闆「修掉小問題」）：`C-392` 題庫最後一輪剩下的四個用詞問題，原句照抄
+describe('小幫手的用詞小問題（C-394）', () => {
+  it('他沒說「發」：拿掉「草稿…發送要你自己按」那句；說了「幫我發」就留著；講狀況的不動', async () => {
+    const { withoutSendDisclaimer } = await import('./ai-admin-agent')
+    expect(withoutSendDisclaimer('好的，要發送推播給客人，我會先幫你擬好草稿，發送時需要你到推播頁面自己按發送。\n\n請問推播的內容要寫什麼？', '週年慶要到了，弄一則推播'))
+      .toBe('請問推播的內容要寫什麼？')
+    expect(withoutSendDisclaimer('我會幫你建立一則推播草稿，內容是「雙11全館85折」，發送對象是全部好友。這則推播會先存成草稿，不會直接發送出去，你需要到推播頁面手動發送。', '雙11全館85折，發給全部好友'))
+      .toBe('我會幫你建立一則推播草稿，內容是「雙11全館85折」，發送對象是全部好友。')
+    // 他說了要發：那句正是要講的
+    const send = '我只能幫你擬好推播草稿，發送需要你到推播頁面自己按喔。'
+    expect(withoutSendDisclaimer(send, '幫我發一則推播說我們今天公休')).toBe(send)
+    // 講狀況的（沒有「草稿」）不動
+    const status = '這則推播發送失敗，需要你到推播頁自己重送一次。'
+    expect(withoutSendDisclaimer(status, '客人說沒收到推播')).toBe(status)
+    // 第二輪實測：「自行發送」也要認
+    expect(withoutSendDisclaimer('我會建立一則推播草稿。這則推播草稿建立後，你需要到推播頁面自行發送。', '雙11全館85折，發給全部好友'))
+      .toBe('我會建立一則推播草稿。')
+  })
+
+  // 第二輪實測原句：四輪裡有一輪又建議把「訂單已經寄出」補進知識庫（AI 會跟每個客人這樣講）
+  it('🔴 代回某一位客人：講到知識的段落拿掉；「幫我回答客人問運費」不算', async () => {
+    const { withoutKnowledgeForOneCustomer } = await import('./ai-admin-agent')
+    const reply = '我沒辦法直接回覆客人訊息。你可以到「客服對話」頁面找到王小姐的對話，然後手動回覆她。\n\n'
+      + '如果你希望 AI 在客人問到訂單寄送狀況時自動回覆，我可以幫你把「訂單已經寄出」這句話加到知識庫，讓 AI 在未來回答類似問題時使用。'
+    expect(withoutKnowledgeForOneCustomer(reply, '幫我回王小姐說訂單已經寄出了'))
+      .toBe('我沒辦法直接回覆客人訊息。你可以到「客服對話」頁面找到王小姐的對話，然後手動回覆她。')
+    const kb = '可以補一條知識：客人問運費就回「滿千免運」。'
+    expect(withoutKnowledgeForOneCustomer(kb, '幫我回答客人問運費的問題')).toBe(kb)
+  })
+
+  it('它自己在問「要改成幾分鐘／幾點／多久」：認得是哪一件；同時講到兩件、或沒在問時間就不換', async () => {
+    const { timeSettingAskedFor } = await import('./ai-admin-agent')
+    expect(timeSettingAskedFor('目前客人等超過 60 分鐘沒有真人回覆，系統會發出提醒。請問你希望改成幾分鐘提醒一次，或是關閉提醒？')).toBe('ai-settings-handoff-sla')
+    expect(timeSettingAskedFor('目前客服接手後，沒有設定自動交還給機器人。請問要設定幾分鐘後自動交還？（設定為 0 則表示不自動交還）')).toBe('ai-settings-handback-idle')
+    expect(timeSettingAskedFor('要改成多久沒動靜就自動結束？')).toBe('ai-settings-auto-close')
+    expect(timeSettingAskedFor('目前提醒是 60 分鐘。')).toBeNull()
+    expect(timeSettingAskedFor('勿擾時段內不會提醒你們，要改成幾點？')).toBeNull()
+  })
+
+  it('🔴 它自己寫的改時間問話 → 換成系統那句（附現在的值）；⛔ 不出現「幾分鐘提醒一次」「設定為 0」', async () => {
+    generateJson
+      // 實測那一輪它有先查設定（沒查的話會先被接地閘門退回，那是另一條測的事）
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_settings', args: {} }))
+      .mockResolvedValueOnce(step({
+        action: 'answer',
+        text: '目前客服接手後，沒有設定自動交還給機器人。請問要設定幾分鐘後自動交還？（設定為 0 則表示不自動交還）',
+      }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '改客服接手後自動交還的時間' })
+    expect(res.reply).toContain('現在沒有開自動交還')
+    expect(res.reply).toContain('要設成客服閒置幾分鐘')
+    expect(res.reply).not.toContain('設定為 0')
+    expect(res.reply.match(/幾分鐘/g)).toHaveLength(1)
+  })
+})
+
 describe('泡泡那句話不可以跟確認卡打架', () => {
   it('🔴 本來就是這樣（noop）：一律用後端查出來的那句，⛔不用模型寫的「我會幫你重新啟用」', async () => {
     generateJson.mockResolvedValueOnce(step({
@@ -909,6 +964,8 @@ describe('畫面上的字（D-116）', () => {
     expect(plainReply('我無法直接刪除。客人說什麼會觸發它？'))
       .toBe('我沒辦法直接刪除。客人說什麼會啟動它？')
     expect(plainReply('改成「我無法接受，觸發了」')).toBe('改成「我無法接受，觸發了」')
+    // `C-394`：跟頁面同一個名字
+    expect(plainReply('我會將「退款」這個字加到敏感詞清單。')).toBe('我會將「退款」這個字加到「一提到就轉真人」的清單。')
   })
 
   it('真的推播草稿卡：客人會看到的那一格是原文', async () => {
