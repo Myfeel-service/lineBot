@@ -44,6 +44,14 @@ const SETTINGS_TOOL = 'get_ai_settings'
 // ⚠️ 只認「AI…的服務時間」：「AI 在服務時間以外照常回答」是對的講法，⛔ 不可以誤擋
 const AI_SERVICE_HOURS = /AI[^。，,\n]{0,6}的(服務時間|上班時間)|(服務時間|勿擾時段?)[^。，,\n]{0,10}AI[^。，,\n]{0,4}(不會?|沒有?)(回|答)/
 
+/**
+ * 引用了某條自動回應「現在回給客人的話」（2026-10-22 實測）：問「把「退換貨」的回覆改成「先填表單」」，
+ * 它一個工具都沒查就寫「目前這條的回覆內容是：「您好，關於退換貨問題，請參考我們的退換貨政策：[連結]」」——整句是編的。
+ * 提示裡寫了「先把 replyText 照抄給他看」，照樣中，所以擋。
+ */
+const QUOTES_SCRIPT_REPLY = /(回覆(內容|的話)?|回給客人的話)\s*(目前|現在)?\s*(是|為)\s*[：:]?\s*「/
+const SCRIPTS_TOOL = 'list_scripts'
+
 export interface GroundingParams {
   /** 模型這一輪寫的回答 */
   text: string
@@ -98,6 +106,11 @@ export function answerGroundingIssue({ text, sources, dateSources = [], calledTo
     return `你寫了「${aiHours}」——服務時間不是 AI 的上班時間。`
       + '⛔ 服務時間只管「客人要找真人時會不會通知你們」（勿擾時段內客人先收到一句稍後回覆），AI 全天照常回答。'
       + '請改寫那句話，⛔ 不要說成「AI 自動回覆的服務時間」。'
+  }
+
+  if (QUOTES_SCRIPT_REPLY.test(answer) && !calledTools.includes(SCRIPTS_TOOL)) {
+    return `你引用了一條自動回應現在回給客人的話，但這一輪沒有查過 ${SCRIPTS_TOOL}。`
+      + `⛔ 那句話不可以憑印象寫（語氣聽起來像查過，店家會以為客人收到的就是那句）。請先查 ${SCRIPTS_TOOL}，照抄 replyText。`
   }
 
   const topic = answer.match(SETTINGS_TOPIC)?.[0]

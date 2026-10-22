@@ -117,4 +117,12 @@ describe('answerGroundingIssue（沒查就講的回答要退回去）', () => {
   it('⛔ 講對話統計的「等太久」不算設定話題（收了會一直白查一次）', () => {
     expect(ok({ text: '昨天有客人等太久才有人回，要不要去看看？', sources: [], calledTools: ['get_conversation_stats'] })).toBe(true)
   })
+
+  // 2026-10-22 實測原句：沒查就編了一句「現在的回覆」
+  it('🔴 沒查自動回應就引用「現在回給客人的話」→ 擋下來，叫它先查 list_scripts', () => {
+    const made = '目前「退換貨」這條自動回應的回覆內容是：\n「您好，關於退換貨問題，請參考我們的退換貨政策：[連結]」\n\n請問你希望客人收到哪一句完整的訊息？'
+    expect(answerGroundingIssue({ text: made, sources: [], calledTools: [] })).toContain('list_scripts')
+    // 查過再引用：放行（同一天實測的好例子）
+    expect(ok({ text: '「退換貨查詢」這條自動回應目前回給客人的話是：「已收到您的訂單 ［訂單編號］，謝謝您」。請問你要改成什麼內容呢？', sources: [], calledTools: ['list_scripts'] })).toBe(true)
+  })
 })

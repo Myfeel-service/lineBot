@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayTokenFor, toDisplayText, toStoredText, VAR_TOKEN_EDGE, variableLabel, variableSegments, variableTokenRanges } from './variable-tokens'
+import { displayTokenFor, toDisplayText, toStoredText, toBracketText, VAR_TOKEN_EDGE, variableLabel, variableSegments, variableTokenRanges } from './variable-tokens'
 
 const NAME = displayTokenFor('displayName')
 
@@ -101,6 +101,14 @@ describe('只看不改的地方：存的格式切成字／變數幾段（小幫�
       { text: ' 謝謝您' },
     ])
     expect(segs.map(s => s.text).join('')).not.toMatch(/\{\{|order_id/)
+  })
+
+  it('講給店家聽用括號寫（［訂單編號］），他照抄回來換得回變數', () => {
+    const stored = '已收到您的訂單 {{order_id}}，謝謝您'
+    const said = toBracketText(stored, 'script')
+    expect(said).toBe('已收到您的訂單 ［訂單編號］，謝謝您')
+    expect(toStoredText(`${said}，請先填表單：https://example.com/f`, 'script', ['order_id']))
+      .toBe('已收到您的訂單 {{order_id}}，謝謝您，請先填表單：https://example.com/f')
   })
 
   it('沒有變數就是整段一段；send 模式不認中文欄位（跟送出端同一條規則）', () => {

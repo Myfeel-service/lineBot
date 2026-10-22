@@ -27,7 +27,7 @@ import {
   MIN_HUMAN_SESSION_MAX_IDLE_HOURS,
 } from '~~/shared/types/ai-knowledge'
 import { MAX_TRIGGER_KEYWORDS, scriptTriggerEvent } from '~~/shared/types/ai-script'
-import { variableLabel } from '~~/shared/variable-tokens'
+import { toStoredText, variableLabel } from '~~/shared/variable-tokens'
 // ⛔ 從 admin-op-def 拿、不從 admin-ops 拿：admin-ops 的註冊表 import 這支，反過來就是循環相依
 import { AdminOpUserError, resolveScriptDoc, type AdminOpCtx, type AdminOpDef } from './admin-op-def'
 import { getAiSettings, setAiSettings } from './ai-settings'
@@ -881,7 +881,12 @@ export const scriptUpdateReply: AdminOpDef = {
   targetField: 'name',
   freeTextFields: ['text'],
   argsHint: '參數：{"name":"自動回應的名字","text":"新的回覆內容（整段）"}。name 要照清單一字不差。'
-    + '⛔ text 要照他講的寫，不要自己加促銷詞或表情符號。只適用「只有一段回覆」的那種；多步驟的請他到自動回應頁改。',
+    + 'text＝客人收到的就是這整段字。'
+    // 2026-10-22：範例「把「退換貨」的回覆改成「先填表單」」照送，客人只會收到「先填表單」四個字——不知道填哪一份、去哪裡填
+    + '⛔ 他沒講要改成哪一句，或講的像是要你做的事（例：「先填表單」「改成先問電話」）而不是一句客人看得懂的話：'
+    + '照樣提議，text 給空字串 ""——卡片會把現在那句給他看、請他打一句完整的話；⛔ 不要自己轉述現在那句，也不要自己反問。'
+    + '他接著講了那一句，再用同一個 name 提議一次。'
+    + '⛔ text 要照他講的寫，不要自己加促銷詞或表情符號。只適用「只有一段回覆」的那種；多段回覆的請他到自動回應頁改。',
   // 客人會看到的字（`D-116`）：同知識卡、推播草稿那一道
   checkUserWords(raw, userSaid) {
     const issue = userAuthoredTextIssue(String(raw?.text ?? ''), userSaid, '新的回覆內容', '要改成回客人什麼')
@@ -892,8 +897,16 @@ export const scriptUpdateReply: AdminOpDef = {
     const name = String(raw?.name ?? '').trim().slice(0, 100)
     const text = String(raw?.text ?? '').trim().slice(0, 2000)
     if (!name) throw new AdminOpUserError('要先問清楚是哪一條自動回應（可以先列出清單讓他挑）。')
-    if (text.length < 2) throw new AdminOpUserError('要先問清楚要改成回什麼。')
-    return { name, text } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
+    // 還沒講要改成哪一句（或只有一個字）＝空字串：預覽出「先給你看現在那句」的卡（needsInput），⛔ 不擋回去讓模型自己問
+    return { name, text: text.length < 2 ? '' : text } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
+  },
+
+  // 他照抄現在那句時會帶著［訂單編號］（小幫手講給他聽的寫法）：換回變數，⛔ 不然客人收到的就是括號那幾個字
+  async prepare(ctx, raw) {
+    const args = raw as unknown as ScriptReplyArgs
+    const row = await findScriptByName(ctx, args.name)
+    const fields = row.nodes.filter(n => n?.type === 'collect' && n.fieldName).map(n => String(n.fieldName))
+    return { ...args, text: toStoredText(args.text, 'script', fields) } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
   },
 
   async fingerprint(ctx, raw) {
@@ -915,23 +928,42 @@ export const scriptUpdateReply: AdminOpDef = {
       )
     }
     const before = String(replies[0]!.text ?? '')
-    if (before.trim() === args.text.trim())
-      return { ...base, summary: `「${row.name}」回的本來就是這段話，不用改。`, items: [], confirmLabel: '知道了', noop: true }
-
     // 2026-10-22 老闆截圖「使用者看不太懂，我也看不太懂」：標題、主句、泡泡講同一句；「現在／改成」掛在內容下面；
     // 停用的提醒排成第三格、跟「客人下次打中這條就會收到」互相打架；{{order_id}} 原樣露出
     const when = whenCustomerGetsReply(row)
+    const summary = when ? `「${row.name}」裡，客人${when}會收到的話：` : `「${row.name}」回給客人的話：`
+    const beforeItem = { heading: '現在', label: before || '（空的）', tone: 'before' as const, ...(before ? { verbatim: true, vars: 'script' as const } : {}) }
+    const offLine = '這條目前是停用的，要啟用後客人才收得到。'
+
+    // 還沒講要改成哪一句：系統把現在那句給他看、請他打新的（⛔ 不交給模型轉述——它會漏講，甚至自己編一句）
+    if (!args.text) {
+      return {
+        ...base,
+        summary,
+        items: [beforeItem],
+        ...(row.enabled ? {} : { warning: offLine }),
+        bubble: '好，先給你看現在這句。',
+        needsInput: '要改成哪一句？直接在下面打給我。要客人填表單或看網頁的話，記得附上網址。',
+        confirmLabel: '',
+      }
+    }
+
+    if (before.trim() === args.text.trim())
+      return { ...base, summary: `「${row.name}」回的本來就是這段話，不用改。`, items: [], confirmLabel: '知道了', noop: true }
+
+    // 很短又沒有網址（「先填表單」）：客人只看得到這幾個字——講出來讓他判斷，⛔ 不擋（「收到，謝謝！」也很短）
+    const shortLine = [...args.text.replace(/\s/g, '')].length <= 8 && !/https?:\/\//.test(args.text)
+      ? `客人只會收到「${args.text}」這幾個字。`
+      : ''
     return {
       ...base,
-      summary: when ? `「${row.name}」裡，客人${when}會收到的話：` : `「${row.name}」回給客人的話：`,
+      summary,
       items: [
-        { heading: '現在', label: before || '（空的）', tone: 'before', ...(before ? { verbatim: true, vars: 'script' } : {}) },
+        beforeItem,
         { heading: '改成', label: args.text, tone: 'after', verbatim: true, vars: 'script' },
       ],
       // ⛔ 停用的時候不可以講「客人會收到新的」：只講一件事，講真的那件
-      warning: row.enabled
-        ? '改完馬上生效：之後的客人收到的就是新的這段。'
-        : '這條目前是停用的，要啟用後客人才收得到。',
+      warning: (row.enabled ? '改完馬上生效：之後的客人收到的就是新的這段。' : offLine) + shortLine,
       confirmLabel: '確定改回覆內容',
     }
   },
@@ -941,6 +973,8 @@ export const scriptUpdateReply: AdminOpDef = {
     const row = await findScriptByName(ctx, args.name)
     const replies = row.nodes.filter(n => n?.type === 'reply')
     if (replies.length !== 1) return { ok: false, message: `「${row.name}」的回覆段數變了，沒有動任何設定——請到自動回應頁看。` }
+    // 「先給你看現在那句」那張卡沒有按鈕，但憑證照樣簽了：⛔ 有人硬送也不可以把回覆清成空的
+    if (!args.text) return { ok: false, message: '還沒講要改成哪一句，沒有動任何設定。' }
     const target = replies[0]!
     const before = String(target.text ?? '')
     if (before.trim() === args.text.trim()) return { ok: true, message: '本來就是這段話，沒有動任何設定。' }

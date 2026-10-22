@@ -463,7 +463,26 @@ describe('改自動回應的關鍵字／回覆字', () => {
       { heading: '現在', label: '已收到您的訂單 {{order_id}}，將由專人盡快為您處理退換貨，謝謝您 🙇', tone: 'before', verbatim: true, vars: 'script' },
       { heading: '改成', label: '先填表單', tone: 'after', verbatim: true, vars: 'script' },
     ])
-    expect(preview.warning).toBe('這條目前是停用的，要啟用後客人才收得到。')
+    // 很短又沒網址：講出客人只看得到這幾個字（⛔ 不擋）
+    expect(preview.warning).toBe('這條目前是停用的，要啟用後客人才收得到。客人只會收到「先填表單」這幾個字。')
+
+    // 小幫手講給他聽的是［訂單編號］（list_scripts 的 replyText）：他照抄回來要換回變數，⛔ 不然客人收到的就是括號那幾個字
+    const copied = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '已收到您的訂單［訂單編號］，請先填寫退換貨表單：https://example.com/f' })
+    expect(copied.args.text).toBe('已收到您的訂單{{order_id}}，請先填寫退換貨表單：https://example.com/f')
+    expect(copied.preview.items[1].label).toBe(copied.args.text)
+    expect(copied.preview.warning).not.toContain('這幾個字')
+
+    // 還沒講要改成哪一句（新的範例句「改「退換貨」回給客人的話」）：系統把現在那句給他看、問他要改成什麼，⛔ 沒有確認鈕
+    const ask = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '' })
+    expect(ask.preview.needsInput).toContain('要改成哪一句')
+    expect(ask.preview.items).toEqual([preview.items[0]])
+    expect(ask.preview.summary).toBe(preview.summary)
+    expect(ask.preview.warning).toBe('這條目前是停用的，要啟用後客人才收得到。')
+    expect(ask.preview.noop).toBeUndefined()
+    // 憑證照樣簽了：硬送也⛔不可以把回覆清成空的
+    const forced = await ops.scriptUpdateReply.execute(ctx, ask.args)
+    expect(forced.ok).toBe(false)
+    expect(fetchCalls.some(c => c.method === 'PUT')).toBe(false)
 
     // 啟用中、沒有先問問題的：講客人傳什麼字
     scriptDocs = [baseScript()]

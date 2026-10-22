@@ -390,3 +390,23 @@ describe('查詢：知識庫現況', () => {
     expect(res2.space).toBe('這次查不到')
   })
 })
+
+// 2026-10-22：改回覆字之前要先給他看現在那句（以前範例「改成「先填表單」」照送，沒人看過原本回什麼）
+describe('查詢：自動回應清單帶「現在回的那句」', () => {
+  it('只有一段回覆的才給；變數寫成［訂單編號］（他照抄回來換得回變數），⛔ 不露出 {{order_id}}', async () => {
+    const rows = await TOOLS.list_scripts.run(makeDb({ scripts: [
+      { name: '退換貨查詢', enabled: false, rootNodeId: 't', nodes: [
+        { id: 't', type: 'trigger', keywords: ['退貨'], next: 'c' },
+        { id: 'c', type: 'collect', question: '請提供訂單編號', fieldName: 'order_id', next: 'r' },
+        { id: 'r', type: 'reply', text: '已收到您的訂單 {{order_id}}，將由專人為您處理' },
+      ] },
+      { name: '服務分流', enabled: true, rootNodeId: 't', nodes: [
+        { id: 't', type: 'trigger', keywords: ['客服'], next: 'q' },
+        { id: 'r1', type: 'reply', text: '出貨' },
+        { id: 'r2', type: 'reply', text: '退貨' },
+      ] },
+    ] }), 'w1', {}, {}) as any[]
+    expect(rows[0].replyText).toBe('已收到您的訂單 ［訂單編號］，將由專人為您處理')
+    expect(rows[1].replyText).toBe('')
+  })
+})

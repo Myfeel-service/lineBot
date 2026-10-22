@@ -209,6 +209,15 @@ describe('建議與範例句的字（D-116）', () => {
       expect(d.say, `${d.op}：「${d.say}」帶了數字`).not.toMatch(/[0-9０-９]|[一二兩三四五六七八九十半]\s*(點|分|小時|天)/)
   })
 
+  // 2026-10-22 老闆截圖：「什麼叫先填表單，使用者不知道我也不知道」——那句是我們自己的範例，按了照送就變成客人收到的話
+  it('🔴 改回覆字的範例⛔不帶新的話（以前「改成「先填表單」」照送，客人只會收到這四個字）', () => {
+    const says = [AGENT_OP_EXAMPLES['script-update-reply'], AGENT_PAGE_PROMPTS['ai-scripts'].placeholder]
+    for (const s of says) {
+      expect(s, s).toContain('回給客人的話')
+      expect(s, s).not.toMatch(/改成「/)
+    }
+  })
+
   it('🔴 跟側欄同一套字：叫「自動回應」、開關叫「啟用／停用」，⛔ 不出現「客服流程」「上架」「下架」', () => {
     for (const s of allSaid())
       expect(s, s).not.toMatch(/客服流程|腳本|上架|下架/)

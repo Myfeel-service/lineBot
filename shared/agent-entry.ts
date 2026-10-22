@@ -138,7 +138,9 @@ export const AGENT_NUMBERLESS_SAY = {
 export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
   'ai-scripts': {
     label: '自動回應',
-    placeholder: '例：把「退換貨」回覆改成「先填表單」',
+    // 2026-10-22：以前是「把「退換貨」回覆改成「先填表單」」——照送就把客人收到的話換成這四個字，客人跟店家都看不懂。
+    // 範例⛔不帶新的話（同 `AGENT_NUMBERLESS_SAY`）：送出後小幫手先給他看現在那句、再問要改成哪一句
+    placeholder: '例：改「退換貨」回給客人的話',
     dos: [
       { op: 'script-create-from-description', say: '有人問「運費」，就回「滿千免運」' },
       // `D-116`：頁面上的開關叫「啟用／停用」，⛔ 不講上架下架
@@ -240,7 +242,8 @@ export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
   'script-create-from-description': '有人問「運費」，就回「滿千免運」',
   'script-set-enabled': '把「查詢訂單」先停用',
   'script-update-keyword': '「營業時間」多加一個關鍵字「今天有開嗎」',
-  'script-update-reply': '把「退換貨」的回覆改成「先填表單」',
+  // ⛔ 不帶新的話（理由見 AGENT_PAGE_PROMPTS 的 ai-scripts 範例字）
+  'script-update-reply': '改「退換貨」回給客人的話',
   'tag-create': '建一個標籤「想買禮盒」',
   'broadcast-draft-create': '擬一則週年慶推播草稿，只發給「VIP」標籤的人',
   'knowledge-draft-create': '補一條知識：客人問「可以刷卡嗎」，就回「可以」',

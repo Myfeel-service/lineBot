@@ -32,6 +32,11 @@
       {{ cancelledByUser ? '你在對話裡說不用了，這張就不做了。' : '這個提議已經被後面那一個取代，不會執行。' }}
     </p>
 
+    <!-- 還缺他要講的那句（needsInput）：沒有按鈕，最底下問他——他在對話裡回了才出真的確認卡 -->
+    <p v-else-if="state === 'idle' && pending.preview.needsInput" class="aa-op__ask" data-op-needs-input>
+      {{ pending.preview.needsInput }}
+    </p>
+
     <div v-else-if="state === 'idle'" class="aa-op__actions">
       <!-- `C-352`①：方案做不到也只給「知道了」——⛔ 不給確認鈕，按了只會得到一份送不出去的草稿 -->
       <template v-if="pending.preview.noop || planLocked">
@@ -99,6 +104,7 @@ const badge = computed(() => {
   if (props.cancelledByUser) return '你已經說不用了'
   if (planLocked.value) return '不會執行'
   if (props.superseded) return '已被下面那個取代'
+  if (props.pending.preview.needsInput) return '等你回覆'
   if (!props.stale || !props.proposedAt) return '還沒執行'
   const mins = Math.floor((Date.now() - props.proposedAt) / 60_000)
   return mins < 1 ? '還沒執行（剛剛提的）' : `還沒執行（${mins} 分鐘前提的）`

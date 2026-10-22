@@ -25,6 +25,7 @@ import { lineQuotaLevel, lineQuotaResetLabel } from '~~/shared/line-quota'
 import { listSources } from './ai-knowledge-sources'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { triggerKeywordsInUse } from '~~/shared/types/ai-script'
+import { toBracketText } from '~~/shared/variable-tokens'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 // 只讀：數條數、讀方案上限（`C-308`⑦，跟開通清單、方案額度同一把尺）
 import { countUsableChunks, getKnowledgeChunkQuota } from './ai-knowledge-quota'
@@ -202,7 +203,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
   // （客服流程清單、自動回應設定），使用者以為是兩樣東西——併成這一支，名字跟側欄同名
   list_scripts: {
     description: '列出所有自動回應（側欄「自動回應」那一頁的每一條）:名稱、啟用或停用、什麼時候啟動(客人打特定的字／AI 判斷客人在問這類事／加好友時)、'
-      + '關鍵字與比對方式（matchMode=semantic 的是 AI 判斷，看 examples「客人會這樣講」，不看字）、幾個步驟、啟動／走完次數。'
+      + '關鍵字與比對方式（matchMode=semantic 的是 AI 判斷，看 examples「客人會這樣講」，不看字）、幾個步驟、啟動／走完次數、'
+      + 'replyText＝只有一段回覆的那種，客人現在收到的那句話（變數寫成［訂單編號］，照抄給他看就好）。'
       + '問「有哪些自動回應 / 哪些沒啟用 / 打某個字會回什麼 / 完成率」時用。'
       + '⛔ 頁面上的開關叫「啟用／停用」,講的時候照這兩個字。',
     requires: 'ai.read',
@@ -213,6 +215,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
         const s = d.data() as any
         const nodes = Array.isArray(s.nodes) ? s.nodes : []
         const trig = nodes.find((n: any) => n?.id === s.rootNodeId) ?? nodes.find((n: any) => n?.type === 'trigger')
+        const replies = nodes.filter((n: any) => n?.type === 'reply')
         return {
           name: s.name,
           enabled: s.enabled === true,
@@ -223,6 +226,9 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
           examples: trig?.matchMode === 'semantic' ? (trig?.examples ?? []).join('、') : '',
           keywordMatch: trig?.keywordMatch ?? 'any',
           stepCount: nodes.length,
+          // 改回覆字之前要先給他看現在那句（2026-10-22：以前範例「改成「先填表單」」照送，沒人看過原本回什麼）。
+          // 只給只有一段回覆的（改回覆字那件代辦只做這種）；變數用括號寫，他照抄回來換得回變數
+          replyText: replies.length === 1 ? toBracketText(String(replies[0].text ?? ''), 'script').slice(0, 200) : '',
           starts: s.stats?.starts ?? 0,
           completions: s.stats?.completions ?? 0,
         }
@@ -1485,7 +1491,8 @@ export async function runAdminAgentChat(params: {
           : ''
 
         // 方案做不到的卡（`C-352`）沒有確認鈕：「按這張不會連它一起做」那類提醒講的是按下去之後，在這張上沒有意義
-        const extras = rawPreview.planLocked ? '' : [supersede, extraWarn].filter(Boolean).join('\n')
+        // 「先給你看現在那句」的卡（needsInput）也沒有確認鈕
+        const extras = (rawPreview.planLocked || rawPreview.needsInput) ? '' : [supersede, extraWarn].filter(Boolean).join('\n')
         const preview = cardTextOf(extras
           ? { ...rawPreview, warning: [extras, rawPreview.warning].filter(Boolean).join('\n') }
           : rawPreview)
@@ -1516,7 +1523,8 @@ export async function runAdminAgentChat(params: {
         const answer = String(data?.answer ?? '').trim()
         // `C-352`：方案做不到（planLocked）也一律用後端那句——模型寫的多半是「我幫你建一則…」，跟卡片講反。
         // 泡泡講「先不做」、原因留在卡片上（`bubble`），⛔ 不讓同一句話在泡泡跟卡片各出現一次
-        const proposeLine = preview.planLocked
+        // needsInput（還缺他要講的那句）同一招：模型寫的多半是「請問要改成什麼」，問句已經在卡片最底下
+        const proposeLine = (preview.planLocked || preview.needsInput)
           ? (preview.bubble || preview.summary)
           : (preview.noop || strayNumbers.length || !text) ? preview.summary : text
 

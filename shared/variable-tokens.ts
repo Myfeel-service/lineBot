@@ -120,6 +120,14 @@ export function variableSegments(stored: string, mode: VariableKeyMode = 'send')
 }
 
 /**
+ * 存的格式 → 用括號寫的字（`{{order_id}}` → `［訂單編號］`）：給小幫手講給店家聽的那一份（純文字沒有膠囊）。
+ * 括號是編輯頁本來就認的寫法：他照抄回來，`toStoredText` 會換回變數。
+ */
+export function toBracketText(stored: string, mode: VariableKeyMode = 'send'): string {
+  return variableSegments(stored, mode).map(s => (s.key ? `［${s.text}］` : s.text)).join('')
+}
+
+/**
  * 顯示用的字 → 存的格式。
  * extraKeys：這一頁「打括號也算」的欄位（例如這個模組收集得到的 phone）；LINE 名稱永遠算。
  */
