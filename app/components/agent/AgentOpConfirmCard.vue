@@ -34,7 +34,7 @@
 
     <!-- 還缺他要講的那句（needsInput）：沒有按鈕，最底下問他——他在對話裡回了才出真的確認卡 -->
     <p v-else-if="state === 'idle' && pending.preview.needsInput" class="aa-op__ask" data-op-needs-input>
-      {{ pending.preview.needsInput }}
+      <strong>{{ askParts.head }}</strong>{{ askParts.rest }}
     </p>
 
     <div v-else-if="state === 'idle'" class="aa-op__actions">
@@ -93,6 +93,13 @@ const state = ref<'idle' | 'running' | 'done' | 'failed' | 'cancelled'>('idle')
 
 /** 一格內容切成字／膠囊：`{{order_id}}` 是程式碼，店家在編輯頁看到的是「訂單編號」 */
 const segmentsOf = (it: AdminOpPreviewItem) => (it.vars ? variableSegments(it.label, it.vars) : [{ text: it.label }])
+
+/** 「要改成哪一句？直接在下面打給我。」粗體，後面的補充（「不用另外做表單…」）一般字重：整段粗體讀起來很重 */
+const askParts = computed(() => {
+  const text = String(props.pending.preview.needsInput ?? '')
+  const cut = text.indexOf('。') + 1
+  return cut > 0 ? { head: text.slice(0, cut), rest: text.slice(cut) } : { head: text, rest: '' }
+})
 
 /** 這張卡還作不作數（被取代、或使用者已經收回） */
 const retired = computed(() => props.superseded || props.cancelledByUser)

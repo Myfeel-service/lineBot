@@ -2002,12 +2002,13 @@
     color: var(--el-text-color-regular);
   }
 
-  /* 還缺他要講的那句：這張卡的「下一步」就是這一句，不是按鈕——跟主句同字級、粗一點 */
+  /* 還缺他要講的那句：這張卡的「下一步」就是這一句，不是按鈕——跟主句同字級，問句粗、後面的補充一般字重 */
   &__ask {
     margin: 0;
     font-size: 0.8125rem;
     line-height: 1.55;
-    font-weight: 600;
+
+    strong { font-weight: 600; }
   }
 
   &__actions {

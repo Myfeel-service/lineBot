@@ -854,7 +854,12 @@ export const scriptUpdateKeyword: AdminOpDef = {
   },
 }
 
-interface ScriptReplyArgs { name: string, text: string }
+interface ScriptReplyArgs {
+  name: string
+  text: string
+  /** 他講的是「先填表單」這種話（要客人多留資料）：卡片多一句「在這條多問一題，客人直接在 LINE 上回答」 */
+  wantsForm?: boolean
+}
 
 /**
  * 客人做了什麼才會收到這段回覆（改回覆字的確認卡用）。
@@ -883,9 +888,12 @@ export const scriptUpdateReply: AdminOpDef = {
   argsHint: '參數：{"name":"自動回應的名字","text":"新的回覆內容（整段）"}。name 要照清單一字不差。'
     + 'text＝客人收到的就是這整段字。'
     // 2026-10-22：範例「把「退換貨」的回覆改成「先填表單」」照送，客人只會收到「先填表單」四個字——不知道填哪一份、去哪裡填
-    + '⛔ 他沒講要改成哪一句，或講的像是要你做的事（例：「先填表單」「改成先問電話」）而不是一句客人看得懂的話：'
+    + '⛔ 他沒講要改成哪一句，或講的像是要你做的事（例：「改成先問電話」）而不是一句客人看得懂的話：'
     + '照樣提議，text 給空字串 ""——卡片會把現在那句給他看、請他打一句完整的話；⛔ 不要自己轉述現在那句，也不要自己反問。'
+    + '他提到表單、問卷（例：「先填表單」）：text 照他講的那幾個字放——系統會一樣先給他看現在那句，並告訴他在這條多問一題就好。'
     + '他接著講了那一句，再用同一個 name 提議一次。'
+    // 2026-10-22 老闆：「為什麼還要退貨表單，我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」
+    + '⛔ 不要建議把客人帶去外面填表單或看網頁：自動回應本來就在 LINE 上問客人；要多問客人資料，是到自動回應頁在這條多加一題。'
     + '⛔ text 要照他講的寫，不要自己加促銷詞或表情符號。只適用「只有一段回覆」的那種；多段回覆的請他到自動回應頁改。',
   // 客人會看到的字（`D-116`）：同知識卡、推播草稿那一道
   checkUserWords(raw, userSaid) {
@@ -897,8 +905,11 @@ export const scriptUpdateReply: AdminOpDef = {
     const name = String(raw?.name ?? '').trim().slice(0, 100)
     const text = String(raw?.text ?? '').trim().slice(0, 2000)
     if (!name) throw new AdminOpUserError('要先問清楚是哪一條自動回應（可以先列出清單讓他挑）。')
+    // 「先填表單」這種一句話（短、講表單、沒網址）：他要的是「讓客人多留資料」，不是要客人收到這幾個字——
+    // 跟沒講一樣出「先給你看現在那句」的卡，多一句「不用另外做表單，在這條多問一題」（老闆 10-22：這個流程就是要在 LINE 上完成）
+    const wantsForm = /表單|表格|問卷/.test(text) && [...text.replace(/\s/g, '')].length <= 12 && !/https?:\/\//.test(text)
     // 還沒講要改成哪一句（或只有一個字）＝空字串：預覽出「先給你看現在那句」的卡（needsInput），⛔ 不擋回去讓模型自己問
-    return { name, text: text.length < 2 ? '' : text } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
+    return { name, text: (text.length < 2 || wantsForm) ? '' : text, ...(wantsForm ? { wantsForm: true } : {}) } satisfies ScriptReplyArgs as unknown as Record<string, unknown>
   },
 
   // 他照抄現在那句時會帶著［訂單編號］（小幫手講給他聽的寫法）：換回變數，⛔ 不然客人收到的就是括號那幾個字
@@ -943,7 +954,10 @@ export const scriptUpdateReply: AdminOpDef = {
         items: [beforeItem],
         ...(row.enabled ? {} : { warning: offLine }),
         bubble: '好，先給你看現在這句。',
-        needsInput: '要改成哪一句？直接在下面打給我。要客人填表單或看網頁的話，記得附上網址。',
+        // ⛔ 不提「附上網址」「填表單」：這個流程就是要客人在 LINE 上完成（老闆 10-22）
+        needsInput: args.wantsForm
+          ? '要改成哪一句？直接在下面打給我。想讓客人多留一些資料（例如要退哪一件、為什麼退），不用另外做表單：到「自動回應」頁在這條多加一題，客人直接在 LINE 上回答。'
+          : '要改成哪一句？直接在下面打給我。',
         confirmLabel: '',
       }
     }
