@@ -272,9 +272,40 @@ function setRouteRaw(view: QuestionListView, item: QuestionItem, route: Question
   else if (route.kind === 'other' && branch) branch.defaultNext = raw
 }
 
-/** 改這條路去哪：路上貼了標籤的，標籤照貼、改標籤後面接哪 */
-export function setRouteTarget(view: QuestionListView, item: QuestionItem, route: QuestionRoute, target: string): void {
-  const last = route.tags[route.tags.length - 1]
+/** 有幾條路指到這個步驟（同一題的「答了」跟「客人說沒有」、同一題的兩顆按鈕各算一條） */
+function incomingCount(nodes: ScriptNode[], id: string): number {
+  let count = 0
+  for (const n of nodes) for (const e of edges(n)) if (e.to === id) count++
+  return count
+}
+
+/**
+ * 這條路上的標籤只給這條路用（`C-395`）：有記號的標籤步驟可以好幾條路共用一個（`toQuestionList` 照樣讀成
+ * 每條路上各貼一個），直接改它＝改一顆按鈕的去處或標籤，別顆跟著變。
+ * 從第一個共用的起複製一份給這條路（id 後面加 -2、-3…），別條照舊接原本那份；回傳這條路自己的標籤。
+ */
+function ownRouteTags(nodes: ScriptNode[], view: QuestionListView, item: QuestionItem, route: QuestionRoute): ScriptTagNode[] {
+  const from = route.tags.findIndex(t => incomingCount(nodes, t.id) > 1)
+  if (from < 0) return route.tags
+  const ids = new Set(nodes.map(n => n.id))
+  const freshId = (base: string) => {
+    let k = 2
+    while (ids.has(`${base}-${k}`)) k++
+    ids.add(`${base}-${k}`)
+    return `${base}-${k}`
+  }
+  const copies: ScriptTagNode[] = route.tags.slice(from).map(t => ({ ...t, id: freshId(t.id), addTagIds: [...t.addTagIds], onRoute: true }))
+  copies.forEach((c, k) => { if (copies[k + 1]) c.next = copies[k + 1]!.id })
+  if (from === 0) setRouteRaw(view, item, route, copies[0]!.id)
+  else route.tags[from - 1]!.next = copies[0]!.id
+  nodes.splice(nodes.findIndex(n => n.id === item.id) + 1, 0, ...copies)
+  return [...route.tags.slice(0, from), ...copies]
+}
+
+/** 改這條路去哪：路上貼了標籤的，標籤照貼、改標籤後面接哪（別條路也接那個標籤的話，先分一份給這條） */
+export function setRouteTarget(nodes: ScriptNode[], view: QuestionListView, item: QuestionItem, route: QuestionRoute, target: string): void {
+  const tags = ownRouteTags(nodes, view, item, route)
+  const last = tags[tags.length - 1]
   if (last) last.next = target
   else setRouteRaw(view, item, route, target)
 }
@@ -295,11 +326,13 @@ function unlinkTags(nodes: ScriptNode[], tags: ScriptTagNode[]): void {
 /**
  * 這條路上貼哪些標籤（`D-150`②，按了那顆按鈕就貼）：空的＝不貼了、這條路直接接回去處；
  * 新貼的放一個標籤步驟在路上、記號 onRoute（不然「按鈕 → 貼標籤 → 結尾」會被讀成那一種結尾自己的標籤）。
+ * 別條路也接同一個標籤步驟的，只改這一條（`C-395`）。
  */
 export function setRouteTags(nodes: ScriptNode[], view: QuestionListView, item: QuestionItem, route: QuestionRoute, tagIds: string[], newId: string): void {
-  const [first, ...rest] = route.tags
+  const own = ownRouteTags(nodes, view, item, route)
+  const [first, ...rest] = own
   if (!tagIds.length) {
-    unlinkTags(nodes, route.tags)
+    unlinkTags(nodes, own)
     return
   }
   if (first) {
@@ -356,7 +389,7 @@ export function appendQuestion(nodes: ScriptNode[], view: QuestionListView, item
     const oneEnd = toEnds.length > 0 && toEnds.every(r => r.target === toEnds[0]!.target)
     if (view.endings.length === 1 || (oneEnd && toEnds.length === routes.length)) {
       if (toEnds[0]) setItemNext(item, toEnds[0].target)
-      for (const r of toEnds) setRouteTarget(view, last, r, item.id)
+      for (const r of toEnds) setRouteTarget(nodes, view, last, r, item.id)
     }
   }
   const at = last ? nodes.findIndex(n => n.id === last.id) + 1 : nodes.findIndex(n => n.id === view.trigger.id) + 1
@@ -364,20 +397,34 @@ export function appendQuestion(nodes: ScriptNode[], view: QuestionListView, item
 }
 
 /**
+ * 這一題的路（「客人說沒有」不算）全去同一種結尾：回那一種的入口；各去不同地方（服務分流那種）回 null。
+ * 好幾種結尾時「排在最後的那一題接哪一種」就看這個——⛔ 不能一律用第一種（會員分流：VIP 的回覆送給一般會員）。
+ */
+function soleEndingOf(view: QuestionListView, item: QuestionItem): string | null {
+  const targets = new Set(routesOf(view, item).filter(r => r.kind !== 'skip').map(r => r.target))
+  const [only] = targets
+  return targets.size === 1 && view.endings.some(e => e.entryId === only) ? only! : null
+}
+
+/**
  * 拿掉一題＝不問這題了：指到它的路改接清單上的下一題（最後一題就是「直接到最後」）；
  * 掛在它上面的看答案分路、它路上貼的標籤一起拿掉；存進客人資料裡這題的欄位一起拿掉。
  * ⛔ 不接它「答了 →」的去處：MYFEEL 查詢訂單第 1 題答了直接到最後、後面四題只從「客人說沒有」走得到，
  * 照那條接＝開頭直接跳到最後、後面整串接不到、存不了檔（`C-379`）。
+ * 好幾種結尾時拿掉最後一題：接它原本去的那一種（`C-395`，跟 moveQuestion 同一個判法）；它的路各去不同結尾的，
+ * 沒有哪一種是對的，照舊接第一種——好幾種結尾時每條路去哪一種畫面上都寫出來，他看得到、可以改。
  */
 export function removeQuestion(nodes: ScriptNode[], view: QuestionListView, itemId: string): void {
   const index = view.items.findIndex(i => i.id === itemId)
   const item = view.items[index]
   if (!item) return
   const branch = item.type === 'collect' ? view.branches.get(item.id) : undefined
-  const routeTags = routesOf(view, item).flatMap(r => r.tags)
+  const onward = index === view.items.length - 1 ? (soleEndingOf(view, item) ?? view.endId) : orderNextOf(view, index)
+  // 路上的標籤跟著這一題拿掉；別的路也接同一個的，那份留給別的路（`C-395`）
+  const routeTags = routesOf(view, item).flatMap(r => ownRouteTags(nodes, view, item, r))
   removeNodes(nodes, [itemId, ...(branch ? [branch.id] : [])])
   unlinkTags(nodes, routeTags)
-  retargetAll(nodes, itemId, orderNextOf(view, index))
+  retargetAll(nodes, itemId, onward)
   if (item.type === 'collect') {
     // 好幾種結尾時每一種都有自己的「存進客人資料」（`D-149`），這題的欄位每一種都拿掉
     for (const e of view.endings) {
@@ -440,10 +487,9 @@ export function moveQuestion(nodes: ScriptNode[], view: QuestionListView, from: 
 
   // 「排在最後的那一題」接哪一種結尾：一種結尾就是它；好幾種時，原本最後一題的路（客人說沒有不算）全去同一種
   // 就是那一種——⛔ 不能一律用第一種：會員分流把最後一題（電話）往上拖，換到最後的那題會接到 VIP 的結尾
-  const lastRoutes = routesOf(view, items[items.length - 1]!).filter(r => r.kind !== 'skip')
-  const lastTargets = new Set(lastRoutes.map(r => r.target))
-  const oneTail = lastTargets.size === 1 && view.endings.some(e => lastTargets.has(e.entryId))
-  const tailEnd = oneTail ? [...lastTargets][0]! : view.endId
+  const soleEnd = soleEndingOf(view, items[items.length - 1]!)
+  const oneTail = soleEnd !== null
+  const tailEnd = soleEnd ?? view.endId
 
   // 先記下每一條路是不是「照順序」（用舊順序判；看答案的每一條、路上貼了標籤的都一樣算）。
   // 原本最後一題全去同一種結尾的也算照順序（好幾種結尾時 isOrderTarget 不算，那是給畫面寫出「答了 → 哪一種」用的）；
@@ -464,7 +510,7 @@ export function moveQuestion(nodes: ScriptNode[], view: QuestionListView, from: 
   reordered.forEach((it, j) => {
     const d = reordered[j + 1]?.id ?? tailEnd
     const f = followsOrder[order[j]!]!
-    routesOf(view, it).forEach((r, k) => { if (f[k]) setRouteTarget(view, it, r, d) })
+    routesOf(view, it).forEach((r, k) => { if (f[k]) setRouteTarget(nodes, view, it, r, d) })
   })
   view.trigger.next = reordered[0]!.id
 }
@@ -493,16 +539,20 @@ export function replaceTerminal(nodes: ScriptNode[], view: QuestionListView, nex
 }
 
 /**
- * 多一種結尾（`D-149`，按鈕「去哪」選「＋ 新的結尾」）：排在最後一種後面；第一種有「存進客人資料」的話
- * 照抄一份掛在前面——題目上勾的「存進客人資料」講的是「問到就存」，不管客人最後走到哪一種結尾。
+ * 多一種結尾（`D-149`，按鈕「去哪」選「＋ 新的結尾」）：排在最後一種後面；已經有結尾在「存進客人資料」的話
+ * 抄一份掛在前面——題目上勾的「存進客人資料」講的是「問到就存」，不管客人最後走到哪一種結尾。
+ * 抄的是每一種存的欄位合起來（`C-395`）：題目上的勾是「任何一種有存就勾」，只抄第一種的話，
+ * 只有第二種存電話的舊資料，畫面勾著電話、走新結尾的客人卻沒存。
  * 回傳新結尾的入口（給那顆按鈕接）。
  */
 export function addEnding(nodes: ScriptNode[], view: QuestionListView, terminal: ScriptReplyNode | ScriptModuleNode, saveLead?: ScriptSaveLeadNode): string {
   const lastTerminal = view.endings[view.endings.length - 1]!.terminal
   const at = nodes.findIndex(n => n.id === lastTerminal.id) + 1
-  const copyFrom = view.endings[0]!.saveLead
-  if (copyFrom && saveLead) {
-    saveLead.fieldMap = copyFrom.fieldMap.map(m => ({ ...m }))
+  // 同一題在兩種結尾存成不同名字的，用前面那一種的
+  const fieldMap = view.endings.flatMap(e => e.saveLead?.fieldMap ?? [])
+    .filter((m, i, all) => m.fromField && all.findIndex(x => x.fromField === m.fromField) === i)
+  if (fieldMap.length && saveLead) {
+    saveLead.fieldMap = fieldMap.map(m => ({ ...m }))
     saveLead.next = terminal.id
     nodes.splice(at, 0, saveLead, terminal)
     return saveLead.id
@@ -547,9 +597,10 @@ export function removeBranchCase(nodes: ScriptNode[], view: QuestionListView, it
   const branch = view.branches.get(item.id)
   if (!branch?.cases[caseIndex]) return
   const route = routesOf(view, item).find(r => r.kind === 'case' && r.index === caseIndex)
+  // 這一條拿掉了，它路上的標籤沒有人接得到、一起拿掉；別的路也接同一個的，那份留給別的路（`C-395`）
+  const tags = route ? ownRouteTags(nodes, view, item, route) : []
   branch.cases.splice(caseIndex, 1)
-  // 這一條拿掉了，它路上的標籤沒有人接得到；拿掉時別的路如果共用，改接它後面那一步
-  unlinkTags(nodes, route?.tags ?? [])
+  unlinkTags(nodes, tags)
   if (!branch.cases.length) {
     item.next = branch.defaultNext
     removeNodes(nodes, [branch.id])

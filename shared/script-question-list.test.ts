@@ -294,6 +294,28 @@ describe('好幾種結尾也用清單（`D-149`）', () => {
     expect(toQuestionList(nodes, 't')!.endings).toHaveLength(1)
   })
 
+  it('⛔ 多一種結尾：抄的是每一種存的欄位合起來（＝題目上勾著的），不是只抄第一種（`C-395`）', () => {
+    // 舊資料：第一種沒有存進客人資料、第二種存電話——畫面上電話那題是勾著的
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'c_id' },
+      { id: 'c_id', type: 'collect', question: '訂單編號？', fieldName: 'order_id', expireMs: 1, format: 'any', next: 'q' },
+      { id: 'q', type: 'quickReply', question: '要留電話嗎？', expireMs: 1, options: [{ label: '要', next: 'c_phone' }, { label: '不用', next: 'r_a' }] },
+      { id: 'c_phone', type: 'collect', question: '電話？', fieldName: 'phone', expireMs: 1, format: 'phone', next: 'save_b' },
+      { id: 'r_a', type: 'reply', text: '好的', thenHandoff: false },
+      { id: 'save_b', type: 'saveLead', fieldMap: [{ fromField: 'phone', attrKey: '電話' }], next: 'r_b' },
+      { id: 'r_b', type: 'reply', text: '會打給您', thenHandoff: false },
+    ]
+    const entry = addEnding(nodes, toQuestionList(nodes, 't')!, { id: 'r_c', type: 'reply', text: 'c', thenHandoff: false }, { id: 'save_c', type: 'saveLead', fieldMap: [], next: '' })
+    expect(entry).toBe('save_c')
+    expect(node(nodes, 'save_c').fieldMap).toEqual([{ fromField: 'phone', attrKey: '電話' }])
+
+    // 兩種各存不同的：合起來；同一題兩種名字不一樣的用前面那一種的
+    nodes.splice(nodes.findIndex(n => n.id === 'r_a'), 0, { id: 'save_a', type: 'saveLead', fieldMap: [{ fromField: 'order_id', attrKey: '訂單編號' }, { fromField: 'phone', attrKey: '手機' }], next: 'r_a' })
+    node(nodes, 'q').options[1].next = 'save_a'
+    addEnding(nodes, toQuestionList(nodes, 't')!, { id: 'r_d', type: 'reply', text: 'd', thenHandoff: false }, { id: 'save_d', type: 'saveLead', fieldMap: [], next: '' })
+    expect(node(nodes, 'save_d').fieldMap).toEqual([{ fromField: 'order_id', attrKey: '訂單編號' }, { fromField: 'phone', attrKey: '手機' }])
+  })
+
   it('刪一題：每一種結尾的存進客人資料都拿掉那個欄位', () => {
     const nodes = orderFlow()
     addEnding(nodes, toQuestionList(nodes, 't')!, { id: 'r_b', type: 'reply', text: 'b', thenHandoff: false }, { id: 'save_b', type: 'saveLead', fieldMap: [], next: '' })
@@ -356,7 +378,7 @@ describe('只留一套畫面（`D-150`）：看答案走不同路、貼在路上
     const v2 = toQuestionList(nodes, 't')!
     const caseRoute = routesOf(v2, item).find(r => r.kind === 'case')!
     node(nodes, 'b1').cases[0].value = 'A123'
-    setRouteTarget(v2, item, caseRoute, 'c_phone')
+    setRouteTarget(nodes, v2, item, caseRoute, 'c_phone')
     expect(valid(nodes)).toBeNull()
     addBranchCase(toQuestionList(nodes, 't')!, item)
     expect(node(nodes, 'b1').cases).toHaveLength(2)
@@ -430,7 +452,7 @@ describe('只留一套畫面（`D-150`）：看答案走不同路、貼在路上
     ]
     const v = toQuestionList(nodes, 't')!
     expect([...v.routeTagIds]).toEqual(['tg']) // 舊資料沒記號：後面接的是一題 → 貼在路上
-    setRouteTarget(v, v.items[0]!, routesOf(v, v.items[0]!)[0]!, 'r')
+    setRouteTarget(nodes, v, v.items[0]!, routesOf(v, v.items[0]!)[0]!, 'r')
     expect(node(nodes, 'q').options[0].next).toBe('tg')
     expect(node(nodes, 'tg').next).toBe('r')
     removeQuestion(nodes, toQuestionList(nodes, 't')!, 'q')
@@ -454,6 +476,82 @@ describe('只留一套畫面（`D-150`）：看答案走不同路、貼在路上
     const v = toQuestionList(nodes, 't')!
     expect(v.items.map(i => i.id)).toEqual(['c_lv', 'c_phone'])
     expect([...v.unreachable]).toEqual(['c_phone'])
+  })
+
+  it('⛔ 好幾種結尾時拿掉最後一題：指到它的路接它原本去的那一種，不是第一種（`C-395`）', () => {
+    // 會員分流：按「會員」先問電話再回 VIP 那句（第二種結尾）；按「不是」直接回一般那句（第一種）
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['會員'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '請問您是會員嗎？', expireMs: 1, options: [{ label: '會員', next: 'c_phone' }, { label: '不是', next: 'r_all' }] },
+      { id: 'c_phone', type: 'collect', question: '請留電話', fieldName: 'phone', expireMs: 1, format: 'phone', next: 'r_vip' },
+      { id: 'r_all', type: 'reply', text: '感謝您的詢問', thenHandoff: false },
+      { id: 'r_vip', type: 'reply', text: 'VIP 專屬客服馬上為您服務', thenHandoff: true },
+    ]
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'c_phone')
+    expect(node(nodes, 'q').options.map((o: any) => o.next)).toEqual(['r_vip', 'r_all']) // 不是 r_all（第一種）
+    expect(valid(nodes)).toBeNull()
+  })
+
+  it('好幾種結尾時拿掉最後一題、它的路各去不同結尾（服務分流）：沒有哪一種是對的，照舊接第一種', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['客服'], priority: 50, next: 'c_name' },
+      { id: 'c_name', type: 'collect', question: '大名？', fieldName: 'name', expireMs: 1, format: 'any', next: 'q' },
+      { id: 'q', type: 'quickReply', question: '請問需要哪項服務？', expireMs: 1, options: [{ label: '出貨查詢', next: 'r1' }, { label: '退換貨', next: 'r2' }] },
+      { id: 'r1', type: 'reply', text: '您可在「我的訂單」查看', thenHandoff: false },
+      { id: 'r2', type: 'reply', text: '請提供訂單編號', thenHandoff: true },
+    ]
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'q')
+    expect(node(nodes, 'c_name').next).toBe('r1')
+    expect([...toQuestionList(nodes, 't')!.unreachable]).toEqual(['r2']) // 另一種標成走不到，畫面標黃
+  })
+
+  it('⛔ 兩條路共用同一個貼在路上的標籤：改一條的去處、標籤，或刪掉一題，另一條不跟著變（`C-395`）', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['客服選單'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '請問需要哪項服務？', expireMs: 1, options: [{ label: '退貨', next: 'tg' }, { label: '換貨', next: 'tg' }] },
+      { id: 'tg', type: 'tag', addTagIds: ['退換貨'], next: 'r1', onRoute: true },
+      { id: 'r1', type: 'reply', text: '請提供訂單編號', thenHandoff: true },
+      { id: 'r2', type: 'reply', text: '換貨請填寫尺寸', thenHandoff: true },
+    ]
+    const v = toQuestionList(nodes, 't')!
+    expect(routesOf(v, v.items[0]!).map(r => r.tags.map(t => t.id))).toEqual([['tg'], ['tg']])
+    // 「換貨」改去第二種結尾：「退貨」照舊去第一種，兩顆都照樣貼標籤
+    setRouteTarget(nodes, v, v.items[0]!, routesOf(v, v.items[0]!)[1]!, 'r2')
+    const v2 = toQuestionList(nodes, 't')!
+    expect(routesOf(v2, v2.items[0]!).map(r => [r.target, r.tags.map(t => t.addTagIds)])).toEqual([['r1', [['退換貨']]], ['r2', [['退換貨']]]])
+    expect(node(nodes, 'q').options.map((o: any) => o.next)).toEqual(['tg', 'tg-2'])
+    expect(valid(nodes)).toBeNull()
+
+    // 「退貨」換標籤：另一顆的不變（又共用一次再改，確認新的那份也是分出來的）
+    node(nodes, 'q').options[1].next = 'tg'
+    node(nodes, 'tg').next = 'r1'
+    nodes.splice(nodes.findIndex(n => n.id === 'tg-2'), 1)
+    const v3 = toQuestionList(nodes, 't')!
+    setRouteTags(nodes, v3, v3.items[0]!, routesOf(v3, v3.items[0]!)[0]!, ['退貨客人'], 'unused')
+    const v4 = toQuestionList(nodes, 't')!
+    expect(routesOf(v4, v4.items[0]!).map(r => r.tags.flatMap(t => t.addTagIds))).toEqual([['退貨客人'], ['退換貨']])
+
+    // 「換貨」不貼了：「退貨」那顆照貼
+    setRouteTags(nodes, v4, v4.items[0]!, routesOf(v4, v4.items[0]!)[1]!, [], '')
+    const v5 = toQuestionList(nodes, 't')!
+    expect(routesOf(v5, v5.items[0]!).map(r => r.tags.flatMap(t => t.addTagIds))).toEqual([['退貨客人'], []])
+    expect(node(nodes, 'q').options.map((o: any) => o.next)).toEqual(['tg-2', 'r1'])
+    expect(nodes.some(n => n.id === 'tg')).toBe(false)
+  })
+
+  it('⛔ 兩題的路共用同一個標籤、刪掉其中一題：另一題路上的標籤留著（`C-395`）', () => {
+    const nodes: ScriptNode[] = [
+      { id: 't', type: 'trigger', keywords: ['x'], priority: 50, next: 'q' },
+      { id: 'q', type: 'quickReply', question: '?', expireMs: 1, options: [{ label: '退貨', next: 'tg' }, { label: '其他', next: 'c' }] },
+      { id: 'c', type: 'collect', question: '大名？', fieldName: 'name', expireMs: 1, format: 'any', next: 'tg' },
+      { id: 'tg', type: 'tag', addTagIds: ['退貨'], next: 'r', onRoute: true },
+      { id: 'r', type: 'reply', text: '好', thenHandoff: false },
+    ]
+    removeQuestion(nodes, toQuestionList(nodes, 't')!, 'q')
+    expect(node(nodes, 't').next).toBe('c')
+    expect(node(nodes, 'c').next).toBe('tg')
+    expect(node(nodes, 'tg')).toMatchObject({ addTagIds: ['退貨'], next: 'r' })
+    expect(valid(nodes)).toBeNull()
   })
 
   it('最後一題有看答案分路、各條去不同結尾：加一題不動任何一條', () => {

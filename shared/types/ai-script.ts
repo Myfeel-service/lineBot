@@ -66,8 +66,9 @@ export interface ScriptTriggerNode {
   /** semantic 模式：意圖範例句（使用者填，例「我要退貨」「想退」「能不能取消訂單」） */
   examples?: string[]
   /**
-   * semantic 模式：「這些交給 AI 回答，不要接」的講法（`D-138`，例「什麼時候出貨」）。
-   * 交給意圖路由當反例：意思一樣就不選這條。見 server/utils/script-match.ts。
+   * 「這些交給 AI 回答，不要接」的講法（`D-138`，例「什麼時候出貨」）。
+   * semantic 模式：交給意圖路由當反例，意思一樣就不選這條（見 server/utils/script-match.ts）。
+   * 看字那種的 any／all（`D-148`）：訊息裡有這幾句就不接（見 hitScriptKeyword）；exact／anyText 用不到，存檔時清掉。
    */
   excludes?: string[]
   /**

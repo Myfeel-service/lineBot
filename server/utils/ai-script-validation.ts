@@ -108,12 +108,15 @@ function normalizeNode(raw: any): ScriptNode | null {
       node.examples = Array.isArray(raw?.examples)
         ? raw.examples.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXAMPLES)
         : []
-      // 「這些交給 AI 回答，不要接」（`D-138`）：沒填就不寫這格
-      const excludes = Array.isArray(raw?.excludes)
-        ? raw.excludes.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXCLUDES)
-        : []
-      if (excludes.length) node.excludes = excludes
     }
+    // 「這些交給 AI 回答，不要接」（`D-138`；`D-148` 起看字那種也有）：沒填就不寫這格。
+    // 看字那種只有「訊息裡有這些字」才用得到（`hitScriptKeyword`）；一模一樣才接、客人輸入任何內容的不生效，
+    // 存檔時清掉（同 `C-370`）——⛔ 以前只收看意思那種，看字那種畫面上填了、存檔就不見（`C-395`）
+    const keepsExcludes = matchMode === 'semantic' || node.keywordMatch === 'any' || node.keywordMatch === 'all'
+    const excludes = keepsExcludes && Array.isArray(raw?.excludes)
+      ? raw.excludes.map((e: unknown) => String(e).trim().slice(0, 200)).filter(Boolean).slice(0, MAX_TRIGGER_EXCLUDES)
+      : []
+    if (excludes.length) node.excludes = excludes
     return node
   }
 

@@ -913,7 +913,7 @@ function caseRows(item: ScriptCollectNode) {
 }
 /** 改一條路去哪（路上貼了標籤的，標籤照貼） */
 function retarget(item: QuestionItem, route: QuestionRoute, id: string) {
-  if (qList.value) setRouteTarget(qList.value, item, route, id)
+  if (qList.value) setRouteTarget(form.value.nodes, qList.value, item, route, id)
 }
 /** 「客人說沒有 →」去哪：剛按開、還沒選過時那條路還不存在，直接寫 */
 function retargetSkip(item: ScriptCollectNode, id: string) {
@@ -1092,7 +1092,7 @@ function resetJump(item: ScriptCollectNode, index: number) {
   const view = qList.value
   const r = view && routesOf(view, item).find(x => x.kind === 'answer')
   if (!view || !r) return
-  setRouteTarget(view, item, r, orderNextOf(view, index))
+  setRouteTarget(form.value.nodes, view, item, r, orderNextOf(view, index))
   const next = new Set(openedJumps.value)
   next.delete(item.id)
   openedJumps.value = next
