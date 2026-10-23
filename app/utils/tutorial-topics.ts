@@ -1690,11 +1690,11 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="cs-kpi"]',
         title: '看關鍵數字',
         // ⛔ 2026-09-29（`D-109`）：原本講「總對話數、機器人先接住的比例、結案比例」——
-        //    跟畫面上那四張卡對不上；「先接住」在下面那張「第一句話是誰回的」，而且機器人跟 AI 是分開算的
+        //    跟畫面上那四張卡對不上；「先接住」在下面那張「一開始是誰接的」（`D-152` 前叫「第一句話是誰回的」），而且機器人跟 AI 是分開算的
         description:
           '這排四張：<strong>新增對話</strong>、<strong>新加好友</strong>、<strong>轉真人</strong>、<strong>已結束</strong>。'
           + '「轉真人」和「已結束」<strong>點下去會直接列出那幾場對話</strong>。'
-          + '想知道客人第一句是誰先接的（機器人、AI 還是真人），看下面「<strong>第一句話是誰回的</strong>」那一條。',
+          + '想知道客人一開始是誰接的（機器人、AI，還是客人直接找真人），看下面「<strong>一開始是誰接的</strong>」那一條。',
         placement: 'bottom',
       },
     ],

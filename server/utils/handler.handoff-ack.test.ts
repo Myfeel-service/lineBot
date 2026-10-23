@@ -284,11 +284,12 @@ describe('勿擾時段：AI 已經先答了一般規則時要接一句', () => {
 })
 
 /**
- * `H-42`①：AI 先答一般說明（例：這批 10 月底陸續出貨）、再說「您這一筆要請專員查」。
- * 第一個回答客人的是 AI，統計卻只記了轉真人 → 算成「客服」（MYFEEL 近 30 天 9 場）。
+ * `H-42`①＋`D-152`：AI 讀過客人的話、判斷要轉真人（先答一般說明再轉、或直接轉），
+ * 這場一開始是 AI 接的；統計以前只記了轉真人 → 算成「客服」（MYFEEL 近 30 天 9＋7 場）。
  * 首接只認第一筆，所以 AI 那筆一定要記在轉真人之前。
+ * 客人自己說要找真人（「轉接專員」）不算 AI：跟按選單那顆一樣，是「直接找真人」。
  */
-describe('AI 先答一般說明再轉真人 → 這場算 AI 先回', () => {
+describe('AI 判斷要轉真人 → 這場算 AI 接的；客人自己要找真人 → 不算', () => {
   const WS_AI_FIRST = 'ws-ai-first'
   const ORDER_STATUS = {
     decision: 'handoff',
@@ -326,15 +327,54 @@ describe('AI 先答一般說明再轉真人 → 這場算 AI 先回', () => {
     expect(kinds.indexOf('ai')).toBeLessThan(kinds.indexOf('live_agent'))
   })
 
-  it('AI 沒有可講的（answer 空）→ 客人只收到轉接那句，不記 AI', async () => {
+  it('AI 沒有一般說明可講、直接轉（這筆要查訂單）→ 客人只收到轉接那句，仍算 AI 接的', async () => {
     const uid = 'U0000000000000000000000000000121'
     vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
     vi.mocked(answerWithAi).mockResolvedValue({ ...ORDER_STATUS, answer: '' } as any)
 
-    await handleMessageEvent(textEvent(uid, '我的咖啡機什麼時候到', Date.now()), { workspaceId: WS_AI_FIRST })
+    await handleMessageEvent(textEvent(uid, '我的訂單訂了兩台但只收到一台', Date.now()), { workspaceId: WS_AI_FIRST })
 
-    expect(enteredKinds()).not.toContain('ai')
+    expect(sentTexts()).not.toContain(ORDER_STATUS.answer)
+    const kinds = enteredKinds()
+    expect(kinds.indexOf('ai')).toBeGreaterThanOrEqual(0)
+    expect(kinds.indexOf('ai')).toBeLessThan(kinds.indexOf('live_agent'))
+  })
+
+  it('AI 判斷是敏感話題、直接轉 → 算 AI 接的', async () => {
+    const uid = 'U0000000000000000000000000000123'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'handoff', answer: '', confidence: 0, sources: [], handoffReason: 'sensitive_topic',
+    } as any)
+
+    await handleMessageEvent(textEvent(uid, '已經付款了為什麼還沒收到 是詐騙嗎', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    const kinds = enteredKinds()
+    expect(kinds.indexOf('ai')).toBeGreaterThanOrEqual(0)
+    expect(kinds.indexOf('ai')).toBeLessThan(kinds.indexOf('live_agent'))
+  })
+
+  it('客人打「轉接專員」→ 直接找真人，不算 AI 接的', async () => {
+    const uid = 'U0000000000000000000000000000124'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+
+    await handleMessageEvent(textEvent(uid, '轉接專員', Date.now()), { workspaceId: WS_AI_FIRST })
+
     expect(enteredKinds()).toContain('live_agent')
+    expect(enteredKinds()).not.toContain('ai')
+  })
+
+  it('客人換句話要找真人（AI 讀出來是要找人）→ 一樣是直接找真人，不算 AI 接的', async () => {
+    const uid = 'U0000000000000000000000000000125'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'handoff', answer: '', confidence: 0, sources: [], handoffReason: 'user_request',
+    } as any)
+
+    await handleMessageEvent(textEvent(uid, '可請客服來電給我嗎？', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    expect(enteredKinds()).toContain('live_agent')
+    expect(enteredKinds()).not.toContain('ai')
   })
 
   it('回覆送不出去 → 客人沒看到 AI 那段，不記 AI（轉真人照常記）', async () => {

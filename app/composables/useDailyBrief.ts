@@ -16,7 +16,7 @@ import type { KpiResult } from '~~/shared/types/conversation-stats'
  * 一天的摘要。
  *
  * ⚠️ 這裡有**兩種不同的數字**，UI 不可以把它們並排：
- * - `autoFirst` / `humanFirst` / `unhandled` 是「第一句話誰回的」的互斥分項，
+ * - `autoFirst` / `humanFirst` / `unhandled` 是「一開始是誰接的」的互斥分項（`humanFirst` 畫面上叫「直接找真人」），
  *   三個加起來等於 `total`（initialHandler 只會是其中一種）。
  * - `handoffs` 是「後來有沒有轉真人」，是 `total` 的**子集**，會與前面重疊
  *   （機器人先回、後來轉真人的同一場會同時算進 autoFirst 和 handoffs）。

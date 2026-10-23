@@ -4127,6 +4127,12 @@ async function callStaffBack(params: {
 }
 
 /**
+ * 客人自己說要找真人的轉接原因：這場一開始算「直接找真人」，跟按選單那顆「真人客服」一樣，
+ * 不算 AI 接的（`D-152`）。AI 表現頁也是把這種從 AI 的成績單裡扣掉（directHandoffs）。
+ */
+const CUSTOMER_ASKED_HUMAN_REASONS: ReadonlySet<HandoffReason | null> = new Set<HandoffReason>(['user_request', 'non_text_content'])
+
+/**
  * 把客人轉真人，**並且由這裡送出客人看到的那則訊息**：回覆本工作區「真人客服」系統模組的
  * 文案（沒設就用預設文字），再交給 commitHandoff 標記 session、通知值班客服。
  *
@@ -4206,15 +4212,15 @@ async function deliverHandoffReply(params: {
   const prefixMessages: messagingApi.Message[] = prefixText
     ? [{ type: 'text', text: prefixText } as messagingApi.TextMessage]
     : []
-  /** AI 那段一般說明真的送到客人手上了（送失敗就不算 AI 回答過） */
-  let prefixDelivered = false
+  /** 這次的回覆真的送到客人手上了（送失敗＝客人什麼都沒收到，不算誰接了他） */
+  let replyDelivered = false
 
   if (replyToken) {
     // reply 失敗（token 過期 / LINE 5xx）不能讓整個轉接蒸發：客人這則沒收到「已安排專員」,
     // 但 session 標記與值班通知必須照常執行——否則客服不知道有人在等,而統計已計入 handoff。
     try {
       await replyMessage(replyToken, [...prefixMessages, ...handoffMessages], workspaceId)
-      prefixDelivered = prefixMessages.length > 0
+      replyDelivered = true
       // 客人剛剛才被告知「已安排專員 / 目前非服務時間」→ 讓等待中的 ack 一起吃節流
       markWaitingAckSent(workspaceId, lineUserId)
       // 一次 reply、兩種來源：前綴那句是 AI 從知識庫查來的（AI 生成），
@@ -4239,10 +4245,12 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  // AI 先答了一般說明＝這場第一個回答客人的是 AI，要在轉真人**之前**記（首接只認第一筆）。
-  // 以前沒記，統計把這種場算成「客服」：MYFEEL 2026-09-24～10-23 共 9 場（`H-42`①）。
-  // 同「需要幫您轉接嗎？」那條的口徑：AI 對客人的真實回應就記 AI 首接。
-  if (prefixDelivered) {
+  // AI 讀過這一則、判斷要轉真人（含先答一般說明再轉、AI 出錯才轉）＝這場一開始是 AI 接的，
+  // 要在轉真人**之前**記（首接只認第一筆）。以前沒記，統計把這種場算成「客服」：
+  // MYFEEL 2026-09-24～10-23 先答再轉 9 場（`H-42`①）＋直接轉 7 場（`D-152`）。
+  // 同「需要幫您轉接嗎？」那條的口徑。沒有 aiTurnId＝AI 根本沒跑（額度用完、腳本逃生門），不記。
+  // ⛔ 客人自己說要找真人不記（見 CUSTOMER_ASKED_HUMAN_REASONS）。
+  if (replyDelivered && params.aiTurnId && !CUSTOMER_ASKED_HUMAN_REASONS.has(params.reason)) {
     await enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
       console.error('[ai-fallback] enterModule(ai) before handoff error:', e),
     )

@@ -182,9 +182,10 @@
                   </div>
                 </template>
 
-                <!-- 不是 AI 接的場：只補一句去處。明細（真人首接/沒人回/選單）是對話統計頁的事，這頁不重複 -->
+                <!-- 不是 AI 接的場：只補一句去處。明細（直接找真人/沒人回/選單）是對話統計頁的事，這頁不重複。
+                     用語跟統計頁那條「一開始是誰接的」同一套（`D-152`） -->
                 <div v-if="heroOtherCount > 0" class="usage-note">
-                  另有 {{ formatNumber(heroOtherCount) }} 場不是 AI 接的（真人直接服務、選單流程、或還沒人回）——明細看<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">對話統計</NuxtLink>。
+                  另有 {{ formatNumber(heroOtherCount) }} 場不是 AI 接的（客人直接找真人、選單流程、或還沒人回）——明細看<NuxtLink :to="`/admin/${workspaceId}/conversation-stats`" class="admin-inline-link">對話統計</NuxtLink>。
                 </div>
 
                 <!-- ⛔ 原因拆解行（91 次：答不出來 62、指名 1…）已整行退場（2026-08-10 老闆「很混亂」拍板）：

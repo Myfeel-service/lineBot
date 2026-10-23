@@ -462,7 +462,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     },
   },
   get_conversation_stats: {
-    description: '對話統計 KPI(與統計頁同一把尺):客人對話場數、AI/機器人/真人首接、整場沒人回、轉真人數。args 可帶 {"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},不帶=昨天。問「昨天/這週幾場對話、AI 先回幾場、幾場沒人理」時用。',
+    description: '對話統計 KPI(與統計頁同一把尺):客人對話場數、一開始是誰接的(AI/機器人/直接找真人)、整場沒人回、轉真人數。args 可帶 {"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD"},不帶=昨天。問「昨天/這週幾場對話、AI 先回幾場、幾場沒人理」時用。'
+      + 'humanFirst＝客人一開始就直接找真人(按了「真人客服」或打字說要找真人),畫面上叫「直接找真人」——⛔不要講成「客服先回」(那幾場客人收到的第一句是自動訊息);AI 看完判斷要交給真人的算在 aiFirst。',
     mutates: false, // requires 不填:轉發呼叫者憑證,由 KPI 端點自行把關
     async run(_db, workspaceId, args, ctx) {
       const DATE_RE = /^\d{4}-\d{2}-\d{2}$/

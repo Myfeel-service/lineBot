@@ -335,6 +335,8 @@ describe('客人傳的照片：扣不扣則', () => {
     expect(repliedTexts()).toEqual(['已為您安排專員，將盡快回覆您 🙇'])
     expect(quickReplyLabels()).toEqual([])
     expect(vi.mocked(enterModule)).toHaveBeenCalledWith('sess-1', LINE_UID, 'live_agent', expect.any(String), WS)
+    // AI 一次都沒跑 → 統計不算 AI 接的（`D-152`：只有 AI 讀過、判斷要轉的才算）
+    expect(vi.mocked(enterModule).mock.calls.map(c => c[2])).not.toContain('ai')
     expect(vi.mocked(notifyHandoffToStaff)).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: WS, reason: 'quota_exceeded', customerMessage: '[圖片]',
     }))

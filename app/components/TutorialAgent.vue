@@ -332,7 +332,7 @@
 
               <!-- 問題一：互斥分項，加起來一定等於母數——讀的人不必自己減 -->
               <div class="ta-brief__split">
-                <span class="ta-brief__q">第一句話是誰回的</span>
+                <span class="ta-brief__q">一開始是誰接的</span>
                 <div class="ta-brief__parts">
                   <span
                     v-for="p in briefParts"
@@ -877,7 +877,7 @@ function askTodo(cap: ResolvedCapability) {
   if (a) askAgent({ text: a.text, send: true, source: 'status-card' })
 }
 /**
- * 「第一句話誰回的」的互斥分項：**只有加起來等於總場數的東西可以並排**。
+ * 「一開始是誰接的」的互斥分項（`D-152` 前叫「第一句話是誰回的」）：**只有加起來等於總場數的東西可以並排**。
  * 這一排的全部價值就是「不用自己減」——所以舊資料湊不到總數時要補一格「其他」，
  * 而不是讓它靜靜地對不起來（那就退回原本被誤讀的狀態了）。
  */
@@ -887,7 +887,7 @@ const briefParts = computed(() => {
     return []
   const parts = [
     { key: 'auto', label: '機器人／AI', value: y.autoFirst, warn: false },
-    { key: 'human', label: '客服', value: y.humanFirst, warn: false },
+    { key: 'human', label: '直接找真人', value: y.humanFirst, warn: false },
     // 0 的時候是好消息，不該長得像警告；>0 才轉警示色
     { key: 'none', label: '沒人回', value: y.unhandled, warn: y.unhandled > 0 },
   ]

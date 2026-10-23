@@ -132,8 +132,8 @@
           <div class="message-card ar-section-card">
             <div class="message-card-header">
               <div class="card-header-main">
-                <span class="section-title">第一句話是誰回的</span>
-                <span class="text-xs text-muted">這 {{ kpi.total }} 場對話，第一句話是誰回的？（點類別可查看對話）</span>
+                <span class="section-title">一開始是誰接的</span>
+                <span class="text-xs text-muted">這 {{ kpi.total }} 場對話，一開始是誰接的？（點類別可查看對話）</span>
               </div>
             </div>
             <div class="card-section-stack">
@@ -229,7 +229,7 @@
                   <el-table-column prop="total" label="總計" width="70" align="right" />
                   <el-table-column prop="bot" label="機器人先回" width="100" align="right" />
                   <el-table-column prop="ai" label="AI 先回" width="80" align="right" />
-                  <el-table-column prop="human" label="客服先回" width="90" align="right" />
+                  <el-table-column prop="human" label="直接找真人" width="100" align="right" />
                   <el-table-column prop="unhandled" label="沒人回" width="80" align="right" />
                   <el-table-column prop="handoff" label="轉真人" width="80" align="right" />
                   <el-table-column prop="closed" label="已結束" width="80" align="right" />
@@ -328,15 +328,16 @@ const rangeLabel = computed(() => {
   return '近 30 天'
 })
 
-// ── 「第一句話是誰回的」分段（堆疊長條 + 圖例共用一份資料）────────────────
-// 名詞 2026-08-07 拍板統一：介面不再講「首接／未首接」，跟昨日摘要卡同一套話
-// （第一句話是誰回的／沒人回／客服）。資料欄位 initialHandler 不動。
+// ── 「一開始是誰接的」分段（堆疊長條 + 圖例共用一份資料）────────────────
+// 名詞 2026-08-07 拍板統一：介面不再講「首接／未首接」，跟昨日摘要卡同一套話。
+// 2026-10-23 `D-152` 改：標題「第一句話是誰回的」→「一開始是誰接的」、「客服」→「直接找真人」——
+// 那 76 場裡 53 場是客人自己按「真人客服」，第一句其實是自動訊息，照字面讀對不上。資料欄位 initialHandler 不動。
 const firstContactSegs = computed(() => {
   const k = kpi.value
   return [
-    { key: 'bot', label: '機器人', value: k.botHandled, escalated: k.botEscalated, cls: 'seg-bot', tab: 'bot_handling', help: '第一個回覆客人的是機器人罐頭回覆或流程。' },
-    { key: 'ai', label: 'AI', value: k.aiHandled, escalated: k.aiEscalated, cls: 'seg-ai', tab: '', help: '第一個回覆客人的是 AI 客服（知識庫問答）。' },
-    { key: 'human', label: '客服', value: k.humanHandled, escalated: 0, cls: 'seg-human', tab: 'human_handling', help: '第一個回覆客人的是真人客服（例如客人一進來就找真人，或真人直接接手還沒人回過的對話）。' },
+    { key: 'bot', label: '機器人', value: k.botHandled, escalated: k.botEscalated, cls: 'seg-bot', tab: 'bot_handling', help: '一開始是機器人的自動回覆或流程接的。' },
+    { key: 'ai', label: 'AI', value: k.aiHandled, escalated: k.aiEscalated, cls: 'seg-ai', tab: '', help: '一開始是 AI 接的：AI 回答了，或 AI 看完判斷要交給真人（例如要查他那一筆訂單）。' },
+    { key: 'human', label: '直接找真人', value: k.humanHandled, escalated: 0, cls: 'seg-human', tab: 'human_handling', help: '客人一開始就要找真人：按了「真人客服」或打字說要找真人；也包含真人直接回、還沒人回過的對話。' },
     // tab 刻意留空（不可點）：收件匣的「待處理」問的是「還需不需要人處理」，
     // 這裡的「沒人回」問的是「有沒有人回答過」——兩邊是不同的一群對話，
     // 接過去只會看到不一樣的數字。口徑見 docs/CONVERSATION-STATS-DEFINITIONS.md
@@ -572,7 +573,7 @@ async function loadAll() {
 
 function exportCsv() {
   if (!trend.value.buckets.length) return
-  const header = '日期,總計,機器人先回,AI先回,客服先回,沒人回,轉真人,已結束,新朋友'
+  const header = '日期,總計,機器人先回,AI先回,直接找真人,沒人回,轉真人,已結束,新朋友'
   // 新朋友查失敗時整批缺欄（見 trend.get.ts）→ CSV 留空格,不填 0 假裝查到了
   const rows = trend.value.buckets.map(b =>
     `${b.date},${b.total},${b.bot},${b.ai},${b.human},${b.unhandled},${b.handoff},${b.closed},${b.newFriends ?? ''}`,

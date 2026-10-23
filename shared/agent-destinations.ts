@@ -62,7 +62,7 @@ export const AGENT_DESTINATIONS = {
   },
   'conversation-stats': {
     label: '對話統計',
-    hint: '每天幾場對話、AI／真人首接、沒人回的場數',
+    hint: '每天幾場對話、一開始是誰接的（機器人／AI／直接找真人）、沒人回的場數',
     path: wid => `/admin/${wid}/conversation-stats`,
   },
   'broadcasts': {
