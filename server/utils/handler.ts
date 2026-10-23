@@ -4206,12 +4206,15 @@ async function deliverHandoffReply(params: {
   const prefixMessages: messagingApi.Message[] = prefixText
     ? [{ type: 'text', text: prefixText } as messagingApi.TextMessage]
     : []
+  /** AI 那段一般說明真的送到客人手上了（送失敗就不算 AI 回答過） */
+  let prefixDelivered = false
 
   if (replyToken) {
     // reply 失敗（token 過期 / LINE 5xx）不能讓整個轉接蒸發：客人這則沒收到「已安排專員」,
     // 但 session 標記與值班通知必須照常執行——否則客服不知道有人在等,而統計已計入 handoff。
     try {
       await replyMessage(replyToken, [...prefixMessages, ...handoffMessages], workspaceId)
+      prefixDelivered = prefixMessages.length > 0
       // 客人剛剛才被告知「已安排專員 / 目前非服務時間」→ 讓等待中的 ack 一起吃節流
       markWaitingAckSent(workspaceId, lineUserId)
       // 一次 reply、兩種來源：前綴那句是 AI 從知識庫查來的（AI 生成），
@@ -4234,6 +4237,15 @@ async function deliverHandoffReply(params: {
     catch (e) {
       console.error('[ai-fallback] handoff reply failed, continuing enterModule/notify:', e)
     }
+  }
+
+  // AI 先答了一般說明＝這場第一個回答客人的是 AI，要在轉真人**之前**記（首接只認第一筆）。
+  // 以前沒記，統計把這種場算成「客服」：MYFEEL 2026-09-24～10-23 共 9 場（`H-42`①）。
+  // 同「需要幫您轉接嗎？」那條的口徑：AI 對客人的真實回應就記 AI 首接。
+  if (prefixDelivered) {
+    await enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
+      console.error('[ai-fallback] enterModule(ai) before handoff error:', e),
+    )
   }
 
   await commitHandoff({

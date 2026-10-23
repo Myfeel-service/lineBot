@@ -284,6 +284,74 @@ describe('勿擾時段：AI 已經先答了一般規則時要接一句', () => {
 })
 
 /**
+ * `H-42`①：AI 先答一般說明（例：這批 10 月底陸續出貨）、再說「您這一筆要請專員查」。
+ * 第一個回答客人的是 AI，統計卻只記了轉真人 → 算成「客服」（MYFEEL 近 30 天 9 場）。
+ * 首接只認第一筆，所以 AI 那筆一定要記在轉真人之前。
+ */
+describe('AI 先答一般說明再轉真人 → 這場算 AI 先回', () => {
+  const WS_AI_FIRST = 'ws-ai-first'
+  const ORDER_STATUS = {
+    decision: 'handoff',
+    answer: '這批商品 10 月底依訂單順序陸續出貨喔。',
+    confidence: 0.8,
+    sources: [],
+    handoffReason: 'order_status',
+  }
+
+  /** enterModule 依呼叫順序記下的模組種類 */
+  const enteredKinds = () => vi.mocked(enterModule).mock.calls.map(c => c[2])
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(shouldSuppressInboundBotAutomationForSession).mockResolvedValue(false)
+    vi.mocked(getSessionStatusCached).mockResolvedValue('open' as any)
+    vi.mocked(loadActiveScripts).mockResolvedValue([])
+    vi.mocked(replyMessage).mockResolvedValue(undefined as any)
+    vi.mocked(getAiSettings).mockResolvedValue(normalizeAiSettings({
+      enabled: true, replyMode: 'auto', systemPrompt: '你是客服', shopUrl: '',
+    }) as any)
+  })
+
+  it('AI 那段送出去了 → 先記 AI、再記轉真人', async () => {
+    const uid = 'U0000000000000000000000000000120'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue(ORDER_STATUS as any)
+
+    await handleMessageEvent(textEvent(uid, '我的咖啡機什麼時候到', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    expect(sentTexts()).toContain(ORDER_STATUS.answer)
+    const kinds = enteredKinds()
+    expect(kinds).toContain('ai')
+    expect(kinds).toContain('live_agent')
+    expect(kinds.indexOf('ai')).toBeLessThan(kinds.indexOf('live_agent'))
+  })
+
+  it('AI 沒有可講的（answer 空）→ 客人只收到轉接那句，不記 AI', async () => {
+    const uid = 'U0000000000000000000000000000121'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({ ...ORDER_STATUS, answer: '' } as any)
+
+    await handleMessageEvent(textEvent(uid, '我的咖啡機什麼時候到', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    expect(enteredKinds()).not.toContain('ai')
+    expect(enteredKinds()).toContain('live_agent')
+  })
+
+  it('回覆送不出去 → 客人沒看到 AI 那段，不記 AI（轉真人照常記）', async () => {
+    const uid = 'U0000000000000000000000000000122'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue(ORDER_STATUS as any)
+    // Once：clearAllMocks 不會清掉實作，用 mockRejectedValue 會讓後面的 describe 全部送不出去
+    vi.mocked(replyMessage).mockRejectedValueOnce(new Error('Invalid reply token'))
+
+    await handleMessageEvent(textEvent(uid, '我的咖啡機什麼時候到', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    expect(enteredKinds()).not.toContain('ai')
+    expect(enteredKinds()).toContain('live_agent')
+  })
+})
+
+/**
  * 實測災情：客人在圖文選單按了「真人客服」，收到「謝謝您！我們的客服人員會很快聯絡您」，
  * 但**沒有任何客服被通知**——這條路只回訊息、標狀態，漏了通知。客人問到第三次、
  * 走到 AI 的二次確認才真的排進佇列。老闆的口徑：機器人裡的轉真人都要真的轉真人。
