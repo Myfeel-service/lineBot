@@ -439,6 +439,11 @@ export const tagCreate: AdminOpDef = {
     const name = String(raw?.name ?? '').trim()
     const said = userSaid.join('\n')
     if (/標籤/.test(said) || (name && said.includes(`「${name}」`))) return
+    // 問完他只回名字（「叫常客吧」「常客好了」）：這一句就是在取名，照常——⛔ 不然同一題問到他剛好打出「標籤」兩個字為止（`C-395`）。
+    // ⚠️ 只看這一句、而且整句幾乎只有名字或講明在取名：「我想把常買的客人分出來」照樣先問
+    const latest = String(userSaid[0] ?? '')
+    const rest = name ? latest.replace(name, '').replace(/[\s，,。.！!～~吧啦啊囉喔]/g, '') : latest
+    if (name && latest.includes(name) && (/叫|名字|取名|命名|名稱|就用/.test(rest) || [...rest].length <= 2)) return
     throw new AdminOpAskFirst([
       '可以用「標籤」把他們分出來，先跟你確認兩件事：',
       '・標籤建好是空的，還要決定誰會被貼上：可以在對話、好友頁手動貼，在自動回應裡自動貼，或到標籤管理打開「讓 AI 判斷」。',
@@ -1072,9 +1077,13 @@ export const scriptUpdateReply: AdminOpDef = {
     // 「先填表單」這種一句話（短、講表單、沒網址）：他要的是「讓客人多留資料」，不是要客人收到這幾個字——
     // 跟沒講一樣出「先給你看現在那句」的卡，多一句「不用另外做表單，在這條多問一題」（老闆 10-22：這個流程就是要在 LINE 上完成）
     const wantsForm = /表單|表格|問卷/.test(text) && [...text.replace(/\s/g, '')].length <= 12 && !/https?:\/\//.test(text)
-    // 講的是「客人」卻沒有一個「您／你」（「請客人先拍照」）：是在講要客人做什麼，不是對客人說的話（`D-151` 實測直接出卡）。
-    // ⚠️「親愛的客人您好」有「您」，照常
-    const instruction = !wantsForm && /客人|顧客|消費者/.test(text) && !/[您你]/.test(text) ? text : ''
+    // 「請客人先拍照」「客人要先…」＝在講要客人做什麼，不是對客人說的話（`D-151` 實測直接出卡）。
+    // ⚠️ 要看句型：只看「有客人、沒有您／你」的話，「親愛的顧客，已收到退貨申請」這種稱呼也被當成指示，怎麼講都改不成（`C-395`）。
+    //    「親愛的客人您好」有「您」，照常
+    const instruction = !wantsForm && !/[您你]/.test(text)
+      && /(?:請|讓|叫|要|跟|和|對|告訴|提醒|通知|麻煩|引導)(?:客人|顧客|消費者)|(?:客人|顧客|消費者)(?:要|先|需|須|必須|得|就|可以|應該)/.test(text)
+      ? text
+      : ''
     // 還沒講要改成哪一句（或只有一個字）＝空字串：預覽時先問他（`AdminOpAskFirst`），⛔ 不擋回去讓模型自己問
     return {
       name,

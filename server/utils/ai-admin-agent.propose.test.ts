@@ -457,6 +457,22 @@ describe('當使用者的話不足以決定要動什麼', () => {
     expect(guessed.reply).toContain('現在沒有開自動交還')
     expect(guessed.reply).not.toContain('30')
   })
+
+  // `C-395` code review：勿擾時段沒有 numberOptional，「整個關掉」被擋成「要改哪一段、改成幾點？」
+  it('「把勿擾整個關掉」不用講數字：{enabled:false} 出卡；帶時間的照樣要他講過', async () => {
+    generateJson.mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { enabled: false } }))
+    const off = await ask('把勿擾時段整個關掉')
+    expect(off.pendingOp?.opId).toBe('ai-settings-service-hours')
+    expect(off.pendingOp?.preview.summary).toContain('整個關掉')
+    expect(generateJson).toHaveBeenCalledTimes(1)
+    expect(setCalls).toHaveLength(0)
+
+    generateJson.mockReset()
+    generateJson.mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-service-hours', args: { mode: 'dnd', start: '22:00', end: '08:00' } }))
+    const guessed = await ask('勿擾時段幫我調一下')
+    expect(guessed.pendingOp).toBeUndefined()
+    expect(guessed.reply).toContain('要改哪一段、改成幾點')
+  })
 })
 
 // `C-394`（2026-10-23 老闆「修掉小問題」）：`C-392` 題庫最後一輪剩下的四個用詞問題，原句照抄
@@ -496,6 +512,44 @@ describe('小幫手的用詞小問題（C-394）', () => {
     expect(timeSettingAskedFor('要改成多久沒動靜就自動結束？')).toBe('ai-settings-auto-close')
     expect(timeSettingAskedFor('目前提醒是 60 分鐘。')).toBeNull()
     expect(timeSettingAskedFor('勿擾時段內不會提醒你們，要改成幾點？')).toBeNull()
+  })
+
+  // `C-395` code review：接地閘門只退回一次，第二次它照樣編的現況跟系統問話的字不夠像，就留在系統那句上面
+  it('🔴 系統先問時：模型那段數字查不到出處就拿掉，⛔ 不跟系統的現況並排；查得到的照留', async () => {
+    // 跟系統問話的字重疊不到四成（重講現況那道攔不到）
+    const made = '我查了一下，目前是 0 分鐘。'
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { minutes: 30 }, answer: made }))
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { minutes: 30 }, answer: made }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '幫我設一下自動交還' })
+    expect(generateJson).toHaveBeenCalledTimes(2) // 第一次被接地閘門退回，第二次才走到系統先問
+    expect(res.pendingOp).toBeUndefined()
+    expect(res.reply).toContain('現在沒有開自動交還')
+    expect(res.reply).not.toContain('0 分鐘')
+
+    // 回答他別的問題、數字是查來的（服務時間 09:00–18:00）：照留
+    generateJson.mockReset()
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'tool', tool: 'get_ai_settings', args: {} }))
+      .mockResolvedValueOnce(step({ action: 'propose', op: 'ai-settings-handback-idle', args: { minutes: 30 }, answer: '服務時間是 09:00–18:00，下班後找真人不會通知你們。' }))
+    const kept = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '服務時間是幾點？順便幫我設一下自動交還' })
+    expect(kept.reply).toContain('服務時間是 09:00–18:00')
+    expect(kept.reply).toContain('現在沒有開自動交還')
+  })
+
+  // `C-395` code review：「提醒」在一句、「幾天…？」在另一句，整段看就被認成在問提醒時間，真正的問話被換掉
+  it('🔴 問時間的那一句沒講改／設、或話題在別句：不換成系統的問話', async () => {
+    const { timeSettingAskedFor } = await import('./ai-admin-agent')
+    expect(timeSettingAskedFor('近 7 天有 2 次超過 60 分鐘才回，系統有提醒客服。\n\n要看最近幾天的明細？')).toBeNull()
+    expect(timeSettingAskedFor('系統會提醒你們。你想多久看一次報表？')).toBeNull()
+    expect(timeSettingAskedFor('目前會提醒。請問要改成幾分鐘？')).toBeNull()
+
+    generateJson
+      .mockResolvedValueOnce(step({ action: 'answer', text: '客人等太久的時候，系統有提醒客服。\n\n要看最近幾天的明細？' }))
+    const res = await runAdminAgentChat({ db: makeDb(), workspaceId: 'w1', uid: 'u1', role: 'admin', message: '最近客人等很久嗎' })
+    expect(generateJson).toHaveBeenCalledTimes(1)
+    expect(res.reply).toContain('要看最近幾天的明細？')
+    expect(res.reply).not.toContain('要改成等幾分鐘')
   })
 
   it('🔴 它自己寫的改時間問話 → 換成系統那句（附現在的值）；⛔ 不出現「幾分鐘提醒一次」「設定為 0」', async () => {

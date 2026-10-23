@@ -61,6 +61,13 @@ describe('查詢：LINE 訊息還剩幾則', () => {
     expect(getLineMonthSendBreakdown).not.toHaveBeenCalled()
   })
 
+  it('⭐ 有幾天沒問到（`C-395`）：照實帶出去、說明要它講「大約、有幾天沒算進去」', async () => {
+    readLineMessageQuota.mockResolvedValue({ kind: 'ok', quota: { limit: 3000, used: 100, remaining: 2900 } })
+    getLineMonthSendBreakdown.mockResolvedValue({ multicast: 50, push: 10, reply: 5, throughLabel: '10/21', missingDays: 1, failedDays: 3 })
+    expect((await run()).thisMonthByType).toMatchObject({ daysLineGaveNoNumber: 1, daysAskFailed: 3 })
+    expect(tool.description).toContain('daysAskFailed')
+  })
+
   it('用在哪問不到 → 只回剩幾則，用在哪那格是 null', async () => {
     readLineMessageQuota.mockResolvedValue({ kind: 'ok', quota: { limit: 3000, used: 3000, remaining: 0 } })
     getLineMonthSendBreakdown.mockResolvedValue(null)

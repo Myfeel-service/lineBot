@@ -29,6 +29,9 @@ const { getLineWorkspaceCredentials } = vi.hoisted(() => ({
   getLineWorkspaceCredentials: vi.fn(async (_wid: string) => ({ channelAccessToken: 'token', channelSecret: 'secret' })),
 }))
 vi.mock('./line-workspace-credentials', () => ({ getLineWorkspaceCredentials }))
+// 憑證讀到空的時，line.ts 會再直接讀一次那份帳號文件確認（`C-395`）；預設＝真的沒有權杖
+const { workspaceDocGet } = vi.hoisted(() => ({ workspaceDocGet: vi.fn() }))
+vi.mock('./firebase', () => ({ getDb: () => ({ collection: () => ({ doc: () => ({ get: workspaceDocGet }) }) }) }))
 
 import { HTTPFetchError } from '@line/bot-sdk'
 import { getLineMessageQuota, getLineMonthSendBreakdown, pushMessage, readLineMessageQuota, readLineMessageQuotaCached } from './line'
@@ -37,6 +40,8 @@ beforeEach(() => {
   quotaMock.mockReset()
   consumptionMock.mockReset()
   pushMock.mockReset()
+  workspaceDocGet.mockReset().mockResolvedValue({ data: () => ({}) })
+  getLineWorkspaceCredentials.mockReset().mockImplementation(async () => ({ channelAccessToken: 'token', channelSecret: 'secret' }))
   vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 afterEach(() => {
@@ -108,6 +113,24 @@ describe('readLineMessageQuota：三種結果分開講', () => {
     consumptionMock.mockResolvedValue({ totalUsage: 1 })
     expect((await readLineMessageQuota('w-err')).kind).toBe('error')
   })
+
+  // `C-395`：讀憑證那支讀庫失敗會吞掉錯誤、回空權杖——以前直接當成沒接 LINE、還快取 5 分鐘，用完的帳號不變紅也不通知
+  it('🔴 讀帳號設定失敗（被吞成空權杖）→ error、⛔ 不是 unconfigured，也不快取（下一次照問）', async () => {
+    getLineWorkspaceCredentials.mockResolvedValue({ channelAccessToken: '', channelSecret: '' })
+    workspaceDocGet.mockRejectedValue(new Error('14 UNAVAILABLE'))
+    expect((await readLineMessageQuotaCached('w-db-down')).kind).toBe('error')
+    expect((await readLineMessageQuotaCached('w-db-down')).kind).toBe('error')
+    expect(workspaceDocGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('🔴 剛才讀失敗、確認時卻讀到有權杖 → error（⛔ 不是 unconfigured）', async () => {
+    getLineWorkspaceCredentials.mockResolvedValueOnce({ channelAccessToken: '', channelSecret: '' })
+    // getMessagingBundle 再讀一次憑證時拿到的還是快取裡那份空的
+    getLineWorkspaceCredentials.mockResolvedValueOnce({ channelAccessToken: '', channelSecret: '' })
+    workspaceDocGet.mockResolvedValue({ data: () => ({ channelAccessToken: 'real-token' }) })
+    expect((await readLineMessageQuota('w-flaky')).kind).toBe('error')
+    expect(quotaMock).not.toHaveBeenCalled()
+  })
 })
 
 /**
@@ -169,19 +192,76 @@ describe('getLineMonthSendBreakdown', () => {
     // 日本時間 10/5 01:00＝台灣 10/5 00:00 → 算 10/1～10/4
     const r = await getLineMonthSendBreakdown('w-stats', Date.parse('2026-10-05T01:00:00+09:00'))
     expect(multicastStatsMock).toHaveBeenCalledTimes(4)
-    expect(r).toEqual({ multicast: 3756, push: 30, reply: 20, throughLabel: '10/4', missingDays: 1 })
+    expect(r).toEqual({ multicast: 3756, push: 30, reply: 20, throughLabel: '10/4', missingDays: 1, failedDays: 0 })
   })
 
   it('1 號當天：還沒有任何一天可以查', async () => {
-    const r = await getLineMonthSendBreakdown('w-stats', Date.parse('2026-11-01T12:00:00+09:00'))
-    expect(r).toEqual({ multicast: 0, push: 0, reply: 0, throughLabel: null, missingDays: 0 })
+    const r = await getLineMonthSendBreakdown('w-stats-day1', Date.parse('2026-11-01T12:00:00+09:00'))
+    expect(r).toEqual({ multicast: 0, push: 0, reply: 0, throughLabel: null, missingDays: 0, failedDays: 0 })
     expect(multicastStatsMock).not.toHaveBeenCalled()
   })
 
-  it('問不到 → null', async () => {
+  it('每一天都問不到 → null', async () => {
     multicastStatsMock.mockRejectedValue(http(500, 'oops'))
     pushStatsMock.mockResolvedValue({ status: 'ready', success: 1 })
     replyStatsMock.mockResolvedValue({ status: 'ready', success: 1 })
-    expect(await getLineMonthSendBreakdown('w-stats', Date.parse('2026-10-05T01:00:00+09:00'))).toBeNull()
+    expect(await getLineMonthSendBreakdown('w-stats-fail', Date.parse('2026-10-05T01:00:00+09:00'))).toBeNull()
+  })
+
+  // ── `C-395`：以前一次並行打約 90 個請求、沒逾時、沒快取，一天失敗整份變 null ──
+  const oct = (day: number) => Date.parse(`2026-10-${String(day).padStart(2, '0')}T12:00:00+09:00`)
+
+  it('🔴 某一天沒問到 → ⛔ 不丟掉整份：其他天照加、照實回 failedDays', async () => {
+    multicastStatsMock.mockImplementation(async (d: string) => {
+      if (d === '20261002') throw http(500, 'oops')
+      return { status: 'ready', success: 100 }
+    })
+    pushStatsMock.mockResolvedValue({ status: 'ready', success: 10 })
+    replyStatsMock.mockResolvedValue({ status: 'ready', success: 1 })
+    const r = await getLineMonthSendBreakdown('w-partial', oct(5))
+    // 10/2 那天整天不算（⛔ 不加一半）：剩 10/1、10/3、10/4
+    expect(r).toEqual({ multicast: 300, push: 30, reply: 3, throughLabel: '10/4', missingDays: 0, failedDays: 1 })
+  })
+
+  it('🔴 LINE 一直不回 → 整份最多等 4 秒，問到的照加、沒問到的算 failedDays（⛔ 不拖住小幫手）', async () => {
+    vi.useFakeTimers()
+    multicastStatsMock.mockImplementation(async (d: string) => (d === '20261003' ? new Promise(() => {}) : { status: 'ready', success: 100 }))
+    pushStatsMock.mockResolvedValue({ status: 'ready', success: 0 })
+    replyStatsMock.mockResolvedValue({ status: 'ready', success: 0 })
+    const p = getLineMonthSendBreakdown('w-hang', oct(5))
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(await p).toEqual({ multicast: 300, push: 0, reply: 0, throughLabel: '10/4', missingDays: 0, failedDays: 1 })
+  })
+
+  it('一次最多同時問 6 天（月底不再一口氣打 90 個）', async () => {
+    let inFlight = 0
+    let peak = 0
+    multicastStatsMock.mockImplementation(async () => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise(r => setTimeout(r, 2))
+      inFlight--
+      return { status: 'ready', success: 1 }
+    })
+    pushStatsMock.mockResolvedValue({ status: 'ready', success: 0 })
+    replyStatsMock.mockResolvedValue({ status: 'ready', success: 0 })
+    const r = await getLineMonthSendBreakdown('w-peak', oct(31))
+    expect(r?.multicast).toBe(30)
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThanOrEqual(6)
+  })
+
+  it('過去的日子問過就記著：再問只問 LINE 還沒算好的那天', async () => {
+    multicastStatsMock.mockImplementation(async (d: string) => (d === '20261004' ? { status: 'unready' } : { status: 'ready', success: 100 }))
+    pushStatsMock.mockImplementation(async (d: string) => (d === '20261003' ? { status: 'unavailable_for_privacy' } : { status: 'ready', success: 10 }))
+    replyStatsMock.mockResolvedValue({ status: 'ready', success: 1 })
+    const first = await getLineMonthSendBreakdown('w-cache-days', oct(5))
+    expect(multicastStatsMock).toHaveBeenCalledTimes(4)
+    const second = await getLineMonthSendBreakdown('w-cache-days', oct(5))
+    // 10/1～10/3 記著（10/3 不到 20 則那天永遠不會有數字，也記著）；10/4 還沒算好，再問一次
+    expect(multicastStatsMock).toHaveBeenCalledTimes(5)
+    expect(multicastStatsMock).toHaveBeenLastCalledWith('20261004')
+    expect(second).toEqual(first)
+    expect(second).toMatchObject({ missingDays: 2, failedDays: 0 })
   })
 })

@@ -89,6 +89,8 @@ interface ServiceHoursArgs {
 const aiSettingsServiceHours: AdminOpDef = {
   capability: 'ai.settings.write',
   needsUserNumber: true,
+  // 「把勿擾整個關掉」本來就沒有數字（`C-395`）：以前被數值閘門擋成「要改成幾點？」，關不掉
+  numberOptional: raw => raw?.enabled === false,
   argsHint: '參數：{"mode":"service"|"dnd","start":"HH:mm","end":"HH:mm","weekendOff":true|false} '
     + '或關掉整個功能用 {"enabled":false}。'
     + '⛔ mode 一定要照使用者的原話選：他講「服務時間 9 點到 6 點」→ mode="service"；'
@@ -750,9 +752,14 @@ const aiSettingsReplyMode: AdminOpDef = {
 // ⛔ 建好一律**停用**：AI 生的流程會有錯（16 案實測出過占位符沒填、觸發詞打架），
 //    要人到流程頁看過才上架。這條不能為了「一句話就搞定」而省掉。
 
-/** 他用引號講的「回客人的話」（「就回「可以，Visa、Master 都收」」），照出現的順序 */
+/**
+ * 他用引號講的「回客人的話」（「就回「可以，Visa、Master 都收」」），照出現的順序。
+ * ⛔ 「回」前面是寄／退／送這類動詞（「寄回「台北市…」」）或客人當主詞（「客人回「需要」」＝客人答的）不算——
+ * 不然那幾個字會照位置蓋掉擬好的回覆（`C-395`）。
+ */
 export function quotedReplies(description: string): string[] {
-  return [...String(description ?? '').matchAll(/回(?:覆|答)?(?:客人)?[：:]?\s*「([^」]{2,})」/g)].map(m => m[1]!.trim())
+  return [...String(description ?? '').matchAll(/(?<!(?:[寄退送返收帶拿撥找挽傳匯拉轉撤贖買]|客人|顧客|消費者|對方|他|她))回(?:覆|答)?(?:客人)?[：:]?\s*「([^」]{2,})」/g)]
+    .map(m => m[1]!.trim())
 }
 
 /** 擬不出來時問他的話：要知道三件事；講到表單就順便講「客人在 LINE 上回答，不用另外做表單」 */

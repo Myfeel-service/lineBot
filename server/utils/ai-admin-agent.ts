@@ -423,7 +423,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       + '⛔ 上限是方案內含＋加購的合計,⛔ 不可以說成「免費的還剩這麼多」。'
       + 'unlimited=true 代表沒設上限:只講已送,⛔ 不講還剩或會用完。'
       + '回覆客人(AI、自動回應)那一項 LINE 不算則數:講用在哪時要分開講,⛔ 不可以加進已送。'
-      + 'state=unconfigured 代表還沒接 LINE;state=error 代表這次問不到,如實講,⛔ 不猜。',
+      + 'state=unconfigured 代表還沒接 LINE;state=error 代表這次問不到,如實講,⛔ 不猜。'
+      + 'thisMonthByType 的 daysLineGaveNoNumber 或 daysAskFailed 大於 0:那幾天沒算進去,講用在哪時要說「大約」並講有幾天沒算進去。',
     requires: 'workspace.read',
     mutates: false,
     async run(_db, workspaceId) {
@@ -453,6 +454,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
               oneByOneIncludes: '你在後台回客人、傳給你的 LINE 通知、試發、活動頁加好友後送的那則、用了客人名字的推播',
               repliesNotCounted: breakdown.reply,
               daysLineGaveNoNumber: breakdown.missingDays,
+              // `C-395`：這次沒問到的天數（LINE 退件、4 秒內沒回完）——⛔ 不默默少算
+              daysAskFailed: breakdown.failedDays,
             }
           : null,
       }
@@ -1185,9 +1188,13 @@ const TIME_SETTING_TOPICS: Array<[RegExp, AdminOpId]> = [
  * ⚠️ 只認一件：一句話同時講到兩件（「勿擾時段內不會提醒你們」）就不換，照它寫的。
  */
 export function timeSettingAskedFor(text: string): AdminOpId | null {
-  const t = String(text ?? '')
-  if (!TIME_QUESTION.test(t)) return null
-  const hits = TIME_SETTING_TOPICS.filter(([re]) => re.test(t))
+  // ⚠️ 只看**在問時間、而且在講改／設**的那一句（`C-395`）：以前整段看，「系統有提醒客服。…要看最近幾天的明細？」
+  //    一處有「提醒」、另一處問「幾天…？」就被認成在問提醒時間，真正的問話被換掉
+  const asks = (String(text ?? '').match(/[^。！!？?\n]*[？?]/g) ?? [])
+    .filter(s => TIME_QUESTION.test(s) && /改|設|調/.test(s))
+    .join('\n')
+  if (!asks) return null
+  const hits = TIME_SETTING_TOPICS.filter(([re]) => re.test(asks))
   return hits.length === 1 ? hits[0]![1] : null
 }
 
@@ -1701,8 +1708,13 @@ export async function runAdminAgentChat(params: {
         // 問話整段由系統寫（含現在是什麼），⛔ 不採用模型寫的：它會漏講現況，甚至自己編一句。他回了之後模型照對話接著提議
         if (e instanceof AdminOpAskFirst) {
           // 它自己也寫了一段現況、一句「要改成什麼」：跟系統的問話重複的段落拿掉，⛔ 同一段話講兩次（`D-151` 第二輪實測）；
-          // 回答他別的問題的段落照留
+          // 回答他別的問題的段落照留。
+          // ⛔ 但數字查不到出處的段落也拿掉（`C-395`）：接地閘門只退回一次，第二次它寫「目前提醒是 0 分鐘。」跟系統問話的字
+          //    不夠像、照樣留下來，就排在「現在是…等超過 60 分鐘」上面——正是 `D-151` 要修掉的那句
           const answer = otherThanAsk(String(data?.answer ?? ''), e.message)
+            .split(/\n{2,}/)
+            .filter(p => !numbersWithoutSource(p, [...groundingSources, ...userSaidTexts, e.message]).length)
+            .join('\n\n')
           return {
             reply: say([answer, e.message].filter(Boolean).join('\n\n')),
             toolCalls,

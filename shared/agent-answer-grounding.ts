@@ -49,7 +49,9 @@ const AI_SERVICE_HOURS = /AI[^。，,\n]{0,6}的(服務時間|上班時間)|(服
  * 它一個工具都沒查就寫「目前這條的回覆內容是：「您好，關於退換貨問題，請參考我們的退換貨政策：[連結]」」——整句是編的。
  * 提示裡寫了「先把 replyText 照抄給他看」，照樣中，所以擋。
  */
-const QUOTES_SCRIPT_REPLY = /(回覆(內容|的話)?|回給客人的話)\s*(目前|現在)?\s*(是|為)\s*[：:]?\s*「/
+// ⚠️ 「新的回覆是「…」」「改成的回覆是「…」」是在講要改成什麼，不是引用現在那句（`C-395`）：
+//    算進來的話它照規矩提議也被退回一次，把唯一一次退回用掉
+const QUOTES_SCRIPT_REPLY = /(?<!(?:新|新的|改成|改成的|改為|改後的?|之後的?|建議的?))(回覆(內容|的話)?|回給客人的話)\s*(目前|現在)?\s*(是|為)\s*[：:]?\s*「/
 const SCRIPTS_TOOL = 'list_scripts'
 
 /**
@@ -57,7 +59,18 @@ const SCRIPTS_TOOL = 'list_scripts'
  * 「表單的連結是什麼？…讓客人在對話中點擊連結填寫表單」。老闆 10-22：「我們做這個流程不是就是為了讓大家在 LINE 上面完成嗎」。
  * 提示寫了照樣中，所以擋。⚠️ 他自己給了網址（「請填寫保固登錄：https://…」）是他的決定，不擋。
  */
-const LEADS_OUT_OF_LINE = /(表單|問卷)[^。\n]{0,15}(連結|網址|點擊|點進)|(連結|網址|點擊)[^。\n]{0,10}填[^。\n]{0,4}(表單|問卷)/
+const LEADS_OUT_OF_LINE = /(表單|問卷)[^。\n]{0,15}(連結|網址|點擊|點進)|(連結|網址|點擊)[^。\n]{0,10}填[^。\n]{0,4}(表單|問卷)/g
+
+/**
+ * 有沒有叫人帶客人出 LINE。⚠️ 同一小句前面講了「不用／不必／別」就是在講不要那樣做（`C-395`）：
+ * 「客人不用去填表單或點連結，直接在 LINE 上回答」正是提示要它講的話，以前也被退回
+ */
+function leadsOutOfLine(answer: string): boolean {
+  return [...answer.matchAll(LEADS_OUT_OF_LINE)].some((m) => {
+    const clause = answer.slice(0, m.index).split(/[，,。；;！!？?\n]/).pop() ?? ''
+    return !/不用|不必|不需要?|無須|無需|免|別|不要|不會|沒有?必要/.test(clause)
+  })
+}
 
 /**
  * 被退回時該查、這一輪卻沒查的那一支（`D-151`，2026-10-23）：系統直接幫它查，結果塞進這一輪再讓它重寫。
@@ -130,7 +143,7 @@ export function answerGroundingIssue({ text, sources, dateSources = [], calledTo
       + '請改寫那句話，⛔ 不要說成「AI 自動回覆的服務時間」。'
   }
 
-  if (LEADS_OUT_OF_LINE.test(answer) && !userTexts.some(t => /https?:\/\//.test(t))) {
+  if (leadsOutOfLine(answer) && !userTexts.some(t => /https?:\/\//.test(t))) {
     return '你建議把客人帶去外面填表單或點連結。⛔ 這個產品要客人在 LINE 上完成：要客人留資料，'
       + '就是在自動回應裡一題一題問（例如訂單編號、要退哪一件、為什麼退），客人直接在 LINE 上回答。'
       + '請改成這個做法（他講清楚要問哪幾題，就可以提議 script-create-from-description）。'

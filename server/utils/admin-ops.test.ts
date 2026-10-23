@@ -644,6 +644,17 @@ describe('op：用一句話建一條自動回應（D-58② 老闆拍板）', () 
     expect(quotedReplies('有人問「可以刷卡嗎」，就回「可以，Visa、Master 都收」')).toEqual(['可以，Visa、Master 都收'])
   })
 
+  // `C-395` code review：「寄回「地址」」「客人回「需要」」被當成要回客人的話，照位置蓋掉擬好的回覆
+  it('🔴 「寄回「…」」「客人回「…」」不是回客人的話：⛔ 不拿來蓋擬好的回覆', async () => {
+    expect(quotedReplies('客人要退貨就請他寄回「台北市信義路1號」，然後回覆收到')).toEqual([])
+    expect(quotedReplies('客人回「需要」就問編號，最後回「已收到，三天內處理」')).toEqual(['已收到，三天內處理'])
+    expect(quotedReplies('如果他回覆「是」就轉真人，否則回客人「好的，有需要再找我們」')).toEqual(['好的，有需要再找我們'])
+    // 回覆／回答／回客人／冒號照舊認
+    expect(quotedReplies('最後回覆：「已收到」；問到運費就回答「滿千免運」')).toEqual(['已收到', '滿千免運'])
+    const args = await op.prepare!(ctx, op.normalize({ description: '客人要退貨就請他寄回「台北市信義路1號」' }))
+    expect((args as any).draft.nodes.find((n: any) => n.type === 'reply').text).not.toBe('台北市信義路1號')
+  })
+
   // `D-151` 實測：「建一條自動回應讓客人先填表單」只回「準備到一半出了狀況」
   it('🔴 擬不出來（拒答）：先問他三件事，⛔ 不要變成「出了狀況」；講到表單就講客人在 LINE 上回答', async () => {
     draftThrows = Object.assign(new Error('「填表單」本身不是一個客服流程'), { statusCode: 422 })

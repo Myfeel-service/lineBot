@@ -243,6 +243,17 @@ describe('建標籤', () => {
     expect(() => ops.tagCreate.checkUserWords!({ name: '回購客' }, ['「回購客」', '建一個標籤'])).not.toThrow()
     expect(() => ops.tagCreate.checkUserWords!({ name: '回購客' }, ['幫我建「回購客」'])).not.toThrow()
   })
+
+  // `C-395` code review：問完名字他只回「叫常客吧」，同一題又問一次（只有打出「標籤」兩字或引號才放行）
+  it('🔴 問完他只回名字：照常出卡，⛔ 不再問同一題；整句不是在取名的照樣先問', () => {
+    const goal = '我想把常買的客人分出來'
+    for (const reply of ['叫常客吧', '常客好了', '就叫常客', '名字用常客', '常客']) {
+      expect(() => ops.tagCreate.checkUserWords!({ name: '常客' }, [reply, goal])).not.toThrow()
+    }
+    // 名字只是出現在講目的那句裡：照樣先問
+    expect(() => ops.tagCreate.checkUserWords!({ name: '常買的客人' }, [goal, '你好'])).toThrow('標籤建好是空的')
+    expect(() => ops.tagCreate.checkUserWords!({ name: '常客' }, ['好', goal])).toThrow('標籤建好是空的')
+  })
 })
 
 describe('補一張知識卡（只放進「等你看過」）', () => {
@@ -508,6 +519,14 @@ describe('改自動回應的關鍵字／回覆字', () => {
     // ⚠️ 對客人說話的那種照常出卡（有「您」）
     const polite = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: '親愛的客人您好，請先拍一張商品照片傳給我們' })
     expect(polite.preview.items[1].label).toBe('親愛的客人您好，請先拍一張商品照片傳給我們')
+    // `C-395` code review：沒有「您／你」的稱呼（「親愛的顧客，…」「各位顧客請注意」）也是對客人說的話，⛔ 不當成指示（以前怎麼講都改不成）
+    for (const greet of ['親愛的顧客，已收到退貨申請，三天內處理', '各位顧客請注意，本週六公休', '感謝顧客支持，我們會盡快處理']) {
+      const ok = await propose(ops.scriptUpdateReply, { name: '退換貨查詢', text: greet })
+      expect(ok.preview.items[1].label).toBe(greet)
+    }
+    for (const order of ['客人要先拍照上傳', '讓顧客填寫訂單編號', '跟客人說三天內處理']) {
+      expect((await askOf(order))?.message).toContain(`「${order}」是要客人做的事`)
+    }
 
     // 憑證照樣簽得出來的話：硬送也⛔不可以把回覆清成空的
     const forced = await ops.scriptUpdateReply.execute(ctx, { name: '退換貨查詢', text: '' })

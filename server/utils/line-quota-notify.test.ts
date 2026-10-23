@@ -28,6 +28,9 @@ const at = (s: string) => Date.parse(`${s}+08:00`)
 const HOUR = 3600_000
 
 let store: Map<string, Record<string, unknown>>
+/** 讀 workspaces 幾次、每份文件寫幾次（`C-395`：節流與「一輪只寫一次」要量得到） */
+let workspaceReads: number
+let writes: Map<string, number>
 function merge(a: Record<string, unknown>, b: Record<string, unknown>) {
   for (const [k, v] of Object.entries(b)) {
     if (v && typeof v === 'object' && !Array.isArray(v) && a[k] && typeof a[k] === 'object')
@@ -35,11 +38,19 @@ function merge(a: Record<string, unknown>, b: Record<string, unknown>) {
     else a[k] = v
   }
 }
-function fakeDb(workspaceIds: string[]) {
+/** noLine：這幾個帳號沒有存取權杖（還沒接 LINE） */
+function fakeDb(workspaceIds: string[], noLine: string[] = []) {
   return {
     collection: (name: string) => {
       if (name === 'workspaces') {
-        const q: any = { select: () => q, limit: () => q, get: async () => ({ docs: workspaceIds.map(id => ({ id })) }) }
+        const q: any = {
+          select: () => q,
+          limit: () => q,
+          get: async () => {
+            workspaceReads++
+            return { docs: workspaceIds.map(id => ({ id, data: () => ({ channelAccessToken: noLine.includes(id) ? '' : 'tok' }) })) }
+          },
+        }
         return q
       }
       return {
@@ -48,6 +59,7 @@ function fakeDb(workspaceIds: string[]) {
           return {
             get: async () => ({ data: () => (store.has(key) ? JSON.parse(JSON.stringify(store.get(key))) : undefined) }),
             set: async (patch: Record<string, unknown>) => {
+              writes.set(key, (writes.get(key) ?? 0) + 1)
               const cur = store.get(key) ?? {}
               merge(cur, JSON.parse(JSON.stringify(patch)))
               store.set(key, cur)
@@ -67,6 +79,8 @@ const crit = { handoffNotify: { enabled: true, lineUserIds: ['Ua', 'Ub'], optOut
 
 beforeEach(() => {
   store = new Map()
+  workspaceReads = 0
+  writes = new Map()
   readLineMessageQuota.mockReset()
   getAiSettings.mockReset().mockResolvedValue(crit)
   pushToNotifyList.mockReset().mockResolvedValue([{ status: 'fulfilled', value: {} }])
@@ -191,5 +205,64 @@ describe('不該發的時候', () => {
     expect(readLineMessageQuota).toHaveBeenCalledTimes(2)
     await notifyLineQuotaLevels(db, at('2026-10-22T10:00:00') + HOUR)
     expect(readLineMessageQuota).toHaveBeenCalledTimes(4)
+  })
+})
+
+/**
+ * `C-395`：以前每 10 分鐘把整個 workspaces 讀一遍才逐一跳過（一份算一次讀取，一天 144 輪×帳號數）、
+ * 每個帳號各寫一次同一份節流文件（整點擠在同一輪會互相卡住）、LINE 一個一個排隊問（每個最多等 4 秒）。
+ */
+describe('排程本身的成本', () => {
+  it('🔴 這一小時已經跑過一輪 → 整輪跳過，連 workspaces 都不讀', async () => {
+    readLineMessageQuota.mockResolvedValue(fine)
+    const db = fakeDb(['ws1', 'ws2', 'ws3'])
+    await notifyLineQuotaLevels(db, at('2026-10-22T10:00:00'))
+    expect(workspaceReads).toBe(1)
+    for (const t of ['10:10', '10:20', '10:30', '10:40', '10:50'])
+      expect(await notifyLineQuotaLevels(db, at(`2026-10-22T${t}:00`))).toMatchObject({ checked: 0, skipped: 'not-due' })
+    expect(workspaceReads).toBe(1)
+  })
+
+  it('🔴 一輪只寫兩次節流文件（佔這一輪＋問過的時間），不管有幾個帳號', async () => {
+    readLineMessageQuota.mockResolvedValue(fine)
+    const ids = Array.from({ length: 8 }, (_, i) => `ws${i}`)
+    await notifyLineQuotaLevels(fakeDb(ids), at('2026-10-22T10:00:00'))
+    expect(readLineMessageQuota).toHaveBeenCalledTimes(8)
+    expect(writes.get('cronState/line-quota-notices')).toBe(2)
+    // 每個帳號問過的時間照樣查得到（上線後唯讀驗證用）
+    expect(store.get('cronState/line-quota-notices')).toMatchObject({ ws0: { checkedAt: at('2026-10-22T10:00:00') }, ws7: { checkedAt: at('2026-10-22T10:00:00') } })
+  })
+
+  it('🔴 LINE 同時問幾個帳號（最多 5 個），⛔ 不一個一個排隊', async () => {
+    let inFlight = 0
+    let peak = 0
+    readLineMessageQuota.mockImplementation(async () => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise(r => setTimeout(r, 2))
+      inFlight--
+      return fine
+    })
+    const ids = Array.from({ length: 12 }, (_, i) => `ws${i}`)
+    expect((await notifyLineQuotaLevels(fakeDb(ids), at('2026-10-22T10:00:00'))).checked).toBe(12)
+    expect(peak).toBe(5)
+  })
+
+  it('🔴 沒接 LINE 的帳號不問（⛔ 不再去讀它的設定、也不佔名額）', async () => {
+    readLineMessageQuota.mockResolvedValue(fine)
+    const r = await notifyLineQuotaLevels(fakeDb(['ws1', 'ws-no-line'], ['ws-no-line']), at('2026-10-22T10:00:00'))
+    expect(r.checked).toBe(1)
+    expect(readLineMessageQuota).toHaveBeenCalledTimes(1)
+    expect(readLineMessageQuota).toHaveBeenCalledWith('ws1')
+  })
+
+  it('一個帳號出錯，其他帳號照樣問、照樣通知', async () => {
+    readLineMessageQuota.mockImplementation(async (wid: string) => {
+      if (wid === 'ws-bad') throw new Error('boom')
+      return near
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const r = await notifyLineQuotaLevels(fakeDb(['ws-bad', 'ws1']), at('2026-10-22T10:00:00'))
+    expect(r).toEqual({ checked: 2, warned: 1, emailed: 0 })
   })
 })

@@ -3,6 +3,8 @@ import { HTTPFetchError } from '@line/bot-sdk'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { v5 as uuidv5 } from 'uuid'
 import { getLineWorkspaceCredentials } from './line-workspace-credentials'
+import { getDb } from './firebase'
+import { capMapSize } from './bounded-cache'
 import { describeLineSendFailure, lineSendFailureKind } from './line-send-error'
 import { lineQuotaFromLine, type LineMessageQuota } from '~~/shared/line-quota'
 
@@ -138,6 +140,18 @@ function rememberLineQuota(wid: string, read: LineQuotaRead): LineQuotaRead {
 }
 
 /**
+ * 有沒有接 LINE（`C-395`）：`getLineWorkspaceCredentials` 讀庫失敗會吞掉錯誤、回空的權杖（還快取一分鐘），
+ * 光看它分不出「真的沒接」跟「這次讀不到」——後者當成沒接的話，用完的帳號 5 分鐘內不會變紅、這一小時也不會通知。
+ * 讀到空的才再直接讀一次那份文件確認：⛔ 讀失敗就往上丟（呼叫端回 error），只有真的讀到沒有權杖才算沒接。
+ */
+async function lineTokenConfigured(wid: string): Promise<boolean> {
+  const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
+  if (String(channelAccessToken || '').trim()) return true
+  const snap = await getDb().collection('workspaces').doc(wid).get()
+  return Boolean(String(snap.data()?.channelAccessToken ?? '').trim())
+}
+
+/**
  * LINE 這個月還能送幾則（`C-380`，數字的意思見 `shared/line-quota.ts`）：現問、不看快取，問到就順手更新快取。
  * ⛔ 不讓它拖住呼叫它的端點：LINE 慢的時候最多等 4 秒就放棄（回 error）。
  */
@@ -145,8 +159,8 @@ export async function readLineMessageQuota(workspaceId: string): Promise<LineQuo
   const wid = String(workspaceId || '').trim()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const { channelAccessToken } = await getLineWorkspaceCredentials(wid)
-    if (!String(channelAccessToken || '').trim()) return rememberLineQuota(wid, { kind: 'unconfigured' })
+    if (!(await lineTokenConfigured(wid))) return rememberLineQuota(wid, { kind: 'unconfigured' })
+    // 剛才那次讀庫失敗、確認時卻讀到有權杖：這裡會因為快取裡的空權杖丟錯 → 回 error（⛔ 不是沒接）
     const { client } = await getMessagingBundle(wid)
     const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), LINE_QUOTA_TIMEOUT_MS) })
     const res = await Promise.race([
@@ -199,16 +213,30 @@ export type LineMonthSendBreakdown = {
   throughLabel: string | null
   /** 有幾天問不到（LINE 還沒算好、或那天不到 20 則它不給數字） */
   missingDays: number
+  /** 有幾天這次沒問到（LINE 退件、4 秒內沒回完）：⛔ 沒算進上面三個數字，回答要講「大約、有幾天沒算進去」 */
+  failedDays: number
 }
+
+type LineDayStats = { multicast: number, push: number, reply: number, missing: boolean }
+
+/** 一次最多同時問幾天（一天 3 支）：一個月 30 天一口氣打出去就是 90 個連線 */
+const LINE_DAY_STATS_CONCURRENCY = 6
+/** 過去的日子不會變（`C-395`）：問過就記著，下一次只問昨天與 LINE 還沒算好的那幾天 */
+const _lineDayStatsCache = new Map<string, LineDayStats>()
+const LINE_DAY_STATS_CACHE_MAX = 5000
 
 /**
  * 這個月到昨天為止，各種送法各送了幾則（`D-146`：問小幫手「LINE 還剩幾則」時順便講用在哪）。
  * ⚠️ LINE 的統計照**日本時間**切天、隔天才有數字、一天不到 20 則不給數字——所以只算到昨天，問不到的天數照實回。
- * 一天問 3 支（LINE 這幾支每秒 2,000 次上限），一個月最多約 90 次。問不到回 null。
+ * 一天問 3 支（LINE 這幾支每秒 2,000 次上限），一個月最多約 90 次。
+ * `C-395`：⛔ 不拖住小幫手——整份最多等 4 秒（同 quota），一次最多問 6 天；問過的日子記著不重問；
+ * 某幾天沒問到不丟掉整份，照實回 failedDays。一天都沒問到（或連憑證都拿不到）才回 null。
  */
 export async function getLineMonthSendBreakdown(workspaceId: string, nowMs: number = Date.now()): Promise<LineMonthSendBreakdown | null> {
+  const wid = String(workspaceId || '').trim()
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const { client } = await getMessagingBundle(workspaceId)
+    const { client } = await getMessagingBundle(wid)
     const jstToday = new Date(nowMs + 9 * 3600_000)
     const y = jstToday.getUTCFullYear()
     const m = jstToday.getUTCMonth()
@@ -216,22 +244,66 @@ export async function getLineMonthSendBreakdown(workspaceId: string, nowMs: numb
     const days = Array.from({ length: jstToday.getUTCDate() - 1 }, (_, i) => `${y}${p2(m + 1)}${p2(i + 1)}`)
     const sum = { multicast: 0, push: 0, reply: 0 }
     let missingDays = 0
-    await Promise.all(days.map(async (date) => {
+    let failedDays = 0
+    const add = (d: LineDayStats) => {
+      sum.multicast += d.multicast
+      sum.push += d.push
+      sum.reply += d.reply
+      if (d.missing) missingDays++
+    }
+
+    const queue: string[] = []
+    for (const date of days) {
+      const hit = _lineDayStatsCache.get(`${wid}:${date}`)
+      if (hit) add(hit)
+      else queue.push(date)
+    }
+    let timedOut = false
+    const deadline = new Promise<null>((resolve) => {
+      timer = setTimeout(() => { timedOut = true; resolve(null) }, LINE_QUOTA_TIMEOUT_MS)
+    })
+    const askDay = async (date: string): Promise<LineDayStats | null> => {
       const [mc, ps, rp] = await Promise.all([
         client.getNumberOfSentMulticastMessages(date),
         client.getNumberOfSentPushMessages(date),
         client.getNumberOfSentReplyMessages(date),
       ])
-      if ([mc, ps, rp].some(r => r.status !== 'ready')) missingDays++
-      sum.multicast += mc.status === 'ready' ? mc.success ?? 0 : 0
-      sum.push += ps.status === 'ready' ? ps.success ?? 0 : 0
-      sum.reply += rp.status === 'ready' ? rp.success ?? 0 : 0
-    }))
-    return { ...sum, throughLabel: days.length ? `${m + 1}/${days.length}` : null, missingDays }
+      const day: LineDayStats = {
+        multicast: mc.status === 'ready' ? mc.success ?? 0 : 0,
+        push: ps.status === 'ready' ? ps.success ?? 0 : 0,
+        reply: rp.status === 'ready' ? rp.success ?? 0 : 0,
+        missing: [mc, ps, rp].some(r => r.status !== 'ready'),
+      }
+      // 「還沒算好」（unready）之後會有數字，不記；不到 20 則（unavailable_for_privacy）那天永遠不會有，照記
+      if (![mc, ps, rp].some(r => r.status === 'unready')) {
+        _lineDayStatsCache.set(`${wid}:${date}`, day)
+        capMapSize(_lineDayStatsCache, LINE_DAY_STATS_CACHE_MAX)
+      }
+      return day
+    }
+    const worker = async () => {
+      for (let date = queue.shift(); date; date = queue.shift()) {
+        // 時間到了：剩下還沒問的不問了，一律算沒問到
+        if (timedOut) { failedDays++; continue }
+        const day = await Promise.race([askDay(date), deadline]).catch((err) => {
+          console.warn(`[getLineMonthSendBreakdown] ${wid} ${date} 問不到：`, lineMulticastErrorDetail(err))
+          return null
+        })
+        if (day) add(day)
+        else failedDays++
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(LINE_DAY_STATS_CONCURRENCY, queue.length) }, worker))
+    if (failedDays) console.warn(`[getLineMonthSendBreakdown] ${wid} 這個月有 ${failedDays}／${days.length} 天沒問到${timedOut ? `（超過 ${LINE_QUOTA_TIMEOUT_MS}ms）` : ''}`)
+    if (days.length && failedDays === days.length) return null
+    return { ...sum, throughLabel: days.length ? `${m + 1}/${days.length}` : null, missingDays, failedDays }
   }
   catch (err) {
-    console.warn(`[getLineMonthSendBreakdown] ${workspaceId} 問不到這個月各種送法的則數：`, lineMulticastErrorDetail(err))
+    console.warn(`[getLineMonthSendBreakdown] ${wid} 問不到這個月各種送法的則數：`, lineMulticastErrorDetail(err))
     return null
+  }
+  finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

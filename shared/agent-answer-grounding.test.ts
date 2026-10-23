@@ -135,6 +135,19 @@ describe('answerGroundingIssue（沒查就講的回答要退回去）', () => {
     expect(ok({ text: '要客人留哪些資料？我幫你擬一條自動回應，客人直接在 LINE 上一題一題回答，不用另外做表單。', sources: [], calledTools: [] })).toBe(true)
   })
 
+  // `C-395` code review：它照提示講「不用去填表單或點連結」、或講新的回覆要改成什麼，也被退回，把唯一一次退回用掉
+  it('🔴 否定句、講「新的回覆是」：⛔ 不擋；同一段裡另一句真的叫人去外面填的照擋', () => {
+    expect(ok({ text: '客人不用去填表單或點連結，直接在 LINE 上回答就好。', sources: [], calledTools: [] })).toBe(true)
+    expect(ok({ text: '不需要另外做問卷連結，我幫你在這條多問一題。', sources: [], calledTools: [] })).toBe(true)
+    expect(answerGroundingIssue({ text: '不用改流程。請把表單的連結貼給客人點擊填寫。', sources: [], calledTools: [], userTexts: [] })).toContain('在 LINE 上')
+
+    expect(ok({ text: '好的，新的回覆是「已收到，我們會盡快處理」，你確認一下。', sources: [], calledTools: [] })).toBe(true)
+    expect(ok({ text: '改成的回覆是：「請先拍照」，對嗎？', sources: [], calledTools: [] })).toBe(true)
+    expect(groundingToolToRun({ text: '新的回覆是「已收到」', calledTools: [] })).toBeNull()
+    // 講現在那句的照擋
+    expect(answerGroundingIssue({ text: '這條現在的回覆是「您好」。', sources: [], calledTools: [] })).toContain('list_scripts')
+  })
+
   // `D-151`（2026-10-23）：只退回不夠——「改提醒時間」被退回之後它照樣不查，第二次的「目前是 0 分鐘」就放行了
   it('被退回時該查卻沒查的那一支：系統替它查（設定／自動回應／異常）', () => {
     expect(groundingToolToRun({ text: '請問提醒時間要改成幾分鐘？目前是 0 分鐘', calledTools: [] })).toBe('get_ai_settings')
