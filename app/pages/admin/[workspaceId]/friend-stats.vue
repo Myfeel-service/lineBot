@@ -33,7 +33,7 @@
               type="primary"
               :icon="Refresh"
               :loading="generating"
-              :disabled="!allowRegen"
+              :disabled="!allowRegen || drafting"
               @click="generate"
             >
               重新產生
@@ -385,31 +385,36 @@
             </summary>
             <div class="card-section-stack">
               <p v-if="tagsUnavailable" class="friend-stats__muted">這次讀不到標籤資料，重新產生一次看看。</p>
-              <dl v-else class="friend-stats__kv friend-stats__kv--wide">
-                <template v-if="p.housekeeping.zeroMember.length">
+              <!-- ⛔ 標籤讀不到時只藏靠標籤的那幾列：「AI 判斷準不準」「等你決定的 AI 建議」讀的是別的紀錄，讀得到就照樣講（code review 抓到整塊一起藏） -->
+              <dl class="friend-stats__kv friend-stats__kv--wide">
+                <template v-if="!tagsUnavailable && p.housekeeping.zeroMember.length">
                   <dt>建了沒人用</dt>
                   <dd class="friend-stats__chips">
                     <el-tag v-for="t in p.housekeeping.zeroMember" :key="t.tagId" size="small" type="info">{{ t.name }}</el-tag>
                     <NuxtLink :to="`/admin/${workspaceId}/tags`" class="admin-inline-link">前往標籤管理封存 →</NuxtLink>
                   </dd>
                 </template>
-                <template v-if="p.housekeeping.aiOnButNeverProduced.length">
+                <template v-if="!tagsUnavailable && p.housekeeping.aiOnButNeverProduced.length">
                   <dt>開著 AI 判斷卻沒判出人</dt>
                   <dd class="friend-stats__chips">
                     <el-tag v-for="t in p.housekeeping.aiOnButNeverProduced" :key="t.tagId" size="small" type="warning">{{ t.name }}</el-tag>
                     <NuxtLink :to="`/admin/${workspaceId}/tags`" class="admin-inline-link">前往改判斷條件 →</NuxtLink>
                   </dd>
                 </template>
-                <dt>沒有任何標籤</dt>
-                <dd>
-                  <template v-if="p.housekeeping.untaggedUsers === null">這次算不出來（貼標紀錄掃到上限，或名單人數讀不到）</template>
-                  <template v-else>{{ fmt(p.housekeeping.untaggedUsers) }} 位——按標籤發的推播不會發到他們</template>
-                </dd>
+                <template v-if="!tagsUnavailable">
+                  <dt>沒有任何標籤</dt>
+                  <dd>
+                    <template v-if="p.housekeeping.untaggedUsers === null">這次算不出來（貼標紀錄掃到上限，或名單人數讀不到）</template>
+                    <template v-else>{{ fmt(p.housekeeping.untaggedUsers) }} 位——按標籤發的推播不會發到他們</template>
+                  </dd>
+                </template>
                 <dt>AI 判斷準不準</dt>
                 <dd>{{ accuracyText }}</dd>
                 <dt>等你決定的 AI 建議</dt>
                 <dd>
-                  <template v-if="p.housekeeping.pendingUsers === 0">沒有</template>
+                  <!-- ⛔ 讀不到（null）不是「沒有」 -->
+                  <template v-if="p.housekeeping.pendingUsers === null">這次讀不到，重新產生一次看看</template>
+                  <template v-else-if="p.housekeeping.pendingUsers === 0">沒有</template>
                   <template v-else>
                     {{ p.integrity.pendingTruncated ? `掃到的那些裡有 ${fmt(p.housekeeping.pendingUsers)} 位` : `${fmt(p.housekeeping.pendingUsers)} 位` }}
                     <!-- ⛔ 不要帶 `?tab=review`：標籤頁沒有那個分頁，審建議是每一列的「待審 N 位」按鈕 -->
@@ -435,7 +440,9 @@ import {
   lineDayOfMs,
   md,
   mdOfMs,
+  pushAudienceLabel,
   tagDataUnavailable,
+  type BroadcastLite,
   type FriendReportPayload,
   type IntentTagStat,
 } from '~~/shared/friend-report'
@@ -443,6 +450,7 @@ import {
   buildProposals,
   buildWatchItems,
   isBlockSpike,
+  isServiceCategory,
   proposalOutcomeText,
   proposalsEmptyText,
   pushBlockBaseline,
@@ -569,13 +577,18 @@ const drafts = reactive<Record<string, DraftState>>({})
 /**
  * 換了一份報告就把擬好的文案清掉（`C-404`）：同一顆標籤的提案可能換了檔期，
  * 留著舊的會把舊檔期的文案與記號帶進推播頁，檔期回顧就記錯一檔。
+ * ⛔ 「清掉」與「補上這份的提案」放在**同一個** watch 裡照順序做（code review 抓到）：
+ *   以前分兩個 watch，靠宣告順序剛好先清後補——順序一反，清完就沒補，按「幫我擬」沒反應。
  */
-watch(() => report.value?.generatedAtMs, () => {
-  for (const k of Object.keys(drafts)) delete drafts[k]
-})
-watch(proposals, (list) => {
+watch([() => report.value?.generatedAtMs, proposals], ([gen, list], prev) => {
+  if (prev && gen !== prev[0]) for (const k of Object.keys(drafts)) delete drafts[k]
   for (const prop of list) drafts[prop.tagId] ??= { loading: false, handoff: null, index: 0, error: '' }
 }, { immediate: true })
+/**
+ * 正在擬文案時不給「重新產生」（code review 抓到）：換了報告，擬好的結果會寫進已經被清掉的那一份，
+ * 畫面不出現、AI 的錢已經花了。擬一次幾秒鐘，等一下就好。
+ */
+const drafting = computed(() => Object.values(drafts).some(d => d.loading))
 
 /** 模板用：拿不到的時候給一份空的（⛔ 不在 render 裡寫入 reactive） */
 const EMPTY_DRAFT: DraftState = { loading: false, handoff: null, index: 0, error: '' }
@@ -651,11 +664,11 @@ function runWatchAction(w: WatchItem) {
  */
 const intentGroups = computed(() => {
   const list = p.value?.intents ?? []
-  const service = (c: string | null) => c === 'behavior' || c === 'member_status'
+  // ⛔ 哪些算「要照顧的」跟「也要留意」同一支（`isServiceCategory`），不在畫面另寫一份
   const groups: Array<{ key: 'interest' | 'service' | 'other', label: string, rows: IntentTagStat[] }> = [
     { key: 'interest', label: '興趣偏好', rows: list.filter(t => t.category === 'interest') },
-    { key: 'service', label: '消費行為・好友狀態', rows: list.filter(t => service(t.category)) },
-    { key: 'other', label: '自訂・其他分類（要在標籤管理設成「興趣偏好」才會提案）', rows: list.filter(t => t.category !== 'interest' && !service(t.category)) },
+    { key: 'service', label: '消費行為・好友狀態', rows: list.filter(t => isServiceCategory(t.category)) },
+    { key: 'other', label: '自訂・其他分類（要在標籤管理設成「興趣偏好」才會提案）', rows: list.filter(t => t.category !== 'interest' && !isServiceCategory(t.category)) },
   ]
   return groups.filter(g => g.rows.length)
 })
@@ -686,8 +699,9 @@ const pushTable = computed(() => {
     const rate = r.clicked !== null && r.sent > 0 ? r.clicked / r.sent : null
     return {
       ...r,
-      // 舊存檔沒有 label（`C-404` 才加）：退回原本的寫法
-      audienceText: r.audience.label || (r.audience.type === 'tags' ? r.audience.tagNames.join('、') : r.audience.type === 'all' ? '全部好友' : '指定名單'),
+      // 舊存檔沒有 label（`C-404` 才加）：退回同一支 `pushAudienceLabel` 照存下來的類型與標籤名組（⛔ 不在畫面另寫一份）
+      audienceText: r.audience.label
+        || pushAudienceLabel({ type: r.audience.type, tagIds: r.audience.tagIds } as BroadcastLite['audienceSource'], r.audience.tagNames),
       clickPct: rate === null ? '' : `${Math.round(rate * 100)}%`,
       clickBar: rate === null ? '0%' : barWidth(rate, maxRate),
       blockText: sameDay ? '同一天' : blocks === undefined ? '—' : fmt(blocks),
@@ -716,12 +730,18 @@ function onHousekeepingToggle(e: Event) {
 const housekeepingSummary = computed(() => {
   const h = p.value?.housekeeping
   if (!h) return ''
-  if (tagsUnavailable.value) return '這次讀不到標籤資料'
   const parts: string[] = []
-  if (h.zeroMember.length) parts.push(`${h.zeroMember.length} 顆建了沒人用`)
-  if (h.aiOnButNeverProduced.length) parts.push(`${h.aiOnButNeverProduced.length} 顆開著 AI 判斷卻沒判出人`)
-  if (h.untaggedUsers) parts.push(`${fmt(h.untaggedUsers)} 位沒有任何標籤`)
-  if (h.pendingUsers) parts.push(`${fmt(h.pendingUsers)} 位的建議等你決定`)
+  // ⛔ 有一塊讀不到就不可以講「沒有要處理的」（code review 抓到：待審建議讀不到時摘要寫「沒有要處理的」）
+  const unreadable: string[] = []
+  if (tagsUnavailable.value) unreadable.push('標籤資料')
+  else {
+    if (h.zeroMember.length) parts.push(`${h.zeroMember.length} 顆建了沒人用`)
+    if (h.aiOnButNeverProduced.length) parts.push(`${h.aiOnButNeverProduced.length} 顆開著 AI 判斷卻沒判出人`)
+    if (h.untaggedUsers) parts.push(`${fmt(h.untaggedUsers)} 位沒有任何標籤`)
+  }
+  if (h.pendingUsers === null) unreadable.push('待審建議')
+  else if (h.pendingUsers) parts.push(`${fmt(h.pendingUsers)} 位的建議等你決定`)
+  if (unreadable.length) parts.push(`這次讀不到${unreadable.join('、')}`)
   return parts.length ? parts.join('・') : '沒有要處理的'
 })
 
@@ -734,6 +754,8 @@ const accuracyText = computed(() => {
   const h = p.value?.housekeeping
   if (!h) return ''
   const s = h.suggestions
+  // ⛔ 讀不到 AI 建議紀錄（null）不是「還沒有人決定過」
+  if (!s) return '這次讀不到 AI 建議的紀錄，重新產生一次看看'
   const since = md(p.value!.integrity.suggestionLedgerSince)
   const auto = s.autoApplied ? `；另有 ${fmt(s.autoApplied)} 次是 AI 直接貼、沒經過人` : ''
   if (s.acceptanceRate === null) return `還沒有人決定過任何一筆建議${auto}`

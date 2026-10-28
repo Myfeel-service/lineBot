@@ -158,6 +158,12 @@ describe('好友統計行銷提案的文案（D-155）', () => {
     expect(rejectProposalCopy('根據你的紀錄，推薦濾芯', water)).toBe('寫出了「我們在觀察你」的話')
   })
 
+  it('⛔ 寫成「您」也一樣擋（店家口氣設成「您」時 AI 就會這樣寫）', () => {
+    expect(rejectProposalCopy('我們注意到您最近在看淨水系統', water)).toBe('寫出了「我們在觀察你」的話')
+    expect(rejectProposalCopy('根據您的紀錄，推薦濾芯', water)).toBe('寫出了「我們在觀察你」的話')
+    expect(rejectProposalCopy('偵測到您的濾芯快到期了', water)).toBe('寫出了「我們在觀察你」的話')
+  })
+
   it('⛔ 商品名裡的「系統」不可以被誤擋（C-404：賣淨水系統的店以前一版都擬不出來）', () => {
     expect(rejectProposalCopy('換季了，淨水系統的濾芯記得換，想問哪一款直接回我們。', water)).toBeNull()
   })

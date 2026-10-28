@@ -15,7 +15,8 @@
  * ⛔ 這裡不做查詢。呼叫端（`server/utils/friend-report-compute.ts`）只掃一趟 `userTags`，
  *   同一批列丟給下面每一支（`D-28` 的成本決定照舊）。
  */
-import { FOLLOW_UP_LABEL, isFollowUpTarget } from './broadcast-follow-up'
+import { followUpAudienceText, isFollowUpTarget } from './broadcast-follow-up'
+import { LINE_STATS_ROUND_DAYS } from './broadcast-line-stats'
 import { pickPreviousSameAudience, wasSent, type AudienceLike } from './broadcast-open-compare'
 import { addDays, daysBetween, taipeiDate } from './time'
 import type { TagCategory } from './types/tag-broadcast'
@@ -135,6 +136,12 @@ export interface PushRow {
   proposalTagId: string | null
   /** 上一則發給同一群人的（`D-154`①／`C-401` 同一支判斷）；沒有或那一則沒打開數＝null */
   prevOpen: { name: string, completedMs: number, openRate: number } | null
+  /**
+   * LINE 的數字定了沒＝排程已經存到最後一輪（發完第 7 天那次，`StoredLineStats.round`）。
+   * ⛔ 不要用「發完過了幾天」代替：滿 7 天但排程還沒抓、或抓失敗 6 小時後才重試的那段，存的還是第 3 天的數字（code review 抓到）。
+   * ⚠️ 舊存檔沒有這一欄＝退回看天數（`pushStatsFinal`）。
+   */
+  statsFinal?: boolean
 }
 
 export interface LineFriendStats {
@@ -212,8 +219,13 @@ export interface FriendReportPayload {
     aiOnButNeverProduced: Array<{ tagId: string, name: string }>
     /** 名單裡一顆標籤都沒有的人；掃描截斷或名單人數查不到＝null */
     untaggedUsers: number | null
-    suggestions: { decided: number, agreed: number, autoApplied: number, acceptanceRate: number | null }
-    pendingUsers: number
+    /**
+     * AI 建議的同意率；**AI 建議紀錄讀不到＝null**（⛔ 不是「還沒有人決定過」——那是讀得到、真的沒有，code review 抓到）。
+     * ⚠️ 舊存檔一定有值（讀不到的時候也照 0 存了），畫面照讀。
+     */
+    suggestions: { decided: number, agreed: number, autoApplied: number, acceptanceRate: number | null } | null
+    /** 等人決定的 AI 建議人數；**待審建議讀不到＝null**（⛔ 不是「沒有」） */
+    pendingUsers: number | null
   }
 }
 
@@ -412,6 +424,8 @@ export interface BroadcastLite {
   proposalTagId: string | null
   /** 收件名單；只有用得到的那幾則才讀（窗口內送出的＋補發的來源那一則，`C-404`），其餘是空陣列 */
   resolvedUserIds: readonly string[]
+  /** LINE 的數字已經存到最後一輪（見 `PushRow.statsFinal`）；沒給＝false */
+  statsFinal?: boolean
 }
 
 /** 真的送出去、送到人、而且知道哪時候送完的（「送出去」的判斷跟推播成效頁同一支 `wasSent`） */
@@ -419,32 +433,45 @@ function sentWithTime(b: BroadcastLite): boolean {
   return wasSent(b) && b.completedMs !== null
 }
 
+/** 標籤名稱這次讀不到時，依標籤發的推播「發給」那一欄寫這個（⛔ 不寫「已刪除的標籤」——沒刪，是沒讀到） */
+export const TAG_NAMES_UNREADABLE_LABEL = '依標籤挑的人（標籤名稱這次讀不到）'
+
 /**
  * 「發給」那一欄的字。補發（`C-403`）講得出補發給哪一則的誰，⛔ 不要寫成看不懂的「指定名單」。
+ * 補發那一句跟推播頁同一支（`followUpAudienceText`）：⛔ 不要在這裡另寫一份——
+ * 以前這裡一律寫「補發給」，「點了連結的人」那則跟推播頁講的不一樣（code review 抓到）。
  */
 export function pushAudienceLabel(
   src: BroadcastLite['audienceSource'],
   tagNames: readonly string[],
 ): string {
-  if (src?.type === 'tags') return tagNames.join('、')
+  if (src?.type === 'tags') return tagNames.length ? tagNames.join('、') : TAG_NAMES_UNREADABLE_LABEL
   if (src?.type === 'all') return '全部好友'
   if (src?.type === 'followUp') {
-    const who = isFollowUpTarget(src.followUpTarget) ? FOLLOW_UP_LABEL[src.followUpTarget] : '其中一部分人'
-    return src.sourceName ? `補發給「${src.sourceName}」${who}` : `補發給${who}`
+    return followUpAudienceText(src.sourceName, isFollowUpTarget(src.followUpTarget) ? src.followUpTarget : undefined)
   }
   if (src?.type === 'import') return '匯入的名單'
   return '指定名單'
+}
+
+/** LINE 的數字定了沒：有存輪次就看輪次；舊存檔沒有這一欄才退回看發完過了幾天 */
+export function pushStatsFinal(row: { statsFinal?: boolean, completedMs: number }, nowMs: number): boolean {
+  if (typeof row.statsFinal === 'boolean') return row.statsFinal
+  // 最後一輪＝發完第 7 天（`[2]` 是固定位置，型別就是 7；⛔ 不用 `[length - 1]`，那個型別會帶 undefined）
+  return nowMs - row.completedMs >= LINE_STATS_ROUND_DAYS[2] * DAY
 }
 
 /**
  * 最近 30 天的推播列（新到舊），**含今天已經送完的**（`C-404`：只算到昨天的話，
  * 今天剛發的推播不在表上，提案的「7 天內收過推播就不提」也看不到它）。
  * `all` 是讀進來的全部推播（含窗口之前的）——「上一則發給同一群人的」可能在窗口外。
+ * `tagNameOf` 傳 null＝**標籤這次讀不到**：依標籤發的那幾則寫「標籤名稱這次讀不到」，
+ *   ⛔ 不可以照「查無此標籤」寫成「(已刪除的標籤)」——讓店家以為標籤被刪了（code review 抓到）。
  */
 export function pushRows(
   all: readonly BroadcastLite[],
   win: ReportWindow,
-  tagNameOf: (tagId: string) => string | null,
+  tagNameOf: ((tagId: string) => string | null) | null,
   nowMs: number,
 ): PushRow[] {
   const candidates = all.map(b => ({
@@ -461,8 +488,8 @@ export function pushRows(
     .sort((a, b) => b.completedMs! - a.completedMs!)
     .map((b) => {
       const tagIds = b.audienceSource?.type === 'tags' ? [...(b.audienceSource.tagIds ?? [])] : []
-      // 刪掉的標籤不猜名字
-      const tagNames = tagIds.map(id => tagNameOf(id) ?? '(已刪除的標籤)')
+      // 刪掉的標籤不猜名字；標籤整個讀不到時不列名字（「發給」那一欄另外講）
+      const tagNames = tagNameOf ? tagIds.map(id => tagNameOf(id) ?? '(已刪除的標籤)') : []
       const prev = pickPreviousSameAudience({ id: b.id, audienceSource: b.audienceSource, completedMs: b.completedMs! }, candidates)
       return {
         id: b.id,
@@ -479,6 +506,7 @@ export function pushRows(
         clicked: b.clicked,
         proposalTagId: b.proposalTagId,
         prevOpen: prev ? { name: prev.name, completedMs: prev.completedMs, openRate: prev.openRate } : null,
+        statsFinal: b.statsFinal === true,
       }
     })
 }

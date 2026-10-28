@@ -1695,9 +1695,7 @@ async function openValidateDialog() {
   // 在任何 async 動作之前先把當下表單狀態完整擷取，避免後續重載覆蓋
   const capturedMode = form.value.scheduleMode as 'now' | 'schedule'
   const capturedScheduleAt = String(form.value.scheduleAt || '').trim()
-  const capturedName = form.value.name.trim()
   const capturedAudienceSource = buildAudienceSource()
-  const capturedMessages = buildMessages()
   /**
    * ⛔ 新建的那一份要跟「儲存草稿」存同一份東西（`C-404`，2026-10-28 code review 抓到）：
    *   以前這裡只帶名字／對象／內容三樣，沒先存草稿就直接按發送或排程的話，
@@ -1723,7 +1721,7 @@ async function openValidateDialog() {
       const created = await apiFetch<any>('/api/broadcast/create', {
         method: 'POST',
         // 新建時 buildSaveBody 不帶 scheduleAt（排程時間由確認排程那一步統一寫入）
-        body: { ...capturedSaveBody, name: capturedName, audienceSource: capturedAudienceSource, messages: capturedMessages },
+        body: capturedSaveBody,
       })
       await loadData()
       selectedId.value = created.id
@@ -1737,6 +1735,14 @@ async function openValidateDialog() {
     finally {
       saving.value = false
     }
+  }
+  /**
+   * ⛔ 已經存過的草稿改了沒存：一定要先存（code review 抓到，同試發那條）。
+   * `/validate` 與 `/send` 讀的都是**存在資料庫的那一份**——不存的話，驗證視窗看的、客人收到的都是舊內容，
+   * 改過的「發完貼記號」也不會貼。排程那條雖然會帶名字／對象／內容，其他欄位一樣會掉。
+   */
+  else if (hasUnsavedChanges.value) {
+    if (!(await saveDraft())) return
   }
 
   if (!selectedId.value) return

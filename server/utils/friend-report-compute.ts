@@ -22,7 +22,7 @@ import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
 import { fetchFollowerDays } from '~~/server/utils/line-follower-insight'
 import { getMarketingEvents } from '~~/server/utils/marketing-events'
 import { getMarketingSkips } from '~~/server/utils/marketing-skips'
-import { parseStoredLineStats } from '~~/shared/broadcast-line-stats'
+import { LINE_STATS_ROUND_DAYS, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
 import {
   FRIEND_REPORT_VERSION,
@@ -124,7 +124,8 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
     db.collection('broadcasts')
       .where('workspaceId', '==', workspaceId)
       .orderBy('createdAt', 'desc')
-      .limit(BROADCAST_SCAN_LIMIT)
+      // 多讀一筆用來判斷「還有沒有更多」（同這支其他掃描；⛔ 剛好 150 則時不可以誤報讀不完）
+      .limit(BROADCAST_SCAN_LIMIT + 1)
       .select('name', 'status', 'createdAt', 'completedAt', 'audienceSource.type', 'audienceSource.tagIds', 'audienceSource.audienceId',
         'audienceSource.sourceBroadcastId', 'audienceSource.followUpTarget', 'audienceSource.sourceName',
         'sentCount', 'lineStats', 'proposalTagId')
@@ -165,7 +166,7 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
   const tagName = (id: string) => tagList.find(t => t.id === id)?.name ?? null
 
   // ── 推播 ────────────────────────────────────────────────────────
-  const docs = broadcastSnap?.docs ?? []
+  const docs = (broadcastSnap?.docs ?? []).slice(0, BROADCAST_SCAN_LIMIT)
   const lites: BroadcastLite[] = docs.map((d) => {
     const v = d.data() as Record<string, any>
     const stats = parseStoredLineStats(v.lineStats)
@@ -180,11 +181,13 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
       clicked: stats?.clicked ?? null,
       proposalTagId: typeof v.proposalTagId === 'string' && v.proposalTagId ? v.proposalTagId : null,
       resolvedUserIds: [],
+      // 存到最後一輪（發完第 7 天那次）才算定了（`PushRow.statsFinal`）
+      statsFinal: Number(v.lineStats?.round) >= LINE_STATS_ROUND_DAYS.length,
     }
   })
-  // 讀到上限、最舊那一則還是窗口開始之後建的＝更早建、這個月才送的推播可能沒讀到
+  // 讀到上限而且還有更多、最舊那一則還是窗口開始之後建的＝更早建、這個月才送的推播可能沒讀到
   const oldestCreatedMs = docs.length ? parseFirestoreDate(docs[docs.length - 1]!.data().createdAt)?.getTime() ?? null : null
-  const pushesTruncated = docs.length >= BROADCAST_SCAN_LIMIT && (oldestCreatedMs === null || oldestCreatedMs >= win.startMs)
+  const pushesTruncated = (broadcastSnap?.size ?? 0) > BROADCAST_SCAN_LIMIT && (oldestCreatedMs === null || oldestCreatedMs >= win.startMs)
 
   /**
    * 收件名單只讀用得到的那幾則：窗口內（含今天）送出的＋補發所補的那一則。
@@ -255,7 +258,8 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
     overview: { line, activeUsers, listSize: totalUsers },
     intents,
     intentPairs: recentIntentPairs(rows, intents.map(t => t.tagId), win),
-    pushes: broadcastSnap ? pushRows(lites, win, tagName, nowMs) : null,
+    // 標籤讀不到傳 null：依標籤發的那幾則講「標籤名稱這次讀不到」，⛔ 不寫成「已刪除的標籤」
+    pushes: broadcastSnap ? pushRows(lites, win, tagsFailed ? null : tagName, nowMs) : null,
     newMembers: {
       // ⛔ 讀不到標籤時來源分不出來：整區講「查不到」，不把所有人都算成「沒有來源標籤」
       total: newUsersScan && tagData ? newUserIds.size : null,
@@ -271,13 +275,16 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
       zeroMember: health.zeroMember.map(t => ({ tagId: t.id, name: tagName(t.id) ?? '(已刪除的標籤)' })),
       aiOnButNeverProduced: health.aiOnButNeverProduced.map(t => ({ tagId: t.id, name: tagName(t.id) ?? '(已刪除的標籤)' })),
       untaggedUsers: coverage.untaggedUsers,
-      suggestions: {
-        decided: outcomes.decided,
-        agreed: outcomes.agreed,
-        autoApplied: outcomes.autoApplied,
-        acceptanceRate: outcomes.acceptanceRate,
-      },
-      pendingUsers: Math.min(pendingScan?.size ?? 0, PENDING_SCAN_LIMIT),
+      // ⛔ 讀不到＝null，不是 0／「還沒有人決定過」（code review 抓到：讀不到卻講成沒有）
+      suggestions: suggestionLogs
+        ? {
+            decided: outcomes.decided,
+            agreed: outcomes.agreed,
+            autoApplied: outcomes.autoApplied,
+            acceptanceRate: outcomes.acceptanceRate,
+          }
+        : null,
+      pendingUsers: pendingScan ? Math.min(pendingScan.size, PENDING_SCAN_LIMIT) : null,
     },
   }
 }

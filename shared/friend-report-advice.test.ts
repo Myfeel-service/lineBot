@@ -213,6 +213,20 @@ describe('還沒設分類的 AI 標籤（C-404：標籤頁新建的預設是「�
     expect(t).toContain('設成「興趣偏好」')
   })
 
+  it('⛔ 分類不只一種時每顆標自己的（code review：以前拿第一顆的分類套整句，第二顆講錯）', () => {
+    const t = unclassifiedHint(payload({ intents: [custom, intent('a1', '參加過試喝會', 'activity', 20, 15, 2)] }))
+    expect(t).toContain('「在看咖啡機」（自訂）、「參加過試喝會」（活動參與）')
+    expect(t).toContain('分類都不是「興趣偏好」')
+    expect(t).not.toContain('分類是「自訂」')
+  })
+
+  it('⚠️ 自訂分類的「人數暴增」刻意不進「也要留意」，但會出現在這一句（客訴類的暴增看得到）', () => {
+    const defect = intent('d1', '回報過商品故障', 'custom', 30, 30, 3)
+    const p = payload({ intents: [defect] })
+    expect(buildWatchItems(p).filter(w => w.kind === 'rising')).toEqual([])
+    expect(unclassifiedHint(p)).toContain('「回報過商品故障」最近新增不少人')
+  })
+
   it('量不夠、或已經分好類的不提醒（對照組）', () => {
     expect(unclassifiedHint(payload({ intents: [intent('c1', 'A', 'custom', 9, 9, 0)] }))).toBeNull()
     expect(unclassifiedHint(payload())).toBeNull()
@@ -307,6 +321,15 @@ describe('也要留意', () => {
     expect(buildWatchItems(mature).filter(w => w.kind === 'push')).toHaveLength(1)
   })
 
+  it('⛔ 滿 7 天、但 LINE 的數字還沒存到最後一輪 → 一樣不比（code review：第 3 天的數字會被當成定了，報出假的「掉很多」）', () => {
+    const flatLine = { ...payload().overview, line: { ...payload().overview.line, blocksByDay: {} } }
+    const notFinal = payload({ pushes: MYFEEL_PUSHES.map(r => ({ ...r, statsFinal: false })), overview: flatLine })
+    expect(buildWatchItems(notFinal).filter(w => w.kind === 'push')).toEqual([])
+    // 對照組：存到最後一輪了就照講
+    const final = payload({ pushes: MYFEEL_PUSHES.map(r => ({ ...r, statsFinal: true })), overview: flatLine })
+    expect(buildWatchItems(final).filter(w => w.kind === 'push')).toHaveLength(1)
+  })
+
   it('封鎖跳起來的判斷：表格與這一條共用（平常不到 1 位不講、要 2 倍以上且至少 5 位）', () => {
     expect(isBlockSpike(29, 10)).toBe(true)
     expect(isBlockSpike(19, 10)).toBe(false)
@@ -337,6 +360,12 @@ describe('上次照提案發的成績', () => {
     const youngOther = push('y', '另一則剛發的', '2026-10-27T12:00:00', 100, 5)
     const t = proposalOutcomeText(payload({ pushes: [youngOther, mine, MYFEEL_PUSHES[1]!, MYFEEL_PUSHES[5]!] }))
     expect(t).toBe('上次照提案發的「在看咖啡機」（10/26）：打開 27%（發完還不到 7 天，打開的人還會再多一些）；最近 30 天其他推播打開 16%–36%。')
+  })
+
+  it('⛔ 滿 7 天但 LINE 最後一次的數字還沒拿到：講「可能還會再多」（⛔ 不寫「發完還不到 7 天」），也不拿沒定的去比', () => {
+    const mine = push('mine', '在看咖啡機・雙 11 購物節', '2026-10-20T12:00:00', 55, 20, { clicked: 9, proposalTagId: 'coffee', statsFinal: false })
+    const t = proposalOutcomeText(payload({ pushes: [mine, { ...MYFEEL_PUSHES[1]!, statsFinal: false }, MYFEEL_PUSHES[5]!] }))
+    expect(t).toBe('上次照提案發的「在看咖啡機・雙 11 購物節」（10/20）：打開 36%、點連結 16%（LINE 最後一次的數字還沒拿到，打開的人可能還會再多一些）；最近 30 天其他推播打開 36%。')
   })
 
   it('LINE 還沒給數字時講什麼時候才有，⛔ 不寫 0%', () => {

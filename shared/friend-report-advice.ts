@@ -20,6 +20,7 @@ import {
   lineDayOfMs,
   md,
   mdOfMs,
+  pushStatsFinal,
   reportNowMs,
   tagDataUnavailable,
   type FriendReportPayload,
@@ -52,14 +53,25 @@ export const BLOCK_SPIKE_MIN = 5
 export const OPEN_DROP_POINTS = 10
 export const OPEN_DROP_MAX_GAP_DAYS = 14
 
-/** LINE 的打開數存到發完第 7 天才不再變（`LINE_STATS_ROUND_DAYS` 最後一輪）；還沒到的數字只能當「目前為止」 */
-const STATS_FINAL_DAYS: number = LINE_STATS_ROUND_DAYS[LINE_STATS_ROUND_DAYS.length - 1] ?? 7
+/**
+ * LINE 的打開數存到發完第 7 天才不再變（`LINE_STATS_ROUND_DAYS` 最後一輪）；還沒到的數字只能當「目前為止」。
+ * 只拿來寫字（「發完還不到 7 天」）；⛔「定了沒」一律問 `pushStatsFinal`（看存到哪一輪，不看天數）。
+ */
+const STATS_FINAL_DAYS = LINE_STATS_ROUND_DAYS[2]
 const DAY = 86_400_000
 
 /** 可以拿來提案的分類（想買的訊號） */
 const PROPOSAL_CATEGORY = 'interest'
 /** 服務類訊號的分類（要照顧的人）；⛔ 自訂／沒分類的不算——不知道它是想買還是在抱怨 */
 const SERVICE_CATEGORIES = new Set(['behavior', 'member_status'])
+
+/**
+ * 這個分類是不是「要照顧的人」（消費行為・好友狀態）。
+ * ⛔ 畫面要分組就 import 這一支，不要在畫面另寫一份（code review 抓到 friend-stats.vue 抄了一份）。
+ */
+export function isServiceCategory(category: string | null | undefined): boolean {
+  return SERVICE_CATEGORIES.has(String(category))
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  檔期
@@ -193,9 +205,12 @@ export function unclassifiedHint(p: FriendReportPayload): string | null {
   if (tagDataUnavailable(p)) return null
   const list = p.intents.filter(t => t.category !== PROPOSAL_CATEGORY && !SERVICE_CATEGORIES.has(String(t.category)) && t.recent >= PROPOSAL_MIN_RECENT)
   if (!list.length) return null
-  const names = list.slice(0, 3).map(t => `「${t.name}」`).join('、')
-  const cat = list[0]!.category ? tagCategoryLabel(list[0]!.category) : '沒有分類'
-  return `${names}${list.length > 3 ? ` 等 ${list.length} 顆` : ''}最近新增不少人，但分類是「${cat}」，這裡分不出是想買還是要照顧的。`
+  const catOf = (t: IntentTagStat) => (t.category ? tagCategoryLabel(t.category) : '沒有分類')
+  // ⛔ 分類不只一種時每顆標自己的：以前拿第一顆的分類套整句，第二顆的分類講錯（code review 抓到）
+  const cats = new Set(list.map(catOf))
+  const names = list.slice(0, 3).map(t => (cats.size === 1 ? `「${t.name}」` : `「${t.name}」（${catOf(t)}）`)).join('、')
+  const catText = cats.size === 1 ? `分類是「${[...cats][0]}」` : '分類都不是「興趣偏好」'
+  return `${names}${list.length > 3 ? ` 等 ${list.length} 顆` : ''}最近新增不少人，但${catText}，這裡分不出是想買還是要照顧的。`
     + '在標籤管理把想買的設成「興趣偏好」，下一份報告就會幫它提案。'
 }
 
@@ -228,7 +243,12 @@ export function isBlockSpike(blocks: number | undefined, baseline: number | null
     && blocks >= baseline * BLOCK_SPIKE_RATIO && blocks >= BLOCK_SPIKE_MIN
 }
 
-/** 服務類訊號（消費行為、好友狀態的意圖標籤）變多最多的那一顆 */
+/**
+ * 服務類訊號（消費行為、好友狀態的意圖標籤）變多最多的那一顆。
+ * ⚠️ 「自訂」／沒分類的刻意不算（`C-404`，有測試釘著）：不知道它是想買還是在抱怨。
+ *   它們量夠時由 `unclassifiedHint` 講「最近新增不少人，分不出是想買還是要照顧的」——客訴類的暴增在那一句看得到。
+ *   （code review 曾建議放寬成「興趣偏好以外都算」，評估後維持：那是 `C-404` 已經拍板的取捨。）
+ */
 function risingItem(p: FriendReportPayload): WatchItem | null {
   if (tagDataUnavailable(p)) return null
   const ratio = (t: IntentTagStat) => (t.prev === 0 ? Number.POSITIVE_INFINITY : t.recent / t.prev)
@@ -255,7 +275,7 @@ function openDropSentence(pushes: readonly PushRow[], nowMs: number): string | n
   let best: { drop: number, text: string } | null = null
   for (const row of pushes) {
     if (!row.prevOpen || row.opened === null || row.sent <= 0) continue
-    if (nowMs - row.completedMs < STATS_FINAL_DAYS * DAY) continue
+    if (!pushStatsFinal(row, nowMs)) continue
     const gap = Math.round((row.completedMs - row.prevOpen.completedMs) / DAY)
     if (gap > OPEN_DROP_MAX_GAP_DAYS) continue
     const rate = row.opened / row.sent
@@ -332,9 +352,16 @@ export function proposalOutcomeText(p: FriendReportPayload): string | null {
   if (mine.opened === null) return `${head}：LINE 還沒給打開人數，發完隔天才有。`
   const parts = [`打開 ${pct(mine.opened / mine.sent)}`]
   if (mine.clicked !== null) parts.push(`點連結 ${pct(mine.clicked / mine.sent)}`)
-  const young = nowMs - mine.completedMs < STATS_FINAL_DAYS * DAY
+  // 「定了沒」看存到哪一輪（`pushStatsFinal`），⛔ 不看天數：滿 7 天但排程還沒抓第 3 輪時，存的還是第 3 天的數字
+  const young = !pushStatsFinal(mine, nowMs)
+  // 滿 7 天卻還沒定＝排程還沒抓到最後一輪：⛔ 不可以寫「發完還不到 7 天」
+  const youngNote = !young
+    ? ''
+    : nowMs - mine.completedMs < STATS_FINAL_DAYS * DAY
+      ? `（發完還不到 ${STATS_FINAL_DAYS} 天，打開的人還會再多一些）`
+      : '（LINE 最後一次的數字還沒拿到，打開的人可能還會再多一些）'
   const others = pushes
-    .filter(x => !x.proposalTagId && x.opened !== null && x.sent > 0 && nowMs - x.completedMs >= STATS_FINAL_DAYS * DAY)
+    .filter(x => !x.proposalTagId && x.opened !== null && x.sent > 0 && pushStatsFinal(x, nowMs))
     .map(x => x.opened! / x.sent)
   let tail = ''
   if (others.length) {
@@ -342,5 +369,5 @@ export function proposalOutcomeText(p: FriendReportPayload): string | null {
     const hi = pct(Math.max(...others))
     tail = `；最近 30 天其他推播打開 ${lo === hi ? lo : `${lo}–${hi}`}`
   }
-  return `${head}：${parts.join('、')}${young ? `（發完還不到 ${STATS_FINAL_DAYS} 天，打開的人還會再多一些）` : ''}${tail}。`
+  return `${head}：${parts.join('、')}${youngNote}${tail}。`
 }

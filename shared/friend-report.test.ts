@@ -19,12 +19,15 @@ import {
   pushAudienceLabel,
   pushedUserSets,
   pushRows,
+  pushStatsFinal,
   recentIntentPairs,
   recipientIdsNeeded,
   reportWindow,
+  TAG_NAMES_UNREADABLE_LABEL,
   type BroadcastLite,
   type UserTagTimedRow,
 } from './friend-report'
+import { followUpAudienceText } from './broadcast-follow-up'
 
 /** 2026-10-28 14:49 台北（MYFEEL 那份報告產生的時間） */
 const NOW = Date.parse('2026-10-28T14:49:00+08:00')
@@ -243,11 +246,34 @@ describe('推播', () => {
     expect(rows[0]!.audience.tagNames).toEqual(['(已刪除的標籤)'])
   })
 
+  it('⛔ 標籤這次讀不到（傳 null）→ 講「標籤名稱這次讀不到」，不寫成「已刪除的標籤」（code review 抓到）', () => {
+    const rows = pushRows([b({ audienceSource: { type: 'tags', tagIds: ['t1', 't2'] } })], W, null, NOW)
+    expect(rows[0]!.audience.tagNames).toEqual([])
+    expect(rows[0]!.audience.label).toBe(TAG_NAMES_UNREADABLE_LABEL)
+    expect(JSON.stringify(rows[0])).not.toContain('已刪除')
+  })
+
   it('「發給」那一欄：補發講得出補發給哪一則的誰（⛔ 不寫看不懂的「指定名單」）', () => {
     expect(pushAudienceLabel({ type: 'followUp', sourceBroadcastId: 'x', followUpTarget: 'unopened', sourceName: '小滑手_開賣' }, []))
       .toBe('補發給「小滑手_開賣」沒打開的人')
     expect(pushAudienceLabel({ type: 'all' }, [])).toBe('全部好友')
     expect(pushAudienceLabel({ type: 'import' }, [])).toBe('匯入的名單')
+  })
+
+  it('⛔ 補發那一句跟推播頁同一支：點了／沒點連結的是「發給」不是「補發給」（code review 抓到兩邊講不一樣）', () => {
+    for (const target of ['unopened', 'clicked', 'unclicked'] as const) {
+      expect(pushAudienceLabel({ type: 'followUp', sourceBroadcastId: 'x', followUpTarget: target, sourceName: '小滑手_開賣' }, []))
+        .toBe(followUpAudienceText('小滑手_開賣', target))
+    }
+    expect(pushAudienceLabel({ type: 'followUp', followUpTarget: 'clicked', sourceName: '小滑手_開賣' }, [])).toBe('發給「小滑手_開賣」點了連結的人')
+  })
+
+  it('LINE 數字定了沒：看存到哪一輪；舊存檔沒有那一欄才看天數', () => {
+    const rows = pushRows([b({ statsFinal: false }), b({ id: 'f', statsFinal: true })], W, names, NOW)
+    expect(rows.map(r => r.statsFinal)).toEqual([false, true])
+    expect(pushStatsFinal({ statsFinal: false, completedMs: NOW - 30 * 86_400_000 }, NOW)).toBe(false)
+    expect(pushStatsFinal({ completedMs: NOW - 8 * 86_400_000 }, NOW)).toBe(true)
+    expect(pushStatsFinal({ completedMs: NOW - 2 * 86_400_000 }, NOW)).toBe(false)
   })
 
   it('誰最近收過推播：30 天內與 7 天內分開算，⛔ 算到產生那一刻（今天早上發的也算）', () => {
