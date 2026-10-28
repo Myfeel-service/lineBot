@@ -2,9 +2,10 @@
  * `C-338`①：叫了 AI 卻完全沒記帳的幾處，補上之後記到對的桶、帶著實際模型、次數跟著進同一桶。
  *
  *   - 擬節慶推播文案（broadcast-copy-gen）→ 後台自用（有人按「幫我擬」才跑）
+ *   - 擬好友統計行銷提案的文案（同一支，`D-155`）→ 後台自用
  *   - 每日摘要的節慶建議（festival-tailor）→ 後台自用（給老闆看的、跟客人多寡無關）
- *   - 貼標報告的總結（tag-report）→ 後台自用
  *   ⛔ 模型回的東西不能用（JSON 壞掉、驗不過）時，錢一樣付了，一樣要記
+ *   （原本還有「貼標報告的總結」：`D-155` 把那段 AI 總結拿掉了，產生報告不再叫 AI）
  *
  * 假的 generateJson／generateText 照 gemini.ts 出口的真實行為演：回 200 就在計量器登記一筆。
  */
@@ -17,21 +18,11 @@ vi.mock('./gemini', () => ({
   runWithLlmBudget: (_ws: string, fn: () => Promise<unknown>) => fn(),
 }))
 vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
-vi.mock('./tag-insights-compute', () => ({ computeTagInsights: vi.fn() }))
-vi.mock('./store-profile', () => ({ getStoreProfile: vi.fn(async () => null) }))
-vi.mock('~~/shared/tag-report', async importOriginal => ({
-  ...(await importOriginal<typeof import('~~/shared/tag-report')>()),
-  isTooThinForSummary: vi.fn(() => false),
-  rejectTagSummary: vi.fn(() => null),
-  buildTagSummaryPrompt: vi.fn(() => '（總結的提示詞）'),
-}))
 
 const { generateJson, generateText } = await import('./gemini')
 const { recordAiUsage } = await import('./ai-usage')
-const { computeTagInsights } = await import('./tag-insights-compute')
 const { tailorFestivalAngle } = await import('./festival-tailor')
-const { generateBroadcastCopy } = await import('./broadcast-copy-gen')
-const { generateTagReport } = await import('./tag-report')
+const { generateBroadcastCopy, generateProposalCopy } = await import('./broadcast-copy-gen')
 const { emptyStoreProfile, setStoreProfileField } = await import('~~/shared/types/store-profile')
 const { TAIWAN_FESTIVALS } = await import('~~/shared/taiwan-festivals')
 
@@ -112,14 +103,21 @@ describe('每日摘要的節慶建議', () => {
   })
 })
 
-describe('貼標報告的總結', () => {
-  const db = { collection: () => ({ doc: () => ({ set: async () => {} }) }) } as any
+describe('擬好友統計行銷提案的文案（D-155）', () => {
+  const input = { tagName: '在看養生茶', tagMeaning: '', festival: null }
 
-  it('記進後台自用、次數一起記（帶著呼叫端的 db）', async () => {
-    vi.mocked(computeTagInsights).mockResolvedValueOnce({} as any)
-    vi.mocked(generateText).mockImplementationOnce(async () => paidText('買過咖啡機的人最常回購濾紙。', 2500, 200))
-    const doc = await generateTagReport(db, 'ws1', 'uid1')
-    expect(doc.summary).toContain('濾紙')
-    expect(vi.mocked(recordAiUsage).mock.calls[0]).toEqual(['ws1', testBucket(2500, 200), db])
+  it('記進後台自用、次數一起記；跟節慶那支同一桶', async () => {
+    vi.mocked(generateJson).mockImplementationOnce(async () => paidJson({ variants: ['天氣轉涼，養生茶包可以先備著。', '最近想喝點溫的？黑豆水很順口。', '想知道哪一款適合你，直接回我們就好。'] }, 800, 120))
+    const out = await generateProposalCopy('ws1', profileOf(), input)
+    expect(out.variants.length).toBeGreaterThan(0)
+    expect(vi.mocked(recordAiUsage).mock.calls[0]).toEqual(['ws1', testBucket(800, 120)])
+  })
+
+  it('三版都沒過檢查：一版都不給，但錢照記', async () => {
+    vi.mocked(generateJson).mockImplementationOnce(async () => paidJson({ variants: ['我們注意到你在看養生茶', '系統判斷你想買', 'NT$599 限時'] }, 800, 120))
+    const out = await generateProposalCopy('ws1', profileOf(), input)
+    expect(out.variants).toEqual([])
+    expect(out.dropped).toHaveLength(3)
+    expect(vi.mocked(recordAiUsage).mock.calls[0]).toEqual(['ws1', testBucket(800, 120)])
   })
 })

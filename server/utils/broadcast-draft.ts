@@ -15,6 +15,8 @@ export function newBroadcastDraftDoc(input: {
   messages: unknown[]
   completionTagIds: string[]
   festivalId?: string
+  /** `D-155`：從好友統計的行銷提案開的（複製一則不帶這個） */
+  proposalTagId?: string
 }): BroadcastDoc {
   const now = FieldValue.serverTimestamp()
   return {
@@ -31,6 +33,7 @@ export function newBroadcastDraftDoc(input: {
     messages: input.messages,
     completionTagIds: input.completionTagIds,
     ...(input.festivalId ? { festivalId: input.festivalId } : {}),
+    ...(input.proposalTagId ? { proposalTagId: input.proposalTagId } : {}),
     scheduleAt: null,
     startedAt: null,
     completedAt: null,

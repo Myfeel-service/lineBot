@@ -4,7 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { memberCountsForTagIds } from '~~/server/utils/tag-member-count'
 import { INACTIVE_TAG_CODE } from '~~/server/utils/inactive-tag'
-import { generateBroadcastCopy } from '~~/server/utils/broadcast-copy-gen'
+import { generateBroadcastCopy, generateProposalCopy } from '~~/server/utils/broadcast-copy-gen'
 import {
   audienceNoticeText,
   matchAudienceTags,
@@ -14,15 +14,21 @@ import {
 import { getMarketingEvents } from '~~/server/utils/marketing-events'
 import { isOwnEventId, ownEventFestival } from '~~/shared/marketing-events'
 import { isStoreProfileReady } from '~~/shared/types/store-profile'
-import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
+import { TAIWAN_FESTIVALS, type TaiwanFestival } from '~~/shared/taiwan-festivals'
 import { BROADCAST_DRAFT_VARIANTS, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
 import { broadcastEntryLockText, broadcastLockText, tierAllowsAudience } from '~~/shared/billing/plans'
+import { fmt } from '~~/shared/friend-report'
+import type { TagDoc } from '~~/shared/types/tag-broadcast'
 
 /**
- * POST /api/marketing-calendar/draft   Body: { festivalId }
+ * POST /api/marketing-calendar/draft   Body: { festivalId } 或 { tagId, festivalId? }
  *
  * 幫一檔節慶擬推播文案三版＋挑好受眾標籤（`D-85` / `C-225`）。
+ * `D-155` 起多一種：好友統計的**行銷提案**——帶 `tagId` 就是「發給這顆標籤的人」，
+ * 受眾就是那一顆（不再配對），檔期選填（提案搭的那一檔）。
+ * ⚠️ 刻意併在這一支、不另開路由：擬推播文案只該有一個地方（驗法、方案鎖、輪廓檢查都在這裡），
+ *    而且多開一支 API 路由會讓不相干的 `$fetch` 型別太深（記憶 `reference_nuxt_typecheck_traps`）。
  *
  * ⛔ **只產文字，不建立任何東西**：不開推播、不排程、不送出。
  *    回去之後由推播頁開一張**還沒存檔**的草稿（`C-221` 同一條紅線：
@@ -33,25 +39,31 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'broadcast.write')
   await assertMaintenanceBudget(workspaceId)
 
-  const body = await readBody(event).catch(() => ({})) as { festivalId?: string }
+  const body = await readBody(event).catch(() => ({})) as { festivalId?: string, tagId?: string }
   const festivalId = String(body?.festivalId ?? '').trim()
+  const tagId = String(body?.tagId ?? '').trim()
   const db = getDb()
+
   // `D-122`②：店家自己的檔期也可以擬（id 是 `own-` 開頭，從這個帳號自己的那份找；⛔ 找不到別家的）
-  const own = isOwnEventId(festivalId)
-    ? (await getMarketingEvents(db, workspaceId)).find(e => e.id === festivalId)
-    : undefined
-  const festival = own ? ownEventFestival(own) : TAIWAN_FESTIVALS.find(f => f.id === festivalId)
-  if (!festival) {
+  let festival: TaiwanFestival | undefined
+  if (festivalId) {
+    const own = isOwnEventId(festivalId)
+      ? (await getMarketingEvents(db, workspaceId)).find(e => e.id === festivalId)
+      : undefined
+    festival = own ? ownEventFestival(own) : TAIWAN_FESTIVALS.find(f => f.id === festivalId)
+  }
+  // 提案的檔期只是加分：那一檔剛被刪掉也照樣擬（只是不提檔期）；節慶模式沒有檔期就沒東西可擬
+  if (!tagId && !festival) {
     throw createError({ statusCode: 400, statusMessage: '找不到這個檔期' })
   }
 
   /**
    * `C-352`①：方案發不了推播（免費）就不擬——擬了也送不出去，還白花一次 AI。
-   * 首頁卡片在入口就鎖住同一句；這裡是讀不到方案時畫面沒鎖、或直接打 API 的那條路。
+   * 提案一定是「依標籤」發，所以要看能不能分眾（輕量／入門只能發全部好友）。
    * 讀不到方案（null）照 fail-open 放行，同推播頁與送出端。
    */
   const tier = await workspaceBroadcastTier(workspaceId, db)
-  const planLock = broadcastEntryLockText(tier, 'all')
+  const planLock = broadcastEntryLockText(tier, tagId ? 'tags' : 'all')
   if (planLock) throw createError({ statusCode: 403, statusMessage: planLock })
 
   const profile = await getStoreProfile(workspaceId, db)
@@ -59,11 +71,15 @@ export default defineEventHandler(async (event) => {
     // ⛔ 誠實擋下來，不要生一堆空話
     throw createError({
       statusCode: 409,
-      statusMessage: 'MiniMe 還不認識你的店，擬出來的文案會是空話。先花 3 分鐘讓它認識，再回來擬這一檔。',
+      statusMessage: tagId
+        ? 'MiniMe 還不認識你的店，擬出來的文案會是空話。先花 3 分鐘讓它認識，再回來擬這一則。'
+        : 'MiniMe 還不認識你的店，擬出來的文案會是空話。先花 3 分鐘讓它認識，再回來擬這一檔。',
     })
   }
 
-  const { variants, dropped } = await generateBroadcastCopy(workspaceId, profile, festival)
+  if (tagId) return await proposalDraft(db, workspaceId, profile, tagId, festival ?? null)
+
+  const { variants, dropped } = await generateBroadcastCopy(workspaceId, profile, festival!)
   if (!variants.length) {
     // ⛔ 丟了什麼要說得出來（`dropped` 帶著原因）
     throw createError({
@@ -111,7 +127,7 @@ export default defineEventHandler(async (event) => {
         : {}
 
       const matched = matchAudienceTags(rows, counts, {
-        festivalName: festival.name,
+        festivalName: festival!.name,
         products: productKeywords(String(profile.fields?.products?.value ?? '')),
         excludeTagIds,
       })
@@ -126,9 +142,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const payload: BroadcastDraftHandoff = {
-    festivalId: festival.id,
-    festivalName: festival.name,
-    suggestedName: `${festival.name}檔期`,
+    festivalId: festival!.id,
+    festivalName: festival!.name,
+    suggestedName: `${festival!.name}檔期`,
     variants: variants.slice(0, BROADCAST_DRAFT_VARIANTS),
     suggestedTagIds,
     audienceNotice,
@@ -137,3 +153,47 @@ export default defineEventHandler(async (event) => {
   }
   return { ...payload, dropped }
 })
+
+/**
+ * 好友統計的行銷提案（`D-155`）：發給這顆標籤的人，可能搭一檔。
+ * ⛔ 受眾就是提案的那一顆，**不再配對別的標籤**——提案講的是「這 55 位」，帶過去變成別群人就是兩件事。
+ */
+async function proposalDraft(
+  db: ReturnType<typeof getDb>,
+  workspaceId: string,
+  profile: NonNullable<Awaited<ReturnType<typeof getStoreProfile>>>,
+  tagId: string,
+  festival: TaiwanFestival | null,
+) {
+  const snap = await db.collection('tags').doc(tagId).get()
+  const tag = snap.exists ? snap.data() as Partial<TagDoc> : null
+  // ⛔ 別家的標籤、停用的標籤一律當找不到（不說「那是別家的」）
+  if (!tag || tag.workspaceId !== workspaceId || tag.status === 'inactive') {
+    throw createError({ statusCode: 404, statusMessage: '那顆標籤現在找不到了（可能剛被停用或刪掉），重新產生一次報告看看。' })
+  }
+  const tagName = String(tag.name ?? '')
+  const tagMeaning = [tag.description, tag.aiCriteria].map(s => String(s ?? '').trim()).filter(Boolean).join('；')
+
+  const { variants, dropped } = await generateProposalCopy(workspaceId, profile, { tagName, tagMeaning, festival })
+  if (!variants.length) {
+    throw createError({
+      statusCode: 502,
+      statusMessage: `這次擬不出可以用的文案${dropped.length ? `（${dropped.length} 版沒過檢查：${dropped[0]!.reason}）` : ''}，再按一次試試。`,
+    })
+  }
+
+  // 人數只是講給他聽的（推播頁送出時會照當下的標籤重算）；讀不到就不講數字，⛔ 不寫 0
+  const count = await memberCountsForTagIds(db, workspaceId, [tagId]).then(c => c[tagId] ?? null).catch(() => null)
+  const payload: BroadcastDraftHandoff = {
+    festivalId: festival?.id ?? '',
+    festivalName: festival?.name ?? tagName,
+    suggestedName: festival ? `${tagName}・${festival.name}` : tagName,
+    variants: variants.slice(0, BROADCAST_DRAFT_VARIANTS),
+    suggestedTagIds: [tagId],
+    audienceNotice: count === null ? `發送對象選好「${tagName}」。` : `發送對象選好「${tagName}」（目前 ${fmt(count)} 位）。`,
+    basis: `照你的輪廓與「${tagName}」這群人寫的`,
+    proposalTagId: tagId,
+    ts: Date.now(),
+  }
+  return { ...payload, dropped }
+}

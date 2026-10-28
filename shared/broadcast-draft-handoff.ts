@@ -22,6 +22,7 @@ export const BROADCAST_DRAFT_HANDOFF_TTL_MS = 30 * 60 * 1000
 export const BROADCAST_DRAFT_VARIANTS = 3
 
 export interface BroadcastDraftHandoff {
+  /** 為哪一檔擬的；好友統計的提案沒搭檔期時是空字串（⛔ 推播上就不寫 festivalId） */
   festivalId: string
   /** 節日名稱（推播的預設名字用得到） */
   festivalName: string
@@ -42,8 +43,16 @@ export interface BroadcastDraftHandoff {
   audienceNotice?: string
   /** 給人看的一句：這幾版是照什麼寫的 */
   basis: string
+  /**
+   * 從好友統計的行銷提案來的才有（提案的那顆標籤，`D-155`）。
+   * 推播存檔時記成 `proposalTagId`，下一份好友統計報告才回報得了「上次照提案發的成績」。
+   */
+  proposalTagId?: string
   ts: number
 }
+
+/** 推播頁網址上的 `from`：從首頁檔期來的是 calendar，從好友統計的提案來的是 proposal */
+export type DraftHandoffSource = 'calendar' | 'proposal'
 
 export function isFreshDraftHandoff(
   payload: BroadcastDraftHandoff | null,
@@ -84,3 +93,10 @@ export function draftHandoffNoticeText(p: BroadcastDraftHandoff): string {
 /** 讀不到時要講的那一句。⛔ 不可以安靜地開一張空白推播。 */
 export const DRAFT_HANDOFF_MISSING_TEXT
   = '文案沒有帶過來（可能已經過期，或這個瀏覽器擋了暫存）。回後台首頁的「接下來的檔期」再按一次就好。'
+
+/** 讀不到時要講的那一句——照他從哪裡來，指回那個地方（⛔ 從好友統計來的不要叫他去首頁找） */
+export function draftHandoffMissingText(from: DraftHandoffSource): string {
+  return from === 'proposal'
+    ? '文案沒有帶過來（可能已經過期，或這個瀏覽器擋了暫存）。回「好友統計」的行銷提案再按一次就好。'
+    : DRAFT_HANDOFF_MISSING_TEXT
+}

@@ -56,6 +56,13 @@ export default defineEventHandler(async (event) => {
     festivalId: typeof body.festivalId === 'string' && body.festivalId.trim()
       ? body.festivalId.trim().slice(0, 64)
       : undefined,
+    /**
+     * `D-155`：從好友統計「行銷提案」開的那一則（提案的標籤 id）。下一份報告靠它回報成績。
+     * ⛔ 跟上面同一條：只有從提案建立的才有，空的就不寫。
+     */
+    proposalTagId: typeof body.proposalTagId === 'string' && body.proposalTagId.trim()
+      ? body.proposalTagId.trim().slice(0, 64)
+      : undefined,
   })
 
   const db = getDb()

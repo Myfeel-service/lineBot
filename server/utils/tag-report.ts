@@ -1,46 +1,38 @@
 /**
- * 客群分析報告的「產生－存檔－沿用」（`D-28` 鐵律①）。
+ * 好友統計報告的「產生－存檔－沿用」（`D-28` 鐵律①，`D-155` 改版後照舊）。
  *
  * 沿用 `takeoverSummary` 的形狀：**按需產生、產生完存起來、下次直接沿用**。
- * ⛔ 不是每次開頁重算——一份報告約三四千次 Firestore 讀取＋一次 LLM，
+ * ⛔ 不是每次開頁重算——一份報告約一萬次 Firestore 讀取＋約 31 次問 LINE，
  *   掛在開頁上就是 08-11 讀取費暴衝重演。
  *
  * 擺法：頂層集合 `tagReports`、doc id = workspaceId，只留**最新一份**。
- * ⛔ 刻意不存歷史版本：Phase 1 沒有任何畫面讀得到歷史，寫進去就是沒人讀的資料
- *   （要做「上個月 vs 這個月」是 Phase 2 的趨勢層，那時再連同口徑一起設計）。
+ * ⛔ 刻意不存歷史版本：「最近 30 天 vs 前 30 天」每次產生都從原始資料重算，用不到舊報告。
+ *
+ * `D-155` 起不再叫 LLM：舊版的「一句話總結」只拿得到標籤維護的數字，四點有三點在叫人多建標籤。
+ * 「接下來該做什麼」改成畫面照 `shared/friend-report-advice.ts` 的規則從數字算出來。
  */
 
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { generateText, runWithLlmBudget } from '~~/server/utils/gemini'
-import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
-import { computeTagInsights } from '~~/server/utils/tag-insights-compute'
-import { getStoreProfile } from '~~/server/utils/store-profile'
-import { storeProfileForPrompt } from '~~/shared/types/store-profile'
-import {
-  buildTagSummaryPrompt,
-  isTooThinForSummary,
-  rejectTagSummary,
-  TAG_SUMMARY_MAX,
-  type TagInsightsPayload,
-  type TagReportDoc,
-  type TagSummarySkip,
-} from '~~/shared/tag-report'
+import { computeFriendReport } from '~~/server/utils/friend-report-compute'
+import { isCurrentReportPayload, type TagReportDoc } from '~~/shared/tag-report'
 
 export const TAG_REPORT_COLLECTION = 'tagReports'
 
-/** 讀最近一份報告；沒有就回 `null`（＝還沒產生過，⛔ 不是「沒有資料」） */
+/**
+ * 讀最近一份報告；沒有就回 `null`（＝還沒產生過，⛔ 不是「沒有資料」）。
+ * `D-155` 以前存的舊形狀回 `legacy: true`、`payload: null`——畫面要請他重新產生，⛔ 不可以畫成空的。
+ */
 export async function getTagReport(db: Firestore, workspaceId: string): Promise<TagReportDoc | null> {
   const snap = await db.collection(TAG_REPORT_COLLECTION).doc(workspaceId).get()
   if (!snap.exists) return null
-  const d = snap.data() as Partial<TagReportDoc> | undefined
+  const d = snap.data() as { generatedAtMs?: unknown, generatedBy?: unknown, payload?: unknown } | undefined
   if (!d?.payload || !d.generatedAtMs) return null
+  const current = isCurrentReportPayload(d.payload)
   return {
     generatedAtMs: Number(d.generatedAtMs),
     generatedBy: String(d.generatedBy ?? ''),
-    payload: d.payload as TagInsightsPayload,
-    summary: String(d.summary ?? ''),
-    summarySkip: (d.summarySkip ?? null) as TagSummarySkip | null,
+    payload: current ? d.payload as TagReportDoc['payload'] : null,
+    legacy: !current,
   }
 }
 
@@ -55,55 +47,15 @@ export async function generateTagReport(
   workspaceId: string,
   generatedBy: string,
 ): Promise<TagReportDoc> {
-  const payload = await computeTagInsights(db, workspaceId)
-
-  let summary = ''
-  let summarySkip: TagSummarySkip | null = null
-
-  if (isTooThinForSummary(payload)) {
-    // 鐵律③：薄資料整段不出現，⛔ 不硬生一句「建議多累積資料」
-    summarySkip = 'too_thin'
-  }
-  else {
-    try {
-      // 輪廓有的話帶一句進去，總結才講得出「你賣的東西」；沒有也能寫
-      const profile = await getStoreProfile(workspaceId, db).catch(() => null)
-      const storeLine = profile ? storeProfileForPrompt(profile).split('\n').join('；') : ''
-
-      // 記帳（`C-338`①：以前完全沒記）：後台按「產生報告」才跑＝後台自用，次數一起記
-      const res = await runMeteredAi(
-        () => runWithLlmBudget(workspaceId, () =>
-          generateText(buildTagSummaryPrompt(payload, storeLine), {
-            // 這是把數字翻成人話，不是創作：溫度壓低
-            temperature: 0.2,
-            maxOutputTokens: 900,
-            thinkingBudget: 0,
-          })),
-        calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, db),
-      )
-      const text = String(res.text ?? '').trim().slice(0, TAG_SUMMARY_MAX * 2)
-      const bad = rejectTagSummary(text, payload)
-      if (bad) {
-        // 鐵律②：一段話裡有一個假數字，其他句的可信度也一起沒了 → 整段退掉
-        console.warn('[tag-report] 總結沒通過檢查：', workspaceId, bad, text.slice(0, 120))
-        summarySkip = 'rejected'
-      }
-      else {
-        summary = text
-      }
-    }
-    catch (e) {
-      // ⛔ 生成失敗不可以讓整份報告不見：數字是程式算的，本來就不受影響
-      console.warn('[tag-report] 總結生成失敗：', workspaceId, e)
-      summarySkip = 'llm_failed'
-    }
-  }
-
-  const doc: TagReportDoc = { generatedAtMs: Date.now(), generatedBy, payload, summary, summarySkip }
+  const payload = await computeFriendReport(db, workspaceId)
+  const generatedAtMs = Date.now()
+  // ⚠️ 用 set 整份蓋掉：舊版存的 summary／summarySkip 不留著，免得之後有人以為那還是現役欄位
   await db.collection(TAG_REPORT_COLLECTION).doc(workspaceId).set({
-    ...doc,
+    generatedAtMs,
+    generatedBy,
+    payload,
     workspaceId,
     updatedAt: FieldValue.serverTimestamp(),
   })
-  return doc
+  return { generatedAtMs, generatedBy, payload, legacy: false }
 }

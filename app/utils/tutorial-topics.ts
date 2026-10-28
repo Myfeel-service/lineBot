@@ -1566,16 +1566,17 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
    *
    * 為什麼補：這一頁 09-23 才開，晚於 09-18 的逐頁盤點（`D-82`），頁首沒填 `help-topics`
    * ＝連「這頁怎麼用」的問號都沒有、第一次進來也不會自動跑導覽。
-   * 頁面自己的說明寫得很清楚，只補第一次看會卡的三件：報告要按了才有（而且不會自己更新）、
-   * 「做過什麼」不等於「想買」、一顆標籤都沒有的人按標籤發推播會漏掉。
-   * ⛔ 每一步都是「有東西才出現」：還沒產生過報告只會看到第一步，有報告的看不到第一步。
+   * `D-155`（2026-10-28）改版後只補第一次看會卡的四件：報告要按了才有（而且不會自己更新）、
+   * 行銷提案的文案要按了才擬、發不發由你決定、「客人在想什麼」只列 AI 判出來的（名冊不在這裡）。
+   * ⛔ 每一步都是「有東西才出現」：還沒產生過報告只會看到第一步，有報告的看不到第一步；
+   *   沒有提案時「行銷提案」那張卡仍在（會講為什麼沒有），所以那一步照樣出現。
    */
   {
     id: 'friend-stats',
     category: 'growth',
     icon: PieChart,
     label: '看懂好友統計',
-    blurb: '從標籤看客人在乎什麼、誰還沒被貼到——產生一次報告就看得到。',
+    blurb: '最近 30 天該對誰發推播、客人在想什麼、推播誰有反應——產生一次報告就看得到。',
     route: wid => `/admin/${wid}/friend-stats`,
     steps: [
       {
@@ -1583,7 +1584,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         requiresPresent: '[data-tour="fs-empty"]',
         title: '先產生一份報告',
         description:
-          '這一頁要先按「<strong>產生報告</strong>」：系統會把你所有的標籤整理一次（要等一下子），告訴你客人在乎什麼、誰還沒被貼到、AI 貼得準不準。'
+          '這一頁要先按「<strong>產生報告</strong>」：系統會把最近 30 天的好友資料整理一次（要等一下子），告訴你該對誰發推播、客人在想什麼、推播誰有反應。'
           + '報告<strong>不會自己更新</strong>，之後想看最新的再按一次。（觀察者要請客服或管理員來按。）',
         placement: 'bottom',
       },
@@ -1596,20 +1597,21 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom-end',
       },
       {
-        target: '[data-tour="fs-expressed"]',
-        requiresPresent: '[data-tour="fs-expressed"]',
-        title: '最容易看錯的一張',
+        target: '[data-tour="fs-proposals"]',
+        requiresPresent: '[data-tour="fs-proposals"]',
+        title: '行銷提案怎麼用',
         description:
-          '標「<strong>做過什麼</strong>」的是<strong>事件紀錄</strong>（填過那份問卷、報名過那檔活動），<strong>不代表他想買</strong>；'
-          + '只有標「<strong>想要什麼</strong>」的才是 AI 從對話判出來的意圖。「<strong>發推播給這群</strong>」會直接帶這群人去推播頁。',
-        placement: 'top',
+          '程式照最近 30 天的資料挑出<strong>該發給誰、為什麼、什麼時候</strong>。按「<strong>幫我擬三版文案</strong>」AI 才會寫字；'
+          + '挑一版按「<strong>用這版開推播草稿</strong>」，會到推播頁開一張還沒存檔的草稿——<strong>發不發由你決定</strong>。',
+        placement: 'bottom',
       },
       {
-        target: '[data-tour="fs-coverage"]',
-        requiresPresent: '[data-tour="fs-coverage"]',
-        title: '一顆標籤都沒有的人',
+        target: '[data-tour="fs-intents"]',
+        requiresPresent: '[data-tour="fs-intents"]',
+        title: '客人最近在想什麼',
         description:
-          '這些人<strong>任何按標籤發的推播都會漏掉</strong>。分母是「有互動的客人」，不是 LINE 的好友總數——從來沒講過話的好友不在名單裡。',
+          '這裡只列<strong>有開 AI 判斷</strong>的標籤，也就是客人在對話裡表現出來的。拿「最近 30 天新增」跟「前 30 天」比，就知道哪一群在變多。'
+          + '問卷、活動名單不在這裡——它們在下面的「推播」與「新進名單」。',
         placement: 'top',
       },
     ],

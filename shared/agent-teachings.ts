@@ -51,7 +51,7 @@ export const AGENT_TEACHINGS = {
   'tour-ai-scripts': { kind: 'tour', ref: 'ai-scripts', hint: '建第一條自動回應：客人說什麼就自動回什麼、關鍵字怎麼比對、客人加好友時要回什麼', requires: 'scripts.write' },
   'tour-ai-scripts-flow': { kind: 'tour', ref: 'ai-scripts-flow', hint: '多步驟的自動回應：問客人資料、答不出來的退路、依答案分流、試跑整條（預約、報名、退貨）', requires: 'scripts.write' },
   'tour-users': { kind: 'tour', ref: 'users', hint: '好友名單、依標籤篩選、批次貼標', requires: 'customers.write' },
-  'tour-friend-stats': { kind: 'tour', ref: 'friend-stats', hint: '好友統計怎麼看：產生報告、「做過什麼」跟「想要什麼」差在哪、誰還沒被貼到' },
+  'tour-friend-stats': { kind: 'tour', ref: 'friend-stats', hint: '好友統計怎麼看：產生報告、行銷提案怎麼擬文案開推播、客人最近在想什麼' },
   'tour-tags': { kind: 'tour', ref: 'tags', hint: '建好友標籤、從範本建、英文代號怎麼取', requires: 'tags.write' },
   'tour-campaigns': { kind: 'tour', ref: 'campaigns', hint: '活動標籤：用一條連結收名單、加好友自動貼標', requires: 'marketing.write' },
   'tour-broadcasts': { kind: 'tour', ref: 'broadcasts', hint: '發推播：選對象、寫內容、排程、發送前確認、看成效', requires: 'broadcast.write' },

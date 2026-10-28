@@ -721,7 +721,7 @@ import {
 } from '~~/shared/broadcast-audience-handoff'
 import {
   BROADCAST_DRAFT_HANDOFF_KEY,
-  DRAFT_HANDOFF_MISSING_TEXT,
+  draftHandoffMissingText,
   draftHandoffNoticeText,
   isFreshDraftHandoff,
   parseDraftHandoff,
@@ -929,6 +929,11 @@ const defaultForm = () => ({
    *   有了它，檔期回顧才敢講「這一檔的成績」而不是「那段期間你發過什麼」。
    */
   festivalId: '',
+  /**
+   * `D-155`：從好友統計的「行銷提案」開的（提案的那顆標籤）。同 `festivalId`：是來歷不是欄位，畫面上不給編輯；
+   * 下一份好友統計報告靠它回報「上次照提案發的成績」。
+   */
+  proposalTagId: '',
 })
 const form = ref(defaultForm())
 const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges({
@@ -1336,6 +1341,7 @@ function loadFormFromItem(item: any) {
     completionTagIds: Array.isArray(item.completionTagIds) ? item.completionTagIds : [],
     // 編輯既有推播時要保留來歷，⛔ 存一次檔就把它洗掉的話，回顧會突然對不起來
     festivalId: String((item as { festivalId?: string }).festivalId ?? ''),
+    proposalTagId: String((item as { proposalTagId?: string }).proposalTagId ?? ''),
   }
 }
 
@@ -1396,6 +1402,7 @@ function buildSaveBody(): Record<string, unknown> {
     completionTagIds: form.value.completionTagIds,
     // ⛔ 空的就不要送：後端只在有值時才寫這個欄位
     ...(form.value.festivalId ? { festivalId: form.value.festivalId } : {}),
+    ...(form.value.proposalTagId ? { proposalTagId: form.value.proposalTagId } : {}),
   }
   const keepScheduled =
     !isCreating.value
@@ -1922,13 +1929,15 @@ function applyAudienceHandoff() {
 
 /**
  * `C-225`：從後台首頁「接下來的檔期」→「為這一檔擬推播」帶過來的文案三版。
+ * `D-155`：好友統計的「行銷提案」走同一條（`from=proposal`），多帶一個提案來歷 `proposalTagId`。
  *
  * ⛔ **只開草稿、不存檔**（`C-221` 同一條紅線：對客人說話的東西，最後一顆按鈕永遠是人）。
  * ⛔ **讀不到要講出來**：跟名單那份同一個理由——安靜地開一張空白推播，
  *    會讓人以為剛剛擬好的文案弄丟了。
  */
 function applyDraftHandoff() {
-  if (String(useRoute().query.from ?? '') !== 'calendar') return
+  const from = String(useRoute().query.from ?? '')
+  if (from !== 'calendar' && from !== 'proposal') return
 
   let raw: string | null = null
   try {
@@ -1941,15 +1950,17 @@ function applyDraftHandoff() {
 
   const payload = parseDraftHandoff(raw)
   if (!isFreshDraftHandoff(payload)) {
-    showToast(DRAFT_HANDOFF_MISSING_TEXT, 'warning')
+    showToast(draftHandoffMissingText(from), 'warning')
     return
   }
 
   openCreate()
   form.value.name = payload.suggestedName
   // ⭐ `C-240`：記下這則是為了哪一檔發的。沒有它，之後的檔期回顧只能照日期猜，
-  //    而照日期猜會把不相干的商品檔期算成這一檔的成績。
+  //    而照日期猜會把不相干的商品檔期算成這一檔的成績。（提案沒搭檔期時是空字串＝不寫）
   form.value.festivalId = payload.festivalId
+  // ⭐ `D-155`：從提案開的要記下來，下一份好友統計才回報得了成績
+  form.value.proposalTagId = from === 'proposal' ? String(payload.proposalTagId ?? '') : ''
   // 預設帶第一版；其餘幾版擺在編輯器上面讓他換（換了只是改文字，還是草稿）
   form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: payload.variants[0]! }, 'A')
   if (payload.suggestedTagIds.length) {

@@ -1,15 +1,15 @@
-// 好友統計（貼標分析）——`D-28` / `D-63` Phase 1。
+// 好友統計（`D-155` 改版：行銷提案、也要留意、客人在想什麼、推播、新進名單、標籤整理）。
 // 卡片外殼沿用全站既有的 .message-card / .ar-section-card / .card-section-stack，
 // 這裡只補這一頁自己的排版。
 // ⛔ 不用 :deep()：這是全域 partial，:deep() 在這裡沒有 scope 可以穿。
 
 .friend-stats {
-  // 「意圖 vs 事件」那兩欄要照**卡片**寬度換行，不是照視窗——側欄開不開會改變卡片寬度。
+  // 三格總覽、提案兩欄要照**卡片**寬度換行，不是照視窗——側欄開不開會改變卡片寬度。
+  // ⚠️ `container-type: inline-size` 一定要配 width:100%（收縮寬度的元素加了會被壓垮）
   container-type: inline-size;
+  width: 100%;
 
-  // 還沒產生過／第一次產生等待中（`D-108`）：放進跟報告卡同一種白卡、置中，
-  // 排法照全站空畫面（`.split-empty-state`：置中、標題＋一顆主要動作）。
-  // 產生好之後報告卡就長在同一個位置。
+  // ── 還沒產生過／等待中／舊版報告（`D-108`）：白卡置中、標題＋一顆主要動作 ──
   &__empty-card {
     min-height: 240px;
     justify-content: center;
@@ -58,34 +58,20 @@
     max-width: 30em;
   }
 
-  // 每張卡的主句：要比旁邊的說明重，但不到標題那麼重
-  &__lead {
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.8;
-    color: var(--el-text-color-primary);
-    max-width: 52em;
-  }
-
-  // 註腳型的說明（口徑、分母、為什麼不列）。
-  // ⛔ 不用 .text-muted：那個對比度在 `D-75` 被抓過，這些句子恰恰是不能被略過的那些。
+  // 註腳型的說明。⛔ 不用 .text-muted：那個對比度在 `D-75` 被抓過
   &__muted {
     margin: 0;
     font-size: 12.5px;
     line-height: 1.8;
     color: var(--el-text-color-secondary);
-    max-width: 52em;
   }
 
-  &__summary p {
-    margin: 0 0 6px;
-    font-size: 14px;
-    line-height: 1.9;
-    color: var(--el-text-color-primary);
-    max-width: 52em;
+  // 直接放在卡片裡（不在 .card-section-stack 裡）的那幾句要自己留內距
+  &__pad {
+    padding: 14px 16px;
 
-    &:last-child {
-      margin-bottom: 0;
+    &--foot {
+      padding-top: 0;
     }
   }
 
@@ -96,58 +82,417 @@
     line-height: 1.8;
   }
 
-  &__chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  &__table {
-    width: 100%;
-  }
-
-  &__sub {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding-top: 8px;
-    border-top: 1px solid var(--el-border-color-lighter);
-  }
-
-  &__sub-title {
-    margin: 0 0 2px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--el-text-color-regular);
-  }
-
-  &__sub-line {
+  &__error {
     margin: 0;
-    font-size: 13px;
-    line-height: 1.8;
-    word-break: break-word;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--el-color-danger);
   }
 
-  // 意圖 vs 事件：兩欄並排。
-  // ⭐ 並排是刻意的——`D-85` 那條「只有加起來等於母數的數字才能並排」在這裡成立：
-  //    兩邊相加就是全部的貼標筆數。
-  &__split {
+  &__warn {
+    color: var(--el-color-warning-dark-2);
+    font-weight: 700;
+  }
+
+  // ── 三格總覽：跟對話統計的 KPI 卡同一種長相（數字底部對齊） ─────────────
+  &__tiles {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
   }
 
-  &__split-col {
+  &__tile {
+    height: 100%;
+
+    .el-card__body {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+  }
+
+  &__tile-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
     min-width: 0;
+    height: 100%;
+  }
+
+  // 全站 .stat-label 是全大寫＋字距（給英文用的），中文標題不要
+  &__tile-label {
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--el-text-color-regular);
+    cursor: help;
+  }
+
+  &__info {
+    font-weight: 400;
+    color: var(--el-text-color-secondary);
+  }
+
+  // 數字底部對齊：數字＋說明列整組推到卡片底部，說明列固定高度（條件顯示的卡才不會比隔壁低半行）
+  &__tile-value {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__tile-unit {
+    margin-left: 3px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  &__tile-foot {
+    padding-top: 0.25rem;
+    min-height: 1.3rem;
+  }
+
+  // ── 行銷提案／也要留意 ────────────────────────────────────────────
+  &__outcome {
+    margin: 0;
+    padding: 12px 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-primary);
+    background: var(--brand-green-wash);
+    border-bottom: 1px solid var(--el-border-color-lighter);
+  }
+
+  &__lock {
+    margin: 12px 16px 0;
+  }
+
+  &__prop {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+
+    &--sep {
+      border-top: 1px solid var(--el-border-color-lighter);
+    }
+  }
+
+  &__prop-top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  &__prop-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--el-text-color-primary);
+    line-height: 1.5;
+  }
+
+  &__toggle {
+    margin-left: auto;
+  }
+
+  // 徽章：想買＝品牌綠、留意＝琥珀（⛔ 不用紅：不是錯，是要多看一眼）、推播＝藍
+  &__pill {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    line-height: 1.4;
+    white-space: nowrap;
+
+    &--buy {
+      background: var(--brand-green-wash);
+      color: var(--brand-green-text);
+    }
+
+    &--care {
+      background: #fdf3e1;
+      color: #8a4b00;
+    }
+
+    &--push {
+      background: #e8f0fe;
+      color: #1d4ed8;
+    }
+  }
+
+  &__prop-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+
+  // 鍵值：標籤欄固定寬，「發給誰／為什麼／什麼時候」三列的值從同一個 x 開始
+  &__kv {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 10px 12px;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+
+    dt {
+      color: var(--el-text-color-regular);
+      font-weight: 600;
+    }
+
+    dd {
+      margin: 0;
+      color: var(--el-text-color-primary);
+      min-width: 0;
+    }
+
+    &--wide {
+      grid-template-columns: 180px minmax(0, 1fr);
+    }
+  }
+
+  &__draft {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     padding: 12px 14px;
+    border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     background: var(--el-fill-color-lighter);
   }
 
-  // 窄卡片：兩欄疊起來（`G-66` 那張表在 ≤440px 破過版，同一個教訓）
-  @container (max-width: 520px) {
-    &__split {
+  &__draft-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--el-text-color-regular);
+  }
+
+  &__draft-nav {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 400;
+
+    // el-button 相鄰會自帶左邊距，這裡用 gap 排
+    .el-button + .el-button {
+      margin-left: 0;
+    }
+  }
+
+  &__draft-text {
+    margin: 0;
+    padding: 10px 12px;
+    font-size: 14px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    background: var(--bg-surface);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+  }
+
+  &__draft-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .el-button + .el-button {
+      margin-left: 0;
+    }
+  }
+
+  &__todo {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 14px 16px;
+  }
+
+  &__todo-main {
+    flex: 1 1 420px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__todo-why {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
+  // ── 表格（唯讀資料表，長相照 el-table small） ──────────────────────
+  &__tbox {
+    overflow-x: auto;
+  }
+
+  // ⚠️ 儲存格一律不換行：窄螢幕上欄寬被擠，標籤名會變成一個字一行直著排（手機實測）——
+  //    寧可讓表格在 `__tbox` 裡橫向捲動，頁面本身不捲
+  &__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+
+    th,
+    td {
+      white-space: nowrap;
+    }
+
+    th {
+      text-align: left;
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--el-text-color-regular);
+      padding: 9px 12px;
+      background: var(--el-fill-color-light);
+      border-bottom: 1px solid var(--el-border-color-lighter);
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--el-border-color-lighter);
+      vertical-align: middle;
+      color: var(--el-text-color-primary);
+    }
+
+    .is-num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+  }
+
+  &__group td {
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--el-text-color-regular);
+    background: var(--el-fill-color-lighter);
+  }
+
+  &__push-name {
+    color: var(--el-text-color-primary);
+    text-decoration: none;
+
+    &:hover {
+      color: var(--brand-green-text);
+      text-decoration: underline;
+    }
+  }
+
+  &__push-tag {
+    margin-left: 6px;
+  }
+
+  // 長條：數字在左、條在右；有數字的至少有一點寬度（`barWidth`）
+  &__barcell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 200px;
+  }
+
+  &__barnum {
+    min-width: 34px;
+    text-align: right;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__track {
+    flex: 1 1 auto;
+    height: 10px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--el-fill-color);
+
+    &--thick {
+      height: 12px;
+    }
+  }
+
+  &__bar {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--brand-green);
+
+    // 灰＝「不是想買的訊號」或「其他／沒有來源」；藍＝推播點連結（跟綠色的「人數」分開）
+    &--gray {
+      background: #b8bec8;
+    }
+
+    &--blue {
+      background: #3b82f6;
+    }
+  }
+
+  // ── 新進名單 ──────────────────────────────────────────────────────
+  &__src {
+    display: grid;
+    grid-template-columns: minmax(0, 280px) minmax(0, 1fr) 56px;
+    align-items: center;
+    gap: 10px 12px;
+    font-size: 13px;
+  }
+
+  &__src-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__src-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  // ── 標籤整理（收合在最底） ────────────────────────────────────────
+  &__housekeeping-summary {
+    cursor: pointer;
+    list-style: none;
+    // 收著的時候沒有下面那條線（.message-card-header 自帶 border-bottom）
+    border-bottom: 0;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+  }
+
+  &__housekeeping[open] &__housekeeping-summary {
+    border-bottom: 1px solid var(--border);
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  // ── 窄卡片：總覽一欄、提案兩欄疊起來、新進名單的名字欄縮窄 ─────────────
+  @container (max-width: 720px) {
+    &__tiles,
+    &__prop-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    &__src {
+      grid-template-columns: minmax(0, 140px) minmax(0, 1fr) 48px;
+    }
+
+    &__kv--wide {
+      grid-template-columns: minmax(0, 1fr);
+
+      dd {
+        margin-bottom: 4px;
+      }
     }
   }
 }

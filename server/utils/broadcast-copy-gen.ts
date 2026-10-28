@@ -1,5 +1,5 @@
 /**
- * 幫一檔節慶擬推播文案三版（`D-85` / `C-225`）。
+ * 幫一檔節慶擬推播文案三版（`D-85` / `C-225`）；`D-155` 起也幫好友統計的行銷提案擬（發給某一群人、可能搭一檔）。
  *
  * ── 跟 `C-223` 的差別 ──────────────────────────────────────────
  * `C-223` 寫的是**給老闆看的一句建議**（「該推什麼」）；這裡寫的是**要發給客人的訊息**。
@@ -109,6 +109,78 @@ export function buildCopyPrompt(profile: StoreProfileDoc, festival: TaiwanFestiv
   ].filter(Boolean).join('\n')
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  好友統計的行銷提案（`D-155`）：發給「某一群人」，可能搭一檔
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ProposalCopyInput {
+  /** 提案的那顆標籤名（例：在看咖啡機） */
+  tagName: string
+  /** 那顆標籤在講什麼：說明＋AI 判斷條件（店家自己在標籤頁寫的）；沒寫就空字串 */
+  tagMeaning: string
+  /** 搭的檔期；沒有＝null（提案寫「這週就可以」） */
+  festival: TaiwanFestival | null
+}
+
+/**
+ * 提案文案多一條紅線：⛔ **不可以讓客人覺得被監視**。
+ * 這群人是 AI 從對話裡判出來的，「我們注意到你在看咖啡機」會把客人嚇跑——
+ * prompt 第 7 條有講，這裡才是真的擋人的（同 `C-223`：prompt 是拜託，檢查才是規則）。
+ */
+export function rejectProposalCopy(text: string, profile: StoreProfileDoc): string | null {
+  const base = rejectBroadcastCopy(text, profile)
+  if (base) return base
+  const s = String(text ?? '')
+  if (/注意到|發現你|觀察到|系統|判斷你|偵測|紀錄顯示|根據你的/.test(s)) return '寫出了「我們在觀察你」的話'
+  // 要人補的空格：忘了補就原樣送到客人手上。⚠️ 只抓「裡面寫著填／內容／XX」的括號——「【雙 11 限定】」是正常寫法
+  if (/[［[【][^］\]】]*(填|輸入|內容|XX|xx|○○)[^］\]】]*[］\]】]/.test(s)) return '留了要人補的空格'
+  return null
+}
+
+export function buildProposalCopyPrompt(profile: StoreProfileDoc, input: ProposalCopyInput, tone: string): string {
+  const products = splitProfileProducts(profile)
+  const f = input.festival
+  return [
+    `你是一位資深行銷企劃，要幫一家店寫 ${BROADCAST_DRAFT_VARIANTS} 版要發給一群客人的 LINE 訊息。`,
+    '',
+    `這群客人：最近在對話裡表現出「${input.tagName}」${input.tagMeaning ? `（店家對這群人的說明：${input.tagMeaning}）` : ''}。`,
+    ...(f
+      ? f.own
+        ? [`搭的檔期：${f.name}（${f.date}）——這是店家自己的檔期；只照名稱與下面的店家資料寫，⛔ 不要自己編活動內容。`]
+        : [`搭的檔期：${f.name}（${f.date}）`, `這個檔期的通用切角：${f.angle}`]
+      : []),
+    '',
+    '這家店：',
+    storeProfileForPrompt(profile),
+    tone ? `\n說話的口氣：${tone}` : '',
+    '',
+    '規則（違反任何一條這次就算失敗）：',
+    `1. **只能提到上面列出的商品**${products.length ? `（${products.join('、')}）` : ''}，⛔ 不准編造沒列出來的東西。`,
+    '2. ⛔ **不准出現任何價格、折扣數字、期限或名額**（例如「NT$599」「八折」「限時 3 天」「前 50 名」）——'
+    + '我們不知道他打算怎麼賣，寫出來客人會照著那個數字來要。',
+    '3. ⛔ 不准使用 `{{變數}}` 或 `［請填寫］` 這類要人補的空格：這段文字會被原樣發出去，忘了補就會原樣出現在客人眼前。',
+    `4. 每一版 **${BROADCAST_COPY_TARGET} 字以內**，客人在手機上一眼讀得完。`,
+    `5. ${BROADCAST_DRAFT_VARIANTS} 版要**明顯不一樣**（切角不同：例如一版講用起來的好處、一版講${f ? '檔期' : '現在'}、一版請他直接回訊息問），`
+    + '⛔ 不可以只是換幾個字。',
+    '6. 用繁體中文，像店家自己講話，不要行銷術語堆砌。',
+    '7. ⛔ **不可以讓客人覺得被觀察**：不要寫「我們注意到你在看…」「系統判斷你…」「根據你的紀錄…」，'
+    + '用自然的開場，像店家對老客人分享消息。',
+    '8. 最後一句請他**直接在 LINE 回訊息**就好，⛔ 不要叫他去填表單或另外開網頁。',
+    '',
+    `回傳純 JSON：{"variants": ["第一版", "第二版", "第三版"]}`,
+  ].filter(Boolean).join('\n')
+}
+
+/** 提案的三版文案。驗法跟節慶那支一樣，再多一條「不可以讓客人覺得被觀察」 */
+export async function generateProposalCopy(
+  workspaceId: string,
+  profile: StoreProfileDoc,
+  input: ProposalCopyInput,
+): Promise<CopyGenOutcome> {
+  const tone = String(profile.fields?.tone?.value ?? '')
+  return runCopyGeneration(workspaceId, buildProposalCopyPrompt(profile, input, tone), s => rejectProposalCopy(s, profile))
+}
+
 export interface CopyGenOutcome {
   variants: string[]
   /** 被丟掉的版本與原因（⛔ 一定要往上傳：丟了東西要說得出丟了什麼） */
@@ -125,11 +197,20 @@ export async function generateBroadcastCopy(
   festival: TaiwanFestival,
 ): Promise<CopyGenOutcome> {
   const tone = String(profile.fields?.tone?.value ?? '')
+  return runCopyGeneration(workspaceId, buildCopyPrompt(profile, festival, tone), s => rejectBroadcastCopy(s, profile))
+}
+
+/** 叫模型、逐版驗、去重——節慶與提案兩種共用（⛔ 不要各寫一份，驗法會漂開） */
+async function runCopyGeneration(
+  workspaceId: string,
+  prompt: string,
+  reject: (text: string) => string | null,
+): Promise<CopyGenOutcome> {
   // 記帳（`C-338`①：以前完全沒記）：後台有人按「幫我擬」才跑＝後台自用那桶，次數一起記（成本進哪桶次數就進哪桶）。
   // 用計量器記：JSON 壞掉丟錯那次也付了錢
   const { data } = await runMeteredAi(
     () => runWithLlmBudget(workspaceId, () =>
-      generateJson<{ variants?: unknown }>(buildCopyPrompt(profile, festival, tone), {
+      generateJson<{ variants?: unknown }>(prompt, {
         temperature: 0.7, // 要三版不一樣，溫度不能太低
         maxOutputTokens: 900,
         thinkingBudget: 0,
@@ -142,7 +223,7 @@ export async function generateBroadcastCopy(
   const kept: string[] = []
   for (const v of raw.slice(0, BROADCAST_DRAFT_VARIANTS * 2)) {
     const s = String(v ?? '').trim().replace(/^[「"']|[」"']$/g, '')
-    const bad = rejectBroadcastCopy(s, profile)
+    const bad = reject(s)
     if (bad) {
       dropped.push({ text: s.slice(0, 60), reason: bad })
       continue

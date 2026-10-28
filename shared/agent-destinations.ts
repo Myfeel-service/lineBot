@@ -102,7 +102,7 @@ export const AGENT_DESTINATIONS = {
   // ── 以下四頁 2026-09-29 才補進來（`D-109`）：以前問到這幾頁，小幫手連「去哪一頁」都指不出去 ──
   'friend-stats': {
     label: '好友統計',
-    hint: '客人在乎什麼（從標籤看）、誰還沒被貼到、AI 貼標準不準、該清掉的標籤',
+    hint: '最近 30 天的行銷提案（該發給誰）、客人在想什麼、推播誰有反應、新進名單從哪來、標籤整理',
     path: wid => `/admin/${wid}/friend-stats`,
   },
   'ai-playground': {
