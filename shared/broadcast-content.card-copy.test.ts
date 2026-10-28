@@ -221,6 +221,13 @@ describe('推播預覽：畫出來的必須就是要送出去的', () => {
     expect((preview[0]!.buttons as { label: string }[])[0]!.label).toBe(tpl.actions[0]!.label)
   })
 
+  it('`C-397`：預覽預設照模組文字的 5000 量，這張系統卡還是按鈕範本，要帶 160 進去', () => {
+    const preview = lineMessagesToPreviewMessages(unifiedActionToLineMessages(
+      normalizeUnifiedAction({ type: 'uri', uri: 'https://example.com' }, 'A'),
+    ))
+    expect(preview[0]!.textLimit).toBe(160)
+  })
+
   it('純文字＝沒有按鈕的氣泡（⛔ 不可以冒出一顆客人不會看到的按鈕）', () => {
     const preview = lineMessagesToPreviewMessages(unifiedActionToLineMessages(
       normalizeUnifiedAction({ type: 'message', text: '今天公休' }, 'A'),

@@ -199,6 +199,8 @@ export function lineMessagesToPreviewMessages(
       return [{
         type: 'text',
         text: String(tpl.text ?? ''),
+        // 預覽預設照模組文字的 5000 量（`C-397`）；這張系統卡還是按鈕範本，LINE 只收 160
+        textLimit: LINE_BUTTONS_TEMPLATE_TEXT_MAX,
         // 預覽只需要按鈕上的字；點下去做什麼（uri／postback）在預覽裡按不到，不必帶
         buttons: actions.map((a: Record<string, unknown>) => ({ label: String(a?.label ?? '') })),
       }]

@@ -1632,6 +1632,7 @@ import {
 } from '~~/shared/types/conversation-stats'
 import { FOLLOW_UP_ICON, FOLLOW_UP_LABEL, followUpMenuItems } from '~~/shared/conversation-flags'
 import { broadcastSentWithBlankVariables } from '~~/shared/broadcast-content'
+import { parseTextButtonsCard } from '~~/shared/text-buttons-card'
 import { HUMAN_HANDLING_BOT_NOTE } from '~~/shared/human-handling-copy'
 import { sessionHeaderStatus } from '~~/shared/conversation-header-status'
 import { editorTooNarrowForCustomerColumn } from '~/utils/conversation-layout'
@@ -5880,6 +5881,14 @@ function getStructuredMessagePreview(msg: MsgItem): StructuredMessagePreview | n
   }
 
   if (type === 'flex') {
+    // 模組「文字＋按鈕」`C-397` 起改送卡片：照舊畫成按鈕卡。⛔ 走下面通用那條會把整段文字當標題、再重複一次提醒文字
+    const textCard = parseTextButtonsCard(payload)
+    if (textCard) {
+      return {
+        variant: 'buttons',
+        cards: [normalizeCard({ title: textCard.text, text: '', actions: textCard.actions.map(toActionLabel) })],
+      }
+    }
     const contents = payload?.contents
     if (contents?.type === 'carousel' && Array.isArray(contents.contents)) {
       // Flex Image Carousel：hero 圖片 + 可選 footer 按鈕

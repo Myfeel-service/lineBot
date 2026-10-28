@@ -1,7 +1,11 @@
 /**
- * 「文字＋按鈕超過 160 字」的版面守門員（`H-27`）。
+ * 「文字超過上限」的版面守門員（`H-27`）。
  *
  *   node scripts/flow-text-limit-check.mjs
+ *
+ * ⚠️ `C-397` 起模組「文字＋按鈕」上限跟純文字一樣 5000（改走卡片送），這兩塊紅色區塊平常碰不到了；
+ *   還走得到的是超過 5000 字、以及推播「開啟網址」那張系統卡（按鈕範本，160）在預覽裡換完名字變長。
+ *   下面的假資料沿用當年那則 276 字切在 160 的真實案例——量的是「一大段被丟掉的字塞進窄容器」的版面，上限是多少不影響。
  *
  * 守的是什麼：`H-27` 在兩個地方加了新的紅色區塊——
  *   ①「機器人模組」編輯器：超出上限時輸入框下方的警告（`.flow-text-overflow`）
@@ -54,7 +58,7 @@ const previewHtml = `
         <div class="fmp-card">
           <p class="fmp-card-text">${KEPT}</p>
           <div class="fmp-card-cut">
-            <span class="fmp-card-cut-label">↓ 以下 ${DROPPED.length} 字送不出去（有按鈕時 LINE 只收 160 字）</span>
+            <span class="fmp-card-cut-label">↓ 以下 ${DROPPED.length} 字送不出去（這張卡 LINE 只收 160 字）</span>
             <p class="fmp-card-cut-text">${DROPPED}</p>
           </div>
           <div class="fmp-btns"><span class="fmp-btn">點我搶先看更多</span></div>
@@ -70,7 +74,7 @@ const editorHtml = `
     <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
       <div class="el-textarea"><textarea class="el-textarea__inner" rows="3">${KEPT}${DROPPED}</textarea></div>
     </div>
-    <p class="flow-text-overflow">超過 116 字，這些字客人收不到。文字底下掛了按鈕時 LINE 只收 160 字——請刪到 160 字以內，或把按鈕移除改用純文字（可到 5000 字）。</p>
+    <p class="flow-text-overflow">超過 116 字，這些字客人收不到。請刪到 5000 字以內。</p>
   </div>
 </div>`
 

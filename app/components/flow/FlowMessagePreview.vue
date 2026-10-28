@@ -25,7 +25,7 @@
         </div>
 
         <div v-for="(msg, i) in messages" :key="i" class="fmp-row">
-          <!-- 文字（無按鈕＝純氣泡；有按鈕＝按鈕範本卡） -->
+          <!-- 文字（無按鈕＝純氣泡；有按鈕＝卡片，`C-397` 前是按鈕範本） -->
           <template v-if="msg.type === 'text'">
             <!--
               ⛔ 純文字氣泡也要講被丟掉的那一段（`C-229` 補）。原本這裡只畫 `keptText`，
@@ -36,15 +36,15 @@
             <template v-if="!hasButtons(msg)">
               <div class="fmp-bubble"><PreviewText :text="keptText(msg)" /></div>
               <div v-if="droppedText(msg)" class="fmp-bubble-cut">
-                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（LINE 單則文字只收 {{ LINE_TEXT_MESSAGE_MAX }} 字）</span>
+                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（LINE 單則文字只收 {{ textMeasure(msg).limit }} 字）</span>
                 <p class="fmp-card-cut-text"><PreviewText :text="droppedText(msg)" /></p>
               </div>
             </template>
             <div v-else class="fmp-card">
               <p class="fmp-card-text"><PreviewText :text="keptText(msg)" /></p>
-              <!-- 超過 160 字的部分：照樣顯示，但明講「送不出去」 -->
+              <!-- 超過上限的部分：照樣顯示，但明講「送不出去」（推播的系統卡還是按鈕範本，上限 160） -->
               <div v-if="droppedText(msg)" class="fmp-card-cut">
-                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（有按鈕時 LINE 只收 160 字）</span>
+                <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（這張卡 LINE 只收 {{ textMeasure(msg).limit }} 字）</span>
                 <p class="fmp-card-cut-text"><PreviewText :text="droppedText(msg)" /></p>
               </div>
               <div class="fmp-btns">
@@ -172,9 +172,11 @@ function hasButtons(msg: any) {
  * 160 字——**預覽在說謊**比沒有預覽更糟。截斷法與 `buildLineMessages` 共用
  * `shared/line-text-limits`，兩邊保證切在同一格。
  * 被切掉的那段不是不顯示，而是另外標出來——過濾掉東西要說得出丟了什麼。
+ * 上限：模組的文字（有沒有按鈕）都是 5000（`C-397`）；推播的系統卡是按鈕範本，
+ * 由 `lineMessagesToPreviewMessages` 帶 `textLimit: 160` 進來。
  */
 function textMeasure(msg: any) {
-  return measureLineText(String(msg?.text || ''), hasButtons(msg))
+  return measureLineText(String(msg?.text || ''), Number(msg?.textLimit) || LINE_TEXT_MESSAGE_MAX)
 }
 function keptText(msg: any): string {
   return textMeasure(msg).kept || '（文字內容）'

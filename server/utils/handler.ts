@@ -26,7 +26,8 @@ import {
 import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
-import { LINE_BUTTONS_TEMPLATE_TEXT_MAX, LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
+import { LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
+import { buildTextButtonsCard } from '~~/shared/text-buttons-card'
 import {
   LINE_ACTION_LABEL_MAX,
   LINE_CARD_BODY_DEFAULT,
@@ -1517,62 +1518,58 @@ function buildLineMessages(
 ): messagingApi.Message[] {
   if (!dbMessages) return []
   return dbMessages.flatMap((msg) => {
-    // ── Text with buttons → Buttons Template ──
+    // ── Text with buttons → 卡片（`C-397`：以前走按鈕範本只收 160 字，形狀與理由見 `shared/text-buttons-card.ts`）──
     if (msg.type === 'text' && msg.buttons && msg.buttons.length > 0) {
       const renderedText = renderWithAttributes(msg.text || '', attributes)
-      return [{
-        type: 'template',
-        altText: renderedText.slice(0, 400),
-        template: {
-          type: 'buttons',
-          // ⛔ 這裡的截斷法必須與後台預覽同一份（`shared/line-text-limits`）——兩邊切在
-          // 不同格，預覽就又開始說謊。存檔端已擋下超長文字（`H-27`），這裡只是最後一道
-          // 保險：舊資料與變數展開後才變長的情況仍可能走到。
-          text: truncateLineText(renderedText || '無內容', LINE_BUTTONS_TEMPLATE_TEXT_MAX),
-          actions: msg.buttons.slice(0, 4).map((b: any) => {
-            if (b.type === 'uri') {
-              return {
-                type: 'uri',
-                label: renderWithAttributes(b.label || '開啟連結', attributes).slice(0, 20),
-                uri: resolveUriWithTagging({
-                  uri: renderWithAttributes(b.uri || 'https://google.com', attributes),
-                  action: b,
-                  userId,
-                  publicBaseOverride,
-                  channelSecret: lineChannelSecret,
-                }),
-              }
-            }
-            if (b.type === 'module') {
-              return {
-                type: 'postback',
-                label: renderWithAttributes(b.label || '觸發模組', attributes).slice(0, 20),
-                data: encodeTriggerModule(
-                  b.moduleId,
-                  b?.tagging?.enabled && Array.isArray(b?.tagging?.addTagIds)
-                    ? b.tagging.addTagIds
-                    : [],
-                )
-              }
-            }
-            const renderedText = renderWithAttributes(b.text || b.label || '點擊傳送', attributes).slice(0, 300)
-            const tagIds = extractTagIdsFromAction(b)
-            if (tagIds.length > 0) {
-              return {
-                type: 'postback',
-                label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
-                data: encodeTriggerMessage(renderedText, tagIds),
-                displayText: renderedText,
-              }
-            }
+      return [buildTextButtonsCard({
+        altText: truncateLineText(renderedText || '無內容', 400),
+        // ⛔ 這裡的截斷法必須與後台預覽同一份（`shared/line-text-limits`）——兩邊切在
+        // 不同格，預覽就又開始說謊。存檔端已擋下超長文字（`H-27`），這裡只是最後一道
+        // 保險：變數展開後才變長的情況仍可能走到。
+        text: truncateLineText(renderedText || '無內容', LINE_TEXT_MESSAGE_MAX),
+        actions: msg.buttons.slice(0, 4).map((b: any) => {
+          if (b.type === 'uri') {
             return {
-              type: 'message',
-              label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
-              text: renderedText,
+              type: 'uri',
+              label: renderWithAttributes(b.label || '開啟連結', attributes).slice(0, 20),
+              uri: resolveUriWithTagging({
+                uri: renderWithAttributes(b.uri || 'https://google.com', attributes),
+                action: b,
+                userId,
+                publicBaseOverride,
+                channelSecret: lineChannelSecret,
+              }),
             }
-          }),
-        },
-      } as messagingApi.TemplateMessage]
+          }
+          if (b.type === 'module') {
+            return {
+              type: 'postback',
+              label: renderWithAttributes(b.label || '觸發模組', attributes).slice(0, 20),
+              data: encodeTriggerModule(
+                b.moduleId,
+                b?.tagging?.enabled && Array.isArray(b?.tagging?.addTagIds)
+                  ? b.tagging.addTagIds
+                  : [],
+              )
+            }
+          }
+          const renderedText = renderWithAttributes(b.text || b.label || '點擊傳送', attributes).slice(0, 300)
+          const tagIds = extractTagIdsFromAction(b)
+          if (tagIds.length > 0) {
+            return {
+              type: 'postback',
+              label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
+              data: encodeTriggerMessage(renderedText, tagIds),
+              displayText: renderedText,
+            }
+          }
+          return {
+            type: 'message',
+            label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
+            text: renderedText,
+          }
+        }),
+      }) as unknown as messagingApi.FlexMessage]
     }
 
     // ── Video ──

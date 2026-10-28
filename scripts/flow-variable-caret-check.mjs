@@ -222,7 +222,7 @@ check('④ 人不在輸入框裡時 → 接在最後面（舊行為，⛔ 不可
 
 // ── ⑦⑧ 長文案：插完畫面要停在游標那裡，而且這一筆要能復原 ──────────
 // 為什麼要長文案：輸入框只有 3 行高，文案短的時候整段都看得見，捲不捲根本量不出來。
-// ⛔ 但**不能超過欄位上限**：這一格文字底下掛了按鈕＝LINE 只收 160 字，`maxlength` 就是 160，
+// ⛔ 但**不能超過欄位上限**（`maxlength`；寫這段時掛了按鈕是 160，`C-397` 起一律 5000），
 //   超過的話瀏覽器會拒絕插入、程式退回自己改資料那條路，量到的就不是要驗的東西
 //   （第一版寫了 710 字的文案，⑧ 一直紅，真因就是這個）。用短行＋多換行撐出捲軸。
 const LONG = Array.from({ length: 20 }, (_, i) => `第 ${i + 1} 行`).join('\n')
@@ -273,7 +273,8 @@ check(`⑧ ${process.platform === 'darwin' ? '⌘Z' : 'Ctrl+Z'} 收得回剛插�
 // ── ⑨ 欄位已經頂到字數上限：不可以變成「按了沒反應」 ──────────────
 // 這時瀏覽器會拒絕插入（`maxlength`），程式要退回自己改資料那條路把整串插進去
 // ——維持舊行為，超出的部分由紅字警告與存檔閘門擋（`H-27`），而不是默默什麼都沒發生。
-const FULL = '滿'.repeat(160)
+// 上限要跟編輯器的 `maxlength` 一樣（`C-397` 起 5000），不然量到的是「沒滿」，⑨ 變假綠燈
+const FULL = '滿'.repeat(5000)
 await resetField(TA, 'textarea', FULL)
 await page.evaluate((sel) => {
   const el = document.querySelector(sel).querySelector('textarea')
@@ -282,7 +283,7 @@ await page.evaluate((sel) => {
 }, TA)
 await pickVariable(TA)
 seen = await readField(TA, 'textarea')
-check('⑨ 欄位已經滿 160 字時，按下去仍然插得進去（⛔ 不可以變成按了沒反應）',
+check('⑨ 欄位已經滿 5000 字時，按下去仍然插得進去（⛔ 不可以變成按了沒反應）',
   seen.value.includes(TOKEN) && seen.value.startsWith(`滿滿滿${TOKEN}`),
   `長度 ${seen.value.length}、開頭「${seen.value.slice(0, 20)}」`)
 

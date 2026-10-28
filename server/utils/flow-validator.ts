@@ -1,6 +1,6 @@
 import { createError } from 'h3'
 import { validateUnifiedAction } from '~~/shared/action-schema'
-import { lineTextOverflowMessage, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
+import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
 
 const FLOW_MESSAGE_LIMIT = 5
 const USER_INPUT_ATTRIBUTE_RE = /^[A-Za-z][A-Za-z0-9_]{0,49}$/
@@ -20,12 +20,13 @@ function ensureTaggingSelection(tagging: any, prefix: string): void {
 
 /**
  * ⛔ 文字長度一定要在這裡擋，不能只靠前端的 `maxlength`。
- * `maxlength` 只擋「當下打的字」——先把長文貼好、之後才加按鈕，舊值不會被裁，
- * 上限形同虛設（`H-27` 就是這樣進來的：5 則模組存著超長文字、發出去被切一半）。
+ * `maxlength` 只擋「當下打的字」，舊資料與直接打 API 的都繞得過去
+ * （`H-27` 就是這樣進來的：5 則模組存著超長文字、發出去被切一半）。
  * 這裡是唯一的收斂點（建立與更新兩支端點都走 `assertValidFlowMessages`）。
+ * `C-397` 起有沒有按鈕上限都是 5000（掛按鈕的改走卡片送）。
  */
 function validateTextLength(msg: any): void {
-  const measure = measureLineText(String(msg?.text || ''), messageHasButtons(msg))
+  const measure = measureLineText(String(msg?.text || ''))
   if (measure.willTruncate) fail(lineTextOverflowMessage(measure))
 }
 

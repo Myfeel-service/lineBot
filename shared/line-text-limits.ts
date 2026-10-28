@@ -12,24 +12,23 @@
  * 2026-09-10 實際發生（`H-27`）：正式資料有 5 則模組處於會被截斷的狀態且都已發送過，
  * 最嚴重的一則整段抽獎規則沒送出去（含「留言別寫『抽獎』否則喪失資格」）。
  *
+ * `C-397`（2026-10-28）：模組的「文字＋按鈕」改用卡片格式送（`shared/text-buttons-card.ts`），
+ * 上限跟純文字一樣 5000——**有沒有按鈕都一樣**，不再有「加了按鈕就降到 160」。
+ * 160 只剩推播「開啟網址」那張系統卡（`broadcast-content.ts` 的 `cardBody`）在用，那張仍是按鈕範本。
+ *
  * ⛔ 別再在別處寫死 160／5000，也別自己寫 `.slice()`——預覽跟送出必須切在同一格，
  * 不然就是換個地方繼續說謊。要切一律走 `truncateLineText()`／`measureLineText()`。
  */
 
-/** 純文字訊息（TextMessage）的上限 */
+/** 純文字訊息（TextMessage）的上限；模組「文字＋按鈕」的卡片也是這個數（`C-397`） */
 export const LINE_TEXT_MESSAGE_MAX = 5000
 
 /**
  * 按鈕範本（buttons template）文字的上限。
- * ⚠️ LINE 的規格是「沒有標題與縮圖時 160 字，有的話 60 字」；我們的組裝端
- * （`buildLineMessages`）從不帶 title／thumbnail，所以恆為 160。
+ * ⚠️ LINE 的規格是「沒有標題與縮圖時 160 字，有的話 60 字」；我們組的系統卡從不帶 title／thumbnail，所以恆為 160。
+ * ⚠️ 模組的「文字＋按鈕」**不是**用這個（`C-397` 起走卡片）。
  */
 export const LINE_BUTTONS_TEMPLATE_TEXT_MAX = 160
-
-/** 這則文字訊息實際適用的上限：掛了按鈕就是 160，否則 5000 */
-export function lineTextLimit(hasButtons: boolean): number {
-  return hasButtons ? LINE_BUTTONS_TEMPLATE_TEXT_MAX : LINE_TEXT_MESSAGE_MAX
-}
 
 /** `msg.buttons` 有沒有真的掛按鈕（空陣列不算） */
 export function messageHasButtons(msg: { buttons?: unknown } | null | undefined): boolean {
@@ -69,10 +68,12 @@ export type LineTextMeasure = {
   dropped: string
 }
 
-/** 量一則文字訊息：現在幾字、上限幾字、會被丟掉哪一段 */
-export function measureLineText(text: string, hasButtons: boolean): LineTextMeasure {
+/**
+ * 量一則文字訊息：現在幾字、上限幾字、會被丟掉哪一段。
+ * 上限預設 5000；推播預覽畫系統卡（按鈕範本）時傳 160 進來。
+ */
+export function measureLineText(text: string, limit: number = LINE_TEXT_MESSAGE_MAX): LineTextMeasure {
   const s = String(text ?? '')
-  const limit = lineTextLimit(hasButtons)
   const cut = cutIndex(s, limit)
   return {
     limit,
@@ -89,8 +90,5 @@ export function measureLineText(text: string, hasButtons: boolean): LineTextMeas
  * 免得「後台說一種、伺服器說另一種」。
  */
 export function lineTextOverflowMessage(measure: LineTextMeasure, prefix = '文字模組'): string {
-  if (measure.limit === LINE_BUTTONS_TEMPLATE_TEXT_MAX) {
-    return `${prefix}：文字底下有按鈕時，LINE 最多只收 ${measure.limit} 字（目前 ${measure.length} 字，請刪掉 ${measure.overflow} 字）。超過的部分客人收不到。若要寫長文，請把按鈕移除，純文字最多 ${LINE_TEXT_MESSAGE_MAX} 字。`
-  }
   return `${prefix}：文字最多 ${measure.limit} 字（目前 ${measure.length} 字，請刪掉 ${measure.overflow} 字）。超過的部分客人收不到。`
 }

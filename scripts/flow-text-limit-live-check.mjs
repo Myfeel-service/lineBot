@@ -8,16 +8,16 @@
  * 證明得了「樣式沒破版」，證明不了「Vue 那邊真的接上了」。這個專案吃過太多次
  * 「typecheck 綠＋測試綠，但新程式根本沒被執行到」（記憶 `feedback_verify_new_code_actually_runs`）。
  *
- * 打開的是**正式資料裡真的存在**的那則（鼴究室「飛利浦AC0510｜預熱」，276 字＋一顆按鈕），
- * 它現在就是超標狀態，所以三個新東西應該同時現身：
- *   ① 輸入框右下角字數 276/160 且標成超出
- *   ② 輸入框下方紅色警告「超過 116 字」
- *   ③ 右側預覽的按鈕範本卡下方「以下 116 字送不出去」＋刪除線的那段
- *   ④ 按「儲存變更」被擋下來，跳出說得出要刪幾字的錯誤
+ * 打開的是**正式資料裡真的存在**的那則（鼴究室「飛利浦AC0510｜預熱」，276 字＋一顆按鈕）。
+ * `H-27` 時它超過按鈕範本的 160 字、被切掉；`C-397` 起「文字＋按鈕」改送卡片、上限 5000，所以現在應該：
+ *   ① 字數顯示 276 / 5000，不是紅的
+ *   ② 沒有紅色警告
+ *   ③ 右側預覽一字不缺（停在最後一句「3 年一換」）、沒有「送不出去」那段
+ * 對照組（⛔ 只有「沒有警告」的話，警告整個壞掉也是綠的）：在畫面上把文字改成 5001 字（不存檔），
+ *   ④ 警告、紅字、預覽「這張卡 LINE 只收 5000 字」都要出現
  *
- * ⛔ ④ 是安全的：前端擋住就不會送出；萬一前端沒擋住，後端 `assertValidFlowMessages`
- *    也會回 400，兩道都擋在寫入之前，不會動到這則模組的內容。
- * ⛔ 這支不改任何資料，也不按其他按鈕。
+ * ⛔ 不按「儲存變更」：以前這則存不進去所以按了安全，現在存得過＝會真的寫進正式資料。
+ *    保險起見所有非 GET 的 /api 請求一律攔下來（開頁自己打的也攔），最後列出攔了哪些。
  */
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,14 +41,14 @@ initializeApp({ credential: cert({ projectId, clientEmail, privateKey: privateKe
 
 const db = getFirestore()
 
-// 先確認那則模組還在、而且真的超標——不然下面「沒看到警告」會被誤讀成程式壞掉
+// 先確認那則模組還在、而且超過 160（不然「現在不紅了」證明不了什麼——它本來就不會紅）
 const flowDoc = await db.collection('flows').doc(FLOW_ID).get()
 if (!flowDoc.exists) { console.error(`查無模組 ${FLOW_ID}`); process.exit(1) }
 const target = (flowDoc.data().messages ?? []).find(m => m?.type === 'text' && Array.isArray(m.buttons) && m.buttons.length > 0)
 if (!target) { console.error('這則模組裡沒有「文字＋按鈕」的訊息，換一則來驗'); process.exit(1) }
-const overflow = String(target.text || '').length - 160
-console.log(`受測模組：${flowDoc.data().name}｜文字 ${String(target.text).length} 字、按鈕 ${target.buttons.length} 顆 → 應超出 ${overflow} 字`)
-if (overflow <= 0) { console.error('這則已經不超標了（有人修過？）——換一則超標的來驗'); process.exit(1) }
+const fullText = String(target.text || '')
+console.log(`受測模組：${flowDoc.data().name}｜文字 ${fullText.length} 字、按鈕 ${target.buttons.length} 顆`)
+if (fullText.length <= 160) { console.error('這則已經不超過 160 了（有人改短？）——換一則超過 160 的來驗'); process.exit(1) }
 
 const members = await db.collection('workspaceMembers').where('workspaceId', '==', WORKSPACE_ID).get()
 const rows = members.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -68,6 +68,17 @@ const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox']
 const page = await browser.newPage()
 await page.setViewport({ width: 1600, height: 1100 })
 page.on('pageerror', e => console.log('  [page error]', String(e).slice(0, 200)))
+// 零寫入：所有非 GET 的 /api 一律攔下（開頁會自己打的 POST 也算在內，被攔不影響這裡要看的東西）
+const blockedWrites = []
+await page.setRequestInterception(true)
+page.on('request', (req) => {
+  if (req.method() !== 'GET' && req.url().includes('/api/')) {
+    blockedWrites.push(`${req.method()} ${new URL(req.url()).pathname}`)
+    req.abort()
+    return
+  }
+  req.continue()
+})
 
 await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' })
 await page.evaluate(async (s) => {
@@ -108,14 +119,13 @@ await new Promise(r => setTimeout(r, 1500))
 const results = []
 const check = (name, ok, detail = '') => results.push({ name, ok, detail })
 
-const seen = await page.evaluate(() => {
+const read = () => page.evaluate(() => {
   // ⛔ `.is-exceed` 掛在 `.el-textarea` 外層不是在字數元素上（EP 的 textarea 就是這樣），
   //    所以要問外層有沒有那個 class，別問字數元素自己。
   const textarea = document.querySelector('.flow-textarea-wrapper--var-inset .el-textarea')
   const count = document.querySelector('.flow-textarea-wrapper--var-inset .el-input__count')
   const warn = document.querySelector('.flow-text-overflow')
   const cut = document.querySelector('.fmp-card-cut')
-  const cutText = document.querySelector('.fmp-card-cut-text')
   const cardText = document.querySelector('.fmp-card-text')
   const vis = el => !!el && el.offsetHeight > 0
   return {
@@ -126,51 +136,42 @@ const seen = await page.evaluate(() => {
     warnText: warn?.innerText?.trim().replace(/\s+/g, ' ') ?? '',
     cutVisible: vis(cut),
     cutLabel: document.querySelector('.fmp-card-cut-label')?.innerText?.trim() ?? '',
-    cutTail: cutText?.innerText?.trim().slice(-14) ?? '',
     cardTail: cardText?.innerText?.trim().slice(-16) ?? '',
-    lineThrough: cutText ? getComputedStyle(cutText).textDecorationLine : '',
   }
 })
-
 // ⛔ 不能只判 `.is-exceed` 在不在：我們自己的樣式專一度較高，class 在、顏色照樣是灰的
-//    （第一次跑就是這樣紅的）。所以要連「真的變紅了」一起量。
-const rgb = String(seen.countColor).match(/\d+/g)?.map(Number) ?? []
-const isRed = rgb.length >= 3 && rgb[0] > 180 && rgb[0] > rgb[1] + 60 && rgb[0] > rgb[2] + 60
-check('① 字數顯示 276/160、標成超出，而且真的是紅的',
-  seen.countExceed && seen.countText.includes('/ 160') && isRed,
-  `「${seen.countText}」is-exceed=${seen.countExceed} 顏色=${seen.countColor}`)
-check('② 輸入框下方紅色警告有出現，而且說得出要刪幾字',
-  seen.warnVisible && seen.warnText.includes(`超過 ${overflow} 字`),
-  `「${seen.warnText.slice(0, 60)}…」`)
-check('③ 預覽的文字停在客人真的看得到的位置', seen.cardTail.endsWith('體積'), `結尾「…${seen.cardTail}」`)
-check('④ 預覽標出「送不出去」那段，且有刪除線',
-  seen.cutVisible && seen.cutLabel.includes(`${overflow} 字送不出去`) && seen.lineThrough.includes('line-through'),
-  `「${seen.cutLabel}」結尾「…${seen.cutTail}」${seen.lineThrough}`)
-
-// ── ⑤ 按儲存要被擋下來 ────────────────────────────────────────
-// 兩道守門（前端 validateMessages／後端 assertValidFlowMessages）都在寫入之前，
-// 所以按下去不會動到這則模組的內容。
-let sawWrite = false
-page.on('request', (req) => {
-  if (req.method() === 'PUT' && req.url().includes('/api/flow/')) sawWrite = true
-})
-const clicked = await page.evaluate(() => {
-  const btn = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === '儲存變更')
-  if (!btn) return false
-  btn.click()
-  return true
-})
-if (!clicked) check('⑤ 按「儲存變更」被擋下來', false, '找不到儲存按鈕')
-else {
-  await new Promise(r => setTimeout(r, 2500))
-  // ⛔ 這一頁的提示不是 Element Plus 的 `.el-message`，是自家的 `.toast-bar .toast`
-  //    （`app/components/AdminToastStack.vue`）。第一次抓錯選擇器，看起來像「沒有提示」。
-  const msg = await page.evaluate(() =>
-    [...document.querySelectorAll('.toast-bar .toast')].map(el => el.innerText.trim()).join(' | '))
-  check('⑤ 按「儲存變更」被擋下來，訊息說得出要刪幾字',
-    msg.includes('160') && msg.includes(`刪掉 ${overflow} 字`), `「${msg.slice(0, 90)}」`)
-  check('⑤b 真的沒有送出寫入請求（擋在寫入之前，沒動到資料）', !sawWrite, sawWrite ? '有發出 PUT！' : '沒有任何 PUT')
+//    （`H-27` 第一次跑就是這樣紅的）。所以要連「真的變紅了」一起量。
+const isRed = (color) => {
+  const rgb = String(color).match(/\d+/g)?.map(Number) ?? []
+  return rgb.length >= 3 && rgb[0] > 180 && rgb[0] > rgb[1] + 60 && rgb[0] > rgb[2] + 60
 }
+
+const seen = await read()
+check(`① 字數顯示 ${fullText.length} / 5000，不是紅的`,
+  seen.countText.includes(`${fullText.length} / 5000`) && !seen.countExceed && !isRed(seen.countColor),
+  `「${seen.countText}」is-exceed=${seen.countExceed} 顏色=${seen.countColor}`)
+check('② 沒有紅色警告', !seen.warnVisible, seen.warnVisible ? `「${seen.warnText.slice(0, 60)}」` : '沒有')
+check('③ 預覽一字不缺（停在最後一句）、沒有「送不出去」那段',
+  fullText.trim().endsWith(seen.cardTail) && !seen.cutVisible,
+  `結尾「…${seen.cardTail}」送不出去那段=${seen.cutVisible}`)
+
+// ── ④ 對照組：在畫面上改成 5001 字（不存檔），紅字、警告、預覽要全部出現 ──────────
+await page.evaluate(() => {
+  const el = document.querySelector('.flow-textarea-wrapper--var-inset textarea')
+  // ⛔ 不能用 el.value=：maxlength 只擋打字不擋程式設值，但 Vue 要收到 input 事件才會更新資料
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+  setter.call(el, '飛'.repeat(5001))
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+})
+await new Promise(r => setTimeout(r, 800))
+const over = await read()
+check('④ 對照組 5001 字：字數紅、警告說超過 1 字、預覽說這張卡只收 5000 字',
+  over.countExceed && isRed(over.countColor) && over.warnVisible && over.warnText.includes('超過 1 字')
+    && over.cutVisible && over.cutLabel.includes('只收 5000 字'),
+  `「${over.countText}」紅=${isRed(over.countColor)}｜「${over.warnText.slice(0, 40)}」｜「${over.cutLabel}」`)
+check('⑤ 全程沒有寫入（非 GET 的 /api 全部攔下，沒有任何一筆是存模組）',
+  !blockedWrites.some(w => w.includes('/api/flow')),
+  blockedWrites.length ? `攔下 ${blockedWrites.length} 筆：${blockedWrites.join('、').slice(0, 160)}` : '一筆都沒有')
 
 const shotPath = join(tmpdir(), `flow-text-limit-live-${process.pid}.png`)
 await page.screenshot({ path: shotPath, fullPage: false })

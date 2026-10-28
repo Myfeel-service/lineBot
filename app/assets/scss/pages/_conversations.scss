@@ -1983,6 +1983,8 @@
     line-height: var(--line-lh-card);
     letter-spacing: 0.01em;
     color: #1f2a3a;
+    // 「文字＋按鈕」的整段文字畫在標題這格（`C-397` 起可到 5000 字）：照客人在 LINE 看到的換行，不要擠成一坨
+    white-space: pre-wrap;
   }
 
   .conv-line-template.variant-buttons .conv-line-card-text,

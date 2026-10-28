@@ -131,7 +131,7 @@ function insertByBrowser(field: HTMLTextAreaElement | HTMLInputElement, token: s
     ok = false
   }
   // ⛔ 不能只信回傳值，要比對「插出來的字跟我們要的一模一樣」。
-  //   欄位頂到 `maxlength` 時（文字訊息掛了按鈕就只剩 160 字）瀏覽器會拒絕插入卻回 true，
+  //   欄位頂到 `maxlength` 時（文字訊息 5000 字；`C-397` 以前掛按鈕只剩 160）瀏覽器會拒絕插入卻回 true，
   //   放著不管就是「按了沒反應」；萬一它改成只插得下半截，`{{displa` 這種殘骸更糟。
   //   對不上就回 false，交給下面的退路整串插進去（維持舊行為：上限由紅字警告與存檔閘門擋）。
   return ok && field.value === insertTokenAtCaret(before, token, range).text
