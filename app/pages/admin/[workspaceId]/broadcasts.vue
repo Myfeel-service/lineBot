@@ -449,6 +449,7 @@
               <div class="admin-field-group">
                 <AdminFieldLabel text="打開的比例（LINE 官方統計，通常發完幾個小時後才有）" tight />
                 <span class="bc-ctr-value">{{ formatPercentRate(report.openRate) }}</span>
+                <p v-if="openRateCompareText" class="bc-open-compare">{{ openRateCompareText }}</p>
               </div>
               <!-- 點連結的人 ÷ 送到的人，兩邊都是人數。⛔ 以前的「追蹤連結點擊率」拿點擊次數去除人數，單位對不上 -->
               <div class="admin-field-group">
@@ -730,6 +731,7 @@ import {
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { describeOpenRateChange } from '~~/shared/broadcast-open-compare'
 // `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
 import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import { taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
@@ -1043,6 +1045,20 @@ function formatPercentRate(rate: number | null | undefined): string {
   if (rate == null) return '—'
   return `${(rate * 100).toFixed(2)}%`
 }
+
+/** `D-154`①：「打開的比例」底下那一句——跟上一則發給同一群人的比（口徑見 shared/broadcast-open-compare.ts） */
+const openRateCompareText = computed(() => {
+  const r = report.value
+  if (!r?.previousSameAudience || r.openRate == null) return ''
+  return describeOpenRateChange({
+    prev: r.previousSameAudience,
+    currentRate: r.openRate,
+    currentCompletedMs: parseFirestoreDate(r.completedAt)?.getTime() ?? null,
+    nowMs: Date.now(),
+    formatRate: formatPercentRate,
+    formatDate: formatStoredDate,
+  })
+})
 
 function bcMetaText(bc: any): string {
   const parts: string[] = []

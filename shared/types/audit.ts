@@ -322,7 +322,7 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   weekendOff: '週末整天不打擾',
   holidayOff: '國定假日整天不打擾',
   dndReply: '勿擾時段回給客人的話',
-  days: '幾天沒來訊算沉睡',
+  days: '幾天沒動靜算沉睡',
   role: '權限',
   // `C-254`（2026-09-24）補的那一批動作會帶到的欄位。
   // ⚠️ 陣列一律只記數量（`auditSnapshot` 的 `count`），所以這裡對的是 `xxxCount`。

@@ -5,22 +5,27 @@
  * 來源裡會自己更新的只有 tags），所以「沉睡客」做成標籤＝推播端零改動就能選出
  * 「60 天沒講過話的人」發喚醒訊息。
  *
+ * 「沒互動」看的是 `lastPeerActivityAt`＝客人最後一次**有動作**：傳訊息，或按選單／按鈕。
+ * `D-154`（2026-10-28 老闆拍板）以前看 `lastInboundMessageAt`（只算傳訊息）——天天按選單、
+ * 從不打字的客人也被貼成「60 天沒互動」，按一下模組按鈕摘掉、過幾天又被貼回去。
+ *
  * 三個機制（都在這一檔）：
- *   1. 每日掃描貼標（scanInactiveTag，掛 cron/run-tasks）：把「lastInboundMessageAt 落在
+ *   1. 每日掃描貼標（scanInactiveTag，掛 cron/run-tasks）：把「lastPeerActivityAt 落在
  *      窗口內」的客人貼上系統標籤。窗口＝[cutoff-7天, cutoff)，**不是敞開到 epoch**——
- *      ①避免每天重掃整批老對話（08-11 讀取費暴衝的教訓）②lastInboundMessageAt 是
- *      2026-08-19 起才寫的欄位，**刻意不回填**（同紅點那次的鐵律）：更早就沉默的老客
- *      第一批抓不到，隨時間自然補齊，也避免部署當下整排客人同時被貼標。
+ *      ①避免每天重掃整批老對話（08-11 讀取費暴衝的教訓）②**刻意不回填**（同紅點那次的鐵律）：
+ *      功能開始之前就已經沉默很久的老客不貼，避免部署當下整排客人同時被貼標。
+ *      `D-154` 換欄位時同樣不回填：上線那天只多貼「剛好落在窗口裡」的那幾天。
  *   2. 回訊摘標（clearInactiveTagOnReturn，掛 ensureConversationSession 慢路徑）：
- *      沉睡的客人一開口就把標籤摘掉——摘標判斷用的是交易裡**本來就讀了**的對話文件
- *      （舊的 lastInboundMessageAt），常態路徑零額外讀取。
- *   3. 每日修復掃描（併在 scanInactiveTag）：貼圖/圖片路徑存訊息與開會話是並行的，
- *      機制 2 可能讀到已更新的時間而漏摘；每天輪掃一小批已貼標的客人對帳，
+ *      沉睡的客人一傳訊息或按模組按鈕就把標籤摘掉——摘標判斷用的是交易裡**本來就讀了**的
+ *      對話文件（舊的 lastPeerActivityAt），常態路徑零額外讀取。
+ *   3. 每日修復掃描（併在 scanInactiveTag）：兩種情況機制 2 摘不到——①貼圖/圖片路徑存訊息與
+ *      開會話是並行的，可能讀到已更新的時間 ②純切換選單分頁不開會話（見 handler.ts
+ *      isPureMenuSwitch），只更新 lastPeerActivityAt。每天輪掃一小批已貼標的客人對帳，
  *      漏網的隔天自動修復。游標輪轉、每輪上限，不整批掃。
  *
  * ⚠️ 天數門檻與開關在 aiSettings.inactiveTag（預設開、60 天）。
- * ⚠️ 需要複合索引 conversations (workspaceId ASC, lastInboundMessageAt ASC)——見
- *    firestore.indexes.json；部署只跑 myfeel（2026-08-22 拍板 splash 先不管）。
+ * ⚠️ 用的是對話列表那支本來就有的複合索引 conversations (workspaceId ASC, lastPeerActivityAt DESC)
+ *    ——所以掃描照新到舊排；⛔ 改成由舊到新要另開一個 ASC 索引（兩個專案各部署一次）。
  */
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { v4 as uuidv4 } from 'uuid'
@@ -43,6 +48,14 @@ const REPAIR_LIMIT = 200
 export function inactiveTagName(days: number): string {
   return `${days} 天沒互動`
 }
+
+/** 標籤管理頁看得到的說明 */
+export const INACTIVE_TAG_DESCRIPTION = '系統自動維護：超過設定天數沒傳訊息、也沒按選單或按鈕的客人會被貼上，客人回來就自動摘掉。天數在 AI 設定頁調整。'
+/**
+ * `D-154` 以前的說明（只算傳訊息）。每日掃描看到標籤還是這句就換成新的；
+ * ⛔ 只換一字不差的舊句——店家自己改過的說明不動。
+ */
+const LEGACY_INACTIVE_TAG_DESCRIPTION = '系統自動維護：超過設定天數沒來訊的客人會被貼上，一回來就自動摘掉。天數在 AI 設定頁調整。'
 
 /** tagId 的行程內快取：摘標走在收訊熱路徑上，不能每則訊息都查一次 tags */
 const tagIdCache = new Map<string, { tagId: string | null; cachedAt: number }>()
@@ -82,7 +95,7 @@ export async function resolveInactiveTagId(
       name: inactiveTagName(opts.createWithDays),
       category: 'behavior',
       color: '#8a95a1',
-      description: '系統自動維護：超過設定天數沒來訊的客人會被貼上，一回來就自動摘掉。天數在 AI 設定頁調整。',
+      description: INACTIVE_TAG_DESCRIPTION,
       status: 'active',
       createdBy: 'system',
       createdAt: FieldValue.serverTimestamp(),
@@ -92,12 +105,15 @@ export async function resolveInactiveTagId(
     tagId = id
   }
   else if (tagId && opts.createWithDays) {
-    // 天數改了 → 名稱跟上（名稱是「60 天沒互動」這種含天數的字，不改會騙人）。
-    // 只在每日掃描時比對一次，平常路徑不讀不寫。
-    const currentName = snap.docs[0]!.data()?.name
+    // 天數改了 → 名稱跟上（名稱是「60 天沒互動」這種含天數的字，不改會騙人）；
+    // 說明還是 `D-154` 以前的舊句 → 換成新的。只在每日掃描時比對一次，平常路徑不讀不寫。
+    const current = snap.docs[0]!.data()
+    const patch: Record<string, unknown> = {}
     const expected = inactiveTagName(opts.createWithDays)
-    if (currentName !== expected) {
-      await db.collection('tags').doc(tagId).update({ name: expected, updatedAt: FieldValue.serverTimestamp() })
+    if (current?.name !== expected) patch.name = expected
+    if (current?.description === LEGACY_INACTIVE_TAG_DESCRIPTION) patch.description = INACTIVE_TAG_DESCRIPTION
+    if (Object.keys(patch).length) {
+      await db.collection('tags').doc(tagId).update({ ...patch, updatedAt: FieldValue.serverTimestamp() })
     }
   }
 
@@ -112,14 +128,14 @@ export function inactiveWindow(nowMs: number, days: number): { startMs: number; 
 }
 
 /**
- * 回訊摘標：客人來訊、而且上一次來訊已超過 N 天 → 摘掉「沒互動」標籤。
+ * 回訊摘標：客人傳訊息或按模組按鈕、而且上一次有動作已超過 N 天 → 摘掉「沒互動」標籤。
  *
  * 掛在 ensureConversationSession 的慢路徑（交易之後）：
- * - prevInboundMs 用交易裡讀到的**舊值**，常態路徑零額外讀取、零額外延遲
+ * - prevActivityMs 用交易裡讀到的**舊值**（lastPeerActivityAt），常態路徑零額外讀取、零額外延遲
  *   （沒超過門檻時第一個 if 就返回了）。
- * - 回來的客人一定走慢路徑（60 天沒訊息＝快取早就沒了），所以不會漏在快路徑。
+ * - 回來的客人一定走慢路徑（60 天沒動靜＝快取早就沒了），所以不會漏在快路徑。
  * - 貼圖/圖片路徑存訊息與這裡是並行的，可能讀到剛更新的時間而誤判「沒超過」——
- *   那筆由每日修復掃描兜底，最多晚一天摘。
+ *   那筆由每日修復掃描兜底，最多晚一天摘。純切換選單不走這裡，也由修復掃描摘。
  *
  * ⛔ 這裡在收訊熱路徑上，任何失敗都只能記 log，不准把訊息處理弄掛。
  */
@@ -127,14 +143,14 @@ export async function clearInactiveTagOnReturn(
   db: Firestore,
   workspaceId: string,
   convDocId: string,
-  prevInboundMs: number,
+  prevActivityMs: number,
   nowMs: number = Date.now(),
 ): Promise<boolean> {
   try {
-    if (!prevInboundMs) return false
+    if (!prevActivityMs) return false
     const settings = await getAiSettings(workspaceId, db)
     if (!settings.inactiveTag?.enabled) return false
-    if (nowMs - prevInboundMs < settings.inactiveTag.days * DAY_MS) return false
+    if (nowMs - prevActivityMs < settings.inactiveTag.days * DAY_MS) return false
 
     const tagId = await resolveInactiveTagId(db, workspaceId)
     if (!tagId) return false
@@ -181,11 +197,13 @@ export async function scanInactiveTag(db: Firestore): Promise<{
 
       // ── 1. 窗口內的沉默客貼標 ──────────────────────────────
       const { startMs, endMs } = inactiveWindow(nowMs, days)
+      // 新到舊＝吃現成的 DESC 索引（見檔頭）。窗口 7 天、一天的量遠小於 SCAN_LIMIT，
+      // 照新到舊每個人在進窗口的那天就會被貼到
       const convSnap = await db.collection('conversations')
         .where('workspaceId', '==', workspaceId)
-        .where('lastInboundMessageAt', '>=', Timestamp.fromMillis(startMs))
-        .where('lastInboundMessageAt', '<', Timestamp.fromMillis(endMs))
-        .orderBy('lastInboundMessageAt')
+        .where('lastPeerActivityAt', '>=', Timestamp.fromMillis(startMs))
+        .where('lastPeerActivityAt', '<', Timestamp.fromMillis(endMs))
+        .orderBy('lastPeerActivityAt', 'desc')
         .limit(SCAN_LIMIT)
         .select() // 只要 doc id（＝users 主鍵），內容一個欄位都不用讀
         .get()
@@ -202,7 +220,7 @@ export async function scanInactiveTag(db: Firestore): Promise<{
       }
 
       // ── 2. 修復掃描：已貼標的輪一批，回來過的補摘 ──────────
-      // （機制 2 在貼圖/並行路徑可能漏摘，見檔頭。游標輪轉，掃到底歸零重來）
+      // （機制 2 在貼圖/並行路徑、純切換選單摘不到，見檔頭。游標輪轉，掃到底歸零重來）
       let repairQ = db.collection('userTags')
         .where('workspaceId', '==', workspaceId)
         .where('tagId', '==', tagId)
@@ -223,8 +241,8 @@ export async function scanInactiveTag(db: Firestore): Promise<{
         const convs = await db.getAll(...convRefs)
         const cutoffMs = nowMs - days * DAY_MS
         for (const conv of convs) {
-          const lastInboundMs = (conv.data()?.lastInboundMessageAt as Timestamp | undefined)?.toMillis?.() ?? 0
-          if (lastInboundMs && lastInboundMs >= cutoffMs) {
+          const lastActivityMs = (conv.data()?.lastPeerActivityAt as Timestamp | undefined)?.toMillis?.() ?? 0
+          if (lastActivityMs && lastActivityMs >= cutoffMs) {
             const { removed } = await removeTagsFromUser(conv.id, [tagId], 'system', 'inactive-tag:repair', workspaceId)
               .catch((e) => {
                 console.warn('[inactive-tag] repair failed:', conv.id, e)

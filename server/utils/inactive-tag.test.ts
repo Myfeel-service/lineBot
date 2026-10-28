@@ -16,12 +16,14 @@ vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn() }))
 
 import { getAiSettings } from './ai-settings'
-import { removeTagsFromUser } from './tagging'
+import { addTagsToUser, removeTagsFromUser } from './tagging'
 import {
   inactiveWindow,
   inactiveTagName,
   resolveInactiveTagId,
   clearInactiveTagOnReturn,
+  scanInactiveTag,
+  INACTIVE_TAG_DESCRIPTION,
   _clearInactiveTagCacheForTest,
 } from './inactive-tag'
 
@@ -139,5 +141,98 @@ describe('resolveInactiveTagId：系統標籤的建立與改名', () => {
 
   it('inactiveTagName：單一事實來源', () => {
     expect(inactiveTagName(60)).toBe('60 天沒互動')
+  })
+
+  it('`D-154`：說明還是「沒來訊」那句舊字 → 換成「沒傳訊息、也沒按選單或按鈕」', async () => {
+    const { db, updateCalls } = fakeTagsDb([{ id: 'tag9', data: {
+      name: '60 天沒互動',
+      description: '系統自動維護：超過設定天數沒來訊的客人會被貼上，一回來就自動摘掉。天數在 AI 設定頁調整。',
+    } }])
+    await resolveInactiveTagId(db, WS, { createWithDays: 60 })
+    expect(updateCalls).toHaveLength(1)
+    expect(updateCalls[0]!.data.description).toBe(INACTIVE_TAG_DESCRIPTION)
+    expect(updateCalls[0]!.data.name).toBeUndefined() // 名稱沒變就不碰
+  })
+
+  it('⛔ 店家自己改過的說明不動', async () => {
+    const { db, updateCalls } = fakeTagsDb([{ id: 'tag9', data: { name: '60 天沒互動', description: '很久沒買的客人' } }])
+    await resolveInactiveTagId(db, WS, { createWithDays: 60 })
+    expect(updateCalls).toHaveLength(0)
+  })
+})
+
+/**
+ * 每日掃描的假 db：記下對 conversations 下的每一個條件；修復掃描的 getAll 回 seed 的對話。
+ * 只做到 scanInactiveTag 會走到的那幾條路。
+ */
+function fakeScanDb(seed: {
+  windowDocs?: string[]
+  taggedUserIds?: string[]
+  convs?: Record<string, Record<string, unknown>>
+}) {
+  const convCalls: Array<[string, ...unknown[]]> = []
+  const chain = (onGet: () => any, record?: Array<[string, ...unknown[]]>) => {
+    const q: any = {}
+    for (const m of ['where', 'orderBy', 'limit', 'select', 'startAfter']) {
+      q[m] = (...a: unknown[]) => { record?.push([m, ...a]); return q }
+    }
+    q.get = async () => onGet()
+    return q
+  }
+  const docsOf = (ids: string[], data: (id: string) => Record<string, unknown>) =>
+    ({ docs: ids.map(id => ({ id, data: () => data(id) })), size: ids.length, empty: ids.length === 0 })
+
+  const db: any = {
+    collection: (name: string) => {
+      if (name === 'workspaces') return chain(() => docsOf([WS], () => ({})))
+      if (name === 'tags') return { ...chain(() => docsOf(['tag9'], () => ({ name: '60 天沒互動' }))), doc: () => ({ update: async () => {} }) }
+      if (name === 'cronState') return { doc: () => ({ get: async () => ({ data: () => undefined }), set: async () => {} }) }
+      if (name === 'userTags') {
+        return { ...chain(() => docsOf((seed.taggedUserIds ?? []).map(u => `ut_${u}`), id => ({ userId: id.slice(3) }))), doc: (id: string) => ({ id }) }
+      }
+      if (name === 'conversations') {
+        return { ...chain(() => docsOf(seed.windowDocs ?? [], () => ({})), convCalls), doc: (id: string) => ({ id }) }
+      }
+      throw new Error(`unexpected collection ${name}`)
+    },
+    getAll: async (...refs: Array<{ id: string }>) => refs.map(r => ({ id: r.id, data: () => seed.convs?.[r.id] })),
+  }
+  return { db, convCalls }
+}
+
+const at = (ms: number) => ({ toMillis: () => ms })
+
+describe('scanInactiveTag：看「最後一次有動作」（`D-154`）', () => {
+  beforeEach(() => {
+    vi.mocked(getAiSettings).mockResolvedValue({ inactiveTag: { enabled: true, days: 60 } } as any)
+    vi.mocked(addTagsToUser).mockResolvedValue({ added: ['tag9'], skipped: [] } as any)
+    vi.mocked(removeTagsFromUser).mockResolvedValue({ removed: ['tag9'], skipped: [] })
+  })
+
+  it('貼標窗口查的是 lastPeerActivityAt（傳訊息或按選單／按鈕），⛔ 不是只算傳訊息的 lastInboundMessageAt', async () => {
+    const { db, convCalls } = fakeScanDb({ windowDocs: ['ws1_U1'] })
+    const stats = await scanInactiveTag(db)
+    const fields = convCalls.filter(c => c[0] === 'where' || c[0] === 'orderBy').map(c => c[1])
+    expect(fields).toContain('lastPeerActivityAt')
+    expect(fields).not.toContain('lastInboundMessageAt')
+    // 照新到舊＝吃現成的 (workspaceId, lastPeerActivityAt DESC) 索引；改方向要另開索引
+    expect(convCalls).toContainEqual(['orderBy', 'lastPeerActivityAt', 'desc'])
+    expect(stats.tagged).toBe(1)
+    expect(addTagsToUser).toHaveBeenCalledWith('ws1_U1', ['tag9'], 'system', 'inactive-tag:scan', WS)
+  })
+
+  it('修復掃描：兩個多月沒打字、但前天還在按選單的客人 → 摘掉；真的沒動靜的 → 留著', async () => {
+    const now = Date.now()
+    const { db } = fakeScanDb({
+      taggedUserIds: ['ws1_menu', 'ws1_quiet'],
+      convs: {
+        ws1_menu: { lastInboundMessageAt: at(now - 70 * DAY), lastPeerActivityAt: at(now - 2 * DAY) },
+        ws1_quiet: { lastInboundMessageAt: at(now - 70 * DAY), lastPeerActivityAt: at(now - 70 * DAY) },
+      },
+    })
+    const stats = await scanInactiveTag(db)
+    expect(stats.repaired).toBe(1)
+    expect(removeTagsFromUser).toHaveBeenCalledTimes(1)
+    expect(removeTagsFromUser).toHaveBeenCalledWith('ws1_menu', ['tag9'], 'system', 'inactive-tag:repair', WS)
   })
 })

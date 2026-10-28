@@ -176,7 +176,7 @@ describe('前後對照展開到真的有變的那一格', () => {
 
   it('新增或整個拿掉一組設定時，缺的那一邊講「（空白）」', () => {
     expect(auditChangeLines(null, { inactiveTag: { days: 30 } }).lines).toEqual([
-      { key: 'inactiveTag.days', label: '沉睡客人自動標籤 › 幾天沒來訊算沉睡', before: '（空白）', after: '30' },
+      { key: 'inactiveTag.days', label: '沉睡客人自動標籤 › 幾天沒動靜算沉睡', before: '（空白）', after: '30' },
     ])
   })
 })

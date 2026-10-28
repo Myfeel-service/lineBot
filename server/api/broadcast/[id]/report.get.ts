@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchBroadcastLineInsight } from '~~/server/utils/broadcast-line-insight'
+import { findPreviousSameAudienceOpen } from '~~/server/utils/broadcast-previous-open'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 import { lineStatsExpired, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
@@ -132,6 +133,18 @@ export default defineEventHandler(async (event) => {
     ? uniqueClick / data.sentCount
     : null
 
+  /**
+   * `D-154`①：跟上一則發給同一群人的比。這則沒有打開比例就不查（省讀取）；
+   * 查失敗只少一句比較，⛔ 不准把整張成效報表弄掛。
+   */
+  const previousSameAudience = openRate != null && completedMs != null
+    ? await findPreviousSameAudienceOpen(db, { id, workspaceId, audienceSource: data.audienceSource, completedMs })
+        .catch((e) => {
+          console.warn('[broadcast/report] previous same-audience lookup failed:', id, e)
+          return null
+        })
+    : null
+
   return {
     campaignId: id,
     name: data.name,
@@ -166,6 +179,8 @@ export default defineEventHandler(async (event) => {
     /** 失敗人數超過列出上限時為 true，總數看 failedCount */
     failedRecipientsTruncated: data.failedCount > failedRecipients.length,
     openRate: openRate != null ? Math.round(openRate * 10000) / 10000 : null,
+    /** 上一則發給同一群人的推播與它的打開比例（`D-154`①）；沒有可比的＝null */
+    previousSameAudience,
     clicksByLinkKey,
     startedAt: data.startedAt,
     completedAt: data.completedAt,

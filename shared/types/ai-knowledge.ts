@@ -492,16 +492,17 @@ export interface AiSettingsDoc {
     dndReply: string
   }
   /**
-   * 「N 天沒互動」自動標籤（CRM 分眾）：每天把「超過 N 天沒來訊」的客人貼上系統標籤，
-   * 客人一回來就自動摘掉。標籤本身在 tags 集合（code=sys_inactive，見 inactive-tag.ts），
+   * 「N 天沒互動」自動標籤（CRM 分眾）：每天把「超過 N 天沒傳訊息、也沒按選單或按鈕」
+   * （`lastPeerActivityAt`，`D-154` 以前只看傳訊息）的客人貼上系統標籤，客人回來就自動摘掉。
+   * 標籤本身在 tags 集合（code=sys_inactive，見 inactive-tag.ts），
    * 推播分眾照常選這個標籤就好——分眾維度只有標籤一種，所以什麼都做成標籤（CRM-EVAL-20260822）。
    *
-   * **預設開啟**：它不對客人說話、只在後台貼標，而且判斷基準 lastInboundMessageAt 是
-   * 2026-08-19 才開始記的——天數門檻走完之前一筆都不會貼，天生就是漸進上線。
+   * **預設開啟**：它不對客人說話、只在後台貼標，而且每天只貼剛滿 N 天的人、不回頭補貼，
+   * 天生就是漸進上線。
    */
   inactiveTag: {
     enabled: boolean
-    /** 幾天沒來訊算「沒互動」（下限 7：太短會把週末沒講話的客人都標成沉睡） */
+    /** 幾天沒動靜算「沒互動」（下限 7：太短會把週末沒講話的客人都標成沉睡） */
     days: number
   }
   /**
@@ -914,8 +915,9 @@ export const DEFAULT_DIGEST_HOUR = 9
  * 系統從哪一天開始記「客人最後一次來訊」（`conversations.lastInboundMessageAt`）。
  *
  * 這是**部署事實**不是設定：在這天之前就沒再來訊的客人查不到那個時間，所以
- * ①「N 天沒互動」標籤的第一批會晚一點才出現 ②客人檔案的「最後來訊」要據此換句話說。
- * ⛔ 單一事實來源——這個日期出現在客人檔案與 AI 設定頁兩處文案，別各寫一份字串。
+ * 客人檔案的「最後來訊」要據此換句話說。（「N 天沒互動」標籤 `D-154` 起改看
+ * `lastPeerActivityAt`，不再用這個日期。）
+ * ⛔ 單一事實來源——別在別處另寫一份日期字串。
  */
 export const INBOUND_TIME_TRACKING_SINCE = '2026-08-19'
 

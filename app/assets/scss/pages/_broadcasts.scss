@@ -440,6 +440,14 @@
   margin: 0;
 }
 
+/* `D-154`①：打開比例底下「跟上一則發給同一群人的比」。是結果不是附註，用正文色不用灰 */
+.bc-open-compare {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  margin: 0;
+  color: var(--text-primary);
+}
+
 .bc-failed-list {
   list-style: none;
   margin: 0;

@@ -264,20 +264,24 @@
               標籤是發推播挑名單的依據。這裡的兩個功能都只在後台動標籤,<strong>不會對客人說任何話</strong>。
             </p>
             <div class="admin-field-group">
-              <AdminFieldLabel text="太久沒來訊的客人，自動貼「沒互動」標籤" tight />
+              <AdminFieldLabel text="太久沒動靜的客人，自動貼「沒互動」標籤" tight />
               <el-switch
                 v-model="form.inactiveTag.enabled"
                 active-text="啟用"
                 inactive-text="停用"
               />
+              <!--
+                `D-154`：「沒動靜」＝沒傳訊息、也沒按選單或按鈕（以前只看傳訊息，天天按選單的客人也被貼）。
+                ⛔ 不回頭補貼是刻意的（見 inactive-tag.ts 檔頭）——這句要照實講，以前寫「會隨時間自然補齊」是錯的：
+                早就沉睡的老客除非回來過再沉睡，否則永遠不會被貼。
+              -->
               <p class="ai-section-hint">
-                超過天數沒來訊就自動貼上（標籤叫「{{ form.inactiveTag.days }} 天沒互動」），
-                客人一回來就自動摘掉——發「好久不見」推播時選這個標籤就是名單。
-                ⚠️ 系統從 {{ INBOUND_TIME_TRACKING_SINCE }} 才開始記「客人最後一次來訊」的時間，
-                在那之前就沒再來訊的老客第一批抓不到，會隨時間自然補齊。
+                超過天數沒傳訊息、也沒按選單或按鈕，就自動貼上（標籤叫「{{ form.inactiveTag.days }} 天沒互動」），
+                客人回來就自動摘掉——發「好久不見」推播時選這個標籤就是名單。
+                ⚠️ 每天只貼剛滿天數的客人、不回頭補貼：開始用這個功能之前就已經很久沒動靜的老客不在裡面。
               </p>
               <div v-if="form.inactiveTag.enabled" class="admin-field-group">
-                <AdminFieldLabel text="幾天沒來訊算「沒互動」" tight />
+                <AdminFieldLabel text="幾天沒動靜算「沒互動」" tight />
                 <el-input-number
                   v-model="form.inactiveTag.days"
                   :min="MIN_INACTIVE_TAG_DAYS"
@@ -722,7 +726,6 @@ import {
   MAX_HUMAN_SESSION_MAX_IDLE_HOURS,
   MIN_INACTIVE_TAG_DAYS,
   MAX_INACTIVE_TAG_DAYS,
-  INBOUND_TIME_TRACKING_SINCE,
 } from '~~/shared/types/ai-knowledge'
 import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { mdw, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from '~~/shared/time'

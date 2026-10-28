@@ -451,11 +451,12 @@ export async function ensureConversationSession(
   /** 這場是「延續真人對話」開的（要在交易外補一筆時間軸事件） */
   let humanLeadRecorded = false
   /**
-   * 交易裡讀到的「客人上一次來訊」時間（舊值）——給交易後的「沒互動」摘標判斷用
-   * （見 inactive-tag.ts）。文字訊息路徑存訊息在會話交易**之後**，所以這裡拿到的
-   * 一定是更新前的值；拿它判斷「這位是不是沉睡了 N 天才回來」零額外讀取。
+   * 交易裡讀到的「客人上一次有動作」時間（舊的 lastPeerActivityAt）——給交易後的「沒互動」
+   * 摘標判斷用（見 inactive-tag.ts，`D-154` 起跟貼標同一個欄位）。文字訊息存訊息、postback
+   * 更新這個時間都在會話交易**之後**，所以這裡拿到的一定是更新前的值；拿它判斷
+   * 「這位是不是沉睡了 N 天才回來」零額外讀取。
    */
-  let prevInboundMsForReturnCheck = 0
+  let prevActivityMsForReturnCheck = 0
   /** 這場現在有沒有 hasInbound（寫進快取用：只傳貼圖的那一則不可以把快取記成「開口過」） */
   let resultHasInbound = false
 
@@ -466,12 +467,12 @@ export async function ensureConversationSession(
     closedOldSessionId = null
     resultStatus = 'open'
     humanLeadRecorded = false
-    prevInboundMsForReturnCheck = 0
+    prevActivityMsForReturnCheck = 0
     resultHasInbound = false
 
     const convSnap = await tx.get(convRef)
     const convData = convSnap.data()
-    prevInboundMsForReturnCheck = (convData?.lastInboundMessageAt as Timestamp | undefined)?.toMillis?.() ?? 0
+    prevActivityMsForReturnCheck = (convData?.lastPeerActivityAt as Timestamp | undefined)?.toMillis?.() ?? 0
 
     // Read existing session inside the transaction (prevents concurrent creates).
     let existingRef: FirebaseFirestore.DocumentReference | null = null
@@ -624,8 +625,8 @@ export async function ensureConversationSession(
    * 常態訊息在函式第一個 if 就返回＝零額外讀取。⛔ Lambda 上不可 fire-and-forget，
    * 所以 await；函式內部自己吞錯，不會拖垮收訊。
    */
-  if (!opts.origin && prevInboundMsForReturnCheck) {
-    await clearInactiveTagOnReturn(db, workspaceId, convDocId, prevInboundMsForReturnCheck, now)
+  if (!opts.origin && prevActivityMsForReturnCheck) {
+    await clearInactiveTagOnReturn(db, workspaceId, convDocId, prevActivityMsForReturnCheck, now)
   }
 
   return resultId
