@@ -1172,6 +1172,7 @@ import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config
 import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
+  firstTaggedPostbackError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import {
@@ -3030,6 +3031,10 @@ function validateMessages(messages: any[]): string | null {
       const sizeError = cardMessageSizeError(msg)
       if (sizeError) return sizeError
     }
+
+    // `H-43`：開了貼標的按鈕放不進 LINE 的 300 字（跟後端 flow-validator 同一支）
+    const postbackError = firstTaggedPostbackError(msg)
+    if (postbackError) return postbackError
       return null
     })()
     if (perMessageError) return `第 ${msgIdx + 1} 則・${perMessageError}`

@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import { validateUnifiedAction } from '~~/shared/action-schema'
+import { firstTaggedPostbackError, validateUnifiedAction } from '~~/shared/action-schema'
 import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardMessageSizeError } from '~~/shared/card-message'
 
@@ -260,6 +260,10 @@ export function assertValidFlowMessages(messages: unknown): asserts messages is 
   for (const msg of messages) {
     validateMessageByType(msg)
   }
+
+  // `H-43`：開了貼標的按鈕編成 postback 放不進 LINE 的 300 字，整則會被退回——按鈕在哪一層都走同一支找
+  const postbackError = firstTaggedPostbackError(messages)
+  if (postbackError) fail(postbackError)
 }
 
 export function assertValidFlowName(name: unknown): string {

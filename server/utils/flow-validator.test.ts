@@ -83,6 +83,15 @@ describe('卡片訊息', () => {
     expect(save(cardMsg(Array(10).fill(full)))).toThrowError(/LINE 收不下.*減少張數/)
   })
 
+  it('`H-43`：開了貼標的「傳送文字」太長（LINE 放不下）存檔就擋，並指出是哪一顆', () => {
+    const tag = '002555ba-3b6a-4908-a3ea-2703aa0b36c0'
+    const btn = (text: string) => ({ type: 'message', label: '我要參加', text, tagging: { enabled: true, addTagIds: [tag] } })
+    expect(save(cardMsg([col({ actions: [btn('我'.repeat(250))] })]))).toThrowError(/按鈕「我要參加」：開了貼標的「傳送文字」最多約/)
+    expect(save([{ type: 'text', text: '嗨', buttons: [btn('我'.repeat(250))] }])).toThrowError(/最多約/)
+    // 以前大約 20 個中文字就會整則被退，現在放得下
+    expect(save([{ type: 'text', text: '嗨', buttons: [btn('我'.repeat(100))] }])).not.toThrow()
+  })
+
   it('錯誤訊息用新名字（「卡片訊息」「張卡」），舊版範本輪播叫「輪播（舊）」', () => {
     expect(save(cardMsg([]))).toThrowError(/卡片訊息：至少要有 1 張卡/)
     expect(save([{ type: 'carousel', columns: [] }])).toThrowError(/輪播（舊）：至少要有 1 個欄位/)

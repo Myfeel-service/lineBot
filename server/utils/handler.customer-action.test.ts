@@ -44,6 +44,7 @@ vi.mock('./ai-scripts', () => ({
 import { handlePostbackEvent } from './handler'
 import { getDb } from './firebase'
 import { CUSTOMER_ACTION_MESSAGE_TYPE } from '~~/shared/customer-action'
+import { encodeTriggerMessage } from '~~/shared/action-schema'
 
 const LINE_UID = 'U0000000000000000000000000000009'
 
@@ -182,6 +183,20 @@ describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
     const actions = actionWrites(writes)
     expect(actions).toHaveLength(1)
     expect(actions[0]!.data.text).toBe('客人點了按鈕送出「我要退貨」')
+  })
+
+  it('`H-43` 新格式（JSON 原樣，不再 encodeURIComponent）按下去一樣認得', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(
+      postbackEvent(encodeTriggerMessage('打 8 折 100%，我要參加', [])),
+      { workspaceId: 'ws-ca4b' },
+    )
+
+    const actions = actionWrites(writes)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]!.data.text).toBe('客人點了按鈕送出「打 8 折 100%，我要參加」')
   })
 
   /**

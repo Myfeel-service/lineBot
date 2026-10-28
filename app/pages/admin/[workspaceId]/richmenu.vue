@@ -404,6 +404,7 @@ import {
   parseTriggerModuleData,
   parseSwitchMenuData,
   encodeTriggerModule,
+  LINE_POSTBACK_DATA_MAX,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import {
@@ -1009,6 +1010,13 @@ async function submitForm() {
       if (!area?.action?.data) return showToast(`區塊 ${index + 1}：請選擇要切換的選單`, 'error')
       if (area?.action?.tagging?.enabled === true && (!Array.isArray(area?.action?.tagging?.addTagIds) || area.action.tagging.addTagIds.length === 0)) {
         return showToast(`區塊 ${index + 1}：已啟用貼標，請至少選擇一個標籤`, 'error')
+      }
+      // `H-43`：標籤會跟著編進 postback，掛太多放不進 LINE 的 300 字（另外兩種動作在 validateUnifiedAction 裡擋）
+      if (area?.action?.tagging?.enabled === true) {
+        const target = parseSwitchMenuData(String(area.action.data || '')).targetMenuId
+        if (encodeSwitchMenu(target, area.action.tagging.addTagIds).length > LINE_POSTBACK_DATA_MAX) {
+          return showToast(`區塊 ${index + 1}：這個區塊掛的標籤太多，LINE 放不下。請少掛幾個標籤。`, 'error')
+        }
       }
       continue
     }
