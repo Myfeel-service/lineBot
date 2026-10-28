@@ -3721,6 +3721,139 @@ try {
     else fail('叫法打了另一組的組名沒有合成一組', JSON.stringify({ box, boxTxt, mergedT, calls, groupsAfter, toasts: await toastsOf(pg) }))
     await pg.close()
   }
+
+  // ── 第四十八段（`C-406` 分組三個視窗搬成元件）：前面幾段沒走到、而且是搬家後新接的那幾條線——
+  //    「疑似重複 → 去合併商品名」帶過去的那一組排第一個（頁面傳給視窗）；「不是，兩台不同」送 dismiss、重算「要處理的事」（視窗通知頁面）；
+  //    之後從待辦再打開不帶上一次那一組；編輯分組「刪除分組」→ 清單拿掉那一組、底下那份回到未分類、一份份重新學（視窗通知頁面） ──
+  if (CHECK_FROM <= 48) {
+    const G = 'C48 SHARP 乾淨方MAX'
+    const LONG = 'C48 SHARP 乾淨方MAX 空氣清淨機 KC-JH70T'
+    const SHORT = 'C48 乾淨方'
+    const SYS = ['C48 甲型除濕機', 'C48 甲型']
+    const folders = [{ id: 'c48-g', name: G, order: 0, createdAtMs: NOW, general: false }]
+    const sa = fakeSource({ id: 'c48-sa', type: 'file', name: 'C48 乾淨方說明書', folderId: 'c48-g', chunkCount: 1, productName: G, summary: ['說明'] })
+    const sb = fakeSource({ id: 'c48-sb', type: 'file', name: 'C48 沒分組的 FAQ', chunkCount: 1, productName: '', summary: ['問答'] })
+    const all = [sa, sb]
+    const pageFake = fakeSourcesPage(all, { 'c48-sa': [fakeChunk({ id: 'a1', title: '濾網' })], 'c48-sb': [fakeChunk({ id: 'b1', title: '運費' })] })
+    const health = {
+      ...emptyHealthFake(),
+      aliasCandidateCount: 1,
+      // 系統沒列成候選的一組（product_split）：只有從「疑似重複」帶過去才看得到
+      duplicates: { scannedAtMs: NOW, items: [{
+        key: 'd1', kind: 'product_split', similarity: 0.93, reason: '兩張卡講同一台的濾網，商品名寫法不同',
+        a: { id: 'a1', title: '濾網多久換', productName: SHORT, sourceId: 'c48-sa' },
+        b: { id: 'b9', title: '濾網更換', productName: LONG, sourceId: 'c48-sb' },
+      }] },
+    }
+    const aliasesFake = {
+      pairs: [],
+      candidates: [{ key: 'k-sys', a: SYS[0], b: SYS[1], reason: `「${SYS[0]}」包含「${SYS[1]}」`, confidence: 'medium', variantRisk: false }],
+      productNames: [G, LONG, SHORT, ...SYS],
+    }
+    const calls = []
+    let healthGets = 0
+    let aliasGets = 0
+    const fake = async (req) => {
+      const url = new URL(req.url())
+      const m = req.method()
+      const body = () => { const b = JSON.parse(req.postData() || '{}'); delete b.workspaceId; return b }
+      if (url.pathname === '/api/ai/folders' && m === 'GET') return json({ items: folders })
+      if (url.pathname === '/api/ai/knowledge/health' && m === 'GET') { healthGets++; return json(health) }
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'GET') { aliasGets++; return json(aliasesFake) }
+      if (url.pathname === '/api/ai/knowledge/product-aliases' && m === 'POST') { const b = body(); calls.push(`alias ${b.action} ${b.a}｜${b.b}`); return json({ ok: true, changed: true }) }
+      const ri = url.pathname.match(/^\/api\/ai\/sources\/(c48-[a-z]+)\/reindex$/)
+      // 重新學晚 1.5 秒回：學完頁面會重讀清單，太快的話「刪掉那一下有沒有馬上拿掉那一組」就被重讀蓋過去、驗不到
+      if (ri && m === 'POST') { calls.push(`relearn ${ri[1]}`); await sleep(1500); return json({ indexed: 1, failed: 0 }) }
+      const fp = url.pathname.match(/^\/api\/ai\/folders\/(c48-[a-z]+)$/)
+      if (fp && m === 'DELETE') {
+        calls.push(`delete ${fp[1]}`)
+        // 同伺服器：底下的資料移到未分類、商品名清掉，回要重新學的那幾份
+        const moved = all.filter(s => s.folderId === fp[1])
+        for (const s of moved) { s.folderId = null; s.productName = '' }
+        folders.splice(folders.findIndex(f => f.id === fp[1]), 1)
+        return json({ movedSources: moved.length, relearnSourceIds: moved.map(s => s.id) })
+      }
+      return pageFake(req)
+    }
+    /** 在 node 這邊等（計數器、紀錄） */
+    const until = async (cond, ms = 8000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await sleep(100); return cond() }
+    const shownCards = () => pg.$$eval(`${SHOWN} .src-alias-card .src-alias-pair`, els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
+    const openAliasFromTodo = async () => {
+      const before = aliasGets
+      await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('可能是同一台'))?.querySelector('.el-button')?.click())
+      await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '這幾個商品名是同一台嗎？'), null, 8000)
+      await markShown(pg, { title: '這幾個商品名是同一台嗎？' })
+      // 等這一次打開的讀取回來（⛔ 不能只看張數：上一次讀到的還留在畫面上）
+      await until(() => aliasGets > before)
+      await sleep(400)
+    }
+    const closeDialogs = async () => {
+      await pg.keyboard.press('Escape')
+      await waitFor(pg, () => ![...document.querySelectorAll('.el-overlay')].some(o => getComputedStyle(o).display !== 'none'), null, 5000)
+      await sleep(400)
+    }
+
+    const pg = await openImportDialog(fake, SOURCES_PAGE)
+    await waitFor(pg, () => document.querySelectorAll('.src-folder-header').length === 1, null, 30_000)
+
+    // 疑似重複 → 去合併商品名：那一組排第一個（比較長的當正式名），系統列的候選排後面
+    await waitFor(pg, () => [...document.querySelectorAll('.src-todo__item')].some(e => e.innerText.includes('疑似重複')), null, 15_000)
+    await pg.evaluate(() => [...document.querySelectorAll('.src-todo__item')].find(e => e.innerText.includes('疑似重複'))?.querySelector('.el-button')?.click())
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '疑似重複的知識'), null, 8000)
+    const aliasBefore = aliasGets
+    await pg.evaluate(() => {
+      const dlg = [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '疑似重複的知識')
+      ;[...(dlg?.querySelectorAll('.el-button') ?? [])].find(b => b.innerText.includes('去合併商品名'))?.click()
+    })
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '這幾個商品名是同一台嗎？' && d.querySelectorAll('.src-alias-card').length === 2), null, 10_000)
+    await markShown(pg, { title: '這幾個商品名是同一台嗎？' })
+    await until(() => aliasGets > aliasBefore)
+    await sleep(300)
+    const pinnedCards = await shownCards()
+    if (pinnedCards.length === 2 && pinnedCards[0] === `「${LONG}」＝「${SHORT}」？` && pinnedCards[1] === `「${SYS[0]}」＝「${SYS[1]}」？`) pass(`疑似重複 →「去合併商品名」：系統沒列的那一組帶進去排第一個（比較長的「${LONG}」當正式名），系統列的候選排後面`)
+    else fail('去合併商品名帶過去的那一組不對', JSON.stringify({ pinnedCards }))
+
+    // 「不是，兩台不同」→ 送 dismiss（兩個名字原樣）、講一句、重算「要處理的事」、重讀候選（帶過去的那一組不再出現）
+    const healthBefore = healthGets
+    await pg.evaluate(s => [...document.querySelector(`${s} .src-alias-card`)?.querySelectorAll('.src-alias-actions .el-button') ?? []].find(b => b.innerText.includes('不是'))?.click(), SHOWN)
+    const dismissT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('好的，不再詢問這一組')), null, 8000)
+    const healthRe = await until(() => healthGets > healthBefore)
+    await sleep(300)
+    const afterDismiss = await shownCards()
+    if (dismissT && healthRe && calls.join('｜') === `alias dismiss ${LONG}｜${SHORT}` && afterDismiss.length === 1 && afterDismiss[0] === `「${SYS[0]}」＝「${SYS[1]}」？`) pass(`「不是，兩台不同」→ 只送 dismiss（${calls.join('｜')}）、講「好的，不再詢問這一組」、重算「要處理的事」，清單剩系統列的那一組`)
+    else fail('「不是，兩台不同」不對', JSON.stringify({ dismissT, healthRe, calls, afterDismiss }))
+    await closeDialogs()
+
+    // 從待辦「前往確認」再打開：⛔ 不帶上一次從疑似重複帶過去的那一組
+    await openAliasFromTodo()
+    const fromTodo = await shownCards()
+    if (fromTodo.length === 1 && fromTodo[0] === `「${SYS[0]}」＝「${SYS[1]}」？`) pass('從待辦「前往確認」再打開：只列系統的候選，不帶上一次從疑似重複帶過去的那一組')
+    else fail('從待辦打開時帶到上一次那一組', JSON.stringify({ fromTodo }))
+    await closeDialogs()
+
+    // 編輯分組 →「刪除分組」：先講底下幾份會移到未分類 → 刪了清單拿掉那一組、那份回到未分類、一份份重新學
+    calls.length = 0
+    await pg.evaluate(n => [...document.querySelectorAll('.src-folder-header')].find(e => e.querySelector('.src-folder-name')?.innerText.trim() === n)?.querySelector('.src-folder-icon-btn')?.click(), G)
+    await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 8000)
+    await markShown(pg, { title: '編輯分組' })
+    await waitFor(pg, s => !!document.querySelector(`${s} .src-group-alias__input`), SHOWN, 10_000)
+    const editTxt = await pg.$eval(SHOWN, e => e.innerText.replace(/\s+/g, ' '))
+    await pg.evaluate(s => document.querySelector(`${s} .folder-footer .el-button--danger`)?.click(), SHOWN)
+    const box = await waitFor(pg, () => [...document.querySelectorAll('.el-message-box')].some(b => b.offsetParent !== null), null, 5000)
+    const boxTxt = await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.innerText.replace(/\s+/g, ' ') ?? '')
+    await pg.evaluate(() => [...document.querySelectorAll('.el-message-box')].find(b => b.offsetParent !== null)?.querySelector('.el-message-box__btns .el-button--danger')?.click())
+    const delT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('已刪除分組，1 份資料移到了未分類')), null, 8000)
+    // 刪掉那一下（重新學還沒回來、清單還沒重讀）：那一組就要不見、那份就要在未分類
+    const heads = await pg.$$eval('.src-folder-header', els => els.length)
+    const loose = await pg.$$eval('.split-list > .flow-sidebar-row', els => els.map(e => e.innerText.replace(/\s+/g, ' ')))
+    // 視窗關掉有淡出動畫：等它關完（⛔ 跳出提示那一下量會量到淡出到一半）
+    const editClosed = await waitFor(pg, () => ![...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.el-dialog__title')?.innerText === '編輯分組'), null, 3000)
+    const relearnT = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 照新的商品名學好了 1 份資料')), null, 10_000)
+    const delCalls = calls.join('｜')
+    if (editTxt.includes('目前底下 1 份資料') && box && boxTxt.includes('底下的 1 份資料會移到「未分類」') && delT && relearnT && editClosed && delCalls === 'delete c48-g｜relearn c48-sa' && heads === 0 && loose.some(t => t.includes('C48 乾淨方說明書'))) pass(`編輯分組 →「刪除分組」：先講「底下的 1 份資料會移到「未分類」」，刪了當下清單就拿掉那一組、那份回到未分類，接著重新學（${delCalls}）`)
+    else fail('刪除分組不對', JSON.stringify({ editTxt: editTxt.slice(0, 160), box, boxTxt, delT, relearnT, editClosed, calls, heads, loose, toasts: await toastsOf(pg) }))
+    await pg.close()
+  }
 }
 catch (e) {
   fail('守門員中斷', String(e?.stack ?? e).slice(0, 400))
