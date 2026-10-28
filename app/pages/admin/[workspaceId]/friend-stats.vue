@@ -196,6 +196,11 @@
             <p v-if="proposals.length" class="friend-stats__muted friend-stats__pad friend-stats__pad--foot">
               照提案發出去之後，下一份報告會回報它的成績、跟你其他推播比。
             </p>
+            <!-- `C-404`：量夠、卻因為還沒設分類而沒提案的 AI 標籤——講清楚設成什麼就會提案（⛔ 程式不替他猜是想買還是在抱怨） -->
+            <p v-if="unclassified" class="friend-stats__muted friend-stats__pad friend-stats__hint" data-unclassified-hint>
+              {{ unclassified }}
+              <NuxtLink :to="`/admin/${workspaceId}/tags`" class="admin-inline-link">前往標籤管理 →</NuxtLink>
+            </p>
           </div>
 
           <!-- ── 也要留意（沒有就整段不出現） ───────────────────── -->
@@ -230,7 +235,9 @@
                 <span class="text-xs text-muted">AI 從對話判出來的</span>
               </div>
             </div>
-            <p v-if="!p.intents.length" class="friend-stats__muted friend-stats__pad">
+            <!-- ⛔ 讀不到標籤時不可以講「還沒有標籤開 AI 判斷」——那是假的（`C-404`） -->
+            <p v-if="tagsUnavailable" class="friend-stats__muted friend-stats__pad">這次讀不到標籤資料，重新產生一次看看。</p>
+            <p v-else-if="!p.intents.length" class="friend-stats__muted friend-stats__pad">
               還沒有標籤開 AI 判斷。開了之後，客人在對話裡提到的東西會自動被貼上。
               <NuxtLink :to="`/admin/${workspaceId}/tags`" class="admin-inline-link">前往標籤管理 →</NuxtLink>
             </p>
@@ -377,7 +384,8 @@
               <span class="text-xs text-muted">{{ housekeepingOpen ? '收合' : '展開' }}</span>
             </summary>
             <div class="card-section-stack">
-              <dl class="friend-stats__kv friend-stats__kv--wide">
+              <p v-if="tagsUnavailable" class="friend-stats__muted">這次讀不到標籤資料，重新產生一次看看。</p>
+              <dl v-else class="friend-stats__kv friend-stats__kv--wide">
                 <template v-if="p.housekeeping.zeroMember.length">
                   <dt>建了沒人用</dt>
                   <dd class="friend-stats__chips">
@@ -423,25 +431,27 @@ import { useAdminToast } from '~~/app/composables/useAdminToast'
 import { broadcastEntryLockText } from '~~/shared/billing/plans'
 import { BROADCAST_DRAFT_HANDOFF_KEY, type BroadcastDraftHandoff } from '~~/shared/broadcast-draft-handoff'
 import {
-  blockBaseline,
   fmt,
   lineDayOfMs,
   md,
   mdOfMs,
+  tagDataUnavailable,
   type FriendReportPayload,
   type IntentTagStat,
 } from '~~/shared/friend-report'
 import {
-  BLOCK_SPIKE_MIN,
-  BLOCK_SPIKE_RATIO,
   buildProposals,
   buildWatchItems,
+  isBlockSpike,
   proposalOutcomeText,
   proposalsEmptyText,
+  pushBlockBaseline,
+  unclassifiedHint,
   type Proposal,
   type WatchItem,
 } from '~~/shared/friend-report-advice'
 import { cooldownText, type TagReportDoc } from '~~/shared/tag-report'
+import { taipeiDate } from '~~/shared/time'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 useHead({ title: useAdminTitle('好友統計') })
@@ -484,6 +494,7 @@ const integrityLines = computed(() => {
   if (!i) return []
   const out: string[] = []
   if (i.failed.length) out.push(`有幾塊資料這次查不到（${i.failed.join('、')}），相關的數字不完整。`)
+  if (i.pushesTruncated) out.push('推播太多，這次沒讀到最近 30 天的每一則，「推播發給誰最有反應」可能少列幾則。')
   if (i.userTagsTruncated) out.push(`貼標紀錄掃到上限（已掃 ${fmt(i.scannedUserTags)} 筆），標籤人數與來源只算了這一段。`)
   if (i.newMembersTruncated) out.push('新進名單掃到上限，「新進名單從哪裡來」只算了掃到的那些。')
   if (i.pendingTruncated) out.push('待審建議掃到上限，「等你決定的 AI 建議」是掃到的那些裡的數字，不是全部。')
@@ -528,9 +539,13 @@ const tiles = computed(() => {
 })
 
 // ── 行銷提案 ──────────────────────────────────────────────────────
-const proposals = computed<Proposal[]>(() => (p.value ? buildProposals(p.value) : []))
+/** 報告不會自己更新：帶今天的日期進去，已經過去的檔期就不搭（`C-404`） */
+const proposals = computed<Proposal[]>(() => (p.value ? buildProposals(p.value, taipeiDate()) : []))
 const proposalsEmpty = computed(() => (p.value ? proposalsEmptyText(p.value) : ''))
 const outcomeText = computed(() => (p.value ? proposalOutcomeText(p.value) : null))
+const unclassified = computed(() => (p.value ? unclassifiedHint(p.value) : null))
+/** 讀不到標籤或貼標紀錄：跟標籤有關的每一區都講「這次讀不到」 */
+const tagsUnavailable = computed(() => (p.value ? tagDataUnavailable(p.value) : false))
 
 /** 第 2 則以後收合，按了才展開（第 1 則永遠展開） */
 const openedProposals = ref<string[]>([])
@@ -551,6 +566,13 @@ interface DraftState {
 }
 /** 每則提案擬好的文案（按了才擬，⛔ 產生報告時不擬——大部分提案不會被採用，先擬是白花錢） */
 const drafts = reactive<Record<string, DraftState>>({})
+/**
+ * 換了一份報告就把擬好的文案清掉（`C-404`）：同一顆標籤的提案可能換了檔期，
+ * 留著舊的會把舊檔期的文案與記號帶進推播頁，檔期回顧就記錯一檔。
+ */
+watch(() => report.value?.generatedAtMs, () => {
+  for (const k of Object.keys(drafts)) delete drafts[k]
+})
 watch(proposals, (list) => {
   for (const prop of list) drafts[prop.tagId] ??= { loading: false, handoff: null, index: 0, error: '' }
 }, { immediate: true })
@@ -623,12 +645,17 @@ function runWatchAction(w: WatchItem) {
 }
 
 // ── 客人最近在想什麼 ──────────────────────────────────────────────
-/** 照標籤的分類分兩組：興趣偏好（想買的訊號）一組、其他（出貨、退換貨…）一組。分類是店家自己設的 */
+/**
+ * 照標籤的分類分三組：興趣偏好（想買的訊號）、消費行為・好友狀態（要照顧的）、還沒分類的。分類是店家自己設的。
+ * ⚠️ 標籤頁新建的預設是「自訂」：⛔ 不可以把它併進任何一邊猜（`C-404`）——可能是想買、也可能是抱怨。
+ */
 const intentGroups = computed(() => {
   const list = p.value?.intents ?? []
-  const groups: Array<{ key: 'interest' | 'other', label: string, rows: IntentTagStat[] }> = [
+  const service = (c: string | null) => c === 'behavior' || c === 'member_status'
+  const groups: Array<{ key: 'interest' | 'service' | 'other', label: string, rows: IntentTagStat[] }> = [
     { key: 'interest', label: '興趣偏好', rows: list.filter(t => t.category === 'interest') },
-    { key: 'other', label: '消費行為・好友狀態・其他', rows: list.filter(t => t.category !== 'interest') },
+    { key: 'service', label: '消費行為・好友狀態', rows: list.filter(t => service(t.category)) },
+    { key: 'other', label: '自訂・其他分類（要在標籤管理設成「興趣偏好」才會提案）', rows: list.filter(t => t.category !== 'interest' && !service(t.category)) },
   ]
   return groups.filter(g => g.rows.length)
 })
@@ -641,12 +668,8 @@ function barWidth(n: number, max: number): string {
 }
 
 // ── 推播 ──────────────────────────────────────────────────────────
-const baseline = computed(() => {
-  const pushes = p.value?.pushes ?? []
-  const line = p.value?.overview.line
-  if (!line || line.status === 'no_token' || line.status === 'failed') return null
-  return blockBaseline(line.blocksByDay, new Set(pushes.map(x => lineDayOfMs(x.completedMs))))
-})
+/** 平常一天封鎖幾位、哪一天算跳起來——跟「也要留意」那一條共用同一支（⛔ 不在畫面另寫門檻） */
+const baseline = computed(() => (p.value ? pushBlockBaseline(p.value) : null))
 
 const pushTable = computed(() => {
   const pushes = p.value?.pushes ?? []
@@ -661,14 +684,14 @@ const pushTable = computed(() => {
     const sameDay = seenDays.has(day)
     seenDays.add(day)
     const rate = r.clicked !== null && r.sent > 0 ? r.clicked / r.sent : null
-    const b = baseline.value
     return {
       ...r,
-      audienceText: r.audience.type === 'tags' ? r.audience.tagNames.join('、') : r.audience.type === 'all' ? '全部好友' : '指定名單',
+      // 舊存檔沒有 label（`C-404` 才加）：退回原本的寫法
+      audienceText: r.audience.label || (r.audience.type === 'tags' ? r.audience.tagNames.join('、') : r.audience.type === 'all' ? '全部好友' : '指定名單'),
       clickPct: rate === null ? '' : `${Math.round(rate * 100)}%`,
       clickBar: rate === null ? '0%' : barWidth(rate, maxRate),
       blockText: sameDay ? '同一天' : blocks === undefined ? '—' : fmt(blocks),
-      blockWarn: !sameDay && blocks !== undefined && b !== null && b >= 1 && blocks >= b * BLOCK_SPIKE_RATIO && blocks >= BLOCK_SPIKE_MIN,
+      blockWarn: !sameDay && isBlockSpike(blocks, baseline.value),
     }
   })
 })
@@ -693,6 +716,7 @@ function onHousekeepingToggle(e: Event) {
 const housekeepingSummary = computed(() => {
   const h = p.value?.housekeeping
   if (!h) return ''
+  if (tagsUnavailable.value) return '這次讀不到標籤資料'
   const parts: string[] = []
   if (h.zeroMember.length) parts.push(`${h.zeroMember.length} 顆建了沒人用`)
   if (h.aiOnButNeverProduced.length) parts.push(`${h.aiOnButNeverProduced.length} 顆開著 AI 判斷卻沒判出人`)

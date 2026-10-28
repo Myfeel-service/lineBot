@@ -140,15 +140,17 @@ async function openLoggedInPage({ fakeReads, fakeWrites } = {}) {
 
 /** 等到頁面上出現任一條件；⛔ 不要「睡固定秒數再量一次」——那是假綠燈的標準形狀 */
 async function waitForText(page, needles, timeout = 25_000) {
+  // ⚠️ dev server 剛起來的第一次編譯會自己重新整理頁面一次，讀到一半會丟「Execution context was destroyed」——
+  //    那是頁面在換，不是功能壞了：當作這一輪沒讀到、繼續等（`reference_headless_admin_harness_traps` 第一坑）
+  const read = () => page.evaluate(() => document.body?.innerText ?? '').catch(() => '')
   const start = Date.now()
   while (Date.now() - start < timeout) {
-    const body = await page.evaluate(() => document.body?.innerText ?? '')
+    const body = await read()
     const hit = needles.find(n => body.includes(n))
     if (hit) return { hit, body }
     await new Promise(r => setTimeout(r, 400))
   }
-  const body = await page.evaluate(() => document.body?.innerText ?? '')
-  return { hit: null, body }
+  return { hit: null, body: await read() }
 }
 
 /** 按第一顆字面等於（或包含）這段字的按鈕 */
@@ -196,6 +198,8 @@ function payload(over = {}) {
       listSize: 10810,
     },
     intents: [
+      // `C-404`：標籤頁新建的 AI 標籤預設分類是「自訂」——不提案、不當成要留意，只提醒去設分類
+      { tagId: 'custom-ai', name: '在看淨水器', category: 'custom', members: 30, recent: 12, prev: 3, notPushedRecent: 20, pushedWithin7d: 0 },
       { tagId: 'shipping', name: '問過出貨進度', category: 'behavior', members: 141, recent: 71, prev: 66, notPushedRecent: 50, pushedWithin7d: 0 },
       { tagId: 'returns', name: '退換貨處理中', category: 'behavior', members: 100, recent: 62, prev: 37, notPushedRecent: 40, pushedWithin7d: 0 },
       { tagId: COFFEE, name: '在看咖啡機', category: 'interest', members: 55, recent: 40, prev: 14, notPushedRecent: 22, pushedWithin7d: 0 },
@@ -405,11 +409,16 @@ else {
       ['來源', '問卷_廚餘博士Pro'],
       ['沒有來源', '沒有來源標籤'],
       ['標籤整理摘要', '3 顆建了沒人用'],
+      // `C-404`：「自訂」分類的 AI 標籤——提醒去設分類，在表格裡自成一組
+      ['還沒分類的提醒', '分類是「自訂」'],
+      ['自訂那一組', '自訂・其他分類'],
     ]
     const missing = want.filter(([, t]) => !r.body.includes(t))
     // 回歸鎖：舊版六張卡＋AI 總結＋寫給我們自己看的提醒（`D-155` 拿掉的）
     const regrown = ['一句話總結', '客人自己表現出來的', '這些標籤在回答什麼', '不要相加', '做過什麼', '10810', '提過 77 次']
       .filter(t => r.body.includes(t))
+    // ⛔ 「自訂」的 AI 標籤不可以被當成提案或要留意的（`C-404`）
+    if (r.body.includes('「在看淨水器」的人變多了') || r.body.includes('發一則給「在看淨水器」')) regrown.push('自訂標籤被拿去提案／留意')
     // ⛔ 第 2 則提案預設收合：「31 位」那句本來不在（對照組），展開之後才在
     const before = r.body.includes('其中 31 位最近 30 天沒收過任何推播')
     const toggled = await clickButton(page, '展開')
@@ -503,6 +512,31 @@ else {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  關 6b：讀不到標籤／貼標紀錄（`C-404`）→ 每一區講「這次讀不到」，
+//        ⛔ 不可以講「還沒有標籤開 AI 判斷」或把每顆都列成「建了沒人用」
+// ═══════════════════════════════════════════════════════════════════
+{
+  const broken = payload({
+    integrity: { ...payload().integrity, failed: ['貼標紀錄'], userTagsFailed: true },
+    intents: [],
+    intentPairs: [],
+    newMembers: { total: null, truncated: false, rows: [] },
+    housekeeping: { zeroMember: [], aiOnButNeverProduced: [], untaggedUsers: null, suggestions: { decided: 142, agreed: 121, autoApplied: 552, acceptanceRate: 85.2 }, pendingUsers: 0 },
+  })
+  const { ctx, page } = await openLoggedInPage({ fakeReads: reportReply(reportOf(broken)) })
+  await page.goto(`${WS}/friend-stats`, { waitUntil: 'domcontentloaded' })
+  const r = await waitForText(page, ['這次讀不到標籤資料，提案先空著'])
+  const lies = ['還沒有標籤開 AI 判斷', '建了沒人用', '沒有要處理的'].filter(t => r.body.includes(t))
+  const unreadable = (r.body.match(/這次讀不到標籤資料/g) ?? []).length
+  if (!r.hit) fail(`關 6b：讀不到貼標紀錄時，行銷提案沒講「這次讀不到」。畫面上是：${r.body.slice(0, 200)}`)
+  else if (lies.length) fail(`關 6b：讀不到資料卻下了結論：${lies.join('、')}`)
+  // 提案、客人在想什麼、標籤整理摘要三處都要講
+  else if (unreadable < 3) fail(`關 6b：「這次讀不到標籤資料」只出現 ${unreadable} 次，應該三區都講`)
+  else pass('關 6b：讀不到貼標紀錄 → 提案、客人在想什麼、標籤整理都講「這次讀不到」，沒有假結論')
+  await ctx.close()
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  關 7：「客人最近在想什麼」的「發推播」→ 推播頁、受眾選好那顆標籤
 // ═══════════════════════════════════════════════════════════════════
 {
@@ -589,6 +623,56 @@ else {
       else if (createBody.festivalId !== 'double11-2026') fail(`關 8：存草稿沒帶檔期（festivalId=${createBody.festivalId}）`)
       else if (JSON.stringify(createBody.audienceSource) !== JSON.stringify({ type: 'tags', tagIds: [COFFEE] })) fail(`關 8：受眾不是提案那顆標籤：${JSON.stringify(createBody.audienceSource)}`)
       else pass('關 8：擬文案（帶標籤＋檔期）→ 換到第 2 版 → 推播頁帶第 2 版 → 存草稿時帶著提案來歷、檔期與受眾')
+    }
+  }
+  await ctx.close()
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  關 8b：不存草稿、直接按「驗證並發送」也要帶著提案來歷（`C-404`）
+//        以前這條路建草稿只帶名字／對象／內容三樣：提案成績、檔期回顧、發完貼記號全都認不出這一則。
+//        建草稿在瀏覽器端假造；接下來的驗證會被擋下（500），⛔ 不會真的送出
+// ═══════════════════════════════════════════════════════════════════
+{
+  const V = ['直接發送第一版：雙 11 有新消息，想知道直接回我們。', '直接發送第二版', '直接發送第三版']
+  let createBody = null
+  const { ctx, page } = await openLoggedInPage({
+    fakeReads: reportReply(reportOf(payload())),
+    fakeWrites: (url, method, post) => {
+      if (method === 'POST' && url.includes('/api/marketing-calendar/draft')) {
+        return {
+          body: {
+            festivalId: 'double11-2026', festivalName: '雙 11 購物節', suggestedName: '在看咖啡機・雙 11 購物節',
+            variants: V, suggestedTagIds: [COFFEE], audienceNotice: '發送對象選好「在看咖啡機」（目前 55 位）。',
+            basis: '照你的輪廓與「在看咖啡機」這群人寫的', proposalTagId: COFFEE, ts: Date.now(), dropped: [],
+          },
+        }
+      }
+      if (method === 'POST' && url.includes('/api/broadcast/create')) {
+        createBody = JSON.parse(post || '{}')
+        return { body: { id: 'guard-fake-broadcast-direct' } }
+      }
+      return null
+    },
+  })
+  await page.goto(`${WS}/friend-stats`, { waitUntil: 'domcontentloaded' })
+  await waitForText(page, ['幫我擬三版文案'])
+  await clickButton(page, '幫我擬三版文案')
+  await waitForText(page, ['第 1 版／共 3 版'], 8000)
+  if (!(await clickButton(page, '用這版開推播草稿'))) fail('關 8b：找不到「用這版開推播草稿」')
+  else {
+    const landed = await waitForText(page, ['這是草稿，還沒有送出去'], 20_000)
+    if (!landed.hit) fail('關 8b：推播頁沒接到文案')
+    // ⛔ 不按「儲存草稿」，直接按發送
+    else if (!(await clickButton(page, '驗證並發送'))) fail('關 8b：推播頁找不到「驗證並發送」')
+    else {
+      const start = Date.now()
+      while (!createBody && Date.now() - start < 8000) await new Promise(r => setTimeout(r, 200))
+      if (!createBody) fail('關 8b：按了發送，沒有先建草稿')
+      else if (createBody.proposalTagId !== COFFEE) fail(`關 8b：直接發送建的草稿沒帶提案來歷（proposalTagId=${createBody.proposalTagId}）`)
+      else if (createBody.festivalId !== 'double11-2026') fail(`關 8b：直接發送建的草稿沒帶檔期（festivalId=${createBody.festivalId}）`)
+      else if (!Array.isArray(createBody.completionTagIds)) fail('關 8b：直接發送建的草稿沒帶「發完貼記號」那一格')
+      else pass('關 8b：不存草稿直接按發送，建的草稿也帶著提案來歷、檔期與「發完貼記號」')
     }
   }
   await ctx.close()

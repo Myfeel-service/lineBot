@@ -12,9 +12,11 @@ import { describe, expect, it } from 'vitest'
 import {
   buildProposals,
   buildWatchItems,
+  isBlockSpike,
   pickProposalFestival,
   proposalOutcomeText,
   proposalsEmptyText,
+  unclassifiedHint,
 } from './friend-report-advice'
 import { reportWindow, type FriendReportPayload, type IntentTagStat, type PushRow } from './friend-report'
 import { TAIWAN_FESTIVALS } from './taiwan-festivals'
@@ -55,34 +57,37 @@ function myfeelBlocks(): Record<string, number> {
   return { ...out, '2026-09-29': 29, '2026-09-30': 30, '2026-10-01': 14, '2026-10-04': 29, '2026-10-05': 16, '2026-10-15': 15 }
 }
 
+const aud = (tagId: string, name: string): PushRow['audience'] => ({ type: 'tags', tagIds: [tagId], tagNames: [name], label: name })
+
 function push(id: string, name: string, when: string, sent: number, opened: number | null, over: Partial<PushRow> = {}): PushRow {
   return {
-    id, name, completedMs: at(when), audience: { type: 'tags', tagIds: ['gl'], tagNames: ['問卷_珈樂堤_小滑手'] },
+    id, name, completedMs: at(when), audience: aud('gl', '問卷_珈樂堤_小滑手'),
     sent, opened, clicked: null, proposalTagId: null, prevOpen: null, ...over,
   }
 }
 
 const MYFEEL_PUSHES: PushRow[] = [
-  push('p7', '乾淨方MAX-集資結束推播10/15', '2026-10-15T12:00:00', 819, 110, { audience: { type: 'tags', tagIds: ['max'], tagNames: ['問卷 - 乾淨方MAX'] } }),
+  push('p7', '乾淨方MAX-集資結束推播10/15', '2026-10-15T12:00:00', 819, 110, { audience: aud('max', '問卷 - 乾淨方MAX') }),
   push('p6', '水多會-超早鳥倒數', '2026-10-05T12:00:00', 461, 74, {
-    audience: { type: 'tags', tagIds: ['yimi'], tagNames: ['問卷-宜米-製冰咖啡飲水機'] },
+    audience: aud('yimi', '問卷-宜米-製冰咖啡飲水機'),
     prevOpen: { name: '水都會_開賣', completedMs: at('2026-10-01T12:00:00'), openRate: 0.2328 },
   }),
   push('p5', '小滑手_超早鳥倒數', '2026-10-04T12:00:00', 2165, 466, {
     prevOpen: { name: '小滑手_開賣', completedMs: at('2026-09-29T12:00:00'), openRate: 0.3594 },
   }),
   push('p4', '電淨艙_超早鳥倒數', '2026-10-04T12:00:00', 1592, 252, {
-    audience: { type: 'tags', tagIds: ['chimei'], tagNames: ['問卷_奇美_電淨艙'] },
+    audience: aud('chimei', '問卷_奇美_電淨艙'),
     prevOpen: { name: '電淨艙_開賣', completedMs: at('2026-09-29T12:00:00'), openRate: 0.2436 },
   }),
-  push('p3', '水都會_開賣', '2026-10-01T12:00:00', 464, 108, { audience: { type: 'tags', tagIds: ['yimi'], tagNames: ['問卷-宜米-製冰咖啡飲水機'] } }),
+  push('p3', '水都會_開賣', '2026-10-01T12:00:00', 464, 108, { audience: aud('yimi', '問卷-宜米-製冰咖啡飲水機') }),
   push('p2', '小滑手_開賣', '2026-09-29T12:00:00', 2187, 786),
-  push('p1', '電淨艙_開賣', '2026-09-29T12:00:00', 1613, 393, { audience: { type: 'tags', tagIds: ['chimei'], tagNames: ['問卷_奇美_電淨艙'] } }),
+  push('p1', '電淨艙_開賣', '2026-09-29T12:00:00', 1613, 393, { audience: aud('chimei', '問卷_奇美_電淨艙') }),
 ]
 
 function payload(over: Partial<FriendReportPayload> = {}): FriendReportPayload {
   return {
     version: 2,
+    generatedAtMs: NOW,
     window: reportWindow(NOW),
     integrity: {
       failed: [], userTagsTruncated: false, scannedUserTags: 9404, suggestionLogsTruncated: false,
@@ -176,6 +181,42 @@ describe('行銷提案：挑誰', () => {
     const p = payload({ intents: [intent('coffee', '在看咖啡機', 'interest', 55, 40, 14, null, null)] })
     expect(buildProposals(p)[0]!.who).toBe('在看咖啡機 55 位')
   })
+
+  it('⛔ 檔期已經過了就不搭（C-404：10/28 的報告 11/15 才看，不可以還說「雙 11 前」）；當天還算', () => {
+    const [late] = buildProposals(payload(), '2026-11-15')
+    expect(late!.title).toBe('發一則給「在看咖啡機」的 55 位')
+    expect(late!.festival).toBeNull()
+    expect(buildProposals(payload(), '2026-11-11')[0]!.festival?.id).toBe('double11-2026')
+  })
+
+  it('⛔ 讀不到標籤資料時不提案，講「這次讀不到」（不說成沒標籤或量不夠）', () => {
+    const p = payload({ integrity: { ...payload().integrity, userTagsFailed: true } })
+    expect(buildProposals(p)).toEqual([])
+    expect(proposalsEmptyText(p)).toBe('這次讀不到標籤資料，提案先空著，重新產生一次看看。')
+    expect(buildWatchItems(p).filter(w => w.kind === 'rising')).toEqual([])
+  })
+})
+
+describe('還沒設分類的 AI 標籤（C-404：標籤頁新建的預設是「自訂」）', () => {
+  const custom = intent('c1', '在看咖啡機', 'custom', 55, 40, 14)
+
+  it('⛔ 不拿去提案、也不當成要留意的服務訊號——不知道它是想買還是在抱怨', () => {
+    const p = payload({ intents: [custom] })
+    expect(buildProposals(p)).toEqual([])
+    expect(buildWatchItems(p).filter(w => w.kind === 'rising')).toEqual([])
+  })
+
+  it('講清楚設成「興趣偏好」就會提案', () => {
+    const t = unclassifiedHint(payload({ intents: [custom] }))
+    expect(t).toContain('「在看咖啡機」')
+    expect(t).toContain('分類是「自訂」')
+    expect(t).toContain('設成「興趣偏好」')
+  })
+
+  it('量不夠、或已經分好類的不提醒（對照組）', () => {
+    expect(unclassifiedHint(payload({ intents: [intent('c1', 'A', 'custom', 9, 9, 0)] }))).toBeNull()
+    expect(unclassifiedHint(payload())).toBeNull()
+  })
 })
 
 describe('沒有提案時講為什麼（三種原因三句話）', () => {
@@ -255,6 +296,25 @@ describe('也要留意', () => {
     expect(buildWatchItems(p).filter(w => w.kind === 'push')).toEqual([])
   })
 
+  it('⛔ 這一則發完還不到 7 天不拿去比打開（數字還在長，比了一定「掉很多」，C-404）', () => {
+    const young = payload({
+      generatedAtMs: at('2026-10-08T12:00:00'),
+      overview: { ...payload().overview, line: { ...payload().overview.line, blocksByDay: {} } },
+    })
+    expect(buildWatchItems(young).filter(w => w.kind === 'push')).toEqual([])
+    // 對照組：同一份資料、滿 7 天之後就會講
+    const mature = payload({ overview: { ...payload().overview, line: { ...payload().overview.line, blocksByDay: {} } } })
+    expect(buildWatchItems(mature).filter(w => w.kind === 'push')).toHaveLength(1)
+  })
+
+  it('封鎖跳起來的判斷：表格與這一條共用（平常不到 1 位不講、要 2 倍以上且至少 5 位）', () => {
+    expect(isBlockSpike(29, 10)).toBe(true)
+    expect(isBlockSpike(19, 10)).toBe(false)
+    expect(isBlockSpike(4, 1)).toBe(false)
+    expect(isBlockSpike(6, 0)).toBe(false)
+    expect(isBlockSpike(undefined, 10)).toBe(false)
+  })
+
   it('沒有推播就沒有推播那一條', () => {
     expect(buildWatchItems(payload({ pushes: [] })).filter(w => w.kind === 'push')).toEqual([])
     expect(buildWatchItems(payload({ pushes: null })).filter(w => w.kind === 'push')).toEqual([])
@@ -270,6 +330,13 @@ describe('上次照提案發的成績', () => {
     const mine = push('mine', '在看咖啡機・雙 11 購物節', '2026-10-20T12:00:00', 55, 20, { clicked: 9, proposalTagId: 'coffee' })
     const t = proposalOutcomeText(payload({ pushes: [mine, MYFEEL_PUSHES[1]!, MYFEEL_PUSHES[5]!] }))
     expect(t).toBe('上次照提案發的「在看咖啡機・雙 11 購物節」（10/20）：打開 36%、點連結 16%；最近 30 天其他推播打開 16%–36%。')
+  })
+
+  it('⛔ 提案那則發完還不到 7 天：講數字還會再長，而且只跟已經滿 7 天的推播比（C-404）', () => {
+    const mine = push('mine', '在看咖啡機', '2026-10-26T12:00:00', 55, 15, { proposalTagId: 'coffee' })
+    const youngOther = push('y', '另一則剛發的', '2026-10-27T12:00:00', 100, 5)
+    const t = proposalOutcomeText(payload({ pushes: [youngOther, mine, MYFEEL_PUSHES[1]!, MYFEEL_PUSHES[5]!] }))
+    expect(t).toBe('上次照提案發的「在看咖啡機」（10/26）：打開 27%（發完還不到 7 天，打開的人還會再多一些）；最近 30 天其他推播打開 16%–36%。')
   })
 
   it('LINE 還沒給數字時講什麼時候才有，⛔ 不寫 0%', () => {

@@ -33,6 +33,7 @@ import {
   pushedUserSets,
   pushRows,
   recentIntentPairs,
+  recipientIdsNeeded,
   reportWindow,
   type BroadcastLite,
   type FriendReportPayload,
@@ -45,13 +46,17 @@ import { aggregateSuggestionOutcomes, findTagHealthIssues, memberCountsFromRows,
 import { PENDING_SCAN_LIMIT } from '~~/shared/tag-pending-review'
 import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { taipeiDate } from '~~/shared/time'
-import type { AudienceLike } from '~~/shared/broadcast-open-compare'
 import type { TagDoc, TagSuggestionEvent, UserTagSourceType } from '~~/shared/types/tag-broadcast'
 
 /** 這 30 天新進名單最多讀幾位（MYFEEL 10-28：1,572；9 月大型問卷那個月是 4,411） */
 const NEW_MEMBERS_SCAN_LIMIT = 8000
-/** 推播往回讀幾則（照建立時間）；30 天內的推播一定在裡面，多的是給「上一則同一群人」用 */
-const BROADCAST_SCAN_LIMIT = 80
+/**
+ * 推播往回讀幾則（照建立時間，草稿也算在內）。多讀的是給「上一則同一群人」用。
+ * ⛔ 讀到上限、卻連窗口開頭都沒讀到＝窗口裡的推播可能沒列全，要標 `pushesTruncated` 講出來（`C-404`）。
+ * ⚠️ 這一趟**不讀收件名單**：一則「全部好友」的名單就上千個編號，150 則全讀進來是幾十 MB；
+ *    名單只讀用得到的那幾則（見下面 `getAll` 那段）。
+ */
+const BROADCAST_SCAN_LIMIT = 150
 
 export async function computeFriendReport(db: Firestore, workspaceId: string, nowMs = Date.now()): Promise<FriendReportPayload> {
   const failed: string[] = []
@@ -62,7 +67,7 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
 
   const [tags, userTagScan, totalUsers, suggestionLogs, pendingScan, newUsersScan, activeUsers, broadcastSnap, lineDays, skips, ownEvents] = await Promise.all([
     listDocs<TagDoc>('tags', ref => ref.where('workspaceId', '==', workspaceId))
-      .catch((e) => { console.warn('[friend-report] tags failed:', e); failed.push('標籤'); return [] }),
+      .catch((e) => { console.warn('[friend-report] tags failed:', e); failed.push('標籤'); return null }),
 
     // 一趟掃描：多讀一筆用來判斷「還有沒有更多」
     db.collection('userTags')
@@ -103,11 +108,14 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
       .get()
       .catch((e) => { console.warn('[friend-report] new users failed:', e); failed.push('新進名單'); return null }),
 
-    // 最近 30 天有互動（傳訊息、按選單或按鈕）的人——`C-401` 同一個欄位
+    /**
+     * 最近 30 天有互動（傳訊息、按選單或按鈕）的人——`C-401` 同一個欄位。
+     * ⛔ **不設上界**（`C-404`）：這個欄位只記「最後一次」，10/20 來過、今天又來的人最後一次是今天，
+     *   設成「到昨天為止」會把最常來的人漏掉，而且越晚產生數字越小。
+     */
     db.collection('conversations')
       .where('workspaceId', '==', workspaceId)
       .where('lastPeerActivityAt', '>=', startTs)
-      .where('lastPeerActivityAt', '<', endTs)
       .orderBy('lastPeerActivityAt', 'desc')
       .count().get()
       .then(s => s.data().count)
@@ -117,8 +125,9 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
       .where('workspaceId', '==', workspaceId)
       .orderBy('createdAt', 'desc')
       .limit(BROADCAST_SCAN_LIMIT)
-      .select('name', 'status', 'completedAt', 'audienceSource.type', 'audienceSource.tagIds', 'audienceSource.audienceId',
-        'sentCount', 'lineStats', 'audienceSnapshot.resolvedUserIds', 'proposalTagId')
+      .select('name', 'status', 'createdAt', 'completedAt', 'audienceSource.type', 'audienceSource.tagIds', 'audienceSource.audienceId',
+        'audienceSource.sourceBroadcastId', 'audienceSource.followUpTarget', 'audienceSource.sourceName',
+        'sentCount', 'lineStats', 'proposalTagId')
       .get()
       .catch((e) => { console.warn('[friend-report] broadcasts failed:', e); failed.push('推播'); return null }),
 
@@ -130,6 +139,14 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
   ])
 
   // ── 一趟掃描的結果 ──────────────────────────────────────────────
+  /**
+   * ⛔ 標籤或貼標紀錄讀不到時，下面每一區照空資料算會講出假的事（「還沒有標籤開 AI 判斷」「每顆都建了沒人用」）——
+   *   打旗標讓畫面改講「這次讀不到」，跟標籤有關的清單一律留空（`C-404`）。
+   */
+  const tagsFailed = tags === null
+  const userTagsFailed = userTagScan === null
+  const tagData = !tagsFailed && !userTagsFailed
+  const tagList = tags ?? []
   const userTagsTruncated = userTagScan ? userTagScan.size > TAG_INSIGHTS_SCAN_LIMIT : false
   const rows: Array<UserTagTimedRow & { sourceType: UserTagSourceType }> = (userTagScan?.docs ?? [])
     .slice(0, TAG_INSIGHTS_SCAN_LIMIT)
@@ -144,11 +161,12 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
     })
   const memberCounts = memberCountsFromRows(rows)
   // ⛔ 用 code 反查不要寫死 id：「N 天沒互動」那顆是每個工作區各自建的
-  const inactiveTagIds = tags.filter(t => t.code === INACTIVE_TAG_CODE).map(t => t.id)
-  const tagName = (id: string) => tags.find(t => t.id === id)?.name ?? null
+  const inactiveTagIds = tagList.filter(t => t.code === INACTIVE_TAG_CODE).map(t => t.id)
+  const tagName = (id: string) => tagList.find(t => t.id === id)?.name ?? null
 
   // ── 推播 ────────────────────────────────────────────────────────
-  const lites: BroadcastLite[] = (broadcastSnap?.docs ?? []).map((d) => {
+  const docs = broadcastSnap?.docs ?? []
+  const lites: BroadcastLite[] = docs.map((d) => {
     const v = d.data() as Record<string, any>
     const stats = parseStoredLineStats(v.lineStats)
     return {
@@ -156,17 +174,47 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
       name: String(v.name ?? ''),
       status: String(v.status ?? ''),
       completedMs: parseFirestoreDate(v.completedAt)?.getTime() ?? null,
-      audienceSource: (v.audienceSource ?? null) as AudienceLike,
+      audienceSource: (v.audienceSource ?? null) as BroadcastLite['audienceSource'],
       sentCount: Number(v.sentCount) || 0,
       opened: stats?.opened ?? null,
       clicked: stats?.clicked ?? null,
       proposalTagId: typeof v.proposalTagId === 'string' && v.proposalTagId ? v.proposalTagId : null,
-      resolvedUserIds: Array.isArray(v.audienceSnapshot?.resolvedUserIds) ? v.audienceSnapshot.resolvedUserIds.map(String) : [],
+      resolvedUserIds: [],
     }
   })
-  // ⛔ 推播讀不到時，「最近有沒有收過推播」要回 null，不可以當成「都沒收過」
-  const pushed = broadcastSnap ? pushedUserSets(lites, win) : null
-  const intents = intentTagStats(rows, tags, win, pushed)
+  // 讀到上限、最舊那一則還是窗口開始之後建的＝更早建、這個月才送的推播可能沒讀到
+  const oldestCreatedMs = docs.length ? parseFirestoreDate(docs[docs.length - 1]!.data().createdAt)?.getTime() ?? null : null
+  const pushesTruncated = docs.length >= BROADCAST_SCAN_LIMIT && (oldestCreatedMs === null || oldestCreatedMs >= win.startMs)
+
+  /**
+   * 收件名單只讀用得到的那幾則：窗口內（含今天）送出的＋補發所補的那一則。
+   * `getAll` 帶 fieldMask 只拿名單那一欄；每則一次讀取，跟整份撈回來一樣便宜、但不必搬幾十 MB。
+   */
+  let pushed: { within30: Set<string>, within7: Set<string> } | null = null
+  if (broadcastSnap) {
+    try {
+      const needed = recipientIdsNeeded(lites, win, nowMs)
+      const snaps = needed.length
+        ? await db.getAll(...needed.map(id => db.collection('broadcasts').doc(id)), { fieldMask: ['audienceSnapshot.resolvedUserIds'] })
+        : []
+      const extra: BroadcastLite[] = []
+      for (const s of snaps) {
+        const ids = (s.data() as { audienceSnapshot?: { resolvedUserIds?: unknown[] } } | undefined)?.audienceSnapshot?.resolvedUserIds
+        const list = Array.isArray(ids) ? ids.map(String) : []
+        const hit = lites.find(b => b.id === s.id)
+        // 補發的來源那一則可能比 150 則還舊：補一筆只有名單的（它不在窗口裡，不會被當成推播列）
+        if (hit) hit.resolvedUserIds = list
+        else extra.push({ id: s.id, name: '', status: '', completedMs: null, audienceSource: null, sentCount: 0, opened: null, clicked: null, proposalTagId: null, resolvedUserIds: list })
+      }
+      pushed = pushedUserSets([...lites, ...extra], win, nowMs)
+    }
+    catch (e) {
+      // ⛔ 名單讀不到：「最近有沒有收過推播」回 null，不可以當成「都沒收過」
+      console.warn('[friend-report] recipients failed:', e)
+      failed.push('推播收件名單')
+    }
+  }
+  const intents = tagData ? intentTagStats(rows, tagList, win, pushed) : []
 
   // ── LINE ────────────────────────────────────────────────────────
   const line: LineFriendStats = lineDays.status === 'ok'
@@ -180,17 +228,22 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
 
   // ── 標籤整理 ────────────────────────────────────────────────────
   const aiProducedTagIds = new Set(rows.filter(r => r.sourceType === 'ai').map(r => r.tagId))
-  const health = findTagHealthIssues(tags, memberCounts, aiProducedTagIds)
-  const coverage = aggregateCoverage(rows, totalUsers, { truncated: userTagsTruncated })
+  // ⛔ 讀不到貼標紀錄時 memberCounts 全是 0：每顆都會被說成「建了沒人用」——那時清單留空、沒標籤的人數算不出來
+  const health = tagData ? findTagHealthIssues(tagList, memberCounts, aiProducedTagIds) : { zeroMember: [], aiOnButNeverProduced: [] }
+  const coverage = aggregateCoverage(rows, totalUsers, { truncated: userTagsTruncated || !tagData })
   const outcomes = aggregateSuggestionOutcomes((suggestionLogs?.docs ?? [])
     .slice(0, TAG_SUGGESTION_LOG_SCAN_LIMIT)
     .map(d => ({ event: (d.data() as { event?: TagSuggestionEvent }).event! })))
 
   return {
     version: FRIEND_REPORT_VERSION,
+    generatedAtMs: nowMs,
     window: win,
     integrity: {
       failed,
+      tagsFailed,
+      userTagsFailed,
+      pushesTruncated,
       userTagsTruncated,
       scannedUserTags: rows.length,
       suggestionLogsTruncated: suggestionLogs ? suggestionLogs.size > TAG_SUGGESTION_LOG_SCAN_LIMIT : false,
@@ -202,11 +255,12 @@ export async function computeFriendReport(db: Firestore, workspaceId: string, no
     overview: { line, activeUsers, listSize: totalUsers },
     intents,
     intentPairs: recentIntentPairs(rows, intents.map(t => t.tagId), win),
-    pushes: broadcastSnap ? pushRows(lites, win, tagName) : null,
+    pushes: broadcastSnap ? pushRows(lites, win, tagName, nowMs) : null,
     newMembers: {
-      total: newUsersScan ? newUserIds.size : null,
+      // ⛔ 讀不到標籤時來源分不出來：整區講「查不到」，不把所有人都算成「沒有來源標籤」
+      total: newUsersScan && tagData ? newUserIds.size : null,
       truncated: newMembersTruncated,
-      rows: newUsersScan ? newMemberSources(newUserIds, rows, tags, { excludeTagIds: inactiveTagIds }) : [],
+      rows: newUsersScan && tagData ? newMemberSources(newUserIds, rows, tagList, { excludeTagIds: inactiveTagIds }) : [],
     },
     upcomingFestival: pickProposalFestival(
       [...TAIWAN_FESTIVALS, ...ownEvents.map(ownEventFestival)],

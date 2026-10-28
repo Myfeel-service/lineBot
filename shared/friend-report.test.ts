@@ -16,9 +16,11 @@ import {
   lineFriendStats,
   lineQueryDates,
   newMemberSources,
+  pushAudienceLabel,
   pushedUserSets,
   pushRows,
   recentIntentPairs,
+  recipientIdsNeeded,
   reportWindow,
   type BroadcastLite,
   type UserTagTimedRow,
@@ -154,6 +156,15 @@ describe('新進名單從哪裡來', () => {
     expect(out).toEqual([{ kind: 'tag', tagId: 'survey_a', name: '問卷_廚餘博士Pro', users: 2 }])
   })
 
+  it('⛔ 封存掉的 AI 標籤也不算來源（封存不會從客人身上拿掉，C-404）', () => {
+    const out = newMemberSources(
+      new Set(['n1']),
+      [row('n1', 'archived_ai', '2026-10-01T08:00:00'), row('n1', 'survey_b', '2026-10-01T09:00:00')],
+      [...tags, { id: 'archived_ai', name: '問過價格優惠', aiMode: 'auto', status: 'inactive' }],
+    )
+    expect(out).toEqual([{ kind: 'tag', tagId: 'survey_b', name: 'Tefal 問卷', users: 1 }])
+  })
+
   it('「沒互動」那顆、刪掉的標籤都不算來源；身上沒有來源標籤的人併成「沒有來源標籤」', () => {
     const out = newMemberSources(
       new Set(['n1', 'n2', 'n3']),
@@ -202,35 +213,62 @@ describe('推播', () => {
       b({ id: 'one', sentCount: 1 }),
       b({ id: 'draft', status: 'draft' }),
       b({ id: 'old', completedMs: at('2026-09-20T12:00:00') }),
-      b({ id: 'today', completedMs: at('2026-10-28T09:00:00') }),
-    ], W, names)
+    ], W, names, NOW)
     expect(rows.map(r => r.id)).toEqual(['ok'])
     expect(rows[0]!.audience.tagNames).toEqual(['問卷_珈樂堤_小滑手'])
+    expect(rows[0]!.audience.label).toBe('問卷_珈樂堤_小滑手')
+  })
+
+  it('⛔ 今天已經送完的也要列（C-404：只算到昨天的話，早上照提案發的那一則中午重新產生還看不到）', () => {
+    const rows = pushRows([
+      b({ id: 'ok' }),
+      b({ id: 'today', completedMs: at('2026-10-28T09:00:00') }),
+      b({ id: 'later', completedMs: at('2026-10-28T20:00:00') }), // 產生之後才送完的不算
+    ], W, names, NOW)
+    expect(rows.map(r => r.id)).toEqual(['today', 'ok'])
   })
 
   it('上一則發給同一群人的（可以在窗口外）跟推播成效頁同一支判斷', () => {
     const rows = pushRows([
       b({ id: 'launch', name: '小滑手_開賣', completedMs: at('2026-09-29T12:00:00'), sentCount: 2187, opened: 786 }),
       b({ id: 'countdown', name: '小滑手_超早鳥倒數', completedMs: at('2026-10-04T12:00:00'), sentCount: 2165, opened: 466 }),
-    ], W, names)
+    ], W, names, NOW)
     const countdown = rows.find(r => r.id === 'countdown')!
     expect(countdown.prevOpen?.name).toBe('小滑手_開賣')
     expect(countdown.prevOpen?.openRate).toBeCloseTo(0.3594, 4)
   })
 
   it('刪掉的標籤不猜名字', () => {
-    const rows = pushRows([b({ audienceSource: { type: 'tags', tagIds: ['gone'] } })], W, names)
+    const rows = pushRows([b({ audienceSource: { type: 'tags', tagIds: ['gone'] } })], W, names, NOW)
     expect(rows[0]!.audience.tagNames).toEqual(['(已刪除的標籤)'])
   })
 
-  it('誰最近收過推播：30 天內與 7 天內分開算', () => {
+  it('「發給」那一欄：補發講得出補發給哪一則的誰（⛔ 不寫看不懂的「指定名單」）', () => {
+    expect(pushAudienceLabel({ type: 'followUp', sourceBroadcastId: 'x', followUpTarget: 'unopened', sourceName: '小滑手_開賣' }, []))
+      .toBe('補發給「小滑手_開賣」沒打開的人')
+    expect(pushAudienceLabel({ type: 'all' }, [])).toBe('全部好友')
+    expect(pushAudienceLabel({ type: 'import' }, [])).toBe('匯入的名單')
+  })
+
+  it('誰最近收過推播：30 天內與 7 天內分開算，⛔ 算到產生那一刻（今天早上發的也算）', () => {
     const sets = pushedUserSets([
+      b({ completedMs: at('2026-10-28T09:00:00'), resolvedUserIds: ['u0'] }),
       b({ completedMs: at('2026-10-25T12:00:00'), resolvedUserIds: ['u1'] }),
       b({ completedMs: at('2026-10-05T12:00:00'), resolvedUserIds: ['u2'] }),
       b({ completedMs: at('2026-09-01T12:00:00'), resolvedUserIds: ['u3'] }),
-    ], W)
-    expect([...sets.within30].sort()).toEqual(['u1', 'u2'])
-    expect([...sets.within7]).toEqual(['u1'])
+    ], W, NOW)
+    expect([...sets.within30].sort()).toEqual(['u0', 'u1', 'u2'])
+    expect([...sets.within7].sort()).toEqual(['u0', 'u1'])
+  })
+
+  it('⛔ 補發（LINE 不給名單）用它補的那一則的名單代替，不可以當成誰都沒收到', () => {
+    const all = [
+      b({ id: 'src', completedMs: at('2026-09-20T12:00:00'), resolvedUserIds: ['a', 'b', 'c'] }), // 窗口外的原推播
+      b({ id: 'fu', completedMs: at('2026-10-26T12:00:00'), audienceSource: { type: 'followUp', sourceBroadcastId: 'src', followUpTarget: 'unopened' }, resolvedUserIds: [] }),
+    ]
+    expect(recipientIdsNeeded(all, W, NOW).sort()).toEqual(['fu', 'src'])
+    const sets = pushedUserSets(all, W, NOW)
+    expect([...sets.within7].sort()).toEqual(['a', 'b', 'c'])
   })
 })
 

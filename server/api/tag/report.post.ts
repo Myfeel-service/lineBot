@@ -17,7 +17,8 @@ export default defineEventHandler(async (event) => {
 
   const prev = await getTagReport(db, workspaceId)
   const now = Date.now()
-  if (!canRegenerate(prev?.generatedAtMs ?? null, now)) {
+  // `C-404`：改版前的舊報告不擋冷卻——它畫不出任何東西，畫面叫他按「重新產生」，按鈕卻灰一小時是自相矛盾
+  if (!prev?.legacy && !canRegenerate(prev?.generatedAtMs ?? null, now)) {
     // ⛔ 冷卻中回 429 並**講得出還要多久**，不要只說「請稍後再試」
     throw createError({
       statusCode: 429,

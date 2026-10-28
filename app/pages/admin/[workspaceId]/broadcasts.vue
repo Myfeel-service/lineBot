@@ -1698,6 +1698,13 @@ async function openValidateDialog() {
   const capturedName = form.value.name.trim()
   const capturedAudienceSource = buildAudienceSource()
   const capturedMessages = buildMessages()
+  /**
+   * ⛔ 新建的那一份要跟「儲存草稿」存同一份東西（`C-404`，2026-10-28 code review 抓到）：
+   *   以前這裡只帶名字／對象／內容三樣，沒先存草稿就直接按發送或排程的話，
+   *   「發完幫收到的人貼記號」（`C-213`）、「為哪一檔發的」（`C-240`）、「從好友統計提案來的」（`D-155`）
+   *   全都沒存進去——記號不會貼、檔期回顧與提案成績都認不出這一則。
+   */
+  const capturedSaveBody = buildSaveBody()
 
   const err = validateForm({ requireScheduleTime: capturedMode === 'schedule' })
   if (err) return showToast(err, 'error')
@@ -1715,7 +1722,8 @@ async function openValidateDialog() {
     try {
       const created = await apiFetch<any>('/api/broadcast/create', {
         method: 'POST',
-        body: { name: capturedName, audienceSource: capturedAudienceSource, messages: capturedMessages },
+        // 新建時 buildSaveBody 不帶 scheduleAt（排程時間由確認排程那一步統一寫入）
+        body: { ...capturedSaveBody, name: capturedName, audienceSource: capturedAudienceSource, messages: capturedMessages },
       })
       await loadData()
       selectedId.value = created.id

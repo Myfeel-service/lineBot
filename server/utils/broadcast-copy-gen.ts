@@ -131,7 +131,9 @@ export function rejectProposalCopy(text: string, profile: StoreProfileDoc): stri
   const base = rejectBroadcastCopy(text, profile)
   if (base) return base
   const s = String(text ?? '')
-  if (/注意到|發現你|觀察到|系統|判斷你|偵測|紀錄顯示|根據你的/.test(s)) return '寫出了「我們在觀察你」的話'
+  // ⚠️ 只抓「在講我們觀察客人」的說法，⛔ 不抓單獨的「系統」：「淨水系統」「智慧門鎖系統」是商品名，
+  //    整個擋掉的話賣這類東西的店一版都擬不出來（`C-404` code review 抓到）
+  if (/注意到你|發現你|觀察到你|系統(判斷|顯示|偵測|發現|記錄|紀錄)|判斷你|偵測到你|紀錄顯示|根據你的/.test(s)) return '寫出了「我們在觀察你」的話'
   // 要人補的空格：忘了補就原樣送到客人手上。⚠️ 只抓「裡面寫著填／內容／XX」的括號——「【雙 11 限定】」是正常寫法
   if (/[［[【][^］\]】]*(填|輸入|內容|XX|xx|○○)[^］\]】]*[］\]】]/.test(s)) return '留了要人補的空格'
   return null

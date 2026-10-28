@@ -66,6 +66,11 @@
     color: var(--el-text-color-secondary);
   }
 
+  // 「還沒設分類」那句：跟上面的提案隔一條線，讀起來是另一件事
+  &__hint {
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+
   // 直接放在卡片裡（不在 .card-section-stack 裡）的那幾句要自己留內距
   &__pad {
     padding: 14px 16px;

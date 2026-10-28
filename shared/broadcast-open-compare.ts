@@ -62,8 +62,11 @@ export interface PreviousOpen {
   openRate: number
 }
 
-/** 只有真的送出去、而且送到人的推播才算數（跟存 LINE 數字的排程同一條） */
-function wasSent(c: PreviousOpenCandidate): boolean {
+/**
+ * 只有真的送出去、而且送到人的推播才算數（跟存 LINE 數字的排程同一條）。
+ * ⛔ 好友統計（`shared/friend-report.ts`）也吃這一支，不要再抄一份——兩份規則會漂開（`C-404`）。
+ */
+export function wasSent(c: { status: string, sentCount: number }): boolean {
   return (c.status === 'completed' || c.status === 'failed') && c.sentCount > 0
 }
 

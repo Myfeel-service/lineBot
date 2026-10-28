@@ -3,8 +3,10 @@ import {
   BROADCAST_COPY_MAX,
   BROADCAST_COPY_TARGET,
   buildCopyPrompt,
+  buildProposalCopyPrompt,
   dedupeVariants,
   rejectBroadcastCopy,
+  rejectProposalCopy,
   tooSimilar,
 } from './broadcast-copy-gen'
 import { emptyStoreProfile, setStoreProfileField, type StoreProfileDoc } from '~~/shared/types/store-profile'
@@ -144,5 +146,33 @@ describe('buildCopyPrompt', () => {
     expect(p).not.toContain('通用切角')
     // 節日照舊（對照組）
     expect(t).toContain('這個節日的通用切角：禮盒與送禮的需求會明顯升溫')
+  })
+})
+
+describe('好友統計行銷提案的文案（D-155）', () => {
+  const water = profileOf({ products: '淨水系統、濾芯' })
+
+  it('⛔ 讓客人覺得被觀察的說法一律擋（「我們注意到你」「系統判斷你」）', () => {
+    expect(rejectProposalCopy('我們注意到你最近在看淨水系統', water)).toBe('寫出了「我們在觀察你」的話')
+    expect(rejectProposalCopy('系統判斷你可能需要濾芯', water)).toBe('寫出了「我們在觀察你」的話')
+    expect(rejectProposalCopy('根據你的紀錄，推薦濾芯', water)).toBe('寫出了「我們在觀察你」的話')
+  })
+
+  it('⛔ 商品名裡的「系統」不可以被誤擋（C-404：賣淨水系統的店以前一版都擬不出來）', () => {
+    expect(rejectProposalCopy('換季了，淨水系統的濾芯記得換，想問哪一款直接回我們。', water)).toBeNull()
+  })
+
+  it('⛔ 要人補的空格擋掉（忘了補會原樣送出去），但「【雙 11 限定】」這種正常寫法放行', () => {
+    expect(rejectProposalCopy('淨水系統有［優惠內容］，直接回我們', water)).toBe('留了要人補的空格')
+    expect(rejectProposalCopy('【雙 11 限定】淨水系統有活動，直接回我們', water)).toBeNull()
+  })
+
+  it('prompt 帶得到這群人是誰、搭哪一檔，也寫了「不可以讓客人覺得被觀察」', () => {
+    const double11 = TAIWAN_FESTIVALS.find(f => f.id === 'double11-2026')!
+    const p = buildProposalCopyPrompt(water, { tagName: '在看淨水器', tagMeaning: '問過淨水器規格', festival: double11 }, '')
+    expect(p).toContain('「在看淨水器」')
+    expect(p).toContain('問過淨水器規格')
+    expect(p).toContain('雙 11 購物節')
+    expect(p).toContain('不可以讓客人覺得被觀察')
   })
 })

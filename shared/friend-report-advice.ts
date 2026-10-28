@@ -11,10 +11,23 @@
  * - **也要留意**：服務類訊號變多（例：退換貨）、推播那天封鎖變多／同一群人連著收打開變少
  * - **上次提案的成績**：從提案開的推播發出去之後，下一份報告回報
  *
- * ⛔ 每一條門檻都是常數＋測試；改門檻要連測試一起改，⛔ 不要散在畫面裡。
+ * ⛔ 每一條門檻都是常數＋測試；改門檻要連測試一起改，⛔ 不要散在畫面裡（畫面要用就 import 這裡的函式）。
  */
-import { fmt, lineDayOfMs, md, mdOfMs, blockBaseline, type FriendReportPayload, type IntentTagStat, type PushRow } from './friend-report'
+import { LINE_STATS_ROUND_DAYS } from './broadcast-line-stats'
+import {
+  blockBaseline,
+  fmt,
+  lineDayOfMs,
+  md,
+  mdOfMs,
+  reportNowMs,
+  tagDataUnavailable,
+  type FriendReportPayload,
+  type IntentTagStat,
+  type PushRow,
+} from './friend-report'
 import { isSkipped, type MarketingSkipMap } from './marketing-skips'
+import { tagCategoryLabel } from './tag-admin'
 import { daysBetween } from './time'
 import type { TaiwanFestival } from './taiwan-festivals'
 
@@ -39,7 +52,14 @@ export const BLOCK_SPIKE_MIN = 5
 export const OPEN_DROP_POINTS = 10
 export const OPEN_DROP_MAX_GAP_DAYS = 14
 
+/** LINE 的打開數存到發完第 7 天才不再變（`LINE_STATS_ROUND_DAYS` 最後一輪）；還沒到的數字只能當「目前為止」 */
+const STATS_FINAL_DAYS: number = LINE_STATS_ROUND_DAYS[LINE_STATS_ROUND_DAYS.length - 1] ?? 7
 const DAY = 86_400_000
+
+/** 可以拿來提案的分類（想買的訊號） */
+const PROPOSAL_CATEGORY = 'interest'
+/** 服務類訊號的分類（要照顧的人）；⛔ 自訂／沒分類的不算——不知道它是想買還是在抱怨 */
+const SERVICE_CATEGORIES = new Set(['behavior', 'member_status'])
 
 // ═══════════════════════════════════════════════════════════════════
 //  檔期
@@ -76,7 +96,7 @@ export interface Proposal {
   title: string
   /** 發給誰：在看咖啡機 55 位，其中 22 位最近 30 天沒收過任何推播 */
   who: string
-  /** 為什麼：最近 30 天新增 40 位，前 30 天 14 位；其中 7 位也有「問過價格優惠」 */
+  /** 為什麼：最近 30 天新增 40 位，前 30 天 14 位；其中 7 位也有「在等開賣」 */
   why: string
   /** 什麼時候：雙 11 購物節（11/11）前 */
   when: string
@@ -94,7 +114,7 @@ function pairsOf(p: FriendReportPayload, tagId: string, limit: number, onlyInter
   for (const x of p.intentPairs) {
     if (x.a !== tagId && x.b !== tagId) continue
     const other = byId.get(x.a === tagId ? x.b : x.a)
-    if (!other?.name || (onlyInterest && other.category !== 'interest')) continue
+    if (!other?.name || (onlyInterest && other.category !== PROPOSAL_CATEGORY)) continue
     out.push({ name: other.name, users: x.users })
     if (out.length >= limit) break
   }
@@ -106,15 +126,20 @@ function pushedTooRecently(t: IntentTagStat): boolean {
 }
 
 function proposalCandidates(p: FriendReportPayload): IntentTagStat[] {
-  return p.intents.filter(t => t.category === 'interest' && t.recent >= PROPOSAL_MIN_RECENT && t.members > 0)
+  return p.intents.filter(t => t.category === PROPOSAL_CATEGORY && t.recent >= PROPOSAL_MIN_RECENT && t.members > 0)
 }
 
 /**
  * 挑哪幾群人提案：「興趣偏好」分類的意圖標籤、最近 30 天新增 ≥10 位，
  * 依最近新增多的優先（剛表現出想要的人最熱），7 天內大半收過推播的跳過。
+ *
+ * `today`（台北日期）：報告不會自己更新，⛔ 已經過去的檔期不可以再拿來提案（`C-404`：
+ * 10/28 的報告 11/15 才看，還在說「雙 11 前發一則」）——過了就改成「這週就可以」。
  */
-export function buildProposals(p: FriendReportPayload): Proposal[] {
-  const festival = p.upcomingFestival
+export function buildProposals(p: FriendReportPayload, today?: string): Proposal[] {
+  if (tagDataUnavailable(p)) return []
+  const f = p.upcomingFestival
+  const festival = f && (!today || daysBetween(today, f.date) >= 0) ? f : null
   return proposalCandidates(p)
     .filter(t => !pushedTooRecently(t))
     // intents 已經照「最近新增多的在前」排好；這裡再排一次，不靠上游
@@ -143,9 +168,10 @@ export function buildProposals(p: FriendReportPayload): Proposal[] {
 }
 
 /**
- * 沒有提案時講的那一句。⛔ 三種原因三句不同的話（沒標籤、量不夠、剛發過），不可以只寫「沒有提案」。
+ * 沒有提案時講的那一句。⛔ 幾種原因講不同的話（讀不到、沒標籤、量不夠、剛發過），不可以只寫「沒有提案」。
  */
 export function proposalsEmptyText(p: FriendReportPayload): string {
+  if (tagDataUnavailable(p)) return '這次讀不到標籤資料，提案先空著，重新產生一次看看。'
   if (!p.intents.length) {
     return '還沒有標籤開 AI 判斷。開了之後，客人在對話裡表現出想要什麼會自動被貼上，這裡才提得出案。'
   }
@@ -154,6 +180,23 @@ export function proposalsEmptyText(p: FriendReportPayload): string {
     return `${recentlyPushed.map(t => `「${t.name}」`).join('、')}最近 7 天才收過推播，這次先不提案——同一群人連著收，封鎖的人會變多。`
   }
   return `最近 30 天沒有哪一群「興趣偏好」的人新增到 ${PROPOSAL_MIN_RECENT} 位以上，這次先不提案。`
+}
+
+/**
+ * 量夠、卻因為**還沒設分類**而沒被提案的 AI 標籤（`C-404`）。
+ *
+ * 為什麼不直接拿去提案：標籤頁新建的標籤預設是「自訂」，裡面可能是「在看咖啡機」（想買）也可能是
+ * 「抱怨過」（要照顧）——⛔ 程式猜錯的代價是對抱怨的人推銷。所以只講清楚「設成興趣偏好就會提案」，讓他自己分。
+ * 沒有這種標籤＝null（整句不出現）。
+ */
+export function unclassifiedHint(p: FriendReportPayload): string | null {
+  if (tagDataUnavailable(p)) return null
+  const list = p.intents.filter(t => t.category !== PROPOSAL_CATEGORY && !SERVICE_CATEGORIES.has(String(t.category)) && t.recent >= PROPOSAL_MIN_RECENT)
+  if (!list.length) return null
+  const names = list.slice(0, 3).map(t => `「${t.name}」`).join('、')
+  const cat = list[0]!.category ? tagCategoryLabel(list[0]!.category) : '沒有分類'
+  return `${names}${list.length > 3 ? ` 等 ${list.length} 顆` : ''}最近新增不少人，但分類是「${cat}」，這裡分不出是想買還是要照顧的。`
+    + '在標籤管理把想買的設成「興趣偏好」，下一份報告就會幫它提案。'
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -173,15 +216,24 @@ function pct(rate: number): string {
 
 function audienceLabel(row: PushRow): string {
   if (row.audience.type === 'tags' && row.audience.tagNames.length) return `「${row.audience.tagNames.join('、')}」`
-  if (row.audience.type === 'all') return '全部好友'
-  return '同一群人'
+  return row.audience.label || '同一群人'
 }
 
-/** 服務類訊號（不是興趣偏好的意圖標籤）變多最多的那一顆 */
+/**
+ * 這一天的封鎖算不算「推播那天跳起來」——表格標橘色與「也要留意」那一條**共用這一支**（`C-404`），
+ * ⛔ 不要在畫面上另寫一份門檻。平常不到 1 位時不講倍數（0 位 vs 3 位的「倍數」沒有意義）。
+ */
+export function isBlockSpike(blocks: number | undefined, baseline: number | null): boolean {
+  return blocks !== undefined && baseline !== null && baseline >= 1
+    && blocks >= baseline * BLOCK_SPIKE_RATIO && blocks >= BLOCK_SPIKE_MIN
+}
+
+/** 服務類訊號（消費行為、好友狀態的意圖標籤）變多最多的那一顆 */
 function risingItem(p: FriendReportPayload): WatchItem | null {
+  if (tagDataUnavailable(p)) return null
   const ratio = (t: IntentTagStat) => (t.prev === 0 ? Number.POSITIVE_INFINITY : t.recent / t.prev)
   const hit = p.intents
-    .filter(t => t.category !== 'interest' && t.recent >= RISING_MIN_RECENT && (t.prev === 0 || t.recent >= t.prev * RISING_RATIO))
+    .filter(t => SERVICE_CATEGORIES.has(String(t.category)) && t.recent >= RISING_MIN_RECENT && (t.prev === 0 || t.recent >= t.prev * RISING_RATIO))
     .sort((a, b) => ratio(b) - ratio(a) || b.recent - a.recent || a.tagId.localeCompare(b.tagId))[0]
   if (!hit) return null
   const pair = pairsOf(p, hit.tagId, 1)[0]
@@ -194,11 +246,16 @@ function risingItem(p: FriendReportPayload): WatchItem | null {
   }
 }
 
-/** 同一群人連著收、打開比例掉最多的那一則（口徑跟推播成效頁 `C-401` 同一支） */
-function openDropSentence(pushes: readonly PushRow[]): string | null {
+/**
+ * 同一群人連著收、打開比例掉最多的那一則（口徑跟推播成效頁 `C-401` 同一支）。
+ * ⛔ 這一則發完還不到 7 天就不比（`C-404`）：它的打開數還在長，拿去跟上一則第 7 天的數字比一定「掉很多」，
+ *   過幾天又自己消失＝假警報。
+ */
+function openDropSentence(pushes: readonly PushRow[], nowMs: number): string | null {
   let best: { drop: number, text: string } | null = null
   for (const row of pushes) {
     if (!row.prevOpen || row.opened === null || row.sent <= 0) continue
+    if (nowMs - row.completedMs < STATS_FINAL_DAYS * DAY) continue
     const gap = Math.round((row.completedMs - row.prevOpen.completedMs) / DAY)
     if (gap > OPEN_DROP_MAX_GAP_DAYS) continue
     const rate = row.opened / row.sent
@@ -216,19 +273,21 @@ function openDropSentence(pushes: readonly PushRow[]): string | null {
   return best?.text ?? null
 }
 
+/** 推播那幾天的封鎖基準：沒推播日子的中位數（表格與這一條共用） */
+export function pushBlockBaseline(p: FriendReportPayload): number | null {
+  const line = p.overview.line
+  if (line.status === 'no_token' || line.status === 'failed') return null
+  return blockBaseline(line.blocksByDay, new Set((p.pushes ?? []).map(x => lineDayOfMs(x.completedMs))))
+}
+
 function pushItem(p: FriendReportPayload): WatchItem | null {
   const pushes = p.pushes ?? []
   if (!pushes.length) return null
   const byDay = p.overview.line.blocksByDay
   const pushDays = new Set(pushes.map(x => lineDayOfMs(x.completedMs)))
-  const baseline = blockBaseline(byDay, pushDays)
-  const spikes = baseline !== null && baseline >= 1
-    ? [...pushDays]
-        .filter(d => byDay[d] !== undefined && byDay[d]! >= baseline * BLOCK_SPIKE_RATIO && byDay[d]! >= BLOCK_SPIKE_MIN)
-        .sort()
-        .slice(-3)
-    : []
-  const drop = openDropSentence(pushes)
+  const baseline = pushBlockBaseline(p)
+  const spikes = [...pushDays].filter(d => isBlockSpike(byDay[d], baseline)).sort().slice(-3)
+  const drop = openDropSentence(pushes, reportNowMs(p))
   const action = { type: 'pushes' as const, label: '看各則推播' }
 
   if (spikes.length && baseline !== null) {
@@ -261,21 +320,27 @@ export function buildWatchItems(p: FriendReportPayload): WatchItem[] {
  * 最近 30 天照提案發的那一則（最近的一則）的成績，跟其他推播比。
  * ⛔ 沒照著發不追問、不記成「忽略」——發不發是店家的判斷，不是我們的指標。
  * ⛔ 不寫預估：還沒有可以比的推播時，用問卷名單的比例去推會誤導。
+ * ⚠️ 發完還不到 7 天的數字還在長（`C-404`）：講出來；比較對象只拿**已經滿 7 天**的其他推播，
+ *   ⛔ 不拿一則還在長的去跟定了的比。
  */
 export function proposalOutcomeText(p: FriendReportPayload): string | null {
   const pushes = p.pushes ?? []
   const mine = pushes.find(x => x.proposalTagId)
   if (!mine) return null
+  const nowMs = reportNowMs(p)
   const head = `上次照提案發的「${mine.name}」（${mdOfMs(mine.completedMs)}）`
   if (mine.opened === null) return `${head}：LINE 還沒給打開人數，發完隔天才有。`
   const parts = [`打開 ${pct(mine.opened / mine.sent)}`]
   if (mine.clicked !== null) parts.push(`點連結 ${pct(mine.clicked / mine.sent)}`)
-  const others = pushes.filter(x => !x.proposalTagId && x.opened !== null && x.sent > 0).map(x => x.opened! / x.sent)
+  const young = nowMs - mine.completedMs < STATS_FINAL_DAYS * DAY
+  const others = pushes
+    .filter(x => !x.proposalTagId && x.opened !== null && x.sent > 0 && nowMs - x.completedMs >= STATS_FINAL_DAYS * DAY)
+    .map(x => x.opened! / x.sent)
   let tail = ''
   if (others.length) {
     const lo = pct(Math.min(...others))
     const hi = pct(Math.max(...others))
     tail = `；最近 30 天其他推播打開 ${lo === hi ? lo : `${lo}–${hi}`}`
   }
-  return `${head}：${parts.join('、')}${tail}。`
+  return `${head}：${parts.join('、')}${young ? `（發完還不到 ${STATS_FINAL_DAYS} 天，打開的人還會再多一些）` : ''}${tail}。`
 }

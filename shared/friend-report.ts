@@ -15,7 +15,8 @@
  * ⛔ 這裡不做查詢。呼叫端（`server/utils/friend-report-compute.ts`）只掃一趟 `userTags`，
  *   同一批列丟給下面每一支（`D-28` 的成本決定照舊）。
  */
-import { pickPreviousSameAudience, type AudienceLike } from './broadcast-open-compare'
+import { FOLLOW_UP_LABEL, isFollowUpTarget } from './broadcast-follow-up'
+import { pickPreviousSameAudience, wasSent, type AudienceLike } from './broadcast-open-compare'
 import { addDays, daysBetween, taipeiDate } from './time'
 import type { TagCategory } from './types/tag-broadcast'
 
@@ -124,7 +125,8 @@ export interface PushRow {
   id: string
   name: string
   completedMs: number
-  audience: { type: string, tagIds: string[], tagNames: string[] }
+  /** `label`＝表格「發給」那一欄的字（標籤名、全部好友、補發給哪一則的誰…） */
+  audience: { type: string, tagIds: string[], tagNames: string[], label: string }
   sent: number
   /** LINE 統計的人數；沒給＝null（⛔ 不是 0） */
   opened: number | null
@@ -165,10 +167,23 @@ export interface NewMemberSources {
 
 export interface FriendReportPayload {
   version: typeof FRIEND_REPORT_VERSION
+  /**
+   * 產生的那一刻（毫秒）。窗口只算到昨天，但「今天剛發的推播」「發完還不到 7 天的數字」要拿這個比（`C-404`）。
+   * 舊存檔沒有這一欄＝退回窗口結尾。
+   */
+  generatedAtMs?: number
   window: ReportWindow
   /** ⛔ 畫面一定要讀這一段：哪幾塊算不出來、哪幾塊只算了一部分 */
   integrity: {
     failed: string[]
+    /**
+     * 標籤／貼標紀錄讀不到（`C-404`）。⛔ 讀不到時下面每一區都不可以照空資料下結論
+     * （「還沒有標籤開 AI 判斷」「每顆都建了沒人用」都是假的），要講「這次讀不到」。
+     */
+    tagsFailed?: boolean
+    userTagsFailed?: boolean
+    /** 推播只往回讀到一定則數；連窗口開頭都沒讀到＝窗口裡的推播可能沒列全 */
+    pushesTruncated?: boolean
     userTagsTruncated: boolean
     scannedUserTags: number
     suggestionLogsTruncated: boolean
@@ -221,9 +236,24 @@ export interface IntentTagLike {
   status?: string
 }
 
-/** 有開 AI 判斷、而且還在用的標籤＝意圖。缺欄位＝off 是全系統口徑 */
+/** 有開 AI 判斷的標籤（不管有沒有封存）。缺欄位＝off 是全系統口徑 */
+export function isAiTag(t: IntentTagLike): boolean {
+  return t.aiMode === 'suggest' || t.aiMode === 'auto'
+}
+
+/** 有開 AI 判斷、而且還在用的標籤＝意圖 */
 export function isIntentTag(t: IntentTagLike): boolean {
-  return (t.aiMode === 'suggest' || t.aiMode === 'auto') && t.status !== 'inactive'
+  return isAiTag(t) && t.status !== 'inactive'
+}
+
+/** 報告的「現在」：產生那一刻；舊存檔沒有就用窗口結尾 */
+export function reportNowMs(p: { generatedAtMs?: number, window: ReportWindow }): number {
+  return typeof p.generatedAtMs === 'number' && p.generatedAtMs > 0 ? p.generatedAtMs : p.window.endMs
+}
+
+/** 讀不到標籤或貼標紀錄＝跟標籤有關的每一區都不可以下結論 */
+export function tagDataUnavailable(p: Pick<FriendReportPayload, 'integrity'>): boolean {
+  return !!(p.integrity.tagsFailed || p.integrity.userTagsFailed)
 }
 
 function inRange(ms: number | null, from: number, to: number): boolean {
@@ -323,8 +353,9 @@ export function recentIntentPairs(
 /**
  * 這 30 天第一次進名單的人，照他身上**最早的一顆來源標籤**分組。
  *
- * 來源標籤＝不是意圖、也不是「N 天沒互動」那顆的標籤（問卷、活動、客服按鈕貼的）。
+ * 來源標籤＝不是 AI 判的、也不是「N 天沒互動」那顆的標籤（問卷、活動、客服按鈕貼的）。
  * ⛔ 意圖不算來源：「在看咖啡機」是他進來之後講的話，不是他從哪裡來。
+ *   ⚠️ **封存掉的 AI 標籤也一樣不算**（`C-404`）：封存不會把它從客人身上拿掉，只看「還在用」的話它會被當成來源。
  * ⛔ 刪掉的標籤（`tags` 裡找不到）不猜名字，當成沒有。
  *
  * ⚠️ 母數跟對話統計「新加好友」同一個（`users.createdAt`），**不是** LINE 的新加好友——
@@ -343,7 +374,7 @@ export function newMemberSources(
   for (const r of rows) {
     if (!r?.userId || !newUserIds.has(r.userId)) continue
     const t = byId.get(r.tagId)
-    if (!t || excluded.has(t.id) || isIntentTag(t)) continue
+    if (!t || excluded.has(t.id) || isAiTag(t)) continue
     // 沒有時間的排最後（⛔ 不當成最早）
     const at = r.createdAtMs ?? Number.POSITIVE_INFINITY
     const cur = first.get(r.userId)
@@ -374,27 +405,47 @@ export interface BroadcastLite {
   name: string
   status: string
   completedMs: number | null
-  audienceSource: AudienceLike
+  audienceSource: (NonNullable<AudienceLike> & { sourceBroadcastId?: string, followUpTarget?: string, sourceName?: string }) | null
   sentCount: number
   opened: number | null
   clicked: number | null
   proposalTagId: string | null
+  /** 收件名單；只有用得到的那幾則才讀（窗口內送出的＋補發的來源那一則，`C-404`），其餘是空陣列 */
   resolvedUserIds: readonly string[]
 }
 
-/** 真的送出去、而且送到人的（跟 `broadcast-open-compare.ts` 的 `wasSent` 同一條） */
-function wasSent(b: BroadcastLite): boolean {
-  return (b.status === 'completed' || b.status === 'failed') && b.sentCount > 0 && b.completedMs !== null
+/** 真的送出去、送到人、而且知道哪時候送完的（「送出去」的判斷跟推播成效頁同一支 `wasSent`） */
+function sentWithTime(b: BroadcastLite): boolean {
+  return wasSent(b) && b.completedMs !== null
 }
 
 /**
- * 最近 30 天的推播列（新到舊）。
+ * 「發給」那一欄的字。補發（`C-403`）講得出補發給哪一則的誰，⛔ 不要寫成看不懂的「指定名單」。
+ */
+export function pushAudienceLabel(
+  src: BroadcastLite['audienceSource'],
+  tagNames: readonly string[],
+): string {
+  if (src?.type === 'tags') return tagNames.join('、')
+  if (src?.type === 'all') return '全部好友'
+  if (src?.type === 'followUp') {
+    const who = isFollowUpTarget(src.followUpTarget) ? FOLLOW_UP_LABEL[src.followUpTarget] : '其中一部分人'
+    return src.sourceName ? `補發給「${src.sourceName}」${who}` : `補發給${who}`
+  }
+  if (src?.type === 'import') return '匯入的名單'
+  return '指定名單'
+}
+
+/**
+ * 最近 30 天的推播列（新到舊），**含今天已經送完的**（`C-404`：只算到昨天的話，
+ * 今天剛發的推播不在表上，提案的「7 天內收過推播就不提」也看不到它）。
  * `all` 是讀進來的全部推播（含窗口之前的）——「上一則發給同一群人的」可能在窗口外。
  */
 export function pushRows(
   all: readonly BroadcastLite[],
   win: ReportWindow,
   tagNameOf: (tagId: string) => string | null,
+  nowMs: number,
 ): PushRow[] {
   const candidates = all.map(b => ({
     id: b.id,
@@ -406,10 +457,12 @@ export function pushRows(
     completedMs: b.completedMs,
   }))
   return all
-    .filter(b => wasSent(b) && b.sentCount >= PUSH_MIN_SENT && inRange(b.completedMs, win.startMs, win.endMs))
+    .filter(b => sentWithTime(b) && b.sentCount >= PUSH_MIN_SENT && inRange(b.completedMs, win.startMs, nowMs))
     .sort((a, b) => b.completedMs! - a.completedMs!)
     .map((b) => {
       const tagIds = b.audienceSource?.type === 'tags' ? [...(b.audienceSource.tagIds ?? [])] : []
+      // 刪掉的標籤不猜名字
+      const tagNames = tagIds.map(id => tagNameOf(id) ?? '(已刪除的標籤)')
       const prev = pickPreviousSameAudience({ id: b.id, audienceSource: b.audienceSource, completedMs: b.completedMs! }, candidates)
       return {
         id: b.id,
@@ -418,8 +471,8 @@ export function pushRows(
         audience: {
           type: String(b.audienceSource?.type ?? ''),
           tagIds,
-          // 刪掉的標籤不猜名字
-          tagNames: tagIds.map(id => tagNameOf(id) ?? '(已刪除的標籤)'),
+          tagNames,
+          label: pushAudienceLabel(b.audienceSource, tagNames),
         },
         sent: b.sentCount,
         opened: b.opened,
@@ -430,17 +483,41 @@ export function pushRows(
     })
 }
 
+/** 這幾則推播的收件名單要讀：窗口內（含今天）送出的，加上補發所補的那一則（補發自己沒有名單） */
+export function recipientIdsNeeded(all: readonly BroadcastLite[], win: ReportWindow, nowMs: number): string[] {
+  const out = new Set<string>()
+  for (const b of all) {
+    if (!sentWithTime(b) || !inRange(b.completedMs, win.startMs, nowMs)) continue
+    out.add(b.id)
+    if (b.audienceSource?.type === 'followUp' && b.audienceSource.sourceBroadcastId) out.add(b.audienceSource.sourceBroadcastId)
+  }
+  return [...out]
+}
+
 /**
  * 最近 30 天／7 天收過推播的人（推播存的收件名單 `audienceSnapshot.resolvedUserIds`）。
  * ⛔ 試發不在這裡（試發不寫收件名單）；1 人的正式推播算——那個人真的收到了。
+ * ⛔ **算到產生那一刻**，不是昨天（`C-404`）：早上照提案發了，中午重新產生，這群人要算「7 天內收過」，
+ *   不然同一則提案又出現、叫他同一天再發一次。
+ * ⚠️ 補發（`C-403`）LINE 不給名單，用**它補的那一則的名單**代替——那是收件人的「上限」，
+ *   寧可多算成收過（提案會保守一點），⛔ 也不要當成誰都沒收到。
+ * `bySourceId` 是補發要用的「那一則」的名單（可能在窗口外）。
  */
-export function pushedUserSets(all: readonly BroadcastLite[], win: ReportWindow): { within30: Set<string>, within7: Set<string> } {
+export function pushedUserSets(
+  all: readonly BroadcastLite[],
+  win: ReportWindow,
+  nowMs: number,
+): { within30: Set<string>, within7: Set<string> } {
   const within30 = new Set<string>()
   const within7 = new Set<string>()
-  const sevenStart = win.endMs - 7 * DAY
+  const sevenStart = nowMs - 7 * DAY
+  const byId = new Map(all.map(b => [b.id, b]))
   for (const b of all) {
-    if (!wasSent(b) || !inRange(b.completedMs, win.startMs, win.endMs)) continue
-    for (const u of b.resolvedUserIds) {
+    if (!sentWithTime(b) || !inRange(b.completedMs, win.startMs, nowMs)) continue
+    const recipients = b.audienceSource?.type === 'followUp' && !b.resolvedUserIds.length
+      ? byId.get(String(b.audienceSource.sourceBroadcastId ?? ''))?.resolvedUserIds ?? []
+      : b.resolvedUserIds
+    for (const u of recipients) {
       within30.add(u)
       if (b.completedMs! >= sevenStart) within7.add(u)
     }

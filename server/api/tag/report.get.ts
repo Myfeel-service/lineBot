@@ -20,7 +20,8 @@ export default defineEventHandler(async (event) => {
   return {
     /** `null`＝**還沒產生過**，⛔ 跟「產生了但沒有資料」是兩件事，畫面要講不同的話 */
     report,
-    canRegenerate: canRegenerate(report?.generatedAtMs ?? null, now),
-    cooldownRemainingMs: cooldownRemainingMs(report?.generatedAtMs ?? null, now),
+    // `C-404`：改版前的舊報告不擋冷卻（跟 POST 同一條）
+    canRegenerate: report?.legacy ? true : canRegenerate(report?.generatedAtMs ?? null, now),
+    cooldownRemainingMs: report?.legacy ? 0 : cooldownRemainingMs(report?.generatedAtMs ?? null, now),
   }
 })
