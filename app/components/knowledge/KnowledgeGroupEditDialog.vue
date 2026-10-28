@@ -4,6 +4,7 @@
     title="編輯分組"
     width="min(480px, 92vw)"
     :close-on-click-modal="false"
+    :before-close="closeUnlessBusy"
     destroy-on-close
   >
     <div class="folder-form">
@@ -41,7 +42,7 @@
               <el-tag
                 v-for="a in row.current"
                 :key="a"
-                :closable="canEditSources"
+                :closable="canEdit"
                 disable-transitions
                 @close="removeGroupAlias(row, a)"
               >
@@ -49,7 +50,7 @@
               </el-tag>
             </div>
             <el-autocomplete
-              v-if="canEditSources"
+              v-if="canEdit"
               v-model="row.draft"
               :fetch-suggestions="groupAliasSuggestionsFor(row)"
               :trigger-on-focus="false"
@@ -79,7 +80,7 @@
           刪除分組
         </el-button>
         <div class="folder-footer-right">
-          <el-button @click="visible = false">取消</el-button>
+          <el-button :disabled="folderSaving || folderDeleting" @click="visible = false">取消</el-button>
           <el-button
             type="primary"
             :loading="folderSaving"
@@ -118,6 +119,8 @@ const props = defineProps<{
   /** 正在編輯的那一組 */
   folder: KbFolderRow | null
   folders: KbFolderRow[]
+  /** 改得了資料（sources.write）才給拿掉／加叫法：頁面判斷好傳進來（`C-407`，同 KnowledgeSiteDrafts） */
+  canEdit: boolean
   /** 那一組底下現在幾份資料（刪除前講、視窗底下講） */
   sourceCount: number
   /** 頁面的 mergeProductGroups：兩組其實是同一台 → 合成一組（要動分組清單、重讀、重新學，留在頁面） */
@@ -136,9 +139,8 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const { apiFetch, can } = useWorkspace()
+const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
-const canEditSources = computed(() => can('sources.write'))
 
 const visible = computed({
   get: () => props.open,
@@ -150,6 +152,14 @@ const { aliasPairs, aliasProductNames, aliasFinalOf, loadAliases } = useProductA
 const folderForm = ref({ name: '', general: false })
 const folderSaving = ref(false)
 const folderDeleting = ref(false)
+
+/**
+ * 存／刪到一半不給關（ESC、右上角叉叉；「取消」那顆同時鎖住）（`C-407`）：以前關得掉，
+ * 馬上開另一組時那一組的按鈕卡在「處理中」、等這一組存完又把那一組的視窗關掉（打的字不見）
+ */
+function closeUnlessBusy(done: () => void) {
+  if (!folderSaving.value && !folderDeleting.value) done()
+}
 
 // ── 客人還會怎麼叫它（`C-323`，`D-126` 第 4 步「別名取代產品名稱整理」）──
 // `D-127` 起一組一列（商品名＝組名），列出現有的別名；可以打新的叫法，也可以挑一個現有的商品名（＝當成同一台）。

@@ -887,6 +887,7 @@
   <KnowledgeAliasCandidatesDialog
     v-model:open="aliasOpen"
     :folders="folders"
+    :can-edit="canEditSources"
     :pinned="aliasPinned"
     :merge-groups="mergeProductGroups"
     @changed="loadHealth(true)"
@@ -1572,6 +1573,7 @@
     v-model:open="folderEditOpen"
     :folder="folderEditTarget"
     :folders="folders"
+    :can-edit="canEditSources"
     :source-count="folderEditTarget ? (countByFolder[folderEditTarget.id] ?? 0) : 0"
     :merge-groups="mergeProductGroups"
     @saved="onFolderSaved"
@@ -2672,7 +2674,7 @@ function dupGoMerge(s: DupSuggestionRow) {
   const pair = a && b && normalizeProductName(a) !== normalizeProductName(b)
     ? { a: a.length >= b.length ? a : b, b: a.length >= b.length ? b : a }
     : null
-  void openAliasDialog(pair
+  openAliasDialog(pair
     ? { key: `dup:${s.key}`, ...pair, reason: s.reason, confidence: 'medium', variantRisk: false }
     : undefined)
 }
@@ -3287,7 +3289,7 @@ const todoItems = computed<TodoItem[]>(() => {
       title: `有 ${h.aliasCandidateCount} 組商品名可能是同一台`,
       why: '同一台機器兩種叫法會被 AI 當成兩台——反問客人二選一、出貨時間並列成兩台。',
       // `G-102`：進去唯一能做的是合併／不是（sources.write），觀察者只留這一列當作知道
-      ...(canEditSources.value ? { cta: '前往確認', action: () => { void openAliasDialog() } } : {}),
+      ...(canEditSources.value ? { cta: '前往確認', action: () => { openAliasDialog() } } : {}),
     })
   }
   if (orphanCount.value > 0) {
@@ -3527,10 +3529,15 @@ function openFolderEdit(folder: FolderRow) {
   folderEditOpen.value = true
 }
 
-/** 組名／通用存好了：清單換成伺服器回的那一列 */
+/**
+ * 組名／通用存好了：清單換成伺服器回的那一列，視窗開著的那一組也換（`C-407`）。
+ * 不換的話視窗還拿舊名字：後面加叫法失敗、重讀叫法時照舊名字找（伺服器已經把叫法改指新名字）＝原本的叫法看起來全不見，
+ * 而且名字一直跟舊的不同＝儲存鈕亮著，再按一次又送一次改名
+ */
 function onFolderSaved(row: FolderRow) {
   const idx = folders.value.findIndex(f => f.id === row.id)
   if (idx >= 0) folders.value[idx] = row
+  if (folderEditTarget.value?.id === row.id) folderEditTarget.value = row
 }
 
 /** 分組刪掉了：拿掉那一組，底下的 source 顯示在「未分類」 */
@@ -3762,29 +3769,49 @@ async function retryExhaustedInSource() {
  * 不等它：視窗先關，左邊那幾列標「搬移中」、學完講一句。中途離開頁面的話沒學到的那幾份 AI 暫時還用舊名字——
  * 改組名時舊名字收成了別名，照樣認得是這一台；資料上留了「還沒重新學」的記號，排程 10 分鐘後自己補學完（`D-129`；
  * 以前是「要處理的事」列出來叫他按）。
+ * 一次只跑一條（`C-407`）：同一次儲存又改名又併組會先後丟兩批進來（合成一組那一批、改名那一批）——
+ * 排進正在跑的那一條、全部學完只講一次。以前兩條同時打（不是一份份學）、「學好了」跳兩次、清單重讀兩次。
  */
+/** 還沒輪到的（正在學的那一份不在裡面：學到一半又被要求重學，要再排一次） */
+const relearnQueue: string[] = []
+let relearnRunning = false
 async function relearnSourcesAfterGroupChange(ids: string[]) {
-  if (!ids.length) return
-  movingSourceIds.value = new Set([...movingSourceIds.value, ...ids])
+  const fresh = [...new Set(ids)].filter(id => !relearnQueue.includes(id))
+  if (!fresh.length) return
+  movingSourceIds.value = new Set([...movingSourceIds.value, ...fresh])
+  relearnQueue.push(...fresh)
+  if (relearnRunning) return // 正在跑的那一條會接著學這幾份
+  relearnRunning = true
+  const done: string[] = []
   let failed = 0
-  for (const id of ids) {
-    try {
-      const r = await apiFetch<{ failed: number }>(`/api/ai/sources/${id}/reindex`, { method: 'POST' })
-      if (r.failed > 0) failed++
+  try {
+    while (relearnQueue.length) {
+      const id = relearnQueue.shift()!
+      try {
+        const r = await apiFetch<{ failed: number }>(`/api/ai/sources/${id}/reindex`, { method: 'POST' })
+        if (r.failed > 0) failed++
+      }
+      catch {
+        failed++
+      }
+      done.push(id)
+      // 學的時候又被排進來的那一份：還要再學一次，「搬移中」留著
+      if (!relearnQueue.includes(id)) {
+        const next = new Set(movingSourceIds.value)
+        next.delete(id)
+        movingSourceIds.value = next
+      }
     }
-    catch {
-      failed++
-    }
-    const next = new Set(movingSourceIds.value)
-    next.delete(id)
-    movingSourceIds.value = next
+  }
+  finally {
+    relearnRunning = false
   }
   // `D-129`：沒學成的那幾份系統會自己補（資料上有記號、學失敗的那幾條也會自己再試），⛔ 不叫他去哪裡再按一次
   showToast(failed
-    ? `AI 照新的商品名學好了 ${ids.length - failed} 份；${failed} 份還沒學完，系統會自己再試`
-    : `AI 照新的商品名學好了 ${ids.length} 份資料`, failed ? 'info' : 'success')
+    ? `AI 照新的商品名學好了 ${done.length - failed} 份；${failed} 份還沒學完，系統會自己再試`
+    : `AI 照新的商品名學好了 ${done.length} 份資料`, failed ? 'info' : 'success')
   await loadSources(true)
-  if (selectedId.value && ids.includes(selectedId.value)) await loadSourceDetail(selectedId.value)
+  if (selectedId.value && done.includes(selectedId.value)) await loadSourceDetail(selectedId.value)
   void loadHealth(true)
 }
 

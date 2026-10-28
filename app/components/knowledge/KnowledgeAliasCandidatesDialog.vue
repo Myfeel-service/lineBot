@@ -10,6 +10,8 @@
     </p>
 
     <div v-if="aliasLoading" class="src-chunk-loading"><div class="spinner" /></div>
+    <!-- 讀不到：⛔ 不擺上一次讀到的那份（`C-407`：以前照樣列著、按鈕也能按）；講法同編輯分組讀不到時 -->
+    <p v-else-if="loadFailed" class="text-muted text-sm">讀不到，關掉再打開一次試試。</p>
     <template v-else>
       <p v-if="!aliasCandidates.length" class="text-muted text-sm">
         目前沒有需要確認的組合。
@@ -23,7 +25,7 @@
         </div>
         <p class="src-alias-reason">{{ c.reason }}</p>
         <!-- `G-102`：合併／不是／解除／手動合併都打 `product-aliases` POST（sources.write），觀察者只看候選 -->
-        <div v-if="canEditSources" class="src-alias-actions">
+        <div v-if="canEdit" class="src-alias-actions">
           <el-button type="primary" size="small" :loading="aliasSaving === c.key" @click="decideAlias(c, 'confirm')">
             是同一台，合併
           </el-button>
@@ -57,6 +59,8 @@ import {
 const props = withDefaults(defineProps<{
   open: boolean
   folders: KbFolderRow[]
+  /** 改得了資料（sources.write）才給合併／不是：頁面判斷好傳進來（`C-407`，同 KnowledgeSiteDrafts） */
+  canEdit: boolean
   /** 「疑似重複」帶過來的那一組（系統沒列成候選也要讓他判斷），打開時排第一個 */
   pinned?: ProductAliasCandidate | null
   /** 頁面的 mergeProductGroups：兩組其實是同一台 → 合成一組（要動分組清單、重讀、重新學，留在頁面） */
@@ -71,9 +75,8 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const { apiFetch, can } = useWorkspace()
+const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
-const canEditSources = computed(() => can('sources.write'))
 
 const visible = computed({
   get: () => props.open,
@@ -82,12 +85,34 @@ const visible = computed({
 
 const { aliasLoading, aliasCandidates, loadAliases } = useProductAliases(() => props.folders)
 const aliasSaving = ref('')
+/** 這一次讀不到（⛔ 不能擺上一次的清單：可能是別次打開帶進來的那一組，按鈕照樣按得下去） */
+const loadFailed = ref(false)
+/**
+ * 「疑似重複」帶進來、他還沒判斷的那一組（`C-407`）：每次重讀都放回第一個。
+ * 以前只在打開時放一次，先處理別組（重讀清單）它就不見了——系統沒列成候選，伺服器回的清單裡本來就沒有它
+ */
+const pinnedLeft = ref<ProductAliasCandidate | null>(null)
+
+/** 判斷過的就是帶進來的那一組：之後重讀不再放回去 */
+function decided(c: ProductAliasCandidate) {
+  if (pinnedLeft.value && sameAliasPair(c, pinnedLeft.value)) pinnedLeft.value = null
+}
+
+/** 重讀候選，還沒判斷的帶進來那一組排第一個 */
+async function reloadCandidates() {
+  const ok = await loadAliases()
+  loadFailed.value = !ok
+  const extra = pinnedLeft.value
+  if (ok && extra) aliasCandidates.value = [groupNameFirst(props.folders, extra), ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
+}
 
 watch(() => props.open, async (open) => {
   if (!open) return
-  await loadAliases()
-  const extra = props.pinned
-  if (extra) aliasCandidates.value = [groupNameFirst(props.folders, extra), ...aliasCandidates.value.filter(c => !sameAliasPair(c, extra))]
+  // 先清掉上一次的：讀的這一兩秒、或讀不到時，都不該看到別次打開時的清單
+  aliasCandidates.value = []
+  loadFailed.value = false
+  pinnedLeft.value = props.pinned
+  await reloadCandidates()
 })
 
 async function decideAlias(c: ProductAliasCandidate, action: 'confirm' | 'dismiss') {
@@ -98,7 +123,8 @@ async function decideAlias(c: ProductAliasCandidate, action: 'confirm' | 'dismis
     const fromGroup = action === 'confirm' ? productGroupNamed(props.folders, c.b) : null
     if (keepGroup && fromGroup && keepGroup.id !== fromGroup.id) {
       await props.mergeGroups(keepGroup, fromGroup)
-      await loadAliases()
+      decided(c)
+      await reloadCandidates()
       emit('changed')
       return
     }
@@ -118,7 +144,8 @@ async function decideAlias(c: ProductAliasCandidate, action: 'confirm' | 'dismis
           : '已合併，AI 之後會把它們當同一台（要拿掉：那一組的「編輯分組」）',
       'success',
     )
-    await loadAliases()
+    decided(c)
+    await reloadCandidates()
     emit('changed')
   }
   catch (err: any) {
