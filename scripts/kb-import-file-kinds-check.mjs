@@ -536,8 +536,9 @@ try {
     await pg.close()
   }
 
-  // ── 第六段：空間已經滿了 → ⛔ 一份都不上傳、不整理（不花 AI 的錢）；按之前就講、按鈕按不下去 ──
-  // （2026-10-11 前是「按下去每一份各自失敗」——結果一樣沒花錢，但按了才知道、重試也是馬上又失敗）
+  // ── 第六段：空間已經滿了 → ⛔ 一份都不上傳、不整理（不花 AI 的錢）；選檔之前就講 ──
+  // （2026-10-11 前是「按下去每一份各自失敗」；之後是「選得進去、清單上方講滿了、按鈕按不下去」；
+  //  `C-413` 起更早：一打開就擋在門口，連選檔框都收起來——各種角色、方案的講法在第五十段）
   {
     const uploads = []
     const pg = await openImportDialog((req) => {
@@ -545,15 +546,13 @@ try {
       if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 50, limit: 50, planName: '免費' } })
       if (url.includes('/api/ai/knowledge/upload-url')) { uploads.push(url); return json({ uploadId: 'u', storagePath: 'x', uploadUrl: 'https://storage.googleapis.com/fake-bucket/x' }) }
       return undefined
-    })
-    await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx, pathOf.csv)
-    await waitFor(pg, () => document.querySelectorAll('.kb-site-row').length === 2)
-    const line = await pg.$eval('.kb-quota-line', el => el.innerText).catch(() => '')
-    const disabled = await pg.$eval('.kb-import-actions .el-button--primary', el => el.disabled || el.classList.contains('is-disabled')).catch(() => null)
-    await pg.evaluate(() => document.querySelector('.kb-import-actions .el-button--primary')?.click())
-    await sleep(800)
-    if (line.includes('AI 知識量滿了') && disabled === true && !uploads.length) pass(`空間滿了 → 清單上方先講（「${line.trim().slice(0, 40)}…」）、按鈕按不下去、一份都沒上傳`)
-    else fail('空間滿了沒有先講／還能按／還在上傳', `line=${line} disabled=${disabled} uploads=${uploads.length}`)
+    }, { waitSel: '.kb-step-label' })
+    await waitFor(pg, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const door = await pg.$eval('.kb-add-block', el => el.innerText).catch(() => '')
+    // ⚠️ 只看視窗裡的：資料頁自己也有一個同 class 的隱藏選檔框（「上傳新版」用的），不算
+    const canPick = !!(await pg.$('.el-dialog .kb-file-input'))
+    if (door.includes('AI 知識量滿了') && !canPick && !uploads.length) pass(`空間滿了 → 選檔之前就講（「${door.trim().slice(0, 40)}…」）、連選檔框都收起來、一份都沒上傳`)
+    else fail('空間滿了沒有在門口擋／還選得到檔／還在上傳', `door=${door} canPick=${canPick} uploads=${uploads.length}`)
     await pg.close()
   }
 
@@ -759,13 +758,15 @@ try {
   }
 
   // ── 第十一段：單份「更新這一份」，舊的那份全是草稿 → 空出來的空間是 0（草稿本來就不算），按鈕不可以承諾收得下 ──
+  // `C-413`：滿了現在一打開就擋在門口（重傳同名檔走不到這裡，改去那份資料按「上傳新版」），
+  // 所以改成只剩 1 條：草稿要是被算成空出來的 30 條，按鈕就會承諾 5 條全收
   {
     const JOB = 'job-replace-drafts'
     let bulkCalled = false
     const pg = await openImportDialog((req) => {
       const url = req.url()
       const m = req.method()
-      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 50, limit: 50, planName: '免費' } })
+      if (url.includes('/api/ai/knowledge/quota')) return json({ quota: { used: 49, limit: 50, planName: '免費' } })
       if (url.includes('/api/ai/knowledge/upload-url') && m === 'POST') return json({ uploadId: 'u', storagePath: `preview-uploads/${WORKSPACE_ID}/x`, uploadUrl: 'https://storage.googleapis.com/fake-bucket/x?sig=fake' })
       if (url.startsWith('https://storage.googleapis.com/fake-bucket/')) return { status: 200, contentType: 'text/plain', body: '', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'PUT, OPTIONS', 'Access-Control-Allow-Headers': '*' } }
       if (url.endsWith('/api/ai/knowledge/preview-jobs') && m === 'POST') return json({ jobId: JOB, status: 'processing', phase: 'chunk' })
@@ -779,7 +780,7 @@ try {
     await (await pg.$('.kb-file-input')).uploadFile(pathOf.docx)
     await sleep(400)
     await pg.evaluate(() => [...document.querySelectorAll('.el-button')].find(b => b.innerText.includes('整理並加入'))?.click())
-    // 同名＋空間滿：兩個理由都要停在預覽（`D-123`②）
+    // 同名＋空間不夠：兩個理由都要停在預覽（`D-123`②）
     await waitFor(pg, () => !!document.querySelector('.kb-preview-summary'), null, 20_000)
     // `C-319`：那一顆叫「更新原本那一份」（以前「更新這一份」）。⚠️ 要真的按到：按到了那一顆會變「已選這一份」——
     //    以前字對不上、根本沒按到，這一關只是剛好空間本來就滿才綠（假綠燈，2026-10-15 匯入視窗那邊抓到）
@@ -791,7 +792,7 @@ try {
     await sleep(500)
     const picked = await pg.$$eval('.kb-dedup-row .el-button', els => els.some(e => e.innerText.includes('已選這一份')))
     const btn = await pg.$eval('.kb-preview-summary__actions .el-button--primary', el => ({ text: el.innerText.trim(), disabled: el.disabled || el.classList.contains('is-disabled') })).catch(() => null)
-    if (clicked && picked && btn?.text === 'AI 知識量已經滿了' && btn.disabled && !bulkCalled) pass('選了「更新原本那一份」（變成「已選這一份」）、舊的那份全是草稿 → 換掉也空不出位置，按鈕講「AI 知識量已經滿了」、按不下去')
+    if (clicked && picked && btn?.text.includes('先收前 1 條') && !bulkCalled) pass('選了「更新原本那一份」（變成「已選這一份」）、舊的那份全是草稿 → 換掉也空不出位置，只剩 1 條就講「先收前 1 條」、不承諾 5 條全收')
     else fail('「更新原本那一份」沒按到、或把草稿算成空出來的空間', JSON.stringify({ clicked, picked, btn }))
     await pg.close()
   }
@@ -4136,6 +4137,154 @@ try {
     if (moveStillOpen && moveClosedAfter && calls.includes('move c49-sx→c49-b')) pass('移到哪一組搬到一半：ESC、叉叉關不掉；搬完自己關')
     else fail('移到哪一組搬到一半關得掉', JSON.stringify({ moveStillOpen, moveClosedAfter, calls }))
     await pg.close()
+  }
+
+  // ── 第五十段（`C-413`，示意頁 `RsVDnyeaVEbv76CgZ3TRoA` ①②）：在門口擋——AI 知識量滿了、或這個月加入資料到上限，
+  //    **選檔之前**就講，投放框／起步四格／「整理並加入」整組收起來；拖檔案進來也不收。
+  //    以前照樣讓他選檔、等 AI 整理一場（錢也花了），整理完才說放不進去。
+  //    額度那支回假的、知識庫的寫入一律記下來（應該一支都沒有）：正式庫零寫入、不花 AI 的錢
+  if (CHECK_FROM <= 50) {
+    const kbPosts = []
+    const BUDGET = {
+      blocked: true,
+      title: '這個月加入資料到上限了，11 月 1 日恢復',
+      body: '這段期間網頁、試算表改了，AI 也要等到那天才跟上；已經放進去的照常回答客人。需要更多請跟我們聯絡。',
+    }
+    const openWith = quotaBody => openImportDialog((req) => {
+      const url = req.url()
+      if (url.includes('/api/ai/knowledge/quota')) return json(quotaBody)
+      if (url.includes('/api/ai/') && req.method() !== 'GET') {
+        kbPosts.push(new URL(url).pathname)
+        return json({})
+      }
+      return undefined
+    }, { waitSel: '.kb-step-label' })
+    /** 讀門口那一塊、跟該收起來的那幾樣在不在 */
+    const readDoor = pg => pg.evaluate(() => {
+      const box = document.querySelector('.kb-add-block')
+      return {
+        title: box?.querySelector('.kb-add-block__title')?.innerText.trim() ?? null,
+        body: box?.querySelector('.kb-add-block__body')?.innerText.trim() ?? null,
+        upgrade: box?.querySelector('.kb-add-block__upgrade')?.innerText.trim() ?? null,
+        hint: box?.querySelector('.kb-add-block__hint')?.innerText.trim() ?? null,
+        drop: !!document.querySelector('.kb-drop'),
+        start: !!document.querySelector('.kb-start'),
+        quotaLine: !!document.querySelector('.kb-quota-line'),
+        primary: [...document.querySelectorAll('.el-dialog .el-button')].some(b => b.offsetParent !== null && b.innerText.includes('整理並加入')),
+      }
+    })
+    const hidden = d => !d.drop && !d.start && !d.quotaLine && !d.primary
+
+    // ① 知識量滿了、看得到方案的人：講滿了幾條、給升級鈕、講「上傳新版」那條路
+    const pg = await openWith({ quota: { used: 50, limit: 50, planName: '免費' }, budget: null })
+    await waitFor(pg, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const full = await readDoor(pg)
+    if (full.title === 'AI 知識量滿了（50／50 條）'
+      && full.body === '先刪掉用不到的知識，或升級方案，才能再加新的資料。'
+      && full.upgrade === '升級方案'
+      && full.hint === '要換掉舊的那一份？到那份資料按「上傳新版」，舊的會空出位置。'
+      && hidden(full)) pass('知識量滿了：選檔之前就講、投放框整組收起來；有升級鈕、有「上傳新版」那條路')
+    else fail('知識量滿了沒在門口擋', JSON.stringify(full))
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-door-full.png') })
+
+    // 拖檔案進來（拖放掛在整個第一步，投放框收起來也接得到）：不收、講為什麼
+    await pg.evaluate(() => {
+      const dt = new DataTransfer()
+      dt.items.add(new File(['%PDF-1.4 fake'], '保固說明.pdf', { type: 'application/pdf' }))
+      document.querySelector('.kb-step-label')?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+    })
+    const toastShown = await waitFor(pg, () => [...document.querySelectorAll('.toast')].some(t => t.innerText.includes('AI 知識量滿了')), null, 5000)
+    await sleep(500)
+    const afterDrop = await readDoor(pg)
+    if (toastShown && afterDrop.title && !afterDrop.drop && !kbPosts.length) pass('滿了還拖檔案進來：不收、跳一句「AI 知識量滿了」，沒有送出任何上傳')
+    else fail('滿了拖檔案進來還是收了', JSON.stringify({ toastShown, afterDrop, kbPosts }))
+
+    // 按升級鈕＝去方案頁（跟視窗裡其他「升級方案」連結同一頁）
+    await pg.evaluate(() => document.querySelector('.kb-add-block__upgrade')?.click())
+    const wentBilling = await waitFor(pg, () => location.pathname.endsWith('/settings/billing'), null, 15_000)
+    if (wentBilling) pass('按「升級方案」→ 到方案頁')
+    else fail('按「升級方案」沒去方案頁', pg.url())
+    await pg.close()
+
+    // ② 看不到方案的人（客服、觀察者：伺服器把方案名拿掉了）：不給升級鈕，講「請負責人」
+    const pg2 = await openWith({ quota: { used: 50, limit: 50 }, budget: null })
+    await waitFor(pg2, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const staff = await readDoor(pg2)
+    if (staff.body === '先刪掉用不到的知識，或請負責人升級方案，才能再加新的資料。' && staff.upgrade === null && hidden(staff)) pass('沒有付款權限的人：講「請負責人升級方案」、沒有升級鈕')
+    else fail('沒有付款權限的人看到的不對', JSON.stringify(staff))
+    await pg2.close()
+
+    // ③ 最大的方案也滿了（沒有更大的可以自己買）：只講刪，不給升級鈕
+    const pg3 = await openWith({ quota: { used: 6000, limit: 6000, planName: '專業' }, budget: null })
+    await waitFor(pg3, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const top = await readDoor(pg3)
+    if (top.title === 'AI 知識量滿了（6000／6000 條）' && top.body === '先刪掉用不到的知識，才能再加新的資料。' && top.upgrade === null) pass('最大的方案也滿了：只講刪、沒有升級鈕')
+    else fail('最大的方案滿了還叫人升級', JSON.stringify(top))
+    await pg3.close()
+
+    // ④ 這個月加入資料到上限（還有空間也一樣擋）：講幾號恢復、這段期間 AI 跟不上；沒有升級鈕、沒有「上傳新版」
+    const pg4 = await openWith({ quota: { used: 10, limit: 50, planName: '免費' }, budget: BUDGET })
+    await waitFor(pg4, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const cap = await readDoor(pg4)
+    if (cap.title === BUDGET.title && cap.body === BUDGET.body && cap.upgrade === null && cap.hint === null && hidden(cap)) pass('這個月加入資料到上限：選檔之前就講幾號恢復，不講 token')
+    else fail('加入資料到上限沒在門口擋', JSON.stringify(cap))
+    if (process.env.SHOT_DIR) await (await pg4.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-door-budget.png') })
+    await pg4.close()
+
+    // ⑤ 沒滿也沒到上限（照真的伺服器拿，唯讀）：照常給投放框——而且伺服器真的回了新的那一格（新程式有跑到）
+    let realQuota = null
+    const pg5 = await openImportDialog(async (req) => {
+      if (!req.url().includes('/api/ai/knowledge/quota')) return undefined
+      const real = await (await fetch(req.url(), { headers: req.headers() })).json()
+      realQuota = real
+      return json(real)
+    })
+    await waitFor(pg5, () => !!document.querySelector('.kb-quota-line'), null, 15_000)
+    const normal = await readDoor(pg5)
+    if (realQuota && 'budget' in realQuota && realQuota.budget === null && normal.title === null && normal.drop && normal.primary) pass(`沒滿、沒到上限：照常給投放框（伺服器回 budget: null，已用 ${realQuota.quota?.used}／${realQuota.quota?.limit} 條）`)
+    else fail('正常狀態被擋了、或伺服器沒回新的那一格', JSON.stringify({ realQuota, normal }))
+    await pg5.close()
+
+    // ⑥ 資料頁：自動更新被這個月的上限擋下（`failureKind: ai_budget` → `pausedByBudget`）——講原話、⛔ 不教分享試算表／換網址。
+    //    資料清單照實向伺服器拿（唯讀），只在瀏覽器裡把一份改成試算表、標成「上限暫停」
+    let pausedName = ''
+    const pg6 = await openImportDialog(async (req) => {
+      const url = req.url()
+      if (url.includes('/api/ai/sources/list') && req.method() === 'GET') {
+        const real = await (await fetch(url, { headers: req.headers() })).json()
+        // 挑一份檔案型的（同第三段）：網址型的名字是網址，清單上顯示的字不一樣、點不到（整輪跑時清單第一份剛好是網址型）
+        const items = Array.isArray(real.items) ? real.items : []
+        const target = items.find(s => s.type === 'file' && !/^https?:/.test(s.name)) ?? items[0]
+        if (target) {
+          Object.assign(target, { type: 'gsheet', status: 'ready', failureReason: `${BUDGET.title}。${BUDGET.body}`, pausedByBudget: true })
+          pausedName = target.name
+        }
+        return json(real)
+      }
+      if (url.includes('/api/ai/') && req.method() !== 'GET') {
+        kbPosts.push(new URL(url).pathname)
+        return json({})
+      }
+      return undefined
+    }, { path: '/knowledge/sources', waitSel: '.split-list, .src-list, aside' })
+    await waitListed(() => pausedName)
+    if (!pausedName) throw new Error('資料清單是空的，沒有可以驗「上限暫停」的資料')
+    await waitFor(pg6, n => [...document.querySelectorAll('.split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === n), pausedName)
+    await pg6.evaluate((n) => { [...document.querySelectorAll('.split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === n)?.click() }, pausedName)
+    // 先等右邊真的換成這一份（整輪一起跑時 dev server 比較慢，只等提示會等到空的），再等那一塊出來
+    await waitFor(pg6, n => document.querySelector('.src-header-main input')?.value === n, pausedName, 30_000)
+    await waitFor(pg6, () => !!document.querySelector('.src-fix'), null, 30_000)
+    const fix = await pg6.$eval('.src-fix', el => el.innerText.replace(/\s+/g, ' ')).catch(() => '')
+    if (fix.includes('自動更新先停下來了') && fix.includes(BUDGET.title) && !fix.includes('分享') && !fix.includes('系統訊息') && !fix.includes('抓不到內容')) pass(`資料頁：上限擋下講原話、不叫人去分享試算表（「${fix.trim().slice(0, 60)}…」）`)
+    else {
+      const header = await pg6.$eval('.src-header-main input', el => el.value).catch(() => '（沒有標題）')
+      fail('資料頁把上限擋下講成資料壞了', `fix=${fix || '（沒出現）'} 右邊打開的是=${header} 要的是=${pausedName}`)
+    }
+    if (process.env.SHOT_DIR) await (await pg6.$('.src-fix'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-source-paused.png') })
+    await pg6.close()
+
+    if (kbPosts.length) fail('門口擋著還送出了知識庫的寫入', kbPosts.join('、'))
+    else pass('門口擋著的五種情況＋資料頁：知識庫一支寫入都沒送')
   }
 }
 catch (e) {

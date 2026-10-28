@@ -56,9 +56,20 @@
         上傳新版：整理好會直接更新「<strong>{{ replaceIntentName }}</strong>」（舊的移到回收桶，30 天內救得回來）
       </p>
 
+      <!-- 在門口擋（`C-413`，示意頁 ①②）：知識量滿了、或這個月加入資料到上限——選檔之前就講，
+           投放框、起步四格、「整理並加入」整組收起來（以前整理完才說放不進去，錢也花了）。條件見 addBlock -->
+      <div v-if="addBlock" class="kb-add-block">
+        <p class="kb-add-block__title">{{ addBlock.title }}</p>
+        <p class="kb-add-block__body">{{ addBlock.body }}</p>
+        <el-button v-if="addBlock.upgrade" type="primary" class="kb-add-block__upgrade" @click="goBilling">升級方案</el-button>
+        <!-- 滿了還有一條路：換掉舊的那一份會空出位置（上限那種沒有：換新版一樣要整理） -->
+        <p v-if="addBlock.kind === 'full'" class="kb-add-block__hint">要換掉舊的那一份？到那份資料按「上傳新版」，舊的會空出位置。</p>
+      </div>
+
       <!-- 拖放 + 貼上同一區:不用先決定「我該用哪一種」 -->
       <!-- 點框裡任何空白處＝把游標放進輸入框：整塊就是「一個輸入」的心智模型 -->
       <div
+        v-if="!addBlock"
         class="kb-drop"
         :class="{ 'kb-drop--over': dragOver, 'kb-drop--filled': !!detected }"
         data-tour="kb-drop"
@@ -104,7 +115,7 @@
 
       <!-- AI 知識量（`C-296`）：放之前就看得到剩幾條；滿了要在這裡就講，不是等整理完、按匯入才擋。
            `D-131`④（2026-10-19）：名稱從「知識空間」改成跟官網、條款、方案頁同一個——「AI 知識量」，單位「條」 -->
-      <p v-if="quota && quota.limit != null" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
+      <p v-if="quota && quota.limit != null && !addBlock" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
         <template v-if="roomLeft === 0">
           AI 知識量滿了（{{ quota.used }}／{{ quota.limit }} 條）：新的資料整理完會放不進去，先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
         </template>
@@ -268,7 +279,7 @@
         ⚠️ 跟四版「把能怎麼做都列出來教」的關係：四種**放得進框的東西**都各有一格，沒有少教一種輸入；範本仍在「還沒整理好」裡。
         「檔案」那格不展開面板，點了直接開選檔視窗——收不了的檔選到時當場講怎麼辦（acceptFile 的 toast），不必事先讀一段清單。
       -->
-      <div v-if="!detected" class="kb-start">
+      <div v-if="!detected && !addBlock" class="kb-start">
         <p class="kb-start__head">手上有什麼？點一下就開始</p>
         <div class="kb-start__tiles" data-tour="kb-start">
           <button type="button" class="kb-start__tile" :disabled="previewing" @click="pickStart('file')">
@@ -378,7 +389,7 @@
         好幾份卻是直接匯入——同一件事兩種走法，本身就要解釋。現在一份也直接加入，
         只有要人核對的才停在預覽（見 previewStopReasons）。
       -->
-      <div class="kb-import-actions">
+      <div v-if="!addBlock" class="kb-import-actions">
         <el-button
           type="primary"
           data-tour="kb-preview"
@@ -1273,6 +1284,7 @@ import { CARDS_PER_PAGE_ESTIMATE, recommendSitePages, sitePageGroup } from '~/ut
 import { EMPTY_FILE_HINT } from '~/utils/knowledge-upload'
 import { apiErrorStatus, apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
+import { BILLING_PLAN_ORDER, BILLING_PLANS, isCheckoutablePlan } from '~~/shared/billing/plans'
 
 const props = defineProps<{
   modelValue: boolean
@@ -1663,6 +1675,11 @@ onBeforeUnmount(() => setStrayDropGuard(false))
 const dragOver = ref(false)
 function onDrop(e: DragEvent) {
   dragOver.value = false
+  // 門口擋著（`C-413`）：投放框收起來了，但拖放掛在整個第一步——拖進來照樣講為什麼加不進去，⛔ 不收
+  if (addBlock.value) {
+    showToast(addBlock.value.title, 'warning')
+    return
+  }
   const files = e.dataTransfer?.files
   if (files?.length) {
     acceptFiles(files)
@@ -2458,11 +2475,12 @@ async function runSiteImport() {
   if (targets.length > MAX_SITE_BATCH) {
     return showToast(`一次最多加入 ${MAX_SITE_BATCH} 頁，請先取消勾選一些（可以分批）`, 'error')
   }
-  // 每頁都要跑一次 AI 整理並計入用量,量大時先講清楚再開始
+  // 量大時先講要等多久、視窗要開著。⛔ 不講「算進本月用量」（`C-413`）：店家會以為扣回答則數；
+  // 會用掉幾條，勾選清單上已經講了（siteRoomHint：還能放幾條、一頁大約 5 條），這裡不給第二個估計
   if (targets.length >= 10) {
     try {
       await ElMessageBox.confirm(
-        `要加入 ${targets.length} 頁，每頁都會由 AI 整理並算進本月用量，大約要 ${Math.ceil(targets.length * 0.5)}–${targets.length} 分鐘。期間請讓這個視窗開著。`,
+        `要加入 ${targets.length} 頁，大約要 ${Math.ceil(targets.length * 0.5)}–${targets.length} 分鐘。期間請讓這個視窗開著。`,
         '一次加入整個網站？',
         { confirmButtonText: '開始加入', cancelButtonText: '再想想', type: 'warning' },
       )
@@ -2704,12 +2722,17 @@ const importTotalLabel = computed(() =>
  */
 interface KbQuota { used: number, limit: number | null, planName?: string }
 const quota = ref<KbQuota | null>(null)
+/** 這個月加入資料到上限了（`C-413`）：伺服器給的兩句（幾號恢復、這段期間 AI 跟不上）；沒到＝null */
+const addBudget = ref<{ title: string, body: string } | null>(null)
 async function loadQuota() {
   try {
-    quota.value = (await apiFetch<{ quota: KbQuota | null }>('/api/ai/knowledge/quota')).quota
+    const res = await apiFetch<{ quota: KbQuota | null, budget?: { blocked: true, title: string, body: string } | null }>('/api/ai/knowledge/quota')
+    quota.value = res.quota
+    addBudget.value = res.budget?.blocked ? { title: res.budget.title, body: res.budget.body } : null
   }
   catch {
     quota.value = null
+    addBudget.value = null
   }
 }
 /** 這次還放得下幾條；null＝不限或讀不到。「更新這一份」的舊卡會進回收桶，空間要算回來 */
@@ -2759,6 +2782,39 @@ const quotaRefillHint = computed(() => {
 })
 /** 只有看得到方案的人（管理員，`G-103`）才給「看方案」那條路 */
 const billingLink = computed(() => (quota.value?.planName ? `/admin/${workspaceId.value}/settings/billing` : ''))
+
+/**
+ * 在門口擋（`C-413`，示意頁 `RsVDnyeaVEbv76CgZ3TRoA` ①②）：知識量滿了、或這個月加入資料到上限，
+ * **選檔之前**就講，投放框、起步四格、「整理並加入」整組收起來。以前照樣讓他選檔、等 AI 整理一場（錢也花了），
+ * 整理完才說放不進去。
+ * - 「上傳新版」（資料頁那顆）不經過這一步：舊的會空出位置；伺服器照樣把關（`bulk-create` 會扣回舊的那份）。
+ * - 整理中、背景那一份還在跑時不換掉畫面：那一份要接得回來。
+ * - 升級鈕只給看得到方案的人（`billingLink`）、而且真的有更大的方案可以自己買；沒權限的講「請負責人」。
+ * 兩種都到時講上限那種：刪掉知識也加不進去。
+ */
+const addBlock = computed<{ kind: 'budget' | 'full', title: string, body: string, upgrade: boolean } | null>(() => {
+  if (previewing.value || previewStillRunning.value || replaceIntentName.value) return null
+  if (addBudget.value) return { kind: 'budget', ...addBudget.value, upgrade: false }
+  const q = quota.value
+  if (!q || q.limit == null || roomLeft.value !== 0) return null
+  const limit = q.limit
+  const biggerPlan = BILLING_PLAN_ORDER.some(id => isCheckoutablePlan(id) && (BILLING_PLANS[id].knowledgeChunks ?? 0) > limit)
+  const upgrade = biggerPlan && !!billingLink.value
+  return {
+    kind: 'full',
+    title: `AI 知識量滿了（${q.used}／${limit} 條）`,
+    body: upgrade
+      ? '先刪掉用不到的知識，或升級方案，才能再加新的資料。'
+      : biggerPlan
+        ? '先刪掉用不到的知識，或請負責人升級方案，才能再加新的資料。'
+        : '先刪掉用不到的知識，才能再加新的資料。',
+    upgrade,
+  }
+})
+/** 門口那張卡的「升級方案」：跟這個視窗裡其他「升級方案」連結去同一頁 */
+function goBilling() {
+  if (billingLink.value) void navigateTo(billingLink.value)
+}
 
 /**
  * 主按鈕的字。選了覆蓋目標時**按鈕本身就要改口**（`C-135`）——

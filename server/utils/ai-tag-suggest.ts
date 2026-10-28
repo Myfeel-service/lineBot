@@ -28,7 +28,7 @@ import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser } from './tagging'
 import { recordAiUsage, type UsageDelta } from './ai-usage'
-import { aiUsageOfError, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { aiUsageOfError, asBackgroundUsage, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
 import { recordTagSuggestionEvents } from './tag-suggestion-log'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -272,7 +272,8 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
       }, { merge: true })
 
       if (usage.inputTokens || usage.outputTokens) {
-        await recordAiUsage(workspaceId, usage, db).catch(e => console.warn('[tag-suggest] usage record failed:', e))
+        // 背景工作：每月上限算背景那本，不擋店家加資料（`C-413`）
+        await recordAiUsage(workspaceId, asBackgroundUsage(usage), db).catch(e => console.warn('[tag-suggest] usage record failed:', e))
       }
 
       // 這一輪走完了＝健康；先前有記錄在案的失敗才需要寫（清掉）
@@ -471,7 +472,7 @@ async function suggestForSession(
         temperature: 0,
         maxOutputTokens: 400,
         thinkingBudget: 0, // 短 JSON 輸出：thinking 會吃掉 output 配額把 JSON 截斷（見 gemini.ts）
-      }))
+      }), 'background')
   }
   catch (e) {
     // JSON 壞掉那次也付了錢：先併進這一輪的帳再往外丟（`C-338`②）

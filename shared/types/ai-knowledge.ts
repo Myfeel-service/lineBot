@@ -274,6 +274,11 @@ export interface KnowledgeSourceDoc {
   outdatedAt: Timestamp | null
   status: KnowledgeSourceStatus
   failureReason?: string
+  /**
+   * failureReason 是哪一種（`C-413`）：`ai_budget`＝這個月加入資料到上限、自動更新先停（不是資料壞了）。
+   * 資料頁靠它別教人「去分享試算表／換網址」；成功同步時跟 failureReason 一起清掉。
+   */
+  failureKind?: 'ai_budget'
   /** 排程變動偵測連續失敗次數；成功即清除。≥3 次會把 status 標成 failed */
   checkFailCount?: number
   /** 排程變動偵測最後一次「嘗試」時間（成功或失敗），退避基準；lastFetchedAt 保留「最後成功」語意 */
@@ -577,6 +582,12 @@ export interface AiUsageDoc {
   /** 知識庫建索引 embedding（reindex / bulk-create / 逐卡）；屬建置成本，與客人查詢 embedding 分開 */
   buildEmbeddingTokens?: number
   /**
+   * 整理知識庫那桶（import 進出＋建索引向量）裡，**背景工作**用掉的部分（`C-413`，2026-10-29 起才有）：
+   * AI 貼標建議、標籤發現、知識缺口掃描——客人聊越多用越多、不是店家自己加資料。
+   * 是那桶的**子集**（同 importInputTokens ⊆ inputTokens 的慣例），只拿來把每月上限拆帳，算錢照舊。
+   */
+  backgroundTokens?: number
+  /**
    * 生成 token 照「哪顆模型」拆的明細（`D-130`②，2026-10-19 起才有）：`modelTokens.<桶>.<模型 key>.{input,output}`。
    * 桶＝conversation／build／test（對應上面三組總數），模型 key 見 `server/utils/ai-cost-buckets.ts`。
    * 是上面總數的**子集**——總數減明細剩下的，就是上線前的舊資料（照 flash 價估）。
@@ -587,6 +598,16 @@ export interface AiUsageDoc {
 
 /** AI 花費的三桶：回答客人／整理知識庫／後台自用 */
 export type AiCostBucketId = 'conversation' | 'build' | 'test'
+
+/**
+ * 每月 AI 用量上限的三本帳（`C-413`）——**各自只被自己的用量擋**：
+ *   - `knowledge` 店家加資料：匯入、整理、網頁／試算表自動更新、重新學習、認識你的店
+ *   - `background` 背景工作：AI 貼標建議、標籤發現（客人聊越多用越多，撞到就安靜暫停）
+ *   - `assist` 後台自用：小幫手、擬推播文案、圖文選單底圖、節慶建議
+ * 以前三種共用一本（整理知識庫那桶），客人聊得多就會擋到店家加資料、連小幫手一起停。
+ * 回答客人不在這裡：那條路有自己的則數額度與呼叫上限。
+ */
+export type AiBudgetKind = 'knowledge' | 'background' | 'assist'
 
 /** 一桶裡每顆模型各用了多少生成 token（key 是 `ai-cost-buckets.ts` 的模型 key，如 `flashLite`） */
 export type AiModelTokenCounts = { [modelKey: string]: { input?: number; output?: number } | undefined }

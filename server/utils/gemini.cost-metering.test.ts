@@ -104,8 +104,8 @@ describe('④ 生圖', () => {
 
   it('⛔ 圈在額度境域裡、超額時擋在呼叫之前（以前生圖沒過守門，包了等於沒包）', async () => {
     assertMaintenanceBudget.mockRejectedValue(Object.assign(new Error('本月 AI 整理用量已達安全上限'), { statusCode: 429 }))
-    await expect(runWithLlmBudget('ws1', () => generateImage('a banner'))).rejects.toMatchObject({ statusCode: 429 })
+    await expect(runWithLlmBudget('ws1', () => generateImage('a banner'), 'assist')).rejects.toMatchObject({ statusCode: 429 })
     expect((globalThis as any).fetch).not.toHaveBeenCalled()
-    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1')
+    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1', undefined, 'assist')
   })
 })

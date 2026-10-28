@@ -51,7 +51,7 @@ export default defineEventHandler(async (event) => {
   // ⛔ 一定要帶著生圖模型記（`C-338`③）：它的輸出一百萬 token 要 US$30，以前當成文字模型的 US$2.5 算，
   //    一張 US$0.039 記成 US$0.003＝少 12 倍。模型只回字、沒給圖那次也付了錢，用計量器一起記。
   const img = await runMeteredAi(
-    () => runWithLlmBudget(workspaceId, () => generateImage(prompt, { aspectRatio })),
+    () => runWithLlmBudget(workspaceId, () => generateImage(prompt, { aspectRatio }), 'assist'),
     calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, getDb()),
   )
 

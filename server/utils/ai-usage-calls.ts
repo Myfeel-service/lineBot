@@ -152,6 +152,34 @@ export function usageFromCalls(
   return delta
 }
 
+/** 每月上限擋下來的錯誤上帶的記號（`error.data.reason`，`C-413`）：判斷「是不是上限擋的」看這個，⛔ 不要比對訊息文字 */
+export const AI_BUDGET_ERROR_REASON = 'ai_budget'
+
+/**
+ * 這個錯誤是不是每月上限（`assertMaintenanceBudget`）擋下來的。新的錯誤看 `data.reason`；
+ * 舊格式（`C-413` 以前的訊息、或測試裡手做的錯誤）退回比對文字。
+ * ⚠️ 放這個檔不放 ai-usage.ts：很多測試把 ai-usage.ts 整個假掉，放那裡會「沒有這個 export」。
+ */
+export function isAiBudgetError(err: unknown): boolean {
+  const e = err as { statusCode?: unknown; data?: { reason?: unknown }; statusMessage?: unknown; message?: unknown } | null | undefined
+  if (Number(e?.statusCode) !== 429) return false
+  if (e?.data?.reason === AI_BUDGET_ERROR_REASON) return true
+  return /AI 整理用量|到上限了/.test(String(e?.statusMessage ?? e?.message ?? ''))
+}
+
+/**
+ * 背景工作（AI 貼標建議、標籤發現、知識缺口掃描——客人聊越多用越多、不是店家加資料）的用量（`C-413`）：
+ * 照記進整理知識庫那桶（算錢不變），另外把同一筆的整理桶數字標成 `backgroundTokens`，
+ * 每月上限才分得出「店家加資料」跟「背景工作」兩本帳。
+ * ⛔ 只包 `usageFromCalls('build', …)` 出來的東西；包別桶的不會多出任何數字。
+ */
+export function asBackgroundUsage(delta: UsageDelta): UsageDelta {
+  const t = (Number(delta.importInputTokens ?? 0) || 0)
+    + (Number(delta.importOutputTokens ?? 0) || 0)
+    + (Number(delta.buildEmbeddingTokens ?? 0) || 0)
+  return t > 0 ? { ...delta, backgroundTokens: (Number(delta.backgroundTokens ?? 0) || 0) + t } : delta
+}
+
 /** 把幾筆用量加成一筆（數字相加、模型明細逐桶逐模型相加），給「一次記帳」用 */
 export function mergeUsage(...deltas: Array<UsageDelta | null | undefined>): UsageDelta {
   const out: Record<string, unknown> = {}

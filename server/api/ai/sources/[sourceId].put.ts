@@ -194,7 +194,7 @@ async function generateSourceSummary(
       temperature: 0.2,
       maxOutputTokens: 300,
       thinkingBudget: 0,
-    }))
+    }), 'knowledge')
     // 記帳記在「匯入／整理」那一格（同 AI 整理一下 normalize）：這是整理知識花的錢，不是回客人；照 flash-lite 的單價算
     await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(res)))
     summary = cleanSummaryLines(res.data?.lines)

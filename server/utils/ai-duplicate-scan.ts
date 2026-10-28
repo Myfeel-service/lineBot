@@ -393,6 +393,6 @@ export async function scanNextWorkspaceForDuplicates(db: Firestore): Promise<{ w
   }
 
   await cursorRef.set({ lastWorkspaceId: workspaceId }, { merge: true }).catch(() => {})
-  const result = await runWithLlmBudget(workspaceId, () => runDuplicateScan(db, workspaceId))
+  const result = await runWithLlmBudget(workspaceId, () => runDuplicateScan(db, workspaceId), 'knowledge')
   return { workspaceId, result }
 }

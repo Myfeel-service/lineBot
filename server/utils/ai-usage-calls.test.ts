@@ -9,7 +9,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   aiUsageOfError,
+  asBackgroundUsage,
   callsOf,
+  isAiBudgetError,
   mergeUsage,
   reportAiCall,
   runMeteredAi,
@@ -148,5 +150,45 @@ describe('計量器', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(runMeteredAi(async () => { reportAiCall(flash(1, 1)); return 7 }, () => { throw new Error('db down') })).resolves.toBe(7)
     err.mockRestore()
+  })
+})
+
+describe('`C-413` 背景工作的用量（asBackgroundUsage）', () => {
+  it('整理桶照記（算錢不變），另外把同一筆標成 backgroundTokens', () => {
+    const d = asBackgroundUsage(usageFromCalls('build', [lite(300, 40)]))
+    expect(d).toMatchObject({ inputTokens: 300, outputTokens: 40, importInputTokens: 300, importOutputTokens: 40, backgroundTokens: 340 })
+    expect(d.modelTokens?.build?.flashLite).toEqual({ input: 300, output: 40 })
+  })
+
+  it('知識缺口掃描那種自己寫了建索引向量的：向量也算背景', () => {
+    expect(asBackgroundUsage({ ...usageFromCalls('build', [flash(10, 5)]), buildEmbeddingTokens: 85 }).backgroundTokens).toBe(100)
+  })
+
+  it('包別桶的不會多出數字（後台自用、回答客人本來就不在整理桶）', () => {
+    expect(asBackgroundUsage(usageFromCalls('test', [flash(10, 5)])).backgroundTokens).toBeUndefined()
+    expect(asBackgroundUsage({})).toEqual({})
+  })
+
+  it('跟 mergeUsage 一起用：一輪好幾次加起來，背景那份也跟著加', () => {
+    const merged = mergeUsage(usageFromCalls('build', [lite(10, 1)]), usageFromCalls('build', [lite(20, 2)]))
+    expect(asBackgroundUsage(merged).backgroundTokens).toBe(33)
+  })
+})
+
+describe('`C-413` 認得「每月上限擋下來的」（isAiBudgetError）', () => {
+  it('看記號：data.reason＝ai_budget', () => {
+    expect(isAiBudgetError({ statusCode: 429, statusMessage: '隨便講什麼', data: { reason: 'ai_budget' } })).toBe(true)
+  })
+
+  it('舊格式的訊息照樣認得（上線前的工作、測試手做的錯誤）', () => {
+    expect(isAiBudgetError({ statusCode: 429, statusMessage: '本月 AI 整理用量已達安全上限（20.0M/20M token）' })).toBe(true)
+    expect(isAiBudgetError({ statusCode: 429, statusMessage: '這個月加入資料到上限了，11 月 1 日恢復' })).toBe(true)
+  })
+
+  it('⛔ 別的 429（問太快、按太快）不算：那種是等幾秒，不是等到下個月', () => {
+    expect(isAiBudgetError({ statusCode: 429, statusMessage: '問得有點快，休息 5 秒再問一次。' })).toBe(false)
+    expect(isAiBudgetError({ statusCode: 429, statusMessage: '按太快了，3 秒後再換一次' })).toBe(false)
+    expect(isAiBudgetError({ statusCode: 502, statusMessage: 'Gemini error (429): quota', data: { reason: 'x' } })).toBe(false)
+    expect(isAiBudgetError(null)).toBe(false)
   })
 })

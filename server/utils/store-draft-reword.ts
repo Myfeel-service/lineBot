@@ -167,7 +167,7 @@ export async function rewordStoreDraft(workspaceId: string, key: RewordKey, ctx:
       temperature: 0.9, // 要跟現在那一版不一樣，溫度不能低
       maxOutputTokens: 900,
       thinkingBudget: 0,
-    }))
+    }), 'knowledge')
   const raw = Array.isArray(res.data?.variants) ? res.data.variants.slice(0, VARIANTS * 2) : []
   const dropped: { text: string, reason: string }[] = []
   let body: string | null = null

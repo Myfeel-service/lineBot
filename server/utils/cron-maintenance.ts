@@ -24,6 +24,7 @@ import { deleteSourceFiles } from './knowledge-source-files'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange, tryAutoApplyPageChange } from './ai-knowledge-autoapply'
 import { runWithLlmBudget } from './gemini'
+import { isAiBudgetError } from './ai-usage-calls'
 import { extractUrlText } from './ai-source-extractors'
 import { gsheetSyncAuditNote, syncGoogleSheetSource } from './gsheet-sync'
 import { writeAuditLog } from './audit-log'
@@ -141,7 +142,7 @@ async function checkOneSource(
     if (data.type === 'gsheet') {
       if (data.gsheetAutoApply === false) return { sourceId, outcome: 'unchanged' }
       // 額度境域（C-45）：補問法 LLM 超額時整段丟 429，走下面 catch 記失敗，不再燒錢
-      const r = await runWithLlmBudget(data.workspaceId, () => syncGoogleSheetSource(db, data.workspaceId, sourceId, data))
+      const r = await runWithLlmBudget(data.workspaceId, () => syncGoogleSheetSource(db, data.workspaceId, sourceId, data), 'knowledge')
       // ⛔大量刪除被擋下：不能走「成功」路徑清失敗標記——要讓店家看得到。
       // 寫 failureReason + outdatedAt（體檢紅字 + 有變動提示），等人工到來源頁按
       // 「立即同步」確認放行；同時戳 lastFetchedAt 讓排程下一輪不再空轉重讀同一張表。
@@ -418,7 +419,7 @@ async function checkOneSource(
         autoApply: data.urlAutoApply !== false,
         // 抹掉數字的指紋跟上次確認的一樣＝這次「變了」只是數字停在新的值（decideSourceChange 的 'changed'）
         numbersSettled: String(data.textHash ?? '') === newTextHash,
-      }))
+      }), 'knowledge')
       if (page.kind === 'numbers_drift') {
         // 只有還在跳的數字跟上一版不同：指紋跟上，但「這批知識照哪一版做的」不推進（理由同上面 numeric-drift 那段）
         await commitChange()
@@ -476,7 +477,7 @@ async function checkOneSource(
       if (autoEligible && run.autoApplyRemaining > 0) {
         run.autoApplyRemaining--
         // 額度境域（C-45）：自動套用要先花一次完整重切卡的錢，超額 workspace 直接跳過
-        const auto = await runWithLlmBudget(data.workspaceId, () => tryAutoApplyMinorChange(db, sourceId, data, extracted.text))
+        const auto = await runWithLlmBudget(data.workspaceId, () => tryAutoApplyMinorChange(db, sourceId, data, extracted.text), 'knowledge')
         if (auto.noop) {
           // 重切後其實沒有內容差異(排版級變動):不標記、不通知,但要記下新 hash。
           // appliedContentHash 也推到新值:現有卡片與這一版內容等價,已經沒有東西要決定,
@@ -532,12 +533,17 @@ async function checkOneSource(
     //   - 連續失敗 ≥3 次 → status='failed'，列表狀態直接可見
     const msg = String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200)
     console.warn(`[detect-source-updates] ${sourceId} check failed: ${msg}`)
+    // 每月上限擋下來（`C-413`）不是這份資料壞了：照原話講（已經寫明幾號恢復、這段期間 AI 跟不上），
+    // ⛔ 不累計失敗次數——累到 3 次會標成「同步失敗」，體檢變紅、每日摘要天天叫他去修一個修不了的東西
+    const budget = isAiBudgetError(err)
     const failCount = Number(data.checkFailCount ?? 0) + 1
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-      failureReason: `自動檢查失敗：${msg}`,
-      checkFailCount: failCount,
+      failureReason: budget ? msg : `自動檢查失敗：${msg}`,
+      // 資料頁靠它分得出「上限擋下」跟「資料壞了」（別教人去分享試算表）；換成別種失敗就收掉
+      failureKind: budget ? 'ai_budget' : FieldValue.delete(),
+      ...(budget ? {} : { checkFailCount: failCount }),
       lastCheckedAt: FieldValue.serverTimestamp(),
-      ...(failCount >= 3 ? { status: 'failed' } : {}),
+      ...(!budget && failCount >= 3 ? { status: 'failed' } : {}),
     }).catch(() => {})
     // 不再即時推播(2026-08-06 拍板):status='failed' 由每日摘要每天提醒一次直到修復,
     // 比「跨過第 3 次那一則」更不會漏(gsheet 403 壞半個月沒人知道的教訓——那則沒看到就沒了)。

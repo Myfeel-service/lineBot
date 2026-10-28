@@ -15,7 +15,7 @@
  */
 import { generateJson, runWithLlmBudget } from './gemini'
 import { recordAiUsage } from './ai-usage'
-import { aiUsageOfError, usageFromCalls } from './ai-usage-calls'
+import { aiUsageOfError, asBackgroundUsage, usageFromCalls } from './ai-usage-calls'
 
 /** 一次最多送幾組給判官（防提案數暴增時把 prompt 撐爆） */
 export const MAX_JUDGE_PAIRS = 12
@@ -122,7 +122,7 @@ export async function judgeSimilarTagNames(
         temperature: 0,
         maxOutputTokens: 1200,
         thinkingBudget: 0,
-      }))
+      }), 'background')
     const verdicts = parseJudgeVerdicts(data, batch.length)
     // 撞到上限被切掉的那幾組補成 unsure＝不出聲（長度必須對得起來，見 parseJudgeVerdicts）
     while (verdicts.length < pairs.length) verdicts.push({ verdict: 'unsure', reason: '' })
@@ -132,7 +132,7 @@ export async function judgeSimilarTagNames(
     console.warn('[tag-similarity] 判官失敗，這輪不出相似提醒：', workspaceId, e)
     // JSON 壞掉那次也付了錢：回 null 呼叫端就記不到，所以在這裡記（整理知識庫那桶，`C-338`②）
     const lost = aiUsageOfError(e)
-    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]))
+    if (lost) await recordAiUsage(workspaceId, asBackgroundUsage(usageFromCalls('build', [lost])))
     return null
   }
 }

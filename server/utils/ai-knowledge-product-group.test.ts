@@ -440,7 +440,7 @@ describe('relearnPendingProductSources（改組名中途關頁、沒學完的，
 
   it('這家本月 AI 整理用量用完了 → 先不學（⛔ 學下去每一條都會變成學失敗、AI 找不到），記號留著下次再來', async () => {
     seed({ me: { [RELEARN_PENDING_FIELD]: true, updatedAt: ago(RELEARN_PENDING_GRACE_MS * 2) } })
-    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValueOnce({ used: 9, cap: 1, blocked: true })
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValueOnce({ used: 9, cap: 1, blocked: true, kind: 'knowledge' })
     const r = await run()
     expect(r).toMatchObject({ relearned: 0, skippedBudget: 1 })
     expect(runIndexOnChunk).not.toHaveBeenCalled()

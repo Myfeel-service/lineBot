@@ -147,7 +147,7 @@ export async function tailorFestivalAngle(
           temperature: 0.4,
           maxOutputTokens: 200,
           thinkingBudget: 0,
-        })),
+        }), 'assist'),
       calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
     )
     const text = normalizeTailoredAngle(res.text ?? '', festival.name)

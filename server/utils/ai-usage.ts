@@ -19,10 +19,11 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { getWorkspaceSubscription } from './billing'
 import { GEMINI_MODEL_PRICES } from './ai-cost-buckets'
+import { AI_BUDGET_ERROR_REASON } from './ai-usage-calls'
 import { capMapSize } from './bounded-cache'
 import { aiCallsTowardCeiling } from '~~/shared/billing/call-ceiling'
 import { taipeiYyyyMm } from '~~/shared/time'
-import type { AiCostBucketId, AiModelTokenCounts, AiUsageDoc } from '~~/shared/types/ai-knowledge'
+import type { AiBudgetKind, AiCostBucketId, AiModelTokenCounts, AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
 export const AI_USAGE_COLLECTION = 'aiUsage'
 export const QUOTA_USAGE_COLLECTION = 'quotaUsage'
@@ -176,6 +177,12 @@ export interface UsageDelta {
    */
   buildEmbeddingTokens?: number
   /**
+   * 整理知識庫那桶（import 進出＋建索引向量）裡，**背景工作**用掉的部分（`C-413`）：AI 貼標建議、標籤發現、
+   * 知識缺口掃描。子集慣例同 importInputTokens ⊆ inputTokens——只拿來拆每月上限的帳，算錢照舊。
+   * ⛔ 不要手寫：一律用 `ai-usage-calls.ts` 的 `asBackgroundUsage` 包，它從同一筆的整理桶數字算出來。
+   */
+  backgroundTokens?: number
+  /**
    * 生成 token 照模型拆的明細（`D-130`②）：上面那幾個總數的**子集**，算錢時照各模型單價。
    * ⛔ 不要手寫：一律用 `ai-usage-calls.ts` 的 `usageFromCalls` 產生，它保證總數與明細寫在同一桶、數字一致。
    */
@@ -267,6 +274,7 @@ async function writeAiUsage(workspaceId: string, delta: UsageDelta, db: Firestor
   if (delta.testEmbeddingTokens) updates.testEmbeddingTokens = FieldValue.increment(delta.testEmbeddingTokens)
   if (delta.testInvocations) updates.testInvocations = FieldValue.increment(delta.testInvocations)
   if (delta.buildEmbeddingTokens) updates.buildEmbeddingTokens = FieldValue.increment(delta.buildEmbeddingTokens)
+  if (delta.backgroundTokens) updates.backgroundTokens = FieldValue.increment(delta.backgroundTokens)
   // 巢狀 map ＋ merge:true＝只動到有寫的那幾格（其他模型、其他桶的明細不會被蓋掉）
   const modelTokens = modelTokenIncrements(delta.modelTokens)
   if (modelTokens) updates.modelTokens = modelTokens
@@ -387,17 +395,58 @@ export async function getCurrentMonthTokens(
 //
 //  執行點收口在 gemini.ts 單一出口（runWithLlmBudget 圈起來的呼叫都會查），
 //  未來新功能只要在最外層圈一次，就自動被守住——「忘了加檢查」從此絕種。
+//
+//  `C-413`（2026-10-29）拆成三本帳（AiBudgetKind）：以前只有一本，數的是整理知識庫那整桶、
+//  擋的是所有圈起來的呼叫。那桶裡有 AI 貼標建議、標籤發現、知識缺口掃描這些「客人聊越多用越多」的
+//  背景工作，於是生意好的店家會在沒加資料的月份被說「加太多」，撞到時小幫手、擬推播文案也一起停。
+//  現在每本帳只數自己、只擋自己（圈的時候要講是哪一本，見 gemini.ts 的 runWithLlmBudget）。
 // ═══════════════════════════════════════════════════════════════════
 
 /**
- * 預設維運月上限（import LLM + 建索引 embedding 合計 token）。
+ * 預設維運月上限（import LLM + 建索引 embedding 合計 token）＝「店家加資料」那本。
  * 量級：正常一份 100k 字文件整套切卡+embedding ≈ 20 萬 token；20M ≈ 100 份/月，
  * 一般商家碰不到、失控迴圈會撞上。要調整就改這裡（或日後開 per-workspace 欄位）。
+ * ⚠️ 方案分級（`D-157`③）等真實店家資料再定：MYFEEL 最忙的月份（2026-09）整理桶才 75 萬。
  */
 export const DEFAULT_MAINTENANCE_TOKEN_CAP = 20_000_000
 
-/** 快取 60 秒：批次 embedding 每卡查一次額度會把讀取費燒在守門上，得不償失 */
-const maintBudgetCache = new Map<string, { expiresAt: number; used: number }>()
+/**
+ * 三本帳各自的上限。背景與後台自用目前沒有實測依據，先跟店家那本同一個量級——
+ * 只是防失控的煞車，正常使用碰不到。
+ */
+export const AI_BUDGET_CAPS: Record<AiBudgetKind, number> = {
+  knowledge: DEFAULT_MAINTENANCE_TOKEN_CAP,
+  background: 20_000_000,
+  assist: 20_000_000,
+}
+
+type BudgetCounts = {
+  importInputTokens: number
+  importOutputTokens: number
+  buildEmbeddingTokens: number
+  backgroundTokens: number
+  testInputTokens: number
+  testOutputTokens: number
+  testEmbeddingTokens: number
+}
+
+/**
+ * 某一本帳這個月用了多少（純函式，給測試直接驗口徑）。
+ *   knowledge  ＝ 整理桶（import 進出＋建索引向量）扣掉背景那份
+ *   background ＝ backgroundTokens（整理桶的子集）
+ *   assist     ＝ 後台自用桶（test*）
+ * `C-413` 上線前的舊資料沒有 backgroundTokens：整桶都算店家那本（寧可多算，上限遠高於實際用量）。
+ */
+export function aiBudgetUsed(data: Partial<AiUsageDoc> | null | undefined, kind: AiBudgetKind): number {
+  const n = (v: unknown) => Math.max(0, Number(v ?? 0) || 0)
+  if (kind === 'background') return n(data?.backgroundTokens)
+  if (kind === 'assist') return n(data?.testInputTokens) + n(data?.testOutputTokens) + n(data?.testEmbeddingTokens)
+  const build = n(data?.importInputTokens) + n(data?.importOutputTokens) + n(data?.buildEmbeddingTokens)
+  return Math.max(0, build - n(data?.backgroundTokens))
+}
+
+/** 快取 60 秒：批次 embedding 每卡查一次額度會把讀取費燒在守門上，得不償失。存原始數字，一次讀三本帳都夠用 */
+const maintBudgetCache = new Map<string, { expiresAt: number; counts: BudgetCounts }>()
 
 /** 測試用：清掉快取 */
 export function invalidateMaintenanceBudgetCache(workspaceId?: string) {
@@ -405,41 +454,77 @@ export function invalidateMaintenanceBudgetCache(workspaceId?: string) {
   else maintBudgetCache.clear()
 }
 
-/** 本月維運桶已用量（import in/out + 建索引 embedding） */
+/** 本月某一本帳的已用量；不指定就是「店家加資料」那本（以前唯一的那本） */
 export async function getMaintenanceBudgetStatus(
   workspaceId: string,
   db: Firestore = getDb(),
-): Promise<{ used: number; cap: number; blocked: boolean }> {
+  kind: AiBudgetKind = 'knowledge',
+): Promise<{ used: number; cap: number; blocked: boolean; kind: AiBudgetKind }> {
   const cached = maintBudgetCache.get(workspaceId)
-  let used: number
+  let counts: BudgetCounts
   if (cached && cached.expiresAt > Date.now()) {
-    used = cached.used
+    counts = cached.counts
   }
   else {
     const yyyyMm = currentYyyyMm()
     const snap = await db.collection(AI_USAGE_COLLECTION).doc(usageDocId(workspaceId, yyyyMm)).get()
     const data = (snap.exists ? snap.data() : {}) as Partial<AiUsageDoc>
-    used = Number(data?.importInputTokens ?? 0)
-      + Number(data?.importOutputTokens ?? 0)
-      + Number(data?.buildEmbeddingTokens ?? 0)
-    maintBudgetCache.set(workspaceId, { expiresAt: Date.now() + 60_000, used })
+    counts = {
+      importInputTokens: Number(data?.importInputTokens ?? 0),
+      importOutputTokens: Number(data?.importOutputTokens ?? 0),
+      buildEmbeddingTokens: Number(data?.buildEmbeddingTokens ?? 0),
+      backgroundTokens: Number(data?.backgroundTokens ?? 0),
+      testInputTokens: Number(data?.testInputTokens ?? 0),
+      testOutputTokens: Number(data?.testOutputTokens ?? 0),
+      testEmbeddingTokens: Number(data?.testEmbeddingTokens ?? 0),
+    }
+    maintBudgetCache.set(workspaceId, { expiresAt: Date.now() + 60_000, counts })
   }
-  const cap = DEFAULT_MAINTENANCE_TOKEN_CAP
-  return { used, cap, blocked: used >= cap }
+  const used = aiBudgetUsed(counts, kind)
+  const cap = AI_BUDGET_CAPS[kind]
+  return { used, cap, blocked: used >= cap, kind }
+}
+
+/** 下個月 1 號（台灣日曆月）：「X 月 1 日恢復」 */
+export function aiBudgetResumeLabel(date = new Date()): string {
+  const month = Number(currentYyyyMm(date).slice(4))
+  return `${month === 12 ? 1 : month + 1} 月 1 日`
 }
 
 /**
- * 超過維運上限就丟 429（給入口端點與 gemini 出口共用）。
+ * 擋下來時給人看的話（`C-413`，照示意頁 `RsVDnyeaVEbv76CgZ3TRoA` 的字）：發生什麼、幾號恢復、還照常的是什麼。
+ * ⛔ 不講 token、不講 M——以前是「本月 AI 整理用量已達安全上限（20.0M/20M token）」，店家看不懂。
+ * 加入知識視窗的「擋在門口」那張卡拿 title／body 分兩行排；錯誤訊息用兩句接起來。
+ */
+export function aiBudgetMessage(kind: AiBudgetKind, date = new Date()): { title: string; body: string } {
+  const resume = aiBudgetResumeLabel(date)
+  if (kind === 'background') {
+    return { title: `這個月 AI 讀對話（貼標建議、找新標籤）到上限了，${resume}恢復`, body: '回答客人不受影響。' }
+  }
+  if (kind === 'assist') {
+    return { title: `這個月小幫手、擬文案、畫選單底圖這類後台 AI 到上限了，${resume}恢復`, body: '回答客人不受影響。' }
+  }
+  return {
+    title: `這個月加入資料到上限了，${resume}恢復`,
+    body: '這段期間網頁、試算表改了，AI 也要等到那天才跟上；已經放進去的照常回答客人。需要更多請跟我們聯絡。',
+  }
+}
+
+/**
+ * 某一本帳超過上限就丟 429（給入口端點與 gemini 出口共用）；不指定就是「店家加資料」那本。
  * 訊息寫給店家看：發生什麼、影響什麼、什麼時候恢復。
  */
 export async function assertMaintenanceBudget(
   workspaceId: string,
   db: Firestore = getDb(),
+  kind: AiBudgetKind = 'knowledge',
 ): Promise<void> {
-  const s = await getMaintenanceBudgetStatus(workspaceId, db)
+  const s = await getMaintenanceBudgetStatus(workspaceId, db, kind)
   if (!s.blocked) return
+  const msg = aiBudgetMessage(kind)
   throw createError({
     statusCode: 429,
-    statusMessage: `本月 AI 整理用量已達安全上限（${(s.used / 1_000_000).toFixed(1)}M/${(s.cap / 1_000_000).toFixed(0)}M token）。匯入與自動同步暫停，下月自動恢復；若是正常使用需求請聯繫我們調整上限。`,
+    statusMessage: `${msg.title}。${msg.body}`,
+    data: { reason: AI_BUDGET_ERROR_REASON, kind },
   })
 }

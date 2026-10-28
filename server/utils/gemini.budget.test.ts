@@ -31,16 +31,29 @@ describe('runWithLlmBudget 境域守門', () => {
     assertMaintenanceBudget.mockRejectedValue(
       Object.assign(new Error('本月 AI 整理用量已達安全上限'), { statusCode: 429 }),
     )
-    await expect(runWithLlmBudget('ws1', () => embedDocument('內容')))
+    await expect(runWithLlmBudget('ws1', () => embedDocument('內容'), 'knowledge'))
       .rejects.toMatchObject({ statusCode: 429 })
     expect((globalThis as any).fetch).not.toHaveBeenCalled()
   })
 
   it('境域內未超額 → 照常呼叫、帳照記', async () => {
     assertMaintenanceBudget.mockResolvedValue(undefined)
-    const v = await runWithLlmBudget('ws1', () => embedDocument('內容'))
+    const v = await runWithLlmBudget('ws1', () => embedDocument('內容'), 'knowledge')
     expect(v).toHaveLength(768)
-    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1')
+    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1', undefined, 'knowledge')
+  })
+
+  it('`C-413` 查的是圈的時候講的那一本帳（後台自用不會被整理知識的上限擋）', async () => {
+    assertMaintenanceBudget.mockResolvedValue(undefined)
+    await runWithLlmBudget('ws1', () => embedDocument('內容'), 'assist')
+    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1', undefined, 'assist')
+  })
+
+  it('`C-413` 巢狀圈：裡面那層的帳別算數（背景工作裡叫到整理知識的函式，照裡面講的那本查）', async () => {
+    assertMaintenanceBudget.mockResolvedValue(undefined)
+    await runWithLlmBudget('ws1', () => runWithLlmBudget('ws1', () => embedDocument('內容'), 'knowledge'), 'background')
+    expect(assertMaintenanceBudget).toHaveBeenCalledTimes(1)
+    expect(assertMaintenanceBudget).toHaveBeenCalledWith('ws1', undefined, 'knowledge')
   })
 
   it('境域外（回答客人路徑）完全不查額度——行為不變', async () => {
@@ -50,7 +63,7 @@ describe('runWithLlmBudget 境域守門', () => {
   })
 
   it('workspaceId 為空 → 不建立境域（保底不誤擋）', async () => {
-    const v = await runWithLlmBudget('', () => embedDocument('內容'))
+    const v = await runWithLlmBudget('', () => embedDocument('內容'), 'knowledge')
     expect(v).toHaveLength(768)
     expect(assertMaintenanceBudget).not.toHaveBeenCalled()
   })

@@ -5,7 +5,7 @@
  * Key 由 nuxt.config.ts runtimeConfig.geminiApiKey 注入。
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { EMBEDDING_DIMENSION } from '~~/shared/types/ai-knowledge'
+import { EMBEDDING_DIMENSION, type AiBudgetKind } from '~~/shared/types/ai-knowledge'
 import { reportAiCall, type AiCallUsage } from './ai-usage-calls'
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
@@ -19,14 +19,19 @@ const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 //  用 AsyncLocalStorage 傳 workspace 境域而非改每個函式簽名：
 //  切卡/補問法/OCR 這些工具函式不用知道額度的存在。
 //  沒被圈住的呼叫（回答客人路徑有自己的則數額度）不查、行為不變。
+//
+//  `C-413`：圈的時候一定要講是哪一本帳（kind 必填）——店家加資料／背景工作／後台自用各自只被
+//  自己的用量擋，客人聊得多不會擋到店家加資料、整理撞到上限也不會連小幫手一起停。
+//  ⚠️ 用量要記進同一本：背景工作記帳時用 `asBackgroundUsage` 包、後台自用記 `test` 桶，
+//  圈錯本或記錯本，擋的跟數的就對不起來。
 // ═══════════════════════════════════════════════════════════════════
 
-const llmBudgetALS = new AsyncLocalStorage<{ workspaceId: string }>()
+const llmBudgetALS = new AsyncLocalStorage<{ workspaceId: string; kind: AiBudgetKind }>()
 
-/** 把一段維運工作圈進某 workspace 的額度境域：內部所有 gemini 呼叫都會先過額度檢查 */
-export function runWithLlmBudget<T>(workspaceId: string, fn: () => Promise<T>): Promise<T> {
+/** 把一段工作圈進某 workspace 某一本帳的額度境域：內部所有 gemini 呼叫都會先過那本帳的檢查 */
+export function runWithLlmBudget<T>(workspaceId: string, fn: () => Promise<T>, kind: AiBudgetKind): Promise<T> {
   if (!workspaceId) return fn()
-  return llmBudgetALS.run({ workspaceId }, fn)
+  return llmBudgetALS.run({ workspaceId, kind }, fn)
 }
 
 /** 出口守門：境域內才查；超額丟 429（lazy import 避免模組相依環） */
@@ -34,7 +39,7 @@ async function assertLlmBudget(): Promise<void> {
   const ctx = llmBudgetALS.getStore()
   if (!ctx) return
   const { assertMaintenanceBudget } = await import('./ai-usage')
-  await assertMaintenanceBudget(ctx.workspaceId)
+  await assertMaintenanceBudget(ctx.workspaceId, undefined, ctx.kind)
 }
 
 /**

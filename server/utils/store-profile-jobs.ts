@@ -21,7 +21,7 @@ import { KNOWLEDGE_CHUNKS_COLLECTION, createKnowledgeChunk } from '~~/server/uti
 import { KNOWLEDGE_SOURCES_COLLECTION, listSourceUrlKeys, sourceUrlKey } from '~~/server/utils/ai-knowledge-sources'
 import { invalidateKnowledgeChunkCount } from '~~/server/utils/ai-knowledge-quota'
 import { assertMaintenanceBudget, recordAiUsage } from '~~/server/utils/ai-usage'
-import { aiUsageOfError, callsOf, runMeteredAi, usageFromCalls, type AiCallUsage } from '~~/server/utils/ai-usage-calls'
+import { aiUsageOfError, callsOf, isAiBudgetError, runMeteredAi, usageFromCalls, type AiCallUsage } from '~~/server/utils/ai-usage-calls'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import {
   classifyFetchError,
@@ -432,10 +432,12 @@ function siteCardsSourceIdPrefix(jobId: string): string {
   return `onb_${jobId}_`
 }
 
-/** 維運額度用完（`assertMaintenanceBudget` 丟的那一種 429；⚠️ Gemini 自己的 429 是一時過載，要重試不是停） */
+/**
+ * 維運額度用完（`assertMaintenanceBudget` 丟的那一種 429；⚠️ Gemini 自己的 429 是一時過載，要重試不是停）。
+ * 認法收在 `isAiBudgetError`（`C-413` 訊息改白話之後，舊的比對文字「AI 整理用量」就對不到了）。
+ */
 function isMaintenanceBudgetError(e: unknown): boolean {
-  const x = e as { statusCode?: number, statusMessage?: string, message?: string }
-  return Number(x?.statusCode) === 429 && /AI 整理用量|額度/.test(String(x?.statusMessage ?? x?.message ?? ''))
+  return isAiBudgetError(e)
 }
 
 /** 下個月 1 號（台北）再過 3 天：額度擋下時，工作（含頁面內文）要留到額度回來之後 */
@@ -573,7 +575,7 @@ export async function advanceSiteCards(
         }
         let r: Awaited<ReturnType<typeof chunkSegment>>
         try {
-          r = await runWithLlmBudget(wid, () => chunkSegment(page.text.slice(0, SEGMENT_CHAR_LEN), `開帳時讀的網站頁面：${page.url}`))
+          r = await runWithLlmBudget(wid, () => chunkSegment(page.text.slice(0, SEGMENT_CHAR_LEN), `開帳時讀的網站頁面：${page.url}`), 'knowledge')
         }
         catch (e) {
           if (isMaintenanceBudgetError(e)) throw e

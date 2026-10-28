@@ -170,7 +170,7 @@
           <div class="sa-cost-body">
             <p class="sa-cost-guide__intro">
               AI 是<b>按用量計費</b>的（單位叫 token，可想成「字數」）—— 客人問的字、AI 回的字都算錢。
-              分成三桶的用意是看<b>哪一筆會隨客人變多而變多</b>：只有「回答客人」會，另外兩桶跟客人多寡無關。
+              分成三桶的用意是看<b>哪一筆會隨客人變多而變多</b>：主要是「回答客人」；「整理知識庫」裡讀對話的那兩項也會跟著多，後台自用跟客人多寡無關。
             </p>
             <div class="sa-cost-guide">
               <div class="sa-cost-guide__col sa-cost-guide__col--conv">
@@ -196,13 +196,15 @@
               <div class="sa-cost-guide__col sa-cost-guide__col--build">
                 <div class="sa-cost-guide__head">
                   <span class="sa-cost-dot sa-cost-dot--build" /> 整理知識庫
-                  <span class="sa-cost-guide__when">跟你上傳多少資料走，與客人多寡無關</span>
+                  <!-- `C-413` 查證：AI 貼標建議（每場對話讀一次）、找知識缺口都記在這桶，以前寫「與客人多寡無關」不對 -->
+                  <span class="sa-cost-guide__when">大多跟你上傳多少資料走；讀對話的那兩項會隨客人變多</span>
                 </div>
                 <ul class="sa-cost-guide__list">
                   <li><b>整理文件</b>：把 PDF／文件拆成一條條知識 <span class="sa-cost-guide__price">一份約 NT$2–5</span></li>
                   <li><b>掃描檔轉文字</b>：圖片型 PDF 先辨識成文字，最貴 <span class="sa-cost-guide__price">一份約 NT$5–10</span></li>
                   <li><b>補「客人會怎麼問」</b>：幫知識卡補上常見問法，之後才搜得到 <span class="sa-cost-guide__price">很少</span></li>
-                  <li><b>每天掃知識缺口</b>：找出答不出來的問題、草擬補充建議 <span class="sa-cost-guide__price">很少</span></li>
+                  <li><b>每天掃知識缺口</b>：找出答不出來的問題、草擬補充建議（讀對話） <span class="sa-cost-guide__price">很少</span></li>
+                  <li><b>AI 貼標建議、找新標籤</b>：對話結束後讀一次，建議該貼哪些標籤（讀對話） <span class="sa-cost-guide__price">很少</span></li>
                   <!-- 2026-10 知識庫改版新增的幾項，錢都記在這一格（2026-10-17 對過程式） -->
                   <li><b>重新學習、做總表、每份資料摘要</b>：資料改過後重新整理 <span class="sa-cost-guide__price">很少</span></li>
                   <!-- 2026-10-19 起才記帳（`C-338`①）：開帳讀網站、從既有資料猜輪廓 -->

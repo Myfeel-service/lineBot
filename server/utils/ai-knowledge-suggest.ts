@@ -18,7 +18,7 @@ import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { embedQuery, generateJson, estimateTokens } from './gemini'
 import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
-import { aiUsageOfError, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { aiUsageOfError, asBackgroundUsage, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { isRawSuggestionTopic, topicFromDraftTitle } from '~~/shared/knowledge-suggestion-topic'
 import { isPersonalOrderGroup } from '~~/shared/knowledge-suggestion-personal-order'
@@ -447,7 +447,8 @@ export async function scanWorkspaceKnowledgeGaps(db: Firestore, workspaceId: str
     return await runScan()
   }
   finally {
-    if (Object.keys(usage).length) await recordAiUsage(workspaceId, usage, db)
+    // 知識缺口掃描是背景工作（客人答不出來的問題越多掃越多）：算錢照舊進整理桶，每月上限算背景那本（`C-413`）
+    if (Object.keys(usage).length) await recordAiUsage(workspaceId, asBackgroundUsage(usage), db)
     if (tally.draftsDeferred) {
       console.log(`[kb-suggest] ${workspaceId}: ${tally.draftsDeferred} 個主題因時間預算未草擬，下一輪補`)
     }

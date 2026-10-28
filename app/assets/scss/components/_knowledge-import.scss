@@ -1021,6 +1021,43 @@
   }
 }
 
+/*
+ * 在門口擋（`C-413`）：知識量滿了、或這個月加入資料到上限——佔投放框的位置，選檔之前就講。
+ * 琥珀底＝「這件事會讓你少東西」那一色（同 .kb-quota-line.is-full），不用紅：不是出錯，是到量了。
+ */
+.kb-add-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px 20px;
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 8px;
+  background: var(--el-color-warning-light-9);
+
+  p {
+    margin: 0;
+  }
+  &__title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+  &__body {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--el-text-color-regular);
+  }
+  &__upgrade {
+    margin-top: 4px;
+  }
+  &__hint {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+  }
+}
+
 /* 整站清單：勾的頁可能放不下時（`D-124`），跟空間不夠那幾句同一個琥珀 */
 .kb-site-room.is-tight {
   color: #b45309;

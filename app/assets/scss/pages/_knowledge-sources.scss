@@ -1082,7 +1082,7 @@
     word-break: break-all;
   }
 
-  /* 試算表一次少太多列、系統先停下來等他確認（`C-308`⑤）：東西沒壞，是在等他——琥珀不用紅 */
+  /* 試算表一次少太多列、系統先停下來等他確認（`C-308`⑤）、這個月加入資料到上限自動更新先停（`C-413`）：東西沒壞——琥珀不用紅 */
   &--held {
     border-left-color: var(--el-color-warning);
     background: var(--el-color-warning-light-9);

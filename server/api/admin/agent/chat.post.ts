@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
     history,
     // 轉發呼叫者憑證:get_current_alerts / get_setup_status 打自家 API 時沿用同一套權限
     authHeader: getHeader(event, 'authorization'),
-  }))
+  }), 'assist')
 
   // 內部管理用量照記,但要記進**後台自用**那桶(test*)而不是真客人那桶:
   // 小幫手是我們自己在後台用的,把它算進「回答客人」會讓每則客人成本虛高,

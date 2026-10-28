@@ -186,7 +186,7 @@ export async function advancePreviewJob(
                 nextTitle: e.newChunk?.title ?? '',
                 next: e.newChunk?.content ?? '',
               })),
-            ))
+            ), 'knowledge')
             addJobUsage(work.usage, judged) // 含 JSON 壞掉那幾批（judgeCosmeticRewrites 的 calls 有列）
             const { folded } = applyCosmeticVerdicts(cosmeticCandidates, judged.verdicts)
             if (folded) console.log(`[resync] ${work.input.resyncSourceId} 意思判官摺掉 ${folded}/${cosmeticCandidates.length} 條措辭差異`)
@@ -307,7 +307,7 @@ export async function advancePreviewJob(
     for (;;) {
       const stepStart = Date.now()
       // 額度境域（C-45）:這一步裡的 OCR / 切卡 / 補問法 LLM 呼叫都會先過維運額度檢查
-      await runWithLlmBudget(workspaceId, () => advanceWork(work, { getSourceBuffer }))
+      await runWithLlmBudget(workspaceId, () => advanceWork(work, { getSourceBuffer }), 'knowledge')
       lastStepMs = Date.now() - stepStart
       await flushJobUsage(workspaceId, work) // 每步結清:中途取消 / 逾時也不會漏記已花的 token
       workGen = await saveWork(workspaceId, jobId, work, workGen) // 見 (a):每步落地＋版本鎖,逾時只損失最後一步

@@ -1091,7 +1091,7 @@ export async function retryStuckChunks(
         String(data?.title ?? ''),
         content,
         Array.isArray(data?.questions) ? data.questions.map(String) : [],
-      )))
+      )), 'knowledge')
       // ⛔ 看 keptPrevious：重學又沒成的那種回的也是 status 'indexed'（卡片真的狀態），但這一次沒學成
       if (result.status === 'indexed' && !result.keptPrevious) {
         indexed++

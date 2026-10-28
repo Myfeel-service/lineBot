@@ -124,7 +124,8 @@ describe('整理「這份在講什麼」（C-316）', () => {
     expect(STORE.knowledgeSources!.src1).toMatchObject({ summary: want, summaryAt: '__ts__' })
 
     expect(llm.mock.calls[0]![1]).toMatchObject({ model: 'gemini-2.5-flash-lite', thinkingBudget: 0 })
-    expect(runWithLlmBudget).toHaveBeenCalledWith(WS, expect.any(Function))
+    // 整理一份資料的摘要＝店家加資料那本帳（`C-413`）
+    expect(runWithLlmBudget).toHaveBeenCalledWith(WS, expect.any(Function), 'knowledge')
     expect(recordAiUsage).toHaveBeenCalledWith(WS, { inputTokens: 321, outputTokens: 45, importInputTokens: 321, importOutputTokens: 45 })
   })
 

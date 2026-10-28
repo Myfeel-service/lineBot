@@ -236,7 +236,7 @@ export async function relearnPendingProductSources(
       const r = await runWithLlmBudget(wid, async () => {
         await alignSourceProductWithGroup(db, wid, d.id)
         return relearnSourceChunks(db, wid, d.id)
-      })
+      }, 'knowledge')
       result.relearned++
       result.indexed += r.indexed
       result.failed += r.failed

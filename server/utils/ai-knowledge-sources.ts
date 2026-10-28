@@ -60,6 +60,8 @@ export interface SourceSummary {
   folderId: string | null
   status: KnowledgeSourceStatus
   failureReason?: string
+  /** 停下來是因為這個月加入資料到上限（`C-413`），不是資料壞了：資料頁別教人去分享試算表／換網址 */
+  pausedByBudget: boolean
   chunkCount: number
   refreshIntervalMinutes: number
   onChangeBehavior: 'notify' | 'log_only'
@@ -148,6 +150,7 @@ export function docToSourceSummary(id: string, raw: SourceDocWithSummary): Sourc
     folderId: raw.folderId ?? null,
     status: (raw.status ?? 'ready') as KnowledgeSourceStatus,
     failureReason: raw.failureReason,
+    pausedByBudget: raw.failureKind === 'ai_budget' && !!raw.failureReason,
     chunkCount: Number(raw.chunkCount ?? 0),
     refreshIntervalMinutes: Number(raw.refreshIntervalMinutes ?? 0),
     onChangeBehavior: raw.onChangeBehavior === 'log_only' ? 'log_only' : 'notify',
@@ -826,6 +829,7 @@ export async function clearSourceOutdated(
 export function buildSourceClearFailure(currentStatus?: string) {
   return {
     failureReason: FieldValue.delete(),
+    failureKind: FieldValue.delete(),
     checkFailCount: FieldValue.delete(),
     ...(currentStatus === 'failed' ? { status: 'ready' as const } : {}),
   }

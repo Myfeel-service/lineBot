@@ -13,6 +13,6 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'sources.write')
   await assertMaintenanceBudget(workspaceId) // C-45：判官那一次呼叫也要吃額度
   const db = getDb()
-  const result = await runWithLlmBudget(workspaceId, () => runDuplicateScan(db, workspaceId, { force: true }))
+  const result = await runWithLlmBudget(workspaceId, () => runDuplicateScan(db, workspaceId, { force: true }), 'knowledge')
   return { workspaceId, ...result }
 })

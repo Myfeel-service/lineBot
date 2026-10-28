@@ -217,7 +217,7 @@ async function runCopyGeneration(
         temperature: 0.7, // 要三版不一樣，溫度不能太低
         maxOutputTokens: 900,
         thinkingBudget: 0,
-      })),
+      }), 'assist'),
     calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
   )
 

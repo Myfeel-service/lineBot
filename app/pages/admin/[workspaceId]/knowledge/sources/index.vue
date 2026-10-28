@@ -581,8 +581,9 @@
              (最常見的兩種原因,修的地方一個在 Google、一個是換網址)。
              試算表一次少太多列被擋下（`C-308`⑤）不是「抓不到」：表讀得到，是系統怕誤刪先停下來——標題、做法都不一樣。
              `C-314`：「基本資訊」卡拿掉了（類型／條數／更新時間併成名稱下面那一行），這一塊自己獨立一格、有事才出現 -->
-        <div v-if="selectedSource.failureReason" class="src-fix" :class="{ 'src-fix--held': failureAdvice.kind === 'massDelete' }">
-          <p class="src-fix__title">{{ failureAdvice.kind === 'massDelete' ? `⚠ 表格一次少了 ${failureAdvice.rows} 列，自動同步先停下來` : '⚠ 這份資料目前抓不到內容' }}</p>
+        <!-- 琥珀不用紅的兩種：表格少太多列等他確認、這個月加入資料到上限（`C-413`）——東西都沒壞 -->
+        <div v-if="selectedSource.failureReason" class="src-fix" :class="{ 'src-fix--held': failureAdvice.kind === 'massDelete' || failureAdvice.kind === 'paused' }">
+          <p class="src-fix__title">{{ failureAdvice.kind === 'massDelete' ? `⚠ 表格一次少了 ${failureAdvice.rows} 列，自動同步先停下來` : failureAdvice.kind === 'paused' ? '⚠ 自動更新先停下來了' : '⚠ 這份資料目前抓不到內容' }}</p>
           <p class="src-fix__what">{{ failureAdvice.what }}</p>
 
           <!-- Google Sheet:最常見原因是沒分享給服務帳號 → email 直接放這裡可複製 -->
@@ -608,8 +609,8 @@
             </el-button>
           </div>
 
-          <!-- 擋下來那種的原文就是上面那兩句再講一次（還寫「張卡」），不重複 -->
-          <p v-if="failureAdvice.kind !== 'massDelete'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
+          <!-- 擋下來那種的原文就是上面那兩句再講一次（還寫「張卡」），不重複；上限暫停那種上面已經是原話 -->
+          <p v-if="failureAdvice.kind !== 'massDelete' && failureAdvice.kind !== 'paused'" class="src-fix__raw">系統訊息：{{ selectedSource.failureReason }}</p>
         </div>
 
         <!--
@@ -1623,6 +1624,8 @@ interface SourceSummary {
   folderId: string | null
   status: SourceStatus
   failureReason?: string
+  /** 停下來是因為這個月加入資料到上限（`C-413`），不是資料壞了；舊伺服器沒這格＝當成 false */
+  pausedByBudget?: boolean
   chunkCount: number
   refreshIntervalMinutes: number
   onChangeBehavior: 'notify' | 'log_only'
@@ -3832,6 +3835,9 @@ function massDeleteRows(s: SourceSummary | null): number {
 const failureAdvice = computed(() => {
   const s = selectedSource.value
   if (!s?.failureReason) return { kind: 'other' as const, what: '', rows: 0 }
+  // 這個月加入資料到上限、自動更新先停（`C-413`）：資料沒壞，⛔ 不教分享試算表／換網址；
+  // 那句原話已經講了幾號恢復、這段期間 AI 跟不上，直接給他看
+  if (s.pausedByBudget) return { kind: 'paused' as const, what: s.failureReason, rows: 0 }
   const rows = massDeleteRows(s)
   if (rows > 0) {
     // ⛔ 不叫人去分享（以前照「類型是試算表」一律教分享）：表讀得到，是系統等他確認——去 Google 改分享沒有用

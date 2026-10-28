@@ -17,7 +17,7 @@ import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { recordAiUsage } from './ai-usage'
-import { aiUsageOfError, callsOf, usageFromCalls } from './ai-usage-calls'
+import { aiUsageOfError, asBackgroundUsage, callsOf, usageFromCalls } from './ai-usage-calls'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
 import { recordScannerFailure } from './scanner-health'
@@ -465,7 +465,7 @@ async function scanOneWorkspace(
        * 照那個懷疑去「修」會把本來會動的功能弄壞。
        */
       thinkingBudget: 0,
-    }))
+    }), 'background')
   let discovered: Awaited<ReturnType<typeof discover>>
   try {
     discovered = await discover()
@@ -473,13 +473,14 @@ async function scanOneWorkspace(
   catch (e) {
     // JSON 壞掉（被截斷）時錢已經付了：照記再往外丟（`C-338`②）
     const lost = aiUsageOfError(e)
-    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]), db)
+    if (lost) await recordAiUsage(workspaceId, asBackgroundUsage(usageFromCalls('build', [lost])), db)
     throw e
   }
   const { data } = discovered
 
   // 背景資料處理桶（import* ⊆ 總量子集慣例，同知識缺口掃描；照實際模型算）；⛔ 不記 invocations/answered
-  await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(discovered)), db)
+  // 每月上限算背景那本（`C-413`）：讀對話找標籤不是店家加資料
+  await recordAiUsage(workspaceId, asBackgroundUsage(usageFromCalls('build', callsOf(discovered))), db)
 
   const room = MAX_PENDING_DISCOVERIES - pending.length
   const rawTopics = Array.isArray(data?.topics) ? data.topics : []
@@ -628,7 +629,7 @@ async function resolveSimilarTags(
    */
   if (judged.inputTokens || judged.outputTokens) {
     // 判官用的是 flash-lite：照它的單價記（`D-130`②）
-    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(judged)), db)
+    await recordAiUsage(workspaceId, asBackgroundUsage(usageFromCalls('build', callsOf(judged))), db)
   }
 
   judged.verdicts.forEach((v, i) => {

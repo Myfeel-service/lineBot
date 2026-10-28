@@ -37,7 +37,8 @@ import type { TagDoc } from '~~/shared/types/tag-broadcast'
  */
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'broadcast.write')
-  await assertMaintenanceBudget(workspaceId)
+  // 擬推播文案是後台自用（記 test 桶）：只被後台自用那本帳擋（`C-413`），整理知識撞到上限不連帶停
+  await assertMaintenanceBudget(workspaceId, undefined, 'assist')
 
   const body = await readBody(event).catch(() => ({})) as { festivalId?: string, tagId?: string }
   const festivalId = String(body?.festivalId ?? '').trim()
