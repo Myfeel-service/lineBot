@@ -942,7 +942,8 @@ try {
     }))
     if (extra.titles.length === 5 && extra.titles[0] === '型號 1' && extra.more.includes('還有 4 條')) pass('加好了那頁直接列出前 5 條標題＋「還有 4 條」（不用再點進去才知道 AI 做了什麼）')
     else fail('加好了那頁沒列出整理成哪幾條', JSON.stringify(extra))
-    if (extra.verify.includes('問 AI 一題試試') && extra.verify.includes('不算額度') && extra.verify.includes('到測試對話') && extra.labels === '整理出／AI 學會了／還沒學起來') pass(`問一題講清楚不算額度、給去測試對話的路；數字格改白話（${extra.labels}）`)
+    // `D-129`（2026-10-19，`1acca52`）：「還沒學起來」改叫「還沒學會」（系統會自己再試、不叫他按重新學習）；守門員那時沒跟著改（`E-43`）
+    if (extra.verify.includes('問 AI 一題試試') && extra.verify.includes('不算額度') && extra.verify.includes('到測試對話') && extra.labels === '整理出／AI 學會了／還沒學會') pass(`問一題講清楚不算額度、給去測試對話的路；數字格改白話（${extra.labels}）`)
     else fail('問一題或數字格的說法不對', JSON.stringify(extra))
     if (r.offer.includes('要不要再做一張') && r.offer.includes('佔 1 條 AI 知識量')) {
       await pg.evaluate(() => [...document.querySelectorAll('.kb-overview-suggest .el-button')].find(b => b.innerText.includes('做一張'))?.click())
@@ -2381,7 +2382,8 @@ try {
     }))
     if (!wb.intro && !wb.main.includes('這裡是 AI 回答客人的依據') && !wb.main.includes('左邊點一份資料')) pass('有資料時工作台上面不再擺介紹（「這裡是 AI 回答客人的依據」那三行只給還沒放資料的人看）')
     else fail('有資料了工作台還擺介紹', JSON.stringify({ intro: wb.intro }))
-    if (!wb.main.includes('內容較短') && !wb.main.includes('過期自動停用') && !(await pg.$('.src-todo__muted')) && wb.todo.some(t => t.includes('原始內容改過了')) && wb.todo.some(t => t.includes('AI 沒學起來'))) {
+    // `D-129`（2026-10-19，`1acca52`）：待辦只列「試了 5 次都沒學會」的（還在自動再試的不算），字也改了；守門員那時沒跟著改（`E-43`）
+    if (!wb.main.includes('內容較短') && !wb.main.includes('過期自動停用') && !(await pg.$('.src-todo__muted')) && wb.todo.some(t => t.includes('原始內容改過了')) && wb.todo.some(t => t.includes('試了 5 次都沒學會'))) {
       pass(`「要處理的事」只列要動手的（${wb.todo.join('／')}），「另有 19 條內容較短」「2 條過期自動停用」那幾行灰字不擺`)
     }
     else fail('工作台還有「知道就好」的灰字、或待辦沒列', JSON.stringify({ todo: wb.todo, short: wb.main.includes('內容較短'), expired: wb.main.includes('過期自動停用') }))
@@ -2520,7 +2522,12 @@ try {
       await waitFor(pg, () => [...document.querySelectorAll('.src-lock-pop')].some(p => getComputedStyle(p).display !== 'none' && p.innerText.trim()), null, 5000)
       const t = await pg.evaluate(() => [...document.querySelectorAll('.src-lock-pop')].find(p => getComputedStyle(p).display !== 'none')?.innerText.replace(/\s+/g, ' ').trim() ?? '')
       await pg.keyboard.press('Escape')
-      await pg.mouse.click(5, 500)
+      // ⛔ 不點畫面上固定座標收起來（`E-43`，同第 44 段那次）：鎖頭是 trigger="click"，沒收起來就再按一次鎖頭
+      const lockClosed = () => waitFor(pg, () => ![...document.querySelectorAll('.src-lock-pop')].some(p => getComputedStyle(p).display !== 'none'), null, 2000)
+      if (!(await lockClosed())) {
+        await pg.evaluate(() => document.querySelector('.src-chunk-lock')?.click())
+        await lockClosed()
+      }
       await sleep(400)
       return t
     }
@@ -3082,10 +3089,15 @@ try {
     const pops = await pg.$$eval('.src-lock-pop', els => els.map(e => e.innerText).join(' '))
     await shot(pg, 'buttons-file.png', '.split-editor')
     const oldHits = [r1.editor, r2.editor, r3.editor, pops].flatMap(t => OLD.filter(w => t.includes(w)))
-    if (r1.btns.includes('立即更新') && r2.btns.includes('立即更新') && r3.btns.includes('上傳新版') && r2.editor.includes('建議點上方「立即更新」') && r3.editor.includes('按上方「上傳新版」') && offToast && !oldHits.length) {
+    // `C-368`（2026-10-21，`e7a9d47`）：網址有變動的提醒改成講是哪一件事（沒帶原因的舊資料＝「網頁內容有變」），
+    // 不再一律寫「…建議點上方「立即更新」」；守門員那時沒跟著改（`E-43`）
+    const r2Hint = r2.editor.includes('按上方「立即更新」看網頁改了哪幾行')
+    const r3Hint = r3.editor.includes('按上方「上傳新版」')
+    if (r1.btns.includes('立即更新') && r2.btns.includes('立即更新') && r3.btns.includes('上傳新版') && r2Hint && r3Hint && offToast && !oldHits.length) {
       pass('試算表、網址右上「立即更新」、檔案「上傳新版」；網址有變動的提醒、檔案壞了的修法、鎖頭、關掉自動更新的提示都照新叫法，整頁沒有「換新版／立即同步／重新同步」')
     }
-    else fail('更新類按鈕的叫法不一致', JSON.stringify({ b1: r1.btns, b2: r2.btns, b3: r3.btns, offToast, oldHits }))
+    // 兩句說明各自有沒有對到也印出來（`E-43`：以前只印按鈕，紅了看不出是哪一句）
+    else fail('更新類按鈕的叫法不一致', JSON.stringify({ b1: r1.btns, b2: r2.btns, b3: r3.btns, r2Hint, r3Hint, offToast, oldHits }))
     await pg.close()
   }
 
@@ -3186,7 +3198,13 @@ try {
     await waitFor(pg, () => [...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '新增分組'), null, 8000)
     const menu = await pg.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(e => e.offsetParent !== null).map(e => e.innerText.trim()))
     await pg.keyboard.press('Escape')
-    await pg.mouse.click(700, 600)
+    // ⛔ 不點畫面上固定座標收選單（`E-43`）：那個位置是什麼要看資料載入多快——有一次正好是「AI 建議」（正式資料）的「交給真人就好」，
+    //    跳出「這一組都交給真人？」蓋住整頁，後面「⋯」全點不到＝從頭跑時第 44 段中斷。沒收起來就再按一次選單鈕（按一次開、再按一次收）
+    const kbMenuClosed = () => waitFor(pg, () => ![...document.querySelectorAll('.el-dropdown-menu__item')].some(e => e.offsetParent !== null && e.innerText.trim() === '新增分組'), null, 2000)
+    if (!(await kbMenuClosed())) {
+      await pg.click('[data-tour="kb-more"]')
+      await kbMenuClosed()
+    }
     await sleep(400)
     if (menu.includes('新增分組') && !menu.some(t => t.includes('資料夾'))) pass(`「⋯」選單講「新增分組」（${menu.join('／')}）`)
     else fail('「⋯」選單還在講資料夾', menu.join('／'))
