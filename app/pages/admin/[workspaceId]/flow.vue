@@ -1172,7 +1172,7 @@ import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config
 import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
-  firstTaggedPostbackError,
+  flowTaggedPostbackError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import {
@@ -1193,7 +1193,7 @@ import {
   lineTextOverflowMessage,
   measureLineText,
 } from '~~/shared/line-text-limits'
-import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageSizeError } from '~~/shared/card-message'
+import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -2990,50 +2990,14 @@ function validateMessages(messages: any[]): string | null {
       }
     }
 
-    // 卡片訊息（`C-398` 以前叫「輪播訊息」）：跟後端 `flow-validator.ts` 同一套，上限與大小估算吃 `shared/card-message.ts`
-    if (msg?.type === 'flexImageCarousel' && Array.isArray(msg.columns)) {
-      if (msg.columns.length < 1) return '卡片訊息：至少要有 1 張卡'
-      if (msg.columns.length > 10) return '卡片訊息：最多 10 張卡'
-      const enableImage = msg.enableImage !== false
-      for (const col of msg.columns) {
-        if (enableImage) {
-          if (!col?.imageUrl?.trim()) return '卡片訊息：已開啟圖片，每張卡都要上傳圖片'
-        }
-        else if (!col?.title?.trim()) {
-          return '卡片訊息：沒開圖片時，每張卡都要有標題'
-        }
-        if (String(col?.title || '').length > CARD_TITLE_MAX) return `卡片訊息：標題最多 ${CARD_TITLE_MAX} 字`
-        if (String(col?.text || '').length > CARD_BODY_MAX) {
-          return `卡片訊息：內文最多 ${CARD_BODY_MAX} 字（目前 ${String(col.text).length} 字）`
-        }
-        const action = col?.action
-        if (enableImage) {
-          if (action?.type === 'uri' && !action?.uri?.trim()) return '卡片訊息：圖片動作網址為必填'
-          if (action?.type === 'message' && !action?.text?.trim()) return '卡片訊息：圖片動作傳送文字為必填'
-          if (action?.type === 'module' && !action?.moduleId) return '卡片訊息：請選擇圖片動作要觸發的機器人模組'
-          if (action?.tagging?.enabled === true && (!Array.isArray(action?.tagging?.addTagIds) || action.tagging.addTagIds.length === 0)) {
-            return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
-          }
-        }
-        if (Array.isArray(col?.actions)) {
-          if (col.actions.length > 3) return '卡片訊息：每張卡按鈕最多 3 個'
-          for (const btn of col.actions) {
-            if (!btn?.label?.trim()) return '卡片訊息：按鈕文字為必填'
-            if (btn.type === 'uri' && !btn?.uri?.trim()) return '卡片訊息：按鈕網址為必填'
-            if (btn.type === 'message' && !btn?.text?.trim()) return '卡片訊息：按鈕傳送文字為必填'
-            if (btn.type === 'module' && !btn?.moduleId) return '卡片訊息：請選擇按鈕要觸發的機器人模組'
-            if (btn?.tagging?.enabled === true && (!Array.isArray(btn?.tagging?.addTagIds) || btn.tagging.addTagIds.length === 0)) {
-              return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
-            }
-          }
-        }
-      }
-      const sizeError = cardMessageSizeError(msg)
-      if (sizeError) return sizeError
+    // 卡片訊息（`C-398` 以前叫「輪播訊息」）：全部規則在 `shared/card-message.ts` 一支，後端 `flow-validator.ts` 叫同一支
+    if (msg?.type === 'flexImageCarousel') {
+      const cardError = cardMessageError(msg)
+      if (cardError) return cardError
     }
 
-    // `H-43`：開了貼標的按鈕放不進 LINE 的 300 字（跟後端 flow-validator 同一支）
-    const postbackError = firstTaggedPostbackError(msg)
+    // `H-43`：開了貼標的按鈕放不進 LINE 的 300 字（跟後端 flow-validator 同一支，只看真的會送出去的）
+    const postbackError = flowTaggedPostbackError([msg])
     if (postbackError) return postbackError
       return null
     })()

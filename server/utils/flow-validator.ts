@@ -1,7 +1,7 @@
 import { createError } from 'h3'
-import { firstTaggedPostbackError, validateUnifiedAction } from '~~/shared/action-schema'
+import { flowTaggedPostbackError, validateUnifiedAction } from '~~/shared/action-schema'
 import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
-import { CARD_BODY_MAX, CARD_TITLE_MAX, cardMessageSizeError } from '~~/shared/card-message'
+import { cardMessageError } from '~~/shared/card-message'
 
 const FLOW_MESSAGE_LIMIT = 5
 const USER_INPUT_ATTRIBUTE_RE = /^[A-Za-z][A-Za-z0-9_]{0,49}$/
@@ -153,55 +153,11 @@ function validateImageCarousel(msg: any): void {
   }
 }
 
-// 卡片訊息（`C-398` 以前叫「輪播訊息」）；上限與整組大小估算在 `shared/card-message.ts`，前端存檔前跑同一份
+// 卡片訊息（`C-398` 以前叫「輪播訊息」）：全部規則在 `shared/card-message.ts` 一支，前端存檔前跑同一支
+// （含整組大小——超過 LINE 會把整個請求退回，只能在存檔時擋）
 function validateFlexImageCarousel(msg: any): void {
-  if (!Array.isArray(msg?.columns) || msg.columns.length < 1) fail('卡片訊息：至少要有 1 張卡')
-  if (msg.columns.length > 10) fail('卡片訊息：最多 10 張卡')
-
-  const enableImage = msg?.enableImage !== false
-
-  for (const col of msg.columns) {
-    if (enableImage) {
-      if (!String(col?.imageUrl || '').trim()) fail('卡片訊息：已開啟圖片，每張卡都要上傳圖片')
-    }
-    else if (!String(col?.title || '').trim()) {
-      fail('卡片訊息：沒開圖片時，每張卡都要有標題')
-    }
-    if (String(col?.title || '').length > CARD_TITLE_MAX) fail(`卡片訊息：標題最多 ${CARD_TITLE_MAX} 字`)
-    if (String(col?.text || '').length > CARD_BODY_MAX) {
-      fail(`卡片訊息：內文最多 ${CARD_BODY_MAX} 字（目前 ${String(col.text).length} 字）`)
-    }
-    const action = col?.action
-    if (enableImage) {
-      if (action?.type === 'uri') {
-        if (!String(action?.uri || '').trim()) fail('卡片訊息：圖片動作網址為必填')
-      }
-      if (action?.type === 'message') {
-        if (!String(action?.text || '').trim()) fail('卡片訊息：圖片動作傳送文字為必填')
-      }
-      if (action?.type === 'module') {
-        if (!String(action?.moduleId || '').trim()) fail('卡片訊息：請選擇圖片動作要觸發的機器人模組')
-      }
-      ensureTaggingSelection(action?.tagging, '卡片訊息')
-    }
-
-    if (Array.isArray(col?.actions)) {
-      if (col.actions.length > 3) fail('卡片訊息：每張卡按鈕最多 3 個')
-      for (const btn of col.actions) {
-        if (!String(btn?.label || '').trim()) fail('卡片訊息：按鈕文字為必填')
-        if (btn?.type === 'uri' && !String(btn?.uri || '').trim()) fail('卡片訊息：按鈕網址為必填')
-        if (btn?.type === 'message' && !String(btn?.text || '').trim()) fail('卡片訊息：按鈕傳送文字為必填')
-        if (btn?.type === 'module' && !String(btn?.moduleId || '').trim()) {
-          fail('卡片訊息：請選擇按鈕要觸發的機器人模組')
-        }
-        ensureTaggingSelection(btn?.tagging, '卡片訊息')
-      }
-    }
-  }
-
-  // ⛔ 整組太大 LINE 會把整個請求退回（同一次回覆的其他訊息也送不出去），只能在存檔時擋
-  const sizeError = cardMessageSizeError(msg)
-  if (sizeError) fail(sizeError)
+  const error = cardMessageError(msg)
+  if (error) fail(error)
 }
 
 function validateMessageByType(msg: any): void {
@@ -261,8 +217,9 @@ export function assertValidFlowMessages(messages: unknown): asserts messages is 
     validateMessageByType(msg)
   }
 
-  // `H-43`：開了貼標的按鈕編成 postback 放不進 LINE 的 300 字，整則會被退回——按鈕在哪一層都走同一支找
-  const postbackError = firstTaggedPostbackError(messages)
+  // `H-43`：開了貼標的按鈕編成 postback 放不進 LINE 的 300 字，整則會被退回——按鈕在哪一層都走同一支找，
+  // 只看真的會送出去的（關了圖片的圖片動作、透明背景的圖文訊息不算）
+  const postbackError = flowTaggedPostbackError(messages)
   if (postbackError) fail(postbackError)
 }
 

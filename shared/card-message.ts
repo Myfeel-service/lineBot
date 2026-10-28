@@ -78,7 +78,59 @@ export function estimateCardMessageBytes(msg: any): number {
   return total
 }
 
-/** 整組太大時給人看的那句話；沒問題回空字串。存檔時前後端都擋（`flow.vue`／`flow-validator.ts`） */
+/** 有開貼標卻一個標籤都沒選 */
+function taggingMissingTags(tagging: any): boolean {
+  if (tagging?.enabled !== true) return false
+  const ids = Array.isArray(tagging?.addTagIds) ? tagging.addTagIds.map((x: unknown) => String(x || '').trim()).filter(Boolean) : []
+  return ids.length === 0
+}
+
+/**
+ * 卡片訊息存檔前的全部檢查（張數、圖片、標題、內文、圖片動作、按鈕、貼標、整組大小），回第一個錯誤句，都沒問題回空字串。
+ * ⛔ 前後端都叫這一支（`flow.vue` 的 validateMessages、`flow-validator.ts`）——以前兩邊各抄一份，
+ *    改規則要改兩個地方，漏一邊就是「後台放行、伺服器擋下」（code review 第 10 條）。
+ * 開貼標的按鈕放不放得進 LINE 的 300 字不在這裡（`action-schema.ts` 的 flowTaggedPostbackError，所有訊息共用）。
+ */
+export function cardMessageError(msg: any): string {
+  const columns = msg?.columns
+  if (!Array.isArray(columns) || columns.length < 1) return '卡片訊息：至少要有 1 張卡'
+  if (columns.length > 10) return '卡片訊息：最多 10 張卡'
+  const enableImage = msg?.enableImage !== false
+  const blank = (v: unknown) => !String(v ?? '').trim()
+
+  for (const col of columns) {
+    if (enableImage) {
+      if (blank(col?.imageUrl)) return '卡片訊息：已開啟圖片，每張卡都要上傳圖片'
+    }
+    else if (blank(col?.title)) {
+      return '卡片訊息：沒開圖片時，每張卡都要有標題'
+    }
+    if (String(col?.title ?? '').length > CARD_TITLE_MAX) return `卡片訊息：標題最多 ${CARD_TITLE_MAX} 字`
+    if (String(col?.text ?? '').length > CARD_BODY_MAX) {
+      return `卡片訊息：內文最多 ${CARD_BODY_MAX} 字（目前 ${String(col.text).length} 字）`
+    }
+    const action = col?.action
+    if (enableImage) {
+      if (action?.type === 'uri' && blank(action?.uri)) return '卡片訊息：圖片動作網址為必填'
+      if (action?.type === 'message' && blank(action?.text)) return '卡片訊息：圖片動作傳送文字為必填'
+      if (action?.type === 'module' && blank(action?.moduleId)) return '卡片訊息：請選擇圖片動作要觸發的機器人模組'
+      if (taggingMissingTags(action?.tagging)) return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
+    }
+    if (Array.isArray(col?.actions)) {
+      if (col.actions.length > 3) return '卡片訊息：每張卡按鈕最多 3 個'
+      for (const btn of col.actions) {
+        if (blank(btn?.label)) return '卡片訊息：按鈕文字為必填'
+        if (btn?.type === 'uri' && blank(btn?.uri)) return '卡片訊息：按鈕網址為必填'
+        if (btn?.type === 'message' && blank(btn?.text)) return '卡片訊息：按鈕傳送文字為必填'
+        if (btn?.type === 'module' && blank(btn?.moduleId)) return '卡片訊息：請選擇按鈕要觸發的機器人模組'
+        if (taggingMissingTags(btn?.tagging)) return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
+      }
+    }
+  }
+  return cardMessageSizeError(msg)
+}
+
+/** 整組太大時給人看的那句話；沒問題回空字串。存檔時前後端都擋（經由 `cardMessageError`） */
 export function cardMessageSizeError(msg: any): string {
   const bytes = estimateCardMessageBytes(msg)
   if (bytes <= LINE_CAROUSEL_JSON_MAX) return ''

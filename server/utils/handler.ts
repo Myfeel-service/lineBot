@@ -7,11 +7,11 @@ import { getLineWorkspaceCredentials } from './line-workspace-credentials'
 import { resolveLineOaBasicId } from './line-oa-basic-id'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import {
-  encodeTriggerMessage,
   encodeTriggerModule,
   parseTriggerMessageData,
   parseTriggerModuleData,
   parseSwitchMenuData,
+  taggedMessagePostback,
 } from '~~/shared/action-schema'
 import {
   pickBestMatchingAutoReplyRule,
@@ -1243,7 +1243,7 @@ function buildRichMessageLineMessage(input: {
         return {
           type: 'imagemap',
           baseUrl,
-          altText: renderWithAttributes(input.altText, input.attributes).slice(0, 400),
+          altText: lineAltText(input.altText, input.attributes, '圖文訊息'),
           baseSize: { width: aspect.canvasWidth, height: aspect.canvasHeight },
           actions,
         } as messagingApi.Message
@@ -1267,6 +1267,15 @@ function buildRichMessageLineMessage(input: {
 }
 
 /** Flex footer 按鈕 action（與輪播 template 按鈕邏輯一致，需顯示 label） */
+/**
+ * 卡片、輪播、圖文訊息的通知列那行字（altText）。
+ * ⛔ 判空要看**換完變數之後**：只寫了 {{displayName}} 的、取不到名字就變空字串，
+ *    LINE 不收沒有 altText 的訊息、整次回覆一起失敗（code review 第 2 條）——空的就用 fallback。
+ */
+function lineAltText(raw: unknown, attributes: Record<string, string>, fallback: string): string {
+  return truncateLineText(renderWithAttributes(String(raw || ''), attributes).trim(), 400) || fallback
+}
+
 function buildFlexCarouselButtonAction(
   action: any,
   attributes: Record<string, string>,
@@ -1307,8 +1316,7 @@ function buildFlexCarouselButtonAction(
     return {
       type: 'postback',
       label: renderWithAttributes(action?.label || '　', attributes).slice(0, 20),
-      data: encodeTriggerMessage(renderedText, tagIds),
-      displayText: renderedText,
+      ...taggedMessagePostback(renderedText, tagIds),
     }
   }
   return {
@@ -1454,8 +1462,7 @@ function buildRichMessageFlexMessage(input: {
           ? {
               type: 'postback',
               label: ' ',
-              data: encodeTriggerMessage(renderedText, tagIds),
-              displayText: renderedText,
+              ...taggedMessagePostback(renderedText, tagIds),
             }
           : {
               type: 'message',
@@ -1501,7 +1508,7 @@ function buildRichMessageFlexMessage(input: {
 
   return {
     type: 'flex',
-    altText: renderWithAttributes(input.altText, input.attributes).slice(0, 400),
+    altText: lineAltText(input.altText, input.attributes, '圖文訊息'),
     contents: {
       type: 'bubble',
       ...(transparent
@@ -1536,48 +1543,11 @@ function buildLineMessages(
         // 不同格，預覽就又開始說謊。存檔端已擋下超長文字（`H-27`），這裡只是最後一道
         // 保險：變數展開後才變長的情況仍可能走到。
         text: truncateLineText(renderedText || '無內容', LINE_TEXT_MESSAGE_MAX),
-        actions: msg.buttons.slice(0, 4).map((b: any) => {
-          if (b.type === 'uri') {
-            return {
-              type: 'uri',
-              label: renderWithAttributes(b.label || '開啟連結', attributes).slice(0, 20),
-              uri: resolveUriWithTagging({
-                uri: renderWithAttributes(b.uri || 'https://google.com', attributes),
-                action: b,
-                userId,
-                publicBaseOverride,
-                channelSecret: lineChannelSecret,
-              }),
-            }
-          }
-          if (b.type === 'module') {
-            return {
-              type: 'postback',
-              label: renderWithAttributes(b.label || '觸發模組', attributes).slice(0, 20),
-              data: encodeTriggerModule(
-                b.moduleId,
-                b?.tagging?.enabled && Array.isArray(b?.tagging?.addTagIds)
-                  ? b.tagging.addTagIds
-                  : [],
-              )
-            }
-          }
-          const renderedText = renderWithAttributes(b.text || b.label || '點擊傳送', attributes).slice(0, 300)
-          const tagIds = extractTagIdsFromAction(b)
-          if (tagIds.length > 0) {
-            return {
-              type: 'postback',
-              label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
-              data: encodeTriggerMessage(renderedText, tagIds),
-              displayText: renderedText,
-            }
-          }
-          return {
-            type: 'message',
-            label: renderWithAttributes(b.label || '點擊傳送', attributes).slice(0, 20),
-            text: renderedText,
-          }
-        }),
+        // 按鈕跟卡片訊息的按鈕同一支組法（code review 第 9 條：`C-397` 時兩邊各留一份，改一邊會漏另一邊）。
+        // 沒存 type 的舊資料以前一律當「傳送文字」，這裡照舊
+        actions: msg.buttons.slice(0, 4)
+          .map((b: any) => buildFlexCarouselButtonAction({ ...b, type: b?.type || 'message' }, attributes, userId, publicBaseOverride, lineChannelSecret))
+          .filter((a: Record<string, unknown> | null): a is Record<string, unknown> => a !== null),
       }) as unknown as messagingApi.FlexMessage]
     }
 
@@ -1625,8 +1595,7 @@ function buildLineMessages(
           return {
             type: 'postback',
             label: renderWithAttributes(action?.label || '　', attributes).slice(0, 20),
-            data: encodeTriggerMessage(renderedText, tagIds),
-            displayText: renderedText,
+            ...taggedMessagePostback(renderedText, tagIds),
           }
         }
         return {
@@ -1656,7 +1625,7 @@ function buildLineMessages(
       const carouselAspect = String(msg.imageAspectRatio || '').trim() === 'square' ? 'square' : 'rectangle'
       return [{
         type: 'template',
-        altText: renderWithAttributes(msg.altText || '輪播訊息', attributes).slice(0, 400),
+        altText: lineAltText(msg.altText, attributes, '輪播訊息'),
         template: {
           type: 'carousel',
           columns,
@@ -1703,8 +1672,7 @@ function buildLineMessages(
               ? {
                   type: 'postback',
                   label: renderWithAttributes(col.action.label || '傳送', attributes).slice(0, 20),
-                  data: encodeTriggerMessage(renderedText, tagIds),
-                  displayText: renderedText,
+                  ...taggedMessagePostback(renderedText, tagIds),
                 }
               : {
                   type: 'message',
@@ -1720,7 +1688,7 @@ function buildLineMessages(
       if (!columns.length) return []
       return [{
         type: 'template',
-        altText: renderWithAttributes(msg.altText || '圖片輪播', attributes).slice(0, 400),
+        altText: lineAltText(msg.altText, attributes, '圖片輪播'),
         template: { type: 'image_carousel', columns },
       } as messagingApi.TemplateMessage]
     }
@@ -1764,8 +1732,7 @@ function buildLineMessages(
               ? {
                   type: 'postback',
                   label: ' ',
-                  data: encodeTriggerMessage(renderedText, tagIds),
-                  displayText: renderedText,
+                  ...taggedMessagePostback(renderedText, tagIds),
                 }
               : {
                   type: 'message',
@@ -1800,11 +1767,14 @@ function buildLineMessages(
         })
         .filter(Boolean)
       if (!bubbles.length) return []
-      // 通知列那行字：沒填的話用第一張的標題（`C-398` 以前固定是「輪播訊息」——那是後台的詞，客人看不懂）
-      const firstTitle = String(msg.columns?.find((c: any) => String(c?.title || '').trim())?.title || '').trim()
+      // 通知列那行字：沒填的話用固定的「卡片訊息」（`C-398` 以前是「輪播訊息」——後台的詞）。
+      // ⛔ 不可以拿第一張的標題：這行字也會存成對話紀錄，AI 判斷「客人在問哪個商品」會讀它——
+      //    一整排商品目錄會被當成在談第一張那台，客人接著問「我的什麼時候出貨」就答成那台（code review 第 1 條）。
+      // ⛔ 判空要看**換完變數之後**：只寫了 {{displayName}} 的、取不到名字就是空字串，LINE 不收沒有 altText 的卡、整次回覆失敗（第 2 條）
+      const altText = lineAltText(msg.altText, attributes, '卡片訊息')
       return [{
         type: 'flex',
-        altText: truncateLineText(renderWithAttributes(msg.altText || firstTitle || '卡片訊息', attributes), 400),
+        altText,
         contents: { type: 'carousel', contents: bubbles },
       } as messagingApi.FlexMessage]
     }
@@ -1903,8 +1873,7 @@ function buildLineMessages(
             ? {
                 type: 'postback',
                 label: renderWithAttributes(qr.action.label || '傳送', attributes).slice(0, 20),
-                data: encodeTriggerMessage(renderedText, tagIds),
-                displayText: renderedText,
+                ...taggedMessagePostback(renderedText, tagIds),
               }
             : {
                 type: 'message',
@@ -4135,10 +4104,35 @@ async function callStaffBack(params: {
 }
 
 /**
- * 客人自己說要找真人的轉接原因：這場一開始算「直接找真人」，跟按選單那顆「真人客服」一樣，
- * 不算 AI 接的（`D-152`）。AI 表現頁也是把這種從 AI 的成績單裡扣掉（directHandoffs）。
+ * **AI 看完、自己判斷要交給真人**的轉接原因：只有這幾種，這場一開始才算「AI 接的」（統計頁那格的說明＝
+ * 「AI 回答了，或 AI 看完判斷要交給真人」）。
+ * ⛔ 每一種都要明寫算或不算（code review 第 8 條）：以前是列「客人自己找真人」那兩種不算、其餘都算，
+ *    以後多一種轉接原因忘了加，就會默默被算成 AI 接的。現在是一張對照表，型別要求每一種都列出來——
+ *    `HandoffReason` 多一種沒歸類，typecheck 直接紅。
+ * 不算的：客人自己說要找真人（`user_request`／`non_text_content`，算「直接找真人」，`D-152`）、
+ * AI 呼叫失敗（`llm_error`——AI 根本沒判斷，跟額度用完同一回事，第 4 條）、額度用完、設定問題（`manual`）、
+ * 自動回應連中兩次（`auto_reply_repeat`，不是 AI）。
  */
-const CUSTOMER_ASKED_HUMAN_REASONS: ReadonlySet<HandoffReason | null> = new Set<HandoffReason>(['user_request', 'non_text_content'])
+const HANDOFF_REASON_COUNTS_AS_AI: Record<HandoffReason, boolean> = {
+  low_confidence: true,
+  no_grounding: true,
+  sensitive_topic: true,
+  commercial_inquiry: true,
+  unresolved: true,
+  product_mismatch: true,
+  order_status: true,
+  user_request: false,
+  non_text_content: false,
+  llm_error: false,
+  quota_exceeded: false,
+  manual: false,
+  auto_reply_repeat: false,
+}
+
+/** 這種轉真人的場，一開始算不算「AI 接的」；沒有原因的一律不算（寧可少算，不灌水） */
+export function handoffCountsAsAiFirst(reason: HandoffReason | null | undefined): boolean {
+  return reason ? HANDOFF_REASON_COUNTS_AS_AI[reason] === true : false
+}
 
 /**
  * 把客人轉真人，**並且由這裡送出客人看到的那則訊息**：回覆本工作區「真人客服」系統模組的
@@ -4253,12 +4247,12 @@ async function deliverHandoffReply(params: {
     }
   }
 
-  // AI 讀過這一則、判斷要轉真人（含先答一般說明再轉、AI 出錯才轉）＝這場一開始是 AI 接的，
+  // AI 讀過這一則、判斷要轉真人（含先答一般說明再轉）＝這場一開始是 AI 接的，
   // 要在轉真人**之前**記（首接只認第一筆）。以前沒記，統計把這種場算成「客服」：
   // MYFEEL 2026-09-24～10-23 先答再轉 9 場（`H-42`①）＋直接轉 7 場（`D-152`）。
   // 同「需要幫您轉接嗎？」那條的口徑。沒有 aiTurnId＝AI 根本沒跑（額度用完、腳本逃生門），不記。
-  // ⛔ 客人自己說要找真人不記（見 CUSTOMER_ASKED_HUMAN_REASONS）。
-  if (replyDelivered && params.aiTurnId && !CUSTOMER_ASKED_HUMAN_REASONS.has(params.reason)) {
+  // ⛔ 只認 AI 自己判斷的原因（見 HANDOFF_REASON_COUNTS_AS_AI）：客人自己找真人、AI 呼叫失敗都不記。
+  if (replyDelivered && params.aiTurnId && handoffCountsAsAiFirst(params.reason)) {
     await enterModule(sessionId, lineUserId, 'ai', undefined, workspaceId).catch(e =>
       console.error('[ai-fallback] enterModule(ai) before handoff error:', e),
     )

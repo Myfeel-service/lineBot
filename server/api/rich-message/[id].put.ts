@@ -1,5 +1,7 @@
 import {
   normalizeUnifiedActions,
+  richMessageSendsPostbacks,
+  taggedPostbackError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import { getDoc } from '~~/server/utils/firebase'
@@ -48,6 +50,14 @@ export default defineEventHandler(async (event) => {
       const error = validateUnifiedAction(action)
       if (error) {
         throw createError({ statusCode: 400, statusMessage: `slot ${action.slot}: ${error}` })
+      }
+    }
+    // `H-43`：開貼標的區塊放不放得進 LINE 的 300 字（透明背景改走 imagemap、不送 postback 的不算）
+    const transparent = transparentBackground !== undefined ? Boolean(transparentBackground) : existing.transparentBackground === true
+    if (richMessageSendsPostbacks({ transparentBackground: transparent, actions: normalizedActions })) {
+      for (const action of normalizedActions) {
+        const error = taggedPostbackError(action)
+        if (error) throw createError({ statusCode: 400, statusMessage: `slot ${action.slot}: ${error}` })
       }
     }
     updates.actions = normalizedActions

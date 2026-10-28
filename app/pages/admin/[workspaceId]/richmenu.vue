@@ -398,13 +398,13 @@ import {
 } from '~~/shared/upload-rules'
 import {
   decodeTriggerModule,
-  encodeTriggerMessage,
   encodeSwitchMenu,
   parseTriggerMessageData,
   parseTriggerModuleData,
   parseSwitchMenuData,
   encodeTriggerModule,
-  LINE_POSTBACK_DATA_MAX,
+  taggedMessagePostback,
+  taggedPostbackError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import {
@@ -1011,13 +1011,9 @@ async function submitForm() {
       if (area?.action?.tagging?.enabled === true && (!Array.isArray(area?.action?.tagging?.addTagIds) || area.action.tagging.addTagIds.length === 0)) {
         return showToast(`區塊 ${index + 1}：已啟用貼標，請至少選擇一個標籤`, 'error')
       }
-      // `H-43`：標籤會跟著編進 postback，掛太多放不進 LINE 的 300 字（另外兩種動作在 validateUnifiedAction 裡擋）
-      if (area?.action?.tagging?.enabled === true) {
-        const target = parseSwitchMenuData(String(area.action.data || '')).targetMenuId
-        if (encodeSwitchMenu(target, area.action.tagging.addTagIds).length > LINE_POSTBACK_DATA_MAX) {
-          return showToast(`區塊 ${index + 1}：這個區塊掛的標籤太多，LINE 放不下。請少掛幾個標籤。`, 'error')
-        }
-      }
+      // `H-43`：標籤會跟著編進 postback，掛太多放不進 LINE 的 300 字（跟另外兩種動作同一支）
+      const switchPostbackErr = taggedPostbackError({ ...area.action, type: 'switch' })
+      if (switchPostbackErr) return showToast(`區塊 ${index + 1}：${switchPostbackErr}`, 'error')
       continue
     }
     const err = validateUnifiedAction({
@@ -1032,6 +1028,9 @@ async function submitForm() {
       },
     })
     if (err) return showToast(`區塊 ${index + 1}：${err}`, 'error')
+    // 圖文選單開了貼標的「傳送文字」／「叫出模組」一定是 postback：放不放得進 LINE 的 300 字（`H-43`）
+    const postbackErr = taggedPostbackError(area.action)
+    if (postbackErr) return showToast(`區塊 ${index + 1}：${postbackErr}`, 'error')
   }
 
   const apiAreas = form.value.areas.map(a => {
@@ -1050,8 +1049,8 @@ async function submitForm() {
           ...a,
           action: {
             type: 'postback',
-            data: encodeTriggerMessage(String(a.action.text || ' ').slice(0, 300), tagIds),
-            displayText: String(a.action.text || ' ').slice(0, 300),
+            // data 與聊天泡泡顯示的字同一句（放不下被切短時兩格一起短，code review 第 7 條）
+            ...taggedMessagePostback(String(a.action.text || ' ').slice(0, 300), tagIds),
           },
         }
       }

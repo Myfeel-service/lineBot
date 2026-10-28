@@ -3,6 +3,7 @@ import { validateUploadPayload } from '~~/server/utils/upload-validator'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { writeAuditLog, diffChangedFields } from '~~/server/utils/audit-log'
+import { richMenuAreasPostbackError } from '~~/shared/action-schema'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
@@ -11,6 +12,10 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody(event)
   const { name, size, areas, chatBarText, selected, setAsDefault, imageBase64, contentType } = body
+
+  // `H-43`：每一格的 postback 要放得進 LINE 的 300 字（放不下 LINE 會把整個選單退回，錯誤訊息只有英文）
+  const areasError = richMenuAreasPostbackError(areas)
+  if (areasError) throw createError({ statusCode: 400, statusMessage: areasError })
 
   // Get existing doc to get the old richMenuId and old imageUrl
   const oldDoc = await getDoc<any>('richmenus', firestoreId)

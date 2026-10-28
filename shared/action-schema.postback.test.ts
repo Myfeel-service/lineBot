@@ -4,7 +4,10 @@ import {
   encodeTriggerMessage,
   encodeTriggerModule,
   firstTaggedPostbackError,
+  flowTaggedPostbackError,
   parseTriggerMessageData,
+  richMenuAreasPostbackError,
+  taggedMessagePostback,
   taggedPostbackError,
   validateUnifiedAction,
 } from './action-schema'
@@ -102,11 +105,74 @@ describe('存檔時擋：taggedPostbackError', () => {
     expect(taggedPostbackError(mod(7))).toMatch(/標籤太多.*現在 7 個，最多 6 個/)
   })
 
-  it('圖文選單／圖文訊息的區塊走 validateUnifiedAction，同一條也會擋', () => {
+  it('換行、引號佔 2 格：「現在幾字」跟「最多幾字」用同一把尺，不會講出「最多 224（現在 150）」卻擋下來（第 5 條）', () => {
+    const err = taggedPostbackError(msg('"'.repeat(150)))
+    const [, room, used] = err.match(/最多約 (\d+) 字（現在 (\d+) 字/) ?? []
+    expect(Number(used)).toBeGreaterThan(Number(room))
+    expect(err).toContain('換行、引號各算 2 字')
+    // 沒有跳脫字元的就不多講那一句
+    expect(taggedPostbackError(msg('我'.repeat(250)))).not.toContain('換行')
+  })
+
+  it('validateUnifiedAction 不判放不放得下（它不知道這個動作會不會變成 postback），由呼叫端自己叫', () => {
     expect(validateUnifiedAction({
       slot: 'A', type: 'message', uri: '', text: '我'.repeat(250), moduleId: '',
       tagging: { enabled: true, addTagIds: [TAG] },
-    })).toMatch(/最多約/)
+    })).toBeNull()
+  })
+
+  it('圖文選單的「切換選單」也一起算（第 11 條）', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `${TAG.slice(0, -2)}${String(i).padStart(2, '0')}`)
+    const sw = (n: number) => ({ type: 'switch', data: `switchMenu=${'m'.repeat(20)}`, tagging: { enabled: true, addTagIds: many(n) } })
+    expect(taggedPostbackError(sw(2))).toBe('')
+    expect(taggedPostbackError(sw(8))).toMatch(/標籤太多.*現在 8 個/)
+  })
+})
+
+describe('flowTaggedPostbackError：只看真的會送出去的（第 6 條）', () => {
+  const tooLong = { type: 'message', label: '我要參加', text: '我'.repeat(250), tagging: { enabled: true, addTagIds: [TAG] } }
+
+  it('卡片訊息關了圖片：「圖片動作」不送，不擋；開著就擋', () => {
+    const card = (enableImage: boolean) => [{ type: 'flexImageCarousel', enableImage, columns: [{ action: tooLong, actions: [] }] }]
+    expect(flowTaggedPostbackError(card(false))).toBe('')
+    expect(flowTaggedPostbackError(card(true))).toMatch(/最多約/)
+  })
+
+  it('透明背景的圖文訊息改走 imagemap、貼標本來就不送：不擋；但有「叫出模組」的區塊時還是 Flex，要擋', () => {
+    const rich = (transparentBackground: boolean, withModule: boolean) => [{
+      type: 'richMessage', transparentBackground,
+      actions: [tooLong, ...(withModule ? [{ type: 'module', moduleId: 'm1', tagging: { enabled: false, addTagIds: [] } }] : [])],
+    }]
+    expect(flowTaggedPostbackError(rich(true, false))).toBe('')
+    expect(flowTaggedPostbackError(rich(true, true))).toMatch(/最多約/)
+    expect(flowTaggedPostbackError(rich(false, false))).toMatch(/最多約/)
+  })
+
+  it('文字按鈕、快速回覆照樣找得到', () => {
+    expect(flowTaggedPostbackError([{ type: 'text', text: '嗨', buttons: [tooLong] }])).toMatch(/^按鈕「我要參加」/)
+    expect(flowTaggedPostbackError([{ type: 'quickReply', quickReplies: [{ action: tooLong }] }])).toMatch(/最多約/)
+  })
+})
+
+describe('taggedMessagePostback：聊天泡泡顯示的字＝機器人讀到的字（第 7 條）', () => {
+  it('放得下時兩格都是原句', () => {
+    expect(taggedMessagePostback('我要參加', [TAG])).toEqual({ data: encodeTriggerMessage('我要參加', [TAG]), displayText: '我要參加' })
+  })
+
+  it('放不下被切短時，泡泡也跟著短（以前泡泡是整句、機器人讀切短的，關鍵字對不上）', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { data, displayText } = taggedMessagePostback('我'.repeat(300), [TAG, TAG2])
+    expect(displayText).toBe(parseTriggerMessageData(data).text)
+    expect(displayText.length).toBeLessThan(300)
+  })
+})
+
+describe('richMenuAreasPostbackError：圖文選單存檔時伺服器再擋一次（第 11 條）', () => {
+  it('每一格編好的 data 都要放得下', () => {
+    expect(richMenuAreasPostbackError([{ action: { type: 'postback', data: 'triggerModule=m1' } }])).toBe('')
+    expect(richMenuAreasPostbackError([{ action: { type: 'uri', uri: 'https://a.b' } }, { action: { type: 'postback', data: 'x'.repeat(301) } }]))
+      .toMatch(/^區塊 2：/)
+    expect(richMenuAreasPostbackError(null)).toBe('')
   })
 })
 

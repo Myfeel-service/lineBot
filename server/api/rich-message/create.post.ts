@@ -2,6 +2,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import {
   normalizeUnifiedActions,
+  richMessageSendsPostbacks,
+  taggedPostbackError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import { requireCapability } from '~~/server/utils/workspace-auth'
@@ -29,6 +31,13 @@ export default defineEventHandler(async (event) => {
     const error = validateUnifiedAction(action)
     if (error) {
       throw createError({ statusCode: 400, statusMessage: `slot ${action.slot}: ${error}` })
+    }
+  }
+  // `H-43`：開貼標的區塊放不放得進 LINE 的 300 字（透明背景改走 imagemap、不送 postback 的不算）
+  if (richMessageSendsPostbacks({ transparentBackground: Boolean(transparentBackground), actions: normalizedActions })) {
+    for (const action of normalizedActions) {
+      const error = taggedPostbackError(action)
+      if (error) throw createError({ statusCode: 400, statusMessage: `slot ${action.slot}: ${error}` })
     }
   }
   const id = uuidv4()

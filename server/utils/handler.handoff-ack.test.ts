@@ -45,7 +45,7 @@ vi.mock('./ai-scripts', () => ({
 vi.mock('./conversation-media', () => ({ archiveConversationMedia: vi.fn(async () => ({ ok: false })) }))
 vi.mock('./media-describe', () => ({ readInboundImage: vi.fn(async () => ({ description: '', questions: [] })) }))
 
-import { handleMessageEvent, handlePostbackEvent } from './handler'
+import { handleMessageEvent, handlePostbackEvent, handoffCountsAsAiFirst } from './handler'
 import { getDb } from './firebase'
 import { replyMessage } from './line'
 import { getSessionStatusCached, shouldSuppressInboundBotAutomationForSession, enterModule } from './conversation-session'
@@ -375,6 +375,29 @@ describe('AI 判斷要轉真人 → 這場算 AI 接的；客人自己要找真�
 
     expect(enteredKinds()).toContain('live_agent')
     expect(enteredKinds()).not.toContain('ai')
+  })
+
+  it('AI 呼叫失敗（llm_error）才轉真人 → AI 根本沒判斷，不算 AI 接的（code review 第 4 條）', async () => {
+    const uid = 'U0000000000000000000000000000126'
+    vi.mocked(getDb).mockReturnValue(makeDb(uid, { workspaceId: WS_AI_FIRST }) as any)
+    vi.mocked(answerWithAi).mockResolvedValue({
+      decision: 'handoff', answer: '', confidence: 0, sources: [], handoffReason: 'llm_error',
+    } as any)
+
+    await handleMessageEvent(textEvent(uid, '請問保固多久', Date.now()), { workspaceId: WS_AI_FIRST })
+
+    expect(enteredKinds()).toContain('live_agent')
+    expect(enteredKinds()).not.toContain('ai')
+  })
+
+  it('哪幾種轉接原因算 AI 接的：AI 自己判斷的才算，沒有原因的不算（寧可少算不灌水）', () => {
+    for (const r of ['low_confidence', 'no_grounding', 'sensitive_topic', 'commercial_inquiry', 'unresolved', 'product_mismatch', 'order_status'] as const) {
+      expect(handoffCountsAsAiFirst(r), r).toBe(true)
+    }
+    for (const r of ['user_request', 'non_text_content', 'llm_error', 'quota_exceeded', 'manual', 'auto_reply_repeat'] as const) {
+      expect(handoffCountsAsAiFirst(r), r).toBe(false)
+    }
+    expect(handoffCountsAsAiFirst(null)).toBe(false)
   })
 
   it('回覆送不出去 → 客人沒看到 AI 那段，不記 AI（轉真人照常記）', async () => {

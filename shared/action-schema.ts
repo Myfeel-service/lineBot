@@ -35,12 +35,15 @@ export const TRIGGER_MESSAGE_PREFIX = 'triggerMessage='
 export const SWITCH_MENU_PREFIX = 'switchMenu='
 const SWITCH_MENU_TAGS_KEY = 'tags'
 
+/** 標籤代號清乾淨（去空白、去空的）。編碼與量長度都走這一支，兩邊才會算出同一個長度 */
+function cleanTagIdList(tagIds: unknown): string[] {
+  return Array.isArray(tagIds) ? tagIds.map((item) => String(item || '').trim()).filter(Boolean) : []
+}
+
 function normalizeActionTagging(input: any): ActionTagging {
   return {
     enabled: input?.enabled === true,
-    addTagIds: Array.isArray(input?.addTagIds)
-      ? input.addTagIds.map((item: unknown) => String(item || '').trim()).filter(Boolean)
-      : [],
+    addTagIds: cleanTagIdList(input?.addTagIds),
   }
 }
 
@@ -48,9 +51,7 @@ export function encodeTriggerModule(moduleId: string, tagIds: string[] = []): st
   const cleanModuleId = String(moduleId || '').trim()
   if (!cleanModuleId) return TRIGGER_MODULE_PREFIX
 
-  const cleanTagIds = Array.isArray(tagIds)
-    ? tagIds.map((item) => String(item || '').trim()).filter(Boolean)
-    : []
+  const cleanTagIds = cleanTagIdList(tagIds)
 
   if (cleanTagIds.length === 0) {
     return `${TRIGGER_MODULE_PREFIX}${cleanModuleId}`
@@ -102,9 +103,7 @@ export function encodeSwitchMenu(targetMenuId: string, tagIds: string[] = []): s
   const cleanTargetMenuId = String(targetMenuId || '').trim()
   if (!cleanTargetMenuId) return SWITCH_MENU_PREFIX
 
-  const cleanTagIds = Array.isArray(tagIds)
-    ? tagIds.map((item) => String(item || '').trim()).filter(Boolean)
-    : []
+  const cleanTagIds = cleanTagIdList(tagIds)
 
   if (cleanTagIds.length === 0) {
     return `${SWITCH_MENU_PREFIX}${cleanTargetMenuId}`
@@ -151,10 +150,6 @@ export function parseSwitchMenuData(data: string): { targetMenuId: string; tagId
 /** LINE postback 的 data 上限（字元數）。超過的話 LINE 把**整個請求**退回，同一次回覆的其他訊息也送不出去 */
 export const LINE_POSTBACK_DATA_MAX = 300
 
-function cleanTagIdList(tagIds: unknown): string[] {
-  return Array.isArray(tagIds) ? tagIds.map((item) => String(item || '').trim()).filter(Boolean) : []
-}
-
 function rawTriggerMessage(text: string, tagIds: string[]): string {
   return `${TRIGGER_MESSAGE_PREFIX}${JSON.stringify({ text, tagIds })}`
 }
@@ -190,6 +185,16 @@ export function encodeTriggerMessage(text: string, tagIds: string[] = []): strin
     console.warn(`[postback] 開貼標的「傳送文字」放不進 LINE 的 ${LINE_POSTBACK_DATA_MAX} 字：原本 ${original.length} 字、切到 ${body.length} 字（標籤 ${tags.length} 個）`)
   }
   return data
+}
+
+/**
+ * 開了貼標的「傳送文字」按鈕要放的兩格：data（機器人讀的）＋ displayText（客人聊天泡泡顯示的）。
+ * ⛔ 兩格一定要同一句：`encodeTriggerMessage` 放不下時會把字切短，泡泡卻照原句顯示的話，
+ *    客人看到的是整句、機器人比對關鍵字用的是切短的那句，對得上的自動回應不會觸發（code review 第 7 條）。
+ */
+export function taggedMessagePostback(text: string, tagIds: string[] = []): { data: string, displayText: string } {
+  const data = encodeTriggerMessage(text, tagIds)
+  return { data, displayText: parseTriggerMessageData(data).text }
 }
 
 export function parseTriggerMessageData(data: string): { text: string; tagIds: string[] } {
@@ -246,23 +251,41 @@ export function validateUnifiedAction(action: UnifiedAction): string | null {
   if (action.tagging.enabled && action.tagging.addTagIds.length === 0) {
     return '已啟用貼標，請至少選擇一個標籤'
   }
-  return taggedPostbackError(action) || null
+  // ⛔ 「放不放得進 LINE」不在這裡判：這支不知道這個動作會不會真的變成 postback（例如透明背景的圖文訊息
+  //    改用另一種格式送、貼標本來就不送）。由知道怎麼送的地方自己叫 `taggedPostbackError`（code review 第 6 條）
+  return null
 }
 
 /** 模組 id 是 36 字的 uuid；還沒選的時候照最長的算 */
 const MODULE_ID_PLACEHOLDER = 'x'.repeat(36)
+/** 切換選單的目標還沒選的時候照最長的算（Firestore 代號，多半 20～36 字） */
+const MENU_ID_PLACEHOLDER = 'x'.repeat(36)
+
+function tooManyTagsMessage(total: number, fits: number): string {
+  return `這顆按鈕掛的標籤太多，LINE 放不下（現在 ${total} 個，最多 ${fits} 個）。請少掛幾個標籤。`
+}
+
+/** 標籤從多到少試，看最多能掛幾個 */
+function maxTagsThatFit(tags: string[], encode: (tags: string[]) => string): number {
+  let fits = tags.length
+  while (fits > 0 && encode(tags.slice(0, fits)).length > LINE_POSTBACK_DATA_MAX) fits--
+  return fits
+}
 
 /**
  * 開了貼標的按鈕，編成 postback 之後放不放得進 LINE 的 300 字（`H-43`）。放不下回給人看的那句話，放得下回空字串。
- * - 傳送文字：講「最多約 N 字」（N 照目前掛的標籤算；名字變數換進去的長度算不到，送出時還有最後一道切短）
- * - 叫出模組：只有標籤會讓它變長，講「最多 K 個標籤」（標籤代號 36 字，大約 7 個才會超過）
+ * - 傳送文字：講「最多約 N 字、現在幾字」——**兩個數字用同一把尺**：換行、引號在 JSON 裡佔 2 格，
+ *   現在的字數也照 2 格算，不然會講出「最多 224 字（現在 150 字）」卻擋下來（code review 第 5 條）
+ * - 叫出模組／切換選單：只有標籤會讓它變長，講「最多 K 個標籤」（標籤代號 36 字，大約 7 個才會超過）
  * 只看「開了貼標」的：沒貼標的走別種 data，不會超過。
+ * ⚠️ 呼叫端要自己確定這個動作真的會變成 postback（見 `flowTaggedPostbackError`）。
  */
 export function taggedPostbackError(action: {
   type?: unknown
   text?: unknown
   label?: unknown
   moduleId?: unknown
+  data?: unknown
   tagging?: { enabled?: unknown, addTagIds?: unknown } | null
 } | null | undefined): string {
   if (action?.tagging?.enabled !== true) return ''
@@ -274,24 +297,71 @@ export function taggedPostbackError(action: {
     const text = String(action.text || action.label || '').slice(0, 300)
     if (rawTriggerMessage(text, tags).length <= LINE_POSTBACK_DATA_MAX) return ''
     const room = LINE_POSTBACK_DATA_MAX - rawTriggerMessage('', tags).length
-    if (room <= 0) return `這顆按鈕掛的標籤太多（${tags.length} 個），LINE 放不下。請少掛幾個標籤。`
-    return `開了貼標的「傳送文字」最多約 ${room} 字（現在 ${text.length} 字）。請縮短這句話，或少掛幾個標籤。`
+    if (room <= 0) return tooManyTagsMessage(tags.length, maxTagsThatFit(tags, t => rawTriggerMessage('', t)))
+    const used = JSON.stringify(text).length - 2
+    const escapes = used > text.length ? '；換行、引號各算 2 字' : ''
+    return `開了貼標的「傳送文字」最多約 ${room} 字（現在 ${used} 字${escapes}）。請縮短這句話，或少掛幾個標籤。`
   }
 
   if (action.type === 'module') {
     const moduleId = String(action.moduleId || '').trim() || MODULE_ID_PLACEHOLDER
     if (encodeTriggerModule(moduleId, tags).length <= LINE_POSTBACK_DATA_MAX) return ''
-    let fits = tags.length
-    while (fits > 0 && encodeTriggerModule(moduleId, tags.slice(0, fits)).length > LINE_POSTBACK_DATA_MAX) fits--
-    return `這顆按鈕掛的標籤太多，LINE 放不下（現在 ${tags.length} 個，最多 ${fits} 個）。請少掛幾個標籤。`
+    return tooManyTagsMessage(tags.length, maxTagsThatFit(tags, t => encodeTriggerModule(moduleId, t)))
+  }
+
+  // 圖文選單的「切換選單」（編輯器裡叫 switch，存成 richmenuswitch）：目標選單代號在 data 裡
+  if (action.type === 'switch' || action.type === 'richmenuswitch') {
+    const target = parseSwitchMenuData(String(action.data || '')).targetMenuId || MENU_ID_PLACEHOLDER
+    if (encodeSwitchMenu(target, tags).length <= LINE_POSTBACK_DATA_MAX) return ''
+    return tooManyTagsMessage(tags.length, maxTagsThatFit(tags, t => encodeSwitchMenu(target, t)))
   }
 
   return ''
 }
 
 /**
- * 走遍一整份訊息（文字按鈕、快速回覆、各種輪播、卡片、圖文訊息的區塊都在裡面），找第一顆放不下的開貼標按鈕。
- * 模組存檔前後端都跑這支（`flow-validator.ts`／`flow.vue`）——按鈕藏在哪一層都不用各寫一份。
+ * 圖文選單存檔時（伺服器端）：每一格已經編好的 postback data 都要放得進 LINE 的 300 字（`H-43`，code review 第 11 條）。
+ * 前端編碼前已經用 `taggedPostbackError` 擋過，這裡是防別的路徑（直接打 API、之後別的編輯器）存進來。回第一格放不下的錯誤句，都放得下回空字串。
+ */
+export function richMenuAreasPostbackError(areas: unknown): string {
+  const list = Array.isArray(areas) ? areas : []
+  const index = list.findIndex((a: any) => typeof a?.action?.data === 'string' && a.action.data.length > LINE_POSTBACK_DATA_MAX)
+  if (index < 0) return ''
+  return `區塊 ${index + 1}：這一格的資料太長（掛的標籤太多，或開了貼標的傳送文字太長），LINE 放不下`
+}
+
+/**
+ * 透明背景的圖文訊息，只要沒有「叫出模組」的區塊就改用 imagemap 送（`handler.ts` 的 buildRichMessageFlexMessage），
+ * 那種格式沒有 postback、貼標本來就不送——不能拿 300 字的規矩擋它（code review 第 6 條）。
+ */
+export function richMessageSendsPostbacks(msg: { transparentBackground?: unknown, actions?: unknown } | null | undefined): boolean {
+  if (msg?.transparentBackground !== true) return true
+  return Array.isArray(msg.actions) && msg.actions.some((a: any) => a?.type === 'module')
+}
+
+/**
+ * 模組存檔時：找第一顆放不進 LINE 的開貼標按鈕（前後端同一支：`flow-validator.ts`／`flow.vue`）。
+ * 只看**真的會送出去的**：卡片訊息關了圖片時「圖片動作」不送、透明背景的圖文訊息走 imagemap、
+ * 引用的圖文訊息（richMessageRef）在它自己存檔時檢查。
+ */
+export function flowTaggedPostbackError(messages: unknown): string {
+  for (const msg of Array.isArray(messages) ? messages : []) {
+    if (!msg || typeof msg !== 'object') continue
+    const m = msg as Record<string, any>
+    if (m.type === 'richMessageRef') continue
+    if (m.type === 'richMessage' && !richMessageSendsPostbacks(m)) continue
+    const sent = m.type === 'flexImageCarousel' && m.enableImage === false
+      ? { ...m, columns: (Array.isArray(m.columns) ? m.columns : []).map((c: any) => ({ ...c, action: undefined })) }
+      : m
+    const err = firstTaggedPostbackError(sent)
+    if (err) return err
+  }
+  return ''
+}
+
+/**
+ * 走遍一個物件裡的每一層，找第一顆放不下的開貼標按鈕（按鈕藏在哪一層都不用各寫一份）。
+ * ⚠️ 不分會不會真的送出，模組請用上面的 `flowTaggedPostbackError`。
  */
 export function firstTaggedPostbackError(value: unknown, depth = 0): string {
   if (!value || typeof value !== 'object' || depth > 12) return ''

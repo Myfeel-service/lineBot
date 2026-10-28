@@ -118,10 +118,13 @@ describe('送出去的樣子', () => {
     expect(out.contents.contents[0].body.contents[1].text).toBe(text)
   })
 
-  it('提醒文字沒填：用第一張的標題，不再送「輪播訊息」這個後台的詞給客人', async () => {
-    expect((await render(message([card()]))).altText).toBe('【新品】即將開賣')
-    expect((await render(message([card({ title: '' })]))).altText).toBe('卡片訊息')
+  it('提醒文字沒填：送固定的「卡片訊息」，⛔ 不拿第一張的標題（會存進對話紀錄、被 AI 當成客人在問那台，code review 第 1 條）', async () => {
+    expect((await render(message([card()]))).altText).toBe('卡片訊息')
     expect((await render(message([card()], { altText: '自己寫的' }))).altText).toBe('自己寫的')
+  })
+
+  it('提醒文字只寫了名字變數、取不到名字：不可以送空的（LINE 會整次回覆退回，第 2 條）', async () => {
+    expect((await render(message([card()], { altText: '{{displayName}}' }))).altText).toBe('卡片訊息')
   })
 })
 
