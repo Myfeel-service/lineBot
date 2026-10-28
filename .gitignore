@@ -38,3 +38,6 @@ __pycache__/
 # Claude Code 的個人放行清單：每按一次「永遠允許」就長一條，而且會留下放行很寬的指令（`E-34`，2026-09-30 移出版控）。
 # 團隊共用的設定寫在 .claude/settings.json（照樣進版控）
 .claude/settings.local.json
+
+# graphify 產生的程式地圖（graph.json 一份 12 MB，隨程式變動重產；`C-406` 那次分析留下的）
+graphify-out/
