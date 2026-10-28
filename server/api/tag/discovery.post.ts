@@ -4,6 +4,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { addTagsToUser, removeTagsFromUser } from '~~/server/utils/tagging'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
+import { writeAuditLog } from '~~/server/utils/audit-log'
 import {
   DISCOVERY_CATEGORY_COLORS,
   HISTORY_SAMPLE_NAMES,
@@ -38,6 +39,10 @@ import type { TagDoc } from '~~/shared/types/tag-broadcast'
  *
  * ⛔ 提案的認領走 transaction：兩個管理員同時按「建立」，只有一個成功，
  *    否則同一個主題會長出兩顆同名標籤。
+ *
+ * 操作紀錄（2026-10-28 補）：`C-254` 補紀錄時漏了這一支——手動建標籤（`tag/create`）有記，
+ * 從這張卡按「建立」建的卻一筆都沒有，而這裡還會**一次幫十幾位好友貼上**。
+ * 除了 `rescan` 之外每一種都記（`rescan` 只是排一次掃描，不改設定、不動客人）。
  */
 export default defineEventHandler(async (event) => {
   const { uid, workspaceId, token } = await requireCapability(event, 'tags.write')
@@ -81,12 +86,12 @@ export default defineEventHandler(async (event) => {
    * 下次掃描時如果還有夠多客人在聊，它會自己回來（聊的人散掉了就不會，這是誠實的結果）。
    */
   if (action === 'undo-dismiss') {
-    const done = await db.runTransaction(async (tx) => {
+    const undone = await db.runTransaction(async (tx) => {
       const snap = await tx.get(docRef)
       const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
       const history = Array.isArray(doc?.history) ? doc!.history : []
       const entry = history.find(h => h.id === proposalId && h.action === 'dismiss' && !h.undoneAtMs)
-      if (!entry) return false
+      if (!entry) return null
 
       // 名字比對走 normalize：否決名單存的是原樣，而「在看 除濕機」跟「在看除濕機」是同一個
       const key = normalizeTagName(entry.name)
@@ -97,10 +102,17 @@ export default defineEventHandler(async (event) => {
         history: history.map(h => (h.id === entry.id ? { ...h, undoneAtMs: Date.now() } : h)),
         updatedAt: FieldValue.serverTimestamp(),
       }, { merge: true })
-      return true
+      return entry
     })
 
-    if (!done) throw createError({ statusCode: 404, statusMessage: '找不到這筆忽略紀錄（可能已經取消過了）' })
+    if (!undone) throw createError({ statusCode: 404, statusMessage: '找不到這筆忽略紀錄（可能已經取消過了）' })
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tagDiscovery.undoDismiss',
+      after: { name: undone.name },
+    }, db)
     return { undone: true }
   }
 
@@ -137,6 +149,8 @@ export default defineEventHandler(async (event) => {
      */
     let removed = 0
     let missing = 0
+    /** `missing` 裡面出錯的那幾位（只給操作紀錄分開講：「本來就沒有」跟「拿的時候出錯」不是同一件事） */
+    let failed = 0
     if (action === 'unmerge') {
       const undoSnap = await docRef.collection(TAG_MERGE_UNDO_SUBCOLLECTION).doc(proposalId).get()
       const undo = (undoSnap.data() ?? null) as TagMergeUndoDoc | null
@@ -162,6 +176,7 @@ export default defineEventHandler(async (event) => {
           if (n > 0) removed += n
           // 0＝那位身上早就沒有這顆了（有人手動摘掉／標籤被刪）；-1＝這位出錯了
           else missing += 1
+          if (n < 0) failed += 1
         }
       }
     }
@@ -186,6 +201,28 @@ export default defineEventHandler(async (event) => {
       return true
     })
     if (!done) throw createError({ statusCode: 404, statusMessage: '找不到這筆合併紀錄（可能剛被同事處理過）' })
+
+    if (action === 'unmerge') {
+      await writeAuditLog({
+        workspaceId,
+        uid,
+        actor: 'human',
+        action: 'tagDiscovery.unmerge',
+        ...(entry.tagId ? { targetId: entry.tagId } : {}),
+        after: { name: entry.name, removedCount: removed, notFoundCount: missing - failed },
+        ...(failed ? { note: `有 ${failed} 位拿的時候出錯，標籤可能還在他們身上` } : {}),
+      }, db)
+    }
+    else {
+      await writeAuditLog({
+        workspaceId,
+        uid,
+        actor: 'human',
+        action: 'tagDiscovery.unblock',
+        ...(entry.tagId ? { targetId: entry.tagId } : {}),
+        after: { name: entry.name },
+      }, db)
+    }
 
     // ⛔ 四個數字照實回：摘了幾位、幾位身上本來就沒有了——合起來講會蓋掉「有人手動動過」
     return action === 'unmerge'
@@ -250,7 +287,17 @@ export default defineEventHandler(async (event) => {
   if (!claimed) {
     throw createError({ statusCode: 404, statusMessage: '這條建議已被處理過（可能是同事剛按掉了）' })
   }
-  if (action === 'dismiss') return { dismissed: true }
+  const proposed = Array.isArray(claimed.userDocIds) ? claimed.userDocIds.length : 0
+  if (action === 'dismiss') {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tagDiscovery.dismiss',
+      after: { name: claimed.name, proposedCount: proposed },
+    }, db)
+    return { dismissed: true }
+  }
 
   // ── adopt＝建一顆新的；merge＝用既有那顆（上面已驗過存在且同工作區）────
   const tag = mergeTarget ?? await createTagFromProposal(db, workspaceId, uid, claimed)
@@ -319,6 +366,33 @@ export default defineEventHandler(async (event) => {
       history: history.map(h => (h.id === claimed.id ? { ...h, tagId: tag.id, taggedCount: tagged } : h)),
     }, { merge: true })
   }).catch(e => console.warn('[tag-discovery] history patch failed:', workspaceId, e))
+
+  /*
+   * ⛔ 貼上幾位記實際數字，不拿提議人數充數；兩個數字不一樣時才把提議人數也記下來
+   * （建新標籤時差的是貼失敗的；併進現有標籤時還包含本來就有這顆的，所以不講成「失敗」）。
+   */
+  const counts = { taggedCount: tagged, ...(tagged !== proposed ? { proposedCount: proposed } : {}) }
+  if (action === 'merge') {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tagDiscovery.merge',
+      targetId: tag.id,
+      after: counts,
+      note: `AI 建議的「${claimed.name}」改貼到現有的「${tag.name}」，之後不再建議「${claimed.name}」`,
+    }, db)
+  }
+  else {
+    await writeAuditLog({
+      workspaceId,
+      uid,
+      actor: 'human',
+      action: 'tagDiscovery.adopt',
+      targetId: tag.id,
+      after: { name: tag.name, category: claimed.category, aiMode: 'suggest', ...counts },
+    }, db)
+  }
 
   // ⛔ merge 回 `merged` 不是 `created`：畫面那句 toast 不可以說「已建立」——沒有建立任何東西
   return action === 'merge'

@@ -26,6 +26,7 @@ vi.mock('~~/server/utils/workspace-auth', () => ({
   requireCapability: vi.fn(async () => ({ uid: UID, workspaceId: WS, token: { email: EMAIL } })),
 }))
 vi.mock('~~/server/utils/tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn() }))
+vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn() }))
 vi.mock('uuid', () => ({ v4: () => 'new-tag-id' }))
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -35,6 +36,7 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 const { default: handler } = await import('./discovery.post')
 const { getDb } = await import('~~/server/utils/firebase')
 const { addTagsToUser, removeTagsFromUser } = await import('~~/server/utils/tagging')
+const { writeAuditLog } = await import('~~/server/utils/audit-log')
 
 const PROPOSAL = {
   id: 'p1',
@@ -437,5 +439,113 @@ describe('取消忽略：撤回否決票，但不假裝建議回來了', () => {
       vi.mocked(getDb).mockReturnValue(db)
       await expect(call({ action: 'undo-dismiss', proposalId: 'p1' })).rejects.toThrow('找不到這筆忽略紀錄')
     }
+  })
+})
+
+/**
+ * 操作紀錄（2026-10-28）：老闆按了三次「建立」，操作紀錄一筆都沒有——
+ * `C-254` 補紀錄時漏了這一支，而它會一次幫十幾位好友貼上標籤。
+ */
+describe('每一種決定都要進操作紀錄', () => {
+  const audits = () => vi.mocked(writeAuditLog).mock.calls.map(c => c[0])
+
+  it('建立：記下標籤名、分類、實際貼上幾位，點得到那顆標籤', async () => {
+    const { db } = makeDb({ workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await call({ action: 'adopt', proposalId: 'p1' })
+
+    expect(audits()).toEqual([expect.objectContaining({
+      workspaceId: WS,
+      uid: UID,
+      actor: 'human',
+      action: 'tagDiscovery.adopt',
+      targetId: 'new-tag-id',
+      after: { name: '在看除濕機', category: 'interest', aiMode: 'suggest', taggedCount: 4 },
+    })])
+  })
+
+  it('⛔ 實際貼上的比 AI 找到的少時，兩個數字都記（不拿提議人數充數）', async () => {
+    vi.mocked(addTagsToUser)
+      .mockResolvedValueOnce({ added: ['t'] } as any)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ added: ['t'] } as any)
+      .mockResolvedValueOnce({ added: ['t'] } as any)
+    const { db } = makeDb({ workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await call({ action: 'adopt', proposalId: 'p1' })
+
+    expect(audits()[0]?.after).toMatchObject({ taggedCount: 3, proposedCount: 4 })
+  })
+
+  it('改貼到現有標籤：講清楚哪個主題併進哪一顆，⛔ 不記成「新增了一個標籤」', async () => {
+    const { db } = makeDb(
+      { workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] },
+      { 'tag-mic': { workspaceId: WS, name: '在看收音麥克風' } },
+    )
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await call({ action: 'merge', proposalId: 'p1', tagId: 'tag-mic' })
+
+    expect(audits()).toHaveLength(1)
+    expect(audits()[0]).toMatchObject({ action: 'tagDiscovery.merge', targetId: 'tag-mic', after: { taggedCount: 4 } })
+    expect(audits()[0]?.note).toContain('「在看除濕機」改貼到現有的「在看收音麥克風」')
+  })
+
+  it('忽略／取消忽略：記下是哪個主題', async () => {
+    const first = makeDb({ workspaceId: WS, pending: [PROPOSAL], dismissedNames: [] })
+    vi.mocked(getDb).mockReturnValue(first.db)
+    await call({ action: 'dismiss', proposalId: 'p1' })
+
+    const second = makeDb(first.current())
+    vi.mocked(getDb).mockReturnValue(second.db)
+    await call({ action: 'undo-dismiss', proposalId: 'p1' })
+
+    expect(audits().map(a => [a.action, a.after])).toEqual([
+      ['tagDiscovery.dismiss', { name: '在看除濕機', proposedCount: 4 }],
+      ['tagDiscovery.undoDismiss', { name: '在看除濕機' }],
+    ])
+  })
+
+  it('解除合併：摘了幾位、本來就沒有幾位分開記；出錯的另外講', async () => {
+    const history = [{ id: 'p1', name: '在看除濕機', action: 'merge', tagId: 'tag-mic', decidedAtMs: 2 }]
+    const { db } = makeDb({ workspaceId: WS, pending: [], dismissedNames: ['在看除濕機'], history }, {}, {
+      p1: { workspaceId: WS, tagId: 'tag-mic', userDocIds: ['ws1_u1', 'ws1_u2', 'ws1_u3'], mergedAtMs: 5 },
+    })
+    vi.mocked(getDb).mockReturnValue(db)
+    vi.mocked(removeTagsFromUser)
+      .mockResolvedValueOnce({ removed: ['tag-mic'] } as any)
+      .mockResolvedValueOnce({ removed: [] } as any)
+      .mockRejectedValueOnce(new Error('boom'))
+
+    await call({ action: 'unmerge', proposalId: 'p1' })
+
+    expect(audits()[0]).toMatchObject({
+      action: 'tagDiscovery.unmerge',
+      targetId: 'tag-mic',
+      after: { name: '在看除濕機', removedCount: 1, notFoundCount: 1 },
+      note: '有 1 位拿的時候出錯，標籤可能還在他們身上',
+    })
+  })
+
+  it('只放回可再提：記成另一種（標籤沒有從任何人身上拿掉）', async () => {
+    const history = [{ id: 'p1', name: '在看除濕機', action: 'merge', tagId: 'tag-mic', decidedAtMs: 2 }]
+    const { db } = makeDb({ workspaceId: WS, pending: [], dismissedNames: ['在看除濕機'], history })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await call({ action: 'unblock', proposalId: 'p1' })
+
+    expect(audits().map(a => a.action)).toEqual(['tagDiscovery.unblock'])
+  })
+
+  it('沒做成的不記（同事已經按掉了）；排一次掃描也不記（不改設定、不動客人）', async () => {
+    const { db } = makeDb({ workspaceId: WS, pending: [], dismissedNames: [], history: [] })
+    vi.mocked(getDb).mockReturnValue(db)
+
+    await expect(call({ action: 'adopt', proposalId: 'p1' })).rejects.toThrow('已被處理過')
+    await call({ action: 'rescan' })
+
+    expect(writeAuditLog).not.toHaveBeenCalled()
   })
 })

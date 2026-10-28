@@ -10,6 +10,7 @@
  * ⛔ 新增一種會寫稽核的動作時，這裡要一起補一行——
  *    `shared/types/audit.test.ts` 會掃 server 原始碼，漏了直接紅。
  */
+import { TAG_AI_SEGMENTS, TAG_AI_SUB_SEGMENTS, TAG_CATEGORY_OPTIONS } from '../tag-admin'
 
 /**
  * 誰動的手：人自己在頁面上按的、小幫手代辦的，還是**到了時間系統自己做的**。
@@ -173,6 +174,14 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // 事後要查得到是誰做的。單人貼標仍照上面那條不記。
   'userTags.batchAdd': '一次幫一群好友貼了標籤',
   'userTags.batchRemove': '一次幫一群好友拆了標籤',
+  // 標籤頁「AI 發現的新標籤」那張卡（2026-10-28 補：`C-254` 漏了這支，按「建立」一筆都沒記）。
+  // 建立／改貼都會一次幫聊過這個主題的好友貼上，所以跟上面批次貼標同一級要記
+  'tagDiscovery.adopt': '採用了 AI 發現的新標籤，並幫聊過的好友貼上',
+  'tagDiscovery.merge': '把 AI 發現的主題改貼到現有標籤',
+  'tagDiscovery.dismiss': '忽略了一個 AI 發現的新標籤（之後不再建議）',
+  'tagDiscovery.undoDismiss': '取消忽略一個 AI 發現的新標籤（之後可以再被建議）',
+  'tagDiscovery.unmerge': '解除合併，把併進去的標籤從那批好友身上拿掉',
+  'tagDiscovery.unblock': '讓一個合併過的主題可以再被建議（標籤留在好友身上）',
 
   // 客服常用語
   'supportPreset.create': '新增了一則客服常用語',
@@ -349,6 +358,12 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   color: '顏色',
   type: '類型',
   aiMode: 'AI 判斷方式',
+  // 標籤的分類與 AI 判斷條件（2026-10-28：以前印成「category：custom」）
+  category: '分類',
+  aiCriteria: 'AI 判斷條件',
+  // AI 發現的新標籤（`tagDiscovery.*`）：實際貼上幾位、AI 找到幾位聊過這個主題
+  taggedCount: '貼上了幾位好友',
+  proposedCount: 'AI 找到幾位聊過的好友',
   folderId: '所在資料夾',
   sourceId: '所屬資料',
   refreshIntervalMinutes: '多久自動同步一次（分鐘）',
@@ -427,7 +442,16 @@ export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
     completed: '已送出',
     failed: '發送失敗',
     cancelled: '已取消',
+    // 標籤的狀態（跟標籤頁那顆開關同一組字）。推播沒有這兩個值，不會撞字
+    active: '啟用中',
+    inactive: '已停用',
   },
+  // 標籤（2026-10-28）：以前印成「category：custom」「AI 判斷方式：off」。
+  // ⛔ 從標籤頁用的同一份選項表長出來，不在這裡另寫一份
+  category: Object.fromEntries(TAG_CATEGORY_OPTIONS.map(o => [o.value, o.label])),
+  aiMode: Object.fromEntries(
+    [...TAG_AI_SEGMENTS.filter(o => o.value === 'off'), ...TAG_AI_SUB_SEGMENTS].map(o => [o.value, o.label]),
+  ),
   /*
    * 知識卡的狀態刻意**不叫 `status`**：推播也有 `status`，而兩邊都有 `failed`——
    * 共用一張對照表的話，一張沒學成功的卡會被標成「發送失敗」。

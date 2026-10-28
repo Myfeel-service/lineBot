@@ -78,6 +78,13 @@ describe('能不能還原', () => {
     if (!plan.ok) expect(plan.reason).toContain('沒有辦法還原')
   })
 
+  it('AI 發現新標籤的合併／忽略：標籤頁本來就收得回來，⛔ 不說「沒辦法還原」，講去哪按', () => {
+    const merge = planRevert({ id: 'a4', action: 'tagDiscovery.merge', before: null, after: { taggedCount: 4 } })
+    const dismiss = planRevert({ id: 'a5', action: 'tagDiscovery.dismiss', before: null, after: { name: 'x' } })
+    expect(merge.ok || merge.reason).toContain('「解除合併」')
+    expect(dismiss.ok || dismiss.reason).toContain('「取消忽略」')
+  })
+
   it('🔴 紀錄被截斷過就不准還原（寫回去會少東西，人卻以為完整還原了）', () => {
     const byFlag = planRevert({ id: 'a5', action: 'ai/settings.put', before: { sensitiveTopics: ['a'] }, after: {}, lossy: true })
     expect(byFlag.ok).toBe(false)

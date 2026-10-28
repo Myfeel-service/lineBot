@@ -143,6 +143,12 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
   if (row.action === 'agent-op/script-update-keyword' || row.action === 'agent-op/script-update-reply')
     return { ok: false, reason: '這筆改的是自動回應的內容，紀錄裡只有改之前的那一格，沒辦法一鍵還原——請到「自動回應」頁照「改之前」那一欄改回來。' }
 
+  // AI 發現的新標籤（2026-10-28）：合併與忽略在標籤頁本來就有收回的按鈕，⛔ 不要回「沒辦法還原」把人擋在這裡
+  if (row.action === 'tagDiscovery.merge')
+    return { ok: false, reason: '這筆要收回，請到「標籤」頁展開「先前的建議與決定」，按這一條的「解除合併」。' }
+  if (row.action === 'tagDiscovery.dismiss')
+    return { ok: false, reason: '這筆要收回，請到「標籤」頁展開「先前的建議與決定」，按這一條的「取消忽略」。' }
+
   // 重試學習、重新抓資料這類：做了就是做了，沒有「還原」這回事
   return { ok: false, reason: `「${label}」這種動作沒有辦法還原（它不是把某個值改成另一個值）。` }
 }

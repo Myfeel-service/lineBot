@@ -320,3 +320,40 @@ describe('知識相關的紀錄講「條」與「資料」', () => {
     expect(auditValueText('draft', 'cardStatus')).toBe('等你看過')
   })
 })
+
+/**
+ * 標籤那幾列（2026-10-28 老闆截圖）：「新增了一個標籤」底下印著
+ * 「category：custom／狀態：active／AI 判斷方式：off」——欄位名跟值都是代號。
+ */
+describe('標籤的紀錄印白話，跟標籤頁同一組字', () => {
+  it('欄位名', () => {
+    expect(auditFieldLabel('category')).toBe('分類')
+    expect(auditFieldLabel('aiCriteria')).toBe('AI 判斷條件')
+  })
+
+  it('值：分類、AI 判斷方式、啟用／停用', () => {
+    expect(auditValueText('custom', 'category')).toBe('自訂')
+    expect(auditValueText('interest', 'category')).toBe('興趣偏好')
+    expect(auditValueText('off', 'aiMode')).toBe('手動／系統')
+    expect(auditValueText('suggest', 'aiMode')).toBe('AI 先建議')
+    expect(auditValueText('auto', 'aiMode')).toBe('AI 直接貼')
+    expect(auditValueText('active', 'status')).toBe('啟用中')
+    expect(auditValueText('inactive', 'status')).toBe('已停用')
+  })
+
+  it('⛔ 推播的狀態不受影響（`status` 兩邊共用一張表）', () => {
+    expect(auditValueText('draft', 'status')).toBe('草稿')
+    expect(auditValueText('failed', 'status')).toBe('發送失敗')
+  })
+
+  it('截圖那一列整列讀得懂', () => {
+    const { lines } = auditChangeLines(null, { name: '問卷_好吉康動美雕', category: 'custom', status: 'active', aiMode: 'off', color: '#22C55E' })
+    expect(lines.map(l => `${l.label}：${l.after}`)).toEqual([
+      '名稱：問卷_好吉康動美雕',
+      '分類：自訂',
+      '狀態：啟用中',
+      'AI 判斷方式：手動／系統',
+      '顏色：#22C55E',
+    ])
+  })
+})
