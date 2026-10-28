@@ -1135,16 +1135,16 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     category: 'bot',
     requires: 'marketing.write',
     icon: Files,
-    label: '輪播訊息怎麼填',
-    blurb: '多條知識左右滑。打開一張帶你填。',
+    label: '卡片訊息怎麼填',
+    blurb: '大圖、標題、內文、按鈕的卡。打開一則帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
         target: '[data-tour="fmt-carousel"]',
         demoType: 'flexImageCarousel',
-        title: '先加一張輪播訊息',
+        title: '先加一則卡片訊息',
         description:
-          '點「<strong>＋ 輪播訊息</strong>」這顆就會加一張。我幫你開好了，往下教你填每個欄位 →',
+          '點「<strong>＋ 卡片訊息</strong>」這顆就會加一則。我幫你開好了，往下教你填每個欄位 →',
         placement: 'bottom',
       },
       {
@@ -1152,23 +1152,23 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'flexImageCarousel',
         title: '要不要放圖',
         description:
-          '輪播訊息是多條知識可<strong>左右滑</strong>。先決定每條<strong>要不要放圖片</strong>（開了就能上傳圖、設比例）。',
+          '先決定卡片上<strong>要不要放大圖</strong>（開了就能上傳圖、設比例）。',
         placement: 'top',
       },
       {
         target: '[data-tour="flex-col-title"]',
         demoType: 'flexImageCarousel',
-        title: '填知識內容',
+        title: '填卡片內容',
         description:
-          '每條填<strong>標題、內文</strong>；若有開圖還能上傳圖片、加最多 3 顆<strong>按鈕</strong>。',
+          '填<strong>標題、內文</strong>，再加最多 3 顆<strong>按鈕</strong>（可選綠色按鈕或文字連結）。',
         placement: 'top',
       },
       {
         target: '[data-tour="flex-add-column"]',
         demoType: 'flexImageCarousel',
-        title: '多加幾條',
+        title: '要不要多加幾張',
         description:
-          '按這顆「＋」就多一條，客人在聊天室能<strong>左右滑</strong>看更多。商品、方案並排介紹最好用。',
+          '只放一張就是單張卡片；按這顆多加幾張，客人在聊天室能<strong>左右滑</strong>。商品、方案並排介紹最好用。',
         placement: 'left',
       },
     ],

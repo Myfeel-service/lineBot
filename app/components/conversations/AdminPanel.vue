@@ -5763,7 +5763,8 @@ function parseFlexImageCarouselBody(body: any): { title: string; text: string } 
   const textNodes = contents.filter((item: any) => item?.type === 'text')
   if (!textNodes.length) return { title: '', text: '' }
   const first = textNodes[0]
-  const firstIsTitle = first?.weight === 'bold' || first?.size === 'md'
+  // ⛔ 只認粗體：`C-398` 起內文也是 md（以前只有標題是 md），只有內文、沒標題的卡會被當成標題
+  const firstIsTitle = first?.weight === 'bold'
   if (textNodes.length === 1) {
     if (firstIsTitle) return { title: String(first.text || '').trim(), text: '' }
     return { title: '', text: String(first.text || '').trim() }

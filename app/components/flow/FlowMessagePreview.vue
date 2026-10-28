@@ -100,19 +100,28 @@
             </div>
           </div>
 
-          <!-- 輪播訊息（新版：可關圖＋標題＋內文＋底部按鈕） -->
+          <!--
+            卡片訊息（`C-398` 以前叫輪播訊息：可關圖＋標題＋內文＋底部按鈕）。
+            字全部照 LINE 那樣換行顯示（⛔ 以前標題一行、內文兩行就截掉，預覽看不到客人會看到的字）；只有一張時畫寬一點
+          -->
           <div v-else-if="msg.type === 'flexImageCarousel'" class="fmp-carousel">
-            <div v-for="(col, ci) in cols(msg)" :key="ci" class="fmp-cc">
+            <div v-for="(col, ci) in cols(msg)" :key="ci" class="fmp-cc fmp-cc--card" :class="{ 'fmp-cc--single': cols(msg).length === 1 }">
               <div v-if="flexUsesImage(msg)" class="fmp-cc-img" :style="{ aspectRatio: flexAspect(msg) }">
                 <img v-if="col.imageUrl" :src="col.imageUrl" alt="">
                 <div v-else class="fmp-media-ph"><el-icon><Picture /></el-icon></div>
               </div>
-              <div v-if="col.title || col.text" class="fmp-cc-body">
-                <p v-if="col.title" class="fmp-cc-title"><PreviewText :text="col.title" /></p>
-                <p v-if="col.text" class="fmp-cc-text"><PreviewText :text="col.text" /></p>
+              <!-- 送出端會去掉頭尾空行（handler.ts 的 .trim()），預覽跟著去，不然多畫一行客人看不到的空白 -->
+              <div v-if="cardText(col.title) || cardText(col.text)" class="fmp-cc-body">
+                <p v-if="cardText(col.title)" class="fmp-cc-title"><PreviewText :text="cardText(col.title)" /></p>
+                <p v-if="cardText(col.text)" class="fmp-cc-text"><PreviewText :text="cardText(col.text)" /></p>
               </div>
               <div v-if="(col.actions || []).length" class="fmp-cc-btns">
-                <span v-for="(a, ai) in col.actions" :key="ai" class="fmp-btn"><PreviewText :text="a.label || '按鈕'" /></span>
+                <span
+                  v-for="(a, ai) in col.actions"
+                  :key="ai"
+                  class="fmp-btn"
+                  :class="{ 'fmp-btn--primary': cardButtonStyle(a) === 'primary' }"
+                ><PreviewText :text="a.label || '按鈕'" /></span>
               </div>
             </div>
           </div>
@@ -148,6 +157,7 @@ import { ChatDotRound, Picture, Postcard, VideoCamera } from '@element-plus/icon
 import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
 import { LINE_TEXT_MESSAGE_MAX, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
+import { cardButtonStyle } from '~~/shared/card-message'
 import { splitPreviewMarks } from '~~/shared/preview-variables'
 
 const props = defineProps<{
@@ -193,6 +203,9 @@ function imgUrl(msg: any): string {
 }
 function cols(msg: any): any[] {
   return Array.isArray(msg.columns) ? msg.columns : []
+}
+function cardText(s: unknown): string {
+  return String(s ?? '').trim()
 }
 function flexUsesImage(msg: any): boolean {
   return msg.enableImage !== false

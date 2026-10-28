@@ -56,3 +56,35 @@ describe('原本就有的檢查沒有被我改壞', () => {
     expect(save([{ type: 'text', text: '嗨，這是一則正常的訊息', buttons: [BUTTON] }])).not.toThrow()
   })
 })
+
+/**
+ * `C-398`（`D-153` ⑵）：卡片訊息（以前叫輪播訊息）內文 300→1000，整組太大存檔就擋
+ * （LINE 輪播整組 50 KB，超過會把整個請求退回）。
+ */
+describe('卡片訊息', () => {
+  const col = (over: Record<string, unknown> = {}) => ({
+    imageUrl: 'https://a.example.com/hero.jpg', title: '新品', text: '內文', action: { type: 'none' },
+    actions: [{ type: 'uri', label: '去看看', uri: 'https://a.example.com', style: 'primary' }], ...over,
+  })
+  const cardMsg = (columns: unknown[]) => [{ type: 'flexImageCarousel', enableImage: true, columns }]
+
+  it('內文 1000 字可以存、1001 字擋（說得出目前幾字）', () => {
+    expect(save(cardMsg([col({ text: '飛'.repeat(1000) })]))).not.toThrow()
+    expect(save(cardMsg([col({ text: '飛'.repeat(1001) })]))).toThrowError(/卡片訊息：內文最多 1000 字（目前 1001 字）/)
+  })
+
+  it('超過舊上限 300 字的內文現在存得進去', () => {
+    expect(save(cardMsg([col({ text: '飛'.repeat(301) })]))).not.toThrow()
+  })
+
+  it('十張都塞滿 1000 字＋長網址：整組太大，存檔擋下並講怎麼辦', () => {
+    const longUri = `https://a.example.com/${'x'.repeat(600)}`
+    const full = col({ text: '飛'.repeat(1000), actions: Array(3).fill({ type: 'uri', label: '按', uri: longUri }) })
+    expect(save(cardMsg(Array(10).fill(full)))).toThrowError(/LINE 收不下.*減少張數/)
+  })
+
+  it('錯誤訊息用新名字（「卡片訊息」「張卡」），舊版範本輪播叫「輪播（舊）」', () => {
+    expect(save(cardMsg([]))).toThrowError(/卡片訊息：至少要有 1 張卡/)
+    expect(save([{ type: 'carousel', columns: [] }])).toThrowError(/輪播（舊）：至少要有 1 個欄位/)
+  })
+})

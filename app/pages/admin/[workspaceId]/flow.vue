@@ -282,10 +282,10 @@
             <el-tooltip content="一張大圖，圖上可切出多個可點區塊" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-rich" @click="addMessage('richMessage')">＋ 圖文訊息</el-button>
             </el-tooltip>
-            <el-tooltip content="多張卡片左右滑，每張可放圖片、標題、內文與按鈕" placement="bottom" :show-after="300">
-              <el-button size="small" data-tour="fmt-carousel" @click="addMessage('flexImageCarousel')">＋ 輪播訊息</el-button>
+            <el-tooltip content="大圖、標題、內文、按鈕；放兩張以上客人會左右滑" placement="bottom" :show-after="300">
+              <el-button size="small" data-tour="fmt-carousel" @click="addMessage('flexImageCarousel')">＋ 卡片訊息</el-button>
             </el-tooltip>
-            <el-tooltip v-if="showLegacyCarousel" content="舊版多卡左右滑，建議改用「輪播訊息」" placement="bottom" :show-after="300">
+            <el-tooltip v-if="showLegacyCarousel" content="舊版多卡左右滑，建議改用「卡片訊息」" placement="bottom" :show-after="300">
               <el-button size="small" @click="addMessage('carousel')">＋ 輪播（舊）</el-button>
             </el-tooltip>
             <el-tooltip v-if="showLegacyImageCarousel" content="整排純圖片左右滑，點圖可觸發動作" placement="bottom" :show-after="300">
@@ -812,6 +812,7 @@
                     <p v-else class="text-xs text-muted">
                       未開啟圖片時，每張卡片標題為必填；可填內文與底部按鈕
                     </p>
+                    <p class="text-xs text-muted">放兩張以上，客人會左右滑</p>
                   </template>
                 </div>
               </FlowMessageCardShell>
@@ -980,14 +981,14 @@
                       </template>
                       <div class="admin-field-group" data-tour="flex-col-title">
                         <AdminFieldLabel tight>
-                          標題 <span class="text-muted">({{ flexCarouselUsesImage(msg) ? '選填' : '必填' }}，最多 80 字)</span>
+                          標題 <span class="text-muted">({{ flexCarouselUsesImage(msg) ? '選填' : '必填' }}，最多 {{ CARD_TITLE_MAX }} 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-input-inset-wrap flow-input-inset-wrap--sm control-full">
                           <VariableTextField
                             v-model="col.title"
                             :known-keys="variableKeys"
-                            :placeholder="flexCarouselUsesImage(msg) ? '標題（選填，最多 80 字）' : '標題（必填，最多 80 字）'"
-                            maxlength="80"
+                            :placeholder="flexCarouselUsesImage(msg) ? '標題（選填）' : '標題（必填）'"
+                            :maxlength="CARD_TITLE_MAX"
                           />
                           <FlowVariableInset
                             size="sm"
@@ -998,10 +999,10 @@
                       </div>
                       <div class="admin-field-group">
                         <AdminFieldLabel tight>
-                          內文 <span class="text-muted">(選填，最多 300 字)</span>
+                          內文 <span class="text-muted">(選填，最多 {{ CARD_BODY_MAX }} 字)</span>
                         </AdminFieldLabel>
                         <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
-                          <VariableTextField v-model="col.text" type="textarea" :known-keys="variableKeys" :rows="2" placeholder="內文（選填，最多 300 字）" maxlength="300" />
+                          <VariableTextField v-model="col.text" type="textarea" :known-keys="variableKeys" :rows="4" placeholder="內文（選填）" :maxlength="CARD_BODY_MAX" show-word-limit />
                           <FlowVariableInset
                             :options="variableTokenOptions"
                             @pick="(token, range) => insertVariableToken(col, 'text', String(token), range)"
@@ -1049,6 +1050,20 @@
                                 ✕
                               </el-button>
                             </template>
+                            <!-- `C-398`：沒存樣式的（以前做的）照舊是文字連結，所以畫面上也顯示「文字連結」 -->
+                            <template #bottom-extra>
+                              <div class="admin-field-group">
+                                <AdminFieldLabel text="樣式" tight />
+                                <el-radio-group
+                                  :model-value="cardButtonStyle(act)"
+                                  size="small"
+                                  @update:model-value="(v) => (act.style = v)"
+                                >
+                                  <el-radio-button value="primary">綠色按鈕</el-radio-button>
+                                  <el-radio-button value="link">文字連結</el-radio-button>
+                                </el-radio-group>
+                              </div>
+                            </template>
                           </FlowActionEditor>
                         </div>
                       </div>
@@ -1073,6 +1088,7 @@
                   @click="msg.type === 'carousel' ? addCarouselColumn(msg) : msg.type === 'flexImageCarousel' ? addFlexImageCarouselColumn(msg) : addImageCarouselColumn(msg)"
                 >
                   <span class="add-card-plus">＋</span>
+                  <span class="add-card-label">再加一張</span>
                 </button>
               </div>
             </div>
@@ -1176,6 +1192,7 @@ import {
   lineTextOverflowMessage,
   measureLineText,
 } from '~~/shared/line-text-limits'
+import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageSizeError } from '~~/shared/card-message'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1498,7 +1515,7 @@ const MSG_META: Record<string, { label: string; badge: string }> = {
   richMessageRef:{ label: '圖文訊息(舊)', badge: 'badge-green'  },
   carousel:      { label: '輪播（舊）', badge: 'badge-green'  },
   imageCarousel:     { label: '圖片輪播',      badge: 'badge-gray'   },
-  flexImageCarousel: { label: '輪播訊息', badge: 'badge-purple' },
+  flexImageCarousel: { label: '卡片訊息', badge: 'badge-purple' },
   quickReply:    { label: '快速回覆', badge: 'badge-purple' },
   userInput:     { label: '用戶輸入卡片', badge: 'badge-red' },
 }
@@ -2315,7 +2332,8 @@ function removeCarouselAction(col: any, actionIndex: number) {
 
 function addFlexImageCarouselButton(col: any) {
   if (!col.actions) col.actions = []
-  if (col.actions.length < 3) col.actions.push(newCarouselAction())
+  // `C-398`：新加的按鈕預設綠色實心（舊的沒存樣式＝文字連結，不動）
+  if (col.actions.length < 3) col.actions.push({ ...newCarouselAction(), style: 'primary' })
 }
 
 function removeFlexImageCarouselButton(col: any, actionIndex: number) {
@@ -2925,15 +2943,15 @@ function validateMessages(messages: any[]): string | null {
 
     // carousel buttons are required by design and must be complete
     if (msg?.type === 'carousel' && Array.isArray(msg.columns)) {
-      if (msg.columns.length < 1) return '輪播訊息：至少要有 1 個欄位'
-      if (msg.columns.length > 10) return '輪播訊息：最多 10 個欄位'
+      if (msg.columns.length < 1) return '輪播（舊）：至少要有 1 個欄位'
+      if (msg.columns.length > 10) return '輪播（舊）：最多 10 個欄位'
       for (const col of msg.columns) {
-        if (!col?.thumbnailImageUrl?.trim()) return '輪播訊息：每個欄位都需要縮圖'
-        if (!col?.title?.trim()) return '輪播訊息：標題為必填'
+        if (!col?.thumbnailImageUrl?.trim()) return '輪播（舊）：每個欄位都需要縮圖'
+        if (!col?.title?.trim()) return '輪播（舊）：標題為必填'
         if (!Array.isArray(col?.actions) || col.actions.length < 1) {
-          return '輪播訊息：每個欄位至少要有 1 個按鈕'
+          return '輪播（舊）：每個欄位至少要有 1 個按鈕'
         }
-        if (col.actions.length > 3) return '輪播訊息：每個欄位按鈕最多 3 個'
+        if (col.actions.length > 3) return '輪播（舊）：每個欄位按鈕最多 3 個'
         for (const action of (col?.actions ?? [])) {
           if (!action?.label?.trim()) return '輪播按鈕文字為必填'
           if (action.type === 'uri' && !action?.uri?.trim()) return '輪播按鈕網址為必填'
@@ -2971,39 +2989,46 @@ function validateMessages(messages: any[]): string | null {
       }
     }
 
+    // 卡片訊息（`C-398` 以前叫「輪播訊息」）：跟後端 `flow-validator.ts` 同一套，上限與大小估算吃 `shared/card-message.ts`
     if (msg?.type === 'flexImageCarousel' && Array.isArray(msg.columns)) {
-      if (msg.columns.length < 1) return '輪播訊息：至少要有 1 個欄位'
-      if (msg.columns.length > 10) return '輪播訊息：最多 10 個欄位'
+      if (msg.columns.length < 1) return '卡片訊息：至少要有 1 張卡'
+      if (msg.columns.length > 10) return '卡片訊息：最多 10 張卡'
       const enableImage = msg.enableImage !== false
       for (const col of msg.columns) {
         if (enableImage) {
-          if (!col?.imageUrl?.trim()) return '輪播訊息：已開啟圖片，每個欄位都需要上傳圖片'
+          if (!col?.imageUrl?.trim()) return '卡片訊息：已開啟圖片，每張卡都要上傳圖片'
         }
         else if (!col?.title?.trim()) {
-          return '輪播訊息：未開啟圖片時，每個欄位標題為必填'
+          return '卡片訊息：沒開圖片時，每張卡都要有標題'
+        }
+        if (String(col?.title || '').length > CARD_TITLE_MAX) return `卡片訊息：標題最多 ${CARD_TITLE_MAX} 字`
+        if (String(col?.text || '').length > CARD_BODY_MAX) {
+          return `卡片訊息：內文最多 ${CARD_BODY_MAX} 字（目前 ${String(col.text).length} 字）`
         }
         const action = col?.action
         if (enableImage) {
-          if (action?.type === 'uri' && !action?.uri?.trim()) return '輪播訊息：圖片動作網址為必填'
-          if (action?.type === 'message' && !action?.text?.trim()) return '輪播訊息：圖片動作傳送文字為必填'
-          if (action?.type === 'module' && !action?.moduleId) return '輪播訊息：請選擇圖片動作要觸發的機器人模組'
+          if (action?.type === 'uri' && !action?.uri?.trim()) return '卡片訊息：圖片動作網址為必填'
+          if (action?.type === 'message' && !action?.text?.trim()) return '卡片訊息：圖片動作傳送文字為必填'
+          if (action?.type === 'module' && !action?.moduleId) return '卡片訊息：請選擇圖片動作要觸發的機器人模組'
           if (action?.tagging?.enabled === true && (!Array.isArray(action?.tagging?.addTagIds) || action.tagging.addTagIds.length === 0)) {
-            return '輪播訊息：已啟用貼標，請至少選擇一個標籤'
+            return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
           }
         }
         if (Array.isArray(col?.actions)) {
-          if (col.actions.length > 3) return '輪播訊息：每個欄位按鈕最多 3 個'
+          if (col.actions.length > 3) return '卡片訊息：每張卡按鈕最多 3 個'
           for (const btn of col.actions) {
-            if (!btn?.label?.trim()) return '輪播訊息：按鈕文字為必填'
-            if (btn.type === 'uri' && !btn?.uri?.trim()) return '輪播訊息：按鈕網址為必填'
-            if (btn.type === 'message' && !btn?.text?.trim()) return '輪播訊息：按鈕傳送文字為必填'
-            if (btn.type === 'module' && !btn?.moduleId) return '輪播訊息：請選擇按鈕要觸發的機器人模組'
+            if (!btn?.label?.trim()) return '卡片訊息：按鈕文字為必填'
+            if (btn.type === 'uri' && !btn?.uri?.trim()) return '卡片訊息：按鈕網址為必填'
+            if (btn.type === 'message' && !btn?.text?.trim()) return '卡片訊息：按鈕傳送文字為必填'
+            if (btn.type === 'module' && !btn?.moduleId) return '卡片訊息：請選擇按鈕要觸發的機器人模組'
             if (btn?.tagging?.enabled === true && (!Array.isArray(btn?.tagging?.addTagIds) || btn.tagging.addTagIds.length === 0)) {
-              return '輪播訊息：已啟用貼標，請至少選擇一個標籤'
+              return '卡片訊息：已啟用貼標，請至少選擇一個標籤'
             }
           }
         }
       }
+      const sizeError = cardMessageSizeError(msg)
+      if (sizeError) return sizeError
     }
       return null
     })()

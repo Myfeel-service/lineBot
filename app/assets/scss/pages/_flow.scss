@@ -712,9 +712,16 @@
   background: transparent;
   cursor: pointer;
   display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   align-items: center;
   justify-content: center;
   transition: border-color 0.15s, background 0.15s;
+}
+/* 輪播類的「＋」底下那行字（`C-398`：只有一個「＋」時不知道按了會怎樣；快速回覆那顆沒有這行） */
+.add-card-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
 }
 .carousel-add-card:hover {
   border-color: var(--color-line);

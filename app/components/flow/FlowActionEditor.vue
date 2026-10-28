@@ -124,6 +124,9 @@
         />
       </div>
     </template>
+
+    <!-- 只有某些地方才有的欄位（卡片訊息的按鈕樣式，`C-398`） -->
+    <slot name="bottom-extra" />
   </div>
 </template>
 

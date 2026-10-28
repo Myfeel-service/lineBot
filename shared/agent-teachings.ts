@@ -43,7 +43,7 @@ export const AGENT_TEACHINGS = {
   'tour-flow': { kind: 'tour', ref: 'flow', hint: '機器人模組是什麼、怎麼新增一組要回給客人的訊息', requires: 'marketing.write' },
   'tour-msg-basic': { kind: 'tour', ref: 'msg-basic', hint: '模組裡怎麼加文字、圖片、影片', requires: 'marketing.write' },
   'tour-msg-rich': { kind: 'tour', ref: 'msg-rich', hint: '圖文訊息（一張大圖切成多個可點區塊）怎麼填', requires: 'marketing.write' },
-  'tour-msg-carousel': { kind: 'tour', ref: 'msg-carousel', hint: '輪播訊息（多張卡左右滑）怎麼填', requires: 'marketing.write' },
+  'tour-msg-carousel': { kind: 'tour', ref: 'msg-carousel', hint: '卡片訊息（大圖＋標題＋內文＋按鈕，可多張左右滑）怎麼填', requires: 'marketing.write' },
   'tour-msg-quick': { kind: 'tour', ref: 'msg-quick', hint: '快速回覆（訊息下面一排建議按鈕）怎麼填', requires: 'marketing.write' },
   'tour-msg-userinput': { kind: 'tour', ref: 'msg-userinput', hint: '用戶輸入卡：問客人問題、收他的答案', requires: 'marketing.write' },
   'tour-richmenu': { kind: 'tour', ref: 'richmenu', hint: '建立或修改 LINE 聊天室下方的圖文選單、設為預設', requires: 'marketing.write' },

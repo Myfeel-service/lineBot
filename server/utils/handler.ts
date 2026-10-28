@@ -28,6 +28,7 @@ import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpe
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
 import { buildTextButtonsCard } from '~~/shared/text-buttons-card'
+import { CARD_BODY_MAX, CARD_BUTTON_PRIMARY_COLOR, CARD_TITLE_MAX, cardButtonStyle } from '~~/shared/card-message'
 import {
   LINE_ACTION_LABEL_MAX,
   LINE_CARD_BODY_DEFAULT,
@@ -1321,15 +1322,18 @@ function buildFlexImageCarouselBody(
   col: any,
   attributes: Record<string, string>,
 ): Record<string, unknown> | undefined {
-  const title = renderWithAttributes(col?.title || '', attributes).trim().slice(0, 80)
-  const text = renderWithAttributes(col?.text || '', attributes).trim().slice(0, 300)
+  const title = truncateLineText(renderWithAttributes(col?.title || '', attributes).trim(), CARD_TITLE_MAX)
+  const text = truncateLineText(renderWithAttributes(col?.text || '', attributes).trim(), CARD_BODY_MAX)
   const contents: Record<string, unknown>[] = []
+  // `C-398`（`D-153` ⑵ 拍板 B）：字級放大、內文顏色加深——所有卡片一起換，舊卡片不用改資料。
+  // ⚠️ 對話頁靠 `weight: 'bold'` 認標題（`AdminPanel.vue` 的 parseFlexImageCarouselBody），內文不可以加粗
   if (title) {
     contents.push({
       type: 'text',
       text: title,
       weight: 'bold',
-      size: 'md',
+      size: 'lg',
+      color: '#111111',
       wrap: true,
     })
   }
@@ -1337,8 +1341,8 @@ function buildFlexImageCarouselBody(
     contents.push({
       type: 'text',
       text,
-      size: 'sm',
-      color: '#666666',
+      size: 'md',
+      color: '#4B5563',
       wrap: true,
     })
   }
@@ -1346,8 +1350,8 @@ function buildFlexImageCarouselBody(
   return {
     type: 'box',
     layout: 'vertical',
-    spacing: 'sm',
-    paddingAll: '12px',
+    spacing: 'md',
+    paddingAll: '20px',
     contents,
   }
 }
@@ -1359,23 +1363,28 @@ function buildFlexImageCarouselFooter(
   publicBaseOverride: string,
   lineChannelSecret: string,
 ): Record<string, unknown> | undefined {
-  const buttons = (actions ?? [])
-    .slice(0, 3)
-    .map((action) => buildFlexCarouselButtonAction(action, attributes, userId, publicBaseOverride, lineChannelSecret))
-    .filter(Boolean)
-    .map((flexAction) => ({
-      type: 'button',
-      style: 'link',
-      height: 'sm',
-      action: flexAction,
-    }))
+  const buttons: Record<string, unknown>[] = []
+  for (const action of (actions ?? []).slice(0, 3)) {
+    const flexAction = buildFlexCarouselButtonAction(action, attributes, userId, publicBaseOverride, lineChannelSecret)
+    if (!flexAction) continue
+    // `C-398`：可選綠色實心按鈕；沒存樣式的（以前做的）照舊是文字連結
+    buttons.push(cardButtonStyle(action) === 'primary'
+      ? { type: 'button', style: 'primary', color: CARD_BUTTON_PRIMARY_COLOR, height: 'md', action: flexAction }
+      : { type: 'button', style: 'link', height: 'sm', action: flexAction })
+  }
   if (!buttons.length) return undefined
-  return {
+  const footer: Record<string, unknown> = {
     type: 'box',
     layout: 'vertical',
     spacing: 'sm',
     contents: buttons,
   }
+  // 實心按鈕貼著卡片邊會很擠：留邊、上面不留（跟內文接在一起）
+  if (buttons.some(b => b.style === 'primary')) {
+    footer.paddingAll = '16px'
+    footer.paddingTop = '0px'
+  }
+  return footer
 }
 
 /** Flex：底圖 + 依編輯器座標疊透明點擊區（類似圖文選單），可保留 postback 觸發模組 */
@@ -1791,9 +1800,11 @@ function buildLineMessages(
         })
         .filter(Boolean)
       if (!bubbles.length) return []
+      // 通知列那行字：沒填的話用第一張的標題（`C-398` 以前固定是「輪播訊息」——那是後台的詞，客人看不懂）
+      const firstTitle = String(msg.columns?.find((c: any) => String(c?.title || '').trim())?.title || '').trim()
       return [{
         type: 'flex',
-        altText: renderWithAttributes(msg.altText || '輪播訊息', attributes).slice(0, 400),
+        altText: truncateLineText(renderWithAttributes(msg.altText || firstTitle || '卡片訊息', attributes), 400),
         contents: { type: 'carousel', contents: bubbles },
       } as messagingApi.FlexMessage]
     }

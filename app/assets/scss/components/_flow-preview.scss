@@ -339,6 +339,43 @@
 .fmp-cc-btns { display: flex; flex-direction: column; }
 .fmp-cc-btns .fmp-btn { font-size: 0.74rem; padding: 0.4rem; }
 
+/*
+ * 卡片訊息（flexImageCarousel，`C-398`）：送出端是 wrap，標題、內文全部換行顯示，不截；
+ * 字級與內文顏色跟送出端一起放大（handler.ts 的 buildFlexImageCarouselBody：標題 lg、內文 md #4B5563）。
+ * 只有一張時畫寬一點——客人看到的就是一張完整的卡，不是一排小卡的第一張。
+ */
+.fmp-cc--card .fmp-cc-body { padding: 0.7rem 0.75rem 0.6rem; }
+.fmp-cc--card .fmp-cc-title {
+  margin-bottom: 0.3rem;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  white-space: normal;
+  overflow: visible;
+}
+.fmp-cc--card .fmp-cc-text {
+  display: block;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  color: #4b5563;
+  white-space: pre-wrap;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+/* ⛔ 不能寫百分比：外層 .fmp-row／.fmp-carousel 是照內容決定寬度的，百分比會縮成最窄（實機截圖看到只剩一條） */
+.fmp-cc--single { width: 270px; max-width: 100%; }
+.fmp-cc--single .fmp-cc-title { font-size: 0.95rem; }
+.fmp-cc--single .fmp-cc-text { font-size: 0.8rem; }
+/* 綠色實心按鈕：跟送出端 style primary＋#06C755 同色 */
+.fmp-cc-btns .fmp-btn--primary {
+  margin: 0 0.6rem 0.6rem;
+  padding: 0.55rem;
+  border-top: 0;
+  border-radius: 8px;
+  background: var(--brand-green);
+  color: #fff;
+}
+
 /* 快速回覆膠囊列 */
 .fmp-qr {
   display: flex;
