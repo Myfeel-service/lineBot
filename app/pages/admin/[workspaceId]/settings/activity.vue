@@ -276,7 +276,10 @@ async function revert(row: AuditLogRow) {
   catch (e: any) {
     const reason = e?.statusMessage || e?.data?.statusMessage
     showToast(reason || '還原失敗，請到對應頁面確認現在的設定。', 'error')
-    if (reason) {
+    // 只有被規則擋下（4xx）才把按鈕換成原因；伺服器出錯、這次沒查成功（5xx）是暫時的，
+    // ⛔ 收掉的話要重新整理才回得來（同清單預查：預查出錯照舊給按鈕）
+    const status = Number(e?.statusCode ?? e?.status ?? e?.response?.status ?? 0)
+    if (reason && status >= 400 && status < 500) {
       row.revertible = false
       row.revertReason = reason
     }

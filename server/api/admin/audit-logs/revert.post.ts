@@ -2,7 +2,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb } from '~~/server/utils/firebase'
 import { can } from '~~/shared/permissions'
 import { AUDIT_LOGS_COLLECTION } from '~~/server/utils/audit-log'
-import { applyRevert, findRevertOf, planRevert, type AuditRecordForRevert } from '~~/server/utils/audit-revert'
+import { applyRevert, checkRevert, findRevertOf, planRevert, type AuditRecordForRevert } from '~~/server/utils/audit-revert'
 
 /**
  * POST /api/admin/audit-logs/revert —— 把某一筆改動改回去（`C-31` Phase 2 收尾）。
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
   // `dryRun: true`（`D-156`）：按下「還原」那一刻先預演一次——擋得下來就直接講原因，
   // ⛔ 不要先跳「確定還原嗎」、按了確定才說不行
   if (body?.dryRun === true) {
-    await applyRevert(row, { db, workspaceId, uid, isSuperAdmin, isOrgAdmin, mode: 'dryRun' })
+    await checkRevert(row, { db, workspaceId, uid, isSuperAdmin, isOrgAdmin }, 'confirm')
     return { ok: true, what: plan.what }
   }
 

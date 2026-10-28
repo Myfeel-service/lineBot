@@ -69,6 +69,11 @@ describe('collectTagRefs — 未編碼的設定物件', () => {
     expect([...collectTagRefs({ audienceSource: { type: 'tags', tagIds: ['t2'] } })]).toEqual(['t2'])
   })
 
+  it('🔴 推播「發完要貼的標籤」也算用到（`E-45`：漏掉的話停用了，那則推播發完照樣貼上去）', () => {
+    const broadcast = { name: '雙11', audienceSource: { type: 'all' }, completionTagIds: ['t3'] }
+    expect([...collectTagRefs(broadcast)]).toEqual(['t3'])
+  })
+
   it('去重、去空白、忽略空字串', () => {
     const doc = { tagIds: [' t1 ', 't1', '', null, 't2'] }
     expect([...collectTagRefs(doc)]).toEqual(['t1', 't2'])

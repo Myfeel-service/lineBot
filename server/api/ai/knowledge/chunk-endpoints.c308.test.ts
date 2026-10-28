@@ -83,6 +83,7 @@ vi.stubGlobal('createError', (opts: { statusCode?: number, statusMessage?: strin
 const { updateKnowledgeChunk } = await import('~~/server/utils/ai-knowledge-chunks')
 const { writeAuditLog } = await import('~~/server/utils/audit-log')
 const { invalidateKnowledgeChunkCount, assertKnowledgeChunkQuota } = await import('~~/server/utils/ai-knowledge-quota')
+const { countSourceChunks } = await import('~~/server/utils/ai-knowledge-sources')
 const { default: putHandler } = await import('./[chunkId].put')
 const { default: deleteHandler } = await import('./[chunkId].delete')
 const { default: settingsHandler } = await import('./[chunkId]/settings.post')
@@ -239,6 +240,15 @@ describe('在後台刪掉試算表來的一條（`D-125`②、`C-308`⑧）', ()
     // ⛔ 先記名單再刪：記不成就整個不刪，免得重按時已在回收桶、名單永遠沒記上
     const order = WRITES.map(w => `${w.col}/${w.id}`)
     expect(order.indexOf('knowledgeSources/s1')).toBeLessThan(order.indexOf('knowledgeChunks/c1'))
+  })
+
+  it('🔴 刪完回頭整理那一份時出錯（數條數失敗）→ 這條照樣進回收桶、操作紀錄照樣寫（`C-412`）', async () => {
+    vi.mocked(countSourceChunks).mockRejectedValueOnce(new Error('DEADLINE_EXCEEDED'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(run(deleteHandler)).resolves.toEqual({ ok: true })
+    expect(STORE.knowledgeChunks!.c1!.isDeleted).toBe(true)
+    expect(lastAudit().action).toBe('knowledge.delete')
+    warn.mockRestore()
   })
 
   it('⛔ 不是試算表、或是總覽那一條 → 不記名單（空間快取照樣作廢）', async () => {

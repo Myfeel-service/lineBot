@@ -2,7 +2,8 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
 import { AUDIT_LOGS_COLLECTION } from '~~/server/utils/audit-log'
 import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
-import { applyRevert, planRevert, revertedIdsAmong } from '~~/server/utils/audit-revert'
+import { checkRevert, planRevert, revertedIdsAmong } from '~~/server/utils/audit-revert'
+import type { RevertCtx } from '~~/server/utils/audit-revert-common'
 import type { AuditActor, AuditLogRow } from '~~/shared/types/audit'
 
 /**
@@ -27,6 +28,54 @@ const MAX_UID_LOOKUP = 100
 
 function parseActor(raw: unknown): AuditActor | null {
   return raw === 'human' || raw === 'agent' ? raw : null
+}
+
+/*
+ * 便宜的預查（`D-156`）：那一份還在不在、建好後有沒有被改過、推播送出了沒。回傳「哪幾筆擋下來、為什麼」。
+ * 為什麼要有：拿 MYFEEL 真資料預演，新增類的還原鈕大半按下去會被擋——
+ * 給了按鈕、按下去卻說不行，比沒有按鈕更糟。擋得下來的就收掉按鈕、直接寫原因。
+ * ⚠️ 只做便宜的（每列讀一兩筆）：「哪裡在用它」要掃六類設定，留到按下去那一刻。
+ * ⛔ 走的是只檢查的 checkRevert，不是真的還原那支（code review `C-412`）。
+ * ⛔ 預查自己出錯（不是被規則擋）就照舊給按鈕：按下去時還會完整再查一次
+ */
+async function precheckReverts(rows: AuditLogRow[], ctx: RevertCtx): Promise<Map<string, string>> {
+  const blocked = new Map<string, string>()
+  await Promise.all(rows.map(async (i) => {
+    try {
+      await checkRevert({
+        id: i.id,
+        action: i.action,
+        before: i.before,
+        after: i.after,
+        ...(i.targetId ? { targetId: i.targetId } : {}),
+      }, ctx, 'list')
+    }
+    catch (e: any) {
+      const status = Number(e?.statusCode ?? 0)
+      if (status < 400 || status >= 500 || !e?.statusMessage) {
+        console.error('[audit-logs] revert precheck failed:', i.id, i.action, e)
+        return
+      }
+      blocked.set(i.id, String(e.statusMessage))
+    }
+  }))
+  return blocked
+}
+
+/** uid → Email：畫面要顯示「誰」，只有 uid 等於沒回答。查不到就讓畫面顯示 uid 本身。 */
+async function lookupEmails(uids: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {}
+  if (!uids.length) return out
+  try {
+    const res = await getFirebaseAuth().getUsers(uids.map(uid => ({ uid })))
+    for (const u of res.users)
+      if (u.email) out[u.uid] = u.email
+  }
+  catch (e) {
+    // 換不到名字不影響紀錄本身：紀錄照給，畫面退回顯示 uid
+    console.error('[audit-logs] getUsers failed:', e)
+  }
+  return out
 }
 
 export default defineEventHandler(async (event) => {
@@ -111,75 +160,43 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  // 已經還原過的那幾筆不再給「還原」鈕（`D-156`）：⛔ 不然再按一次會說「這段期間又被改過了」，
-  // 人會去找一個不存在的同事。只問「能還原的」那幾筆；查不到不影響清單本身
-  const revertibleIds = items.filter(i => i.revertible).map(i => i.id)
-  if (revertibleIds.length) {
-    try {
-      const done = await revertedIdsAmong(db, workspaceId, revertibleIds)
-      for (const i of items) {
-        if (!done.has(i.id)) continue
-        i.revertible = false
-        i.reverted = true
-        delete i.revertWhat
-      }
-    }
-    catch (e) {
-      // 查不到就照舊顯示還原鈕：按下去時 revert 那支還會再查一次、擋得住
-      console.error('[audit-logs] reverted lookup failed:', e)
-    }
-  }
+  const revertible = items.filter(i => i.revertible)
+  const uids = [...new Set(items.map(i => i.uid).filter(Boolean))].slice(0, MAX_UID_LOOKUP)
 
-  /*
-   * 便宜的預查（`D-156`）：那一份還在不在、建好後有沒有被改過、推播送出了沒。
-   * 為什麼要有：拿 MYFEEL 真資料預演，新增類的還原鈕大半按下去會被擋——
-   * 給了按鈕、按下去卻說不行，比沒有按鈕更糟。擋得下來的這裡就收掉按鈕、直接寫原因。
-   * ⚠️ 只做便宜的（每列讀一兩筆）：「哪裡在用它」要掃六類設定，留到按下去那一刻。
-   * ⛔ 預查自己出錯（不是被規則擋）就照舊給按鈕：按下去時還會完整再查一次
-   */
-  await Promise.all(items.filter(i => i.revertible).map(async (i) => {
-    try {
-      await applyRevert({
-        id: i.id,
-        action: i.action,
-        before: i.before,
-        after: i.after,
-        ...(i.targetId ? { targetId: i.targetId } : {}),
-      }, { db, workspaceId, uid, isSuperAdmin, mode: 'precheck' })
-    }
-    catch (e: any) {
-      const status = Number(e?.statusCode ?? 0)
-      if (status < 400 || status >= 500 || !e?.statusMessage) {
-        console.error('[audit-logs] revert precheck failed:', i.id, i.action, e)
-        return
-      }
+  // 下面四件互不相干，一起跑（code review `C-412`：以前一件等一件，打開一頁要多等好幾趟來回）
+  const [done, blocked, uidEmails, usage] = await Promise.all([
+    // 已經還原過的那幾筆不再給「還原」鈕（`D-156`）：⛔ 不然再按一次會說「這段期間又被改過了」，
+    // 人會去找一個不存在的同事。只問「能還原的」那幾筆；查不到不影響清單本身
+    revertible.length
+      ? revertedIdsAmong(db, workspaceId, revertible.map(i => i.id)).catch((e) => {
+          // 查不到就照舊顯示還原鈕：按下去時 revert 那支還會再查一次、擋得住
+          console.error('[audit-logs] reverted lookup failed:', e)
+          return new Set<string>()
+        })
+      : new Set<string>(),
+    precheckReverts(revertible, { db, workspaceId, uid, isSuperAdmin }),
+    lookupEmails(uids),
+    // 這個月小幫手提了幾次、你按了幾次確定。⛔兩個數字取同一顆月結桶，
+    // 不去掃紀錄推算——推算出來的東西一旦跟畫面對不起來，就再也沒人相信它。
+    db.collection(AI_USAGE_COLLECTION).doc(`${workspaceId}_${currentYyyyMm()}`).get().catch(() => null),
+  ])
+
+  for (const i of items) {
+    if (done.has(i.id)) {
       i.revertible = false
-      i.revertReason = String(e.statusMessage)
+      i.reverted = true
+      delete i.revertWhat
+      delete i.revertReason
+      continue
+    }
+    const reason = blocked.get(i.id)
+    if (reason) {
+      i.revertible = false
+      i.revertReason = reason
       delete i.revertWhat
     }
-  }))
-
-  // uid → Email：畫面要顯示「誰」，只有 uid 等於沒回答。查不到就讓畫面顯示 uid 本身。
-  const uids = [...new Set(items.map(i => i.uid).filter(Boolean))].slice(0, MAX_UID_LOOKUP)
-  const uidEmails: Record<string, string> = {}
-  if (uids.length) {
-    try {
-      const res = await getFirebaseAuth().getUsers(uids.map(uid => ({ uid })))
-      for (const u of res.users)
-        if (u.email) uidEmails[u.uid] = u.email
-    }
-    catch (e) {
-      // 換不到名字不影響紀錄本身：紀錄照給，畫面退回顯示 uid
-      console.error('[audit-logs] getUsers failed:', e)
-    }
   }
 
-  // 這個月小幫手提了幾次、你按了幾次確定。⛔兩個數字取同一顆月結桶，
-  // 不去掃紀錄推算——推算出來的東西一旦跟畫面對不起來，就再也沒人相信它。
-  const usage = await db.collection(AI_USAGE_COLLECTION)
-    .doc(`${workspaceId}_${currentYyyyMm()}`)
-    .get()
-    .catch(() => null)
   const proposed = Number(usage?.data()?.agentProposed ?? 0)
   const executed = Number(usage?.data()?.agentExecuted ?? 0)
 

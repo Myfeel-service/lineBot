@@ -9,15 +9,17 @@
  * - ⛔ 白名單：紀錄裡出現沒想過的欄位就整筆不還原（寫一半比不寫更糟）
  * - ⛔ 原本那個動作有的護欄這裡一條都不能少——能走原本那支共用函式的就走它（權限、搬資料夾），
  *    走不了的照抄規則並註明出處
+ * - 檢查（只讀）跟動手分兩段（`RevertHandler.check`）：寫入只出現在回傳的那個函式裡
  */
-import { FieldValue, Timestamp } from 'firebase-admin/firestore'
+import { FieldValue, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore'
 import { FLOW_FOLDERS_COLLECTION, FLOWS_COLLECTION } from './flow-folders'
 import { assertValidFlowName } from './flow-validator'
 import { invalidateBrokenModuleRefsCache } from './broken-module-refs'
 import { assertPlanAllows } from './billing'
-import { getSource, updateSourceSettings } from './ai-knowledge-sources'
+import { docToSourceSummary, getSource, updateSourceSettings } from './ai-knowledge-sources'
 import { syncSourceAfterMove } from './ai-knowledge-source-move'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
+import { KNOWLEDGE_FOLDERS_COLLECTION } from './ai-knowledge-folders'
 import { ASSIGNABLE_MEMBER_ROLES, changeWorkspaceMemberRole } from './workspace-member-role'
 import { memberNotifyKindsNow, setMemberNotifyKind, setMemberNotifyReceiving } from './member-line-bind'
 import { syncPublishedEntryUrlForCampaign } from './lead-campaign-published-url'
@@ -26,11 +28,9 @@ import { auditTimeText } from './audit-log'
 import {
   changedSinceError,
   goneError,
-  isRehearsal,
   matchesRecorded,
   onlyKeys,
   recordsNoChange,
-  REHEARSED,
   type AuditRecordForRevert,
   type RevertHandler,
   type RevertPlan,
@@ -68,20 +68,26 @@ function stillAsRecorded(current: Rec, after: Rec | null | undefined): boolean {
 
 const swap = (row: AuditRecordForRevert) => ({ before: row.after ?? null, after: row.before ?? null })
 
+/** 紀錄裡改了哪幾格，講成「名稱、開關」 */
+const fieldsText = (rec: Rec | null | undefined, labels: Record<string, string>) =>
+  Object.keys(rec ?? {}).map(k => labels[k] ?? k).join('、')
+
 // ── 機器人模組：改名、開關、搬資料夾 ─────────────────────────────
 
 const FLOW_KEYS = ['name', 'isActive', 'folderId'] as const
+const FLOW_FIELD_LABELS: Record<string, string> = { name: '名稱', isActive: '開關', folderId: '所在資料夾' }
 
 const flowPut: RevertHandler = {
+  // ⛔ 講改回了哪幾格，不講「整個模組改回原本的樣子」：同一次存檔改的訊息文字紀錄沒記（`C-411`），還原也不會動它
   plan: row => planFields(row, {
     allowed: FLOW_KEYS,
     capability: 'marketing.write',
-    what: '把這個模組的名稱／開關／所在資料夾改回原本的樣子',
+    what: `把這個模組的${fieldsText(row.before, FLOW_FIELD_LABELS)}改回原本的樣子`,
     page: '「機器人模組」頁',
     // 訊息內容紀錄只記「幾則」（整份存進來會被截斷、反而整筆不能還原），寫不回去
     refuse: '這筆改了模組裡的訊息，紀錄只記了幾則、沒記內容，沒辦法一鍵還原——請到「機器人模組」頁改回來。',
   }),
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId } = ctx
     // 方案閘門跟 PUT /api/flow/:id 同一道（D-69 拍板④）
     await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含流程自動化功能，請升級方案後再使用')
@@ -100,16 +106,21 @@ const flowPut: RevertHandler = {
     }
 
     const ref = db.collection(FLOWS_COLLECTION).doc(String(row.targetId))
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref)
+    const verify = (snap: DocumentSnapshot) => {
       if (!snap.exists || snap.data()?.workspaceId !== workspaceId) throw goneError('那個模組')
       if (!stillAsRecorded(snap.data()!, row.after)) throw changedSinceError('這個模組')
-      if (!isRehearsal(ctx)) tx.update(ref, { ...write, updatedAt: FieldValue.serverTimestamp() })
-    })
-    if (isRehearsal(ctx)) return REHEARSED
-    // 讓「按鈕按下去沒反應」的異常檢查立刻反映（同 PUT /api/flow/:id）
-    invalidateBrokenModuleRefsCache(workspaceId)
-    return { message: '已經把這個模組改回原本的樣子。', ...swap(row) }
+    }
+    verify(await ref.get())
+
+    return async () => {
+      await db.runTransaction(async (tx) => {
+        verify(await tx.get(ref))
+        tx.update(ref, { ...write, updatedAt: FieldValue.serverTimestamp() })
+      })
+      // 讓「按鈕按下去沒反應」的異常檢查立刻反映（同 PUT /api/flow/:id）
+      invalidateBrokenModuleRefsCache(workspaceId)
+      return { message: `已經把這個模組的${fieldsText(before, FLOW_FIELD_LABELS)}改回原本的樣子。`, ...swap(row) }
+    }
   },
 }
 
@@ -126,7 +137,7 @@ const tagPut: RevertHandler = {
     page: '「標籤」頁',
     refuse: '這筆動到的標籤欄位目前不支援一鍵還原，請到「標籤」頁改回來。',
   }),
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId } = ctx
     const before = row.before ?? {}
     const write: Rec = {}
@@ -155,14 +166,19 @@ const tagPut: RevertHandler = {
     }
 
     const ref = db.collection('tags').doc(String(row.targetId))
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref)
+    const verify = (snap: DocumentSnapshot) => {
       if (!snap.exists || snap.data()?.workspaceId !== workspaceId) throw goneError('那個標籤')
       if (!stillAsRecorded(snap.data()!, row.after)) throw changedSinceError('這個標籤')
-      if (!isRehearsal(ctx)) tx.update(ref, { ...write, updatedAt: FieldValue.serverTimestamp() })
-    })
-    if (isRehearsal(ctx)) return REHEARSED
-    return { message: '已經把這個標籤改回原本的樣子。', ...swap(row) }
+    }
+    verify(await ref.get())
+
+    return async () => {
+      await db.runTransaction(async (tx) => {
+        verify(await tx.get(ref))
+        tx.update(ref, { ...write, updatedAt: FieldValue.serverTimestamp() })
+      })
+      return { message: '已經把這個標籤改回原本的樣子。', ...swap(row) }
+    }
   },
 }
 
@@ -170,8 +186,29 @@ const tagPut: RevertHandler = {
 
 const SOURCE_KEYS = ['name', 'folderId', 'refreshIntervalMinutes', 'onChangeBehavior'] as const
 
+/**
+ * 沒存這一格時，資料頁顯示的預設值（`docToSourceSummary`）。
+ * 2026-10-29 以前 `PUT /api/ai/sources/:id` 的紀錄拿**原始文件**比**整理過的那份**（code review `C-412`），
+ * 沒存商品名的資料一搬分組就多記一行「商品名：（空白）→ ''」——其實沒變，卻讓整筆被當成「動到商品名」不給還原。
+ */
+const SOURCE_DEFAULTS: Rec = { name: '', url: '', productName: '', refreshIntervalMinutes: 0, onChangeBehavior: 'notify' }
+
+/** 拿掉那種「沒存 → 預設值」的假變更，剩下的才是真的改了什麼 */
+function withoutPhantomSourceKeys(row: AuditRecordForRevert): AuditRecordForRevert {
+  const before: Rec = { ...(row.before ?? {}) }
+  const after: Rec = { ...(row.after ?? {}) }
+  for (const [k, d] of Object.entries(SOURCE_DEFAULTS)) {
+    if (k in before && before[k] == null && after[k] === d) {
+      delete before[k]
+      delete after[k]
+    }
+  }
+  return { ...row, before, after }
+}
+
 const sourcePut: RevertHandler = {
-  plan(row) {
+  plan(raw) {
+    const row = withoutPhantomSourceKeys(raw)
     const base = planFields(row, {
       allowed: SOURCE_KEYS,
       capability: 'sources.write',
@@ -187,32 +224,44 @@ const sourcePut: RevertHandler = {
       return { ok: false, reason: '這筆原本是「沒有設定」，沒辦法一鍵改回去——請到「知識庫」這份資料自己改。' }
     return base
   },
-  async apply(row, ctx) {
+  async check(raw, ctx) {
     const { db, workspaceId, uid } = ctx
+    const row = withoutPhantomSourceKeys(raw)
     const sourceId = String(row.targetId)
     const src = await getSource(db, sourceId, workspaceId)
     if (!src) throw goneError('那份資料')
-    if (!stillAsRecorded(src.data as unknown as Rec, row.after)) throw changedSinceError('這份資料')
-    if (isRehearsal(ctx)) return REHEARSED
+    // 紀錄存的是整理過的那份（跟資料頁看到的一樣），⛔ 拿原始文件比的話沒存的那幾格永遠對不上
+    if (!stillAsRecorded(docToSourceSummary(sourceId, src.data) as unknown as Rec, row.after)) throw changedSinceError('這份資料')
 
     const before = row.before ?? {}
-    // 走跟 PUT /api/ai/sources/:sourceId 同一支（資料夾要是這個帳號的、找不到會講）
-    await updateSourceSettings(db, workspaceId, sourceId, {
-      ...('name' in before ? { name: String(before.name) } : {}),
-      ...('folderId' in before ? { folderId: typeof before.folderId === 'string' && before.folderId ? before.folderId : null } : {}),
-      ...('refreshIntervalMinutes' in before ? { refreshIntervalMinutes: Number(before.refreshIntervalMinutes) } : {}),
-      ...('onChangeBehavior' in before ? { onChangeBehavior: before.onChangeBehavior as never } : {}),
-    })
-
-    // ⛔ 搬回原本的分組＝商品名也要跟著換回來、重新學（只寫 folderId 的話 AI 還當成搬過去那一台）
-    if ('folderId' in before) {
-      const moved = await syncSourceAfterMove(db, workspaceId, sourceId, uid)
-      if (moved.error)
-        return { message: '已經把這份資料搬回原本的分組；AI 重新學的那一步還沒做完，系統會自己補上。', ...swap(row) }
-      if (moved.sync.changed)
-        return { message: '已經把這份資料搬回原本的分組，AI 也跟著重新學了一次。', ...swap(row) }
+    const folderId = typeof before.folderId === 'string' && before.folderId ? before.folderId : null
+    // ⛔ 原本的分組在不在要在這裡查（同模組那種）：只靠 updateSourceSettings 裡那一關的話，
+    //    預演會過、跳了確認框，按下「確定還原」才說找不到資料夾
+    if (folderId) {
+      const f = await db.collection(KNOWLEDGE_FOLDERS_COLLECTION).doc(folderId).get()
+      if (!f.exists || f.data()?.workspaceId !== workspaceId)
+        throw createError({ statusCode: 409, statusMessage: '原本的分組已經刪掉了，搬不回去——請到「知識庫」另外選一個分組。' })
     }
-    return { message: '已經把這份資料改回原本的樣子。', ...swap(row) }
+
+    return async () => {
+      // 走跟 PUT /api/ai/sources/:sourceId 同一支（資料夾要是這個帳號的、找不到會講）
+      await updateSourceSettings(db, workspaceId, sourceId, {
+        ...('name' in before ? { name: String(before.name) } : {}),
+        ...('folderId' in before ? { folderId } : {}),
+        ...('refreshIntervalMinutes' in before ? { refreshIntervalMinutes: Number(before.refreshIntervalMinutes) } : {}),
+        ...('onChangeBehavior' in before ? { onChangeBehavior: before.onChangeBehavior as never } : {}),
+      })
+
+      // ⛔ 搬回原本的分組＝商品名也要跟著換回來、重新學（只寫 folderId 的話 AI 還當成搬過去那一台）
+      if ('folderId' in before) {
+        const moved = await syncSourceAfterMove(db, workspaceId, sourceId, uid)
+        if (moved.error)
+          return { message: '已經把這份資料搬回原本的分組；AI 重新學的那一步還沒做完，系統會自己補上。', ...swap(row) }
+        if (moved.sync.changed)
+          return { message: '已經把這份資料搬回原本的分組，AI 也跟著重新學了一次。', ...swap(row) }
+      }
+      return { message: '已經把這份資料改回原本的樣子。', ...swap(row) }
+    }
   },
 }
 
@@ -231,7 +280,7 @@ const memberRole: RevertHandler = {
     if (was === row.after.role) return { ok: false, reason: '這筆沒有記到改了哪一格，還原不了。' }
     return { ok: true, capability: 'members.manage', what: `把他的權限改回「${roleLabel(was)}」` }
   },
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId, uid, isSuperAdmin, isOrgAdmin } = ctx
     const targetUid = String(row.targetId)
     const role = String(row.before?.role) as WorkspaceMemberRole
@@ -241,21 +290,22 @@ const memberRole: RevertHandler = {
     const snap = await db.collection('workspaceMembers').doc(`${targetUid}_${workspaceId}`).get()
     if (!snap.exists) throw goneError('這位成員')
     if (snap.data()?.role !== row.after?.role) throw changedSinceError('這位成員的權限')
-    // ⚠️ 預演看不到「會不會變成零管理員」那一關（在下面那支交易裡），真的按下去時照樣會擋
-    if (isRehearsal(ctx)) return REHEARSED
+    // ⚠️ 檢查這一段看不到「會不會變成零管理員」那一關（在下面那支交易裡），真的按下去時照樣會擋
 
-    // 擁有者、零管理員、降成觀察者要拿掉通知——全在同一支（跟成員管理頁改權限同一套）
-    const { notifyRemoved } = await changeWorkspaceMemberRole(db, {
-      workspaceId,
-      targetUid,
-      role,
-      canTouchOwner: !!(isOrgAdmin || isSuperAdmin),
-    })
-    const parts = [`已經把權限改回「${roleLabel(role)}」。`]
-    if (notifyRemoved) parts.push('觀察者不收 LINE 通知，也順手把他從通知名單拿掉了。')
-    // 改成觀察者那一次可能把他移出了通知名單，這裡不會自動加回去（要不要收是他自己勾的）
-    if (row.after?.role === 'viewer') parts.push('他之前如果有收 LINE 通知，要收的話請到「設定 → LINE 通知」勾回來。')
-    return { message: parts.join(''), ...swap(row) }
+    return async () => {
+      // 擁有者、零管理員、降成觀察者要拿掉通知——全在同一支（跟成員管理頁改權限同一套）
+      const { notifyRemoved } = await changeWorkspaceMemberRole(db, {
+        workspaceId,
+        targetUid,
+        role,
+        canTouchOwner: !!(isOrgAdmin || isSuperAdmin),
+      })
+      const parts = [`已經把權限改回「${roleLabel(role)}」。`]
+      if (notifyRemoved) parts.push('觀察者不收 LINE 通知，也順手把他從通知名單拿掉了。')
+      // 改成觀察者那一次可能把他移出了通知名單，這裡不會自動加回去（要不要收是他自己勾的）
+      if (row.after?.role === 'viewer') parts.push('他之前如果有收 LINE 通知，要收的話請到「設定 → LINE 通知」勾回來。')
+      return { message: parts.join(''), ...swap(row) }
+    }
   },
 }
 
@@ -278,7 +328,7 @@ const knowledgeSettings: RevertHandler = {
       return { ok: false, reason: '這條知識當時不是「可用」或「停用」，沒辦法一鍵還原——請到「知識庫」頁確認。' }
     return base
   },
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId } = ctx
     const ref = db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(String(row.targetId))
     const snap = await ref.get()
@@ -287,25 +337,46 @@ const knowledgeSettings: RevertHandler = {
     // 規則照 POST /api/ai/knowledge/:chunkId/settings：回收桶的卡不能開關（會讓刪掉的卡復活上線）
     if (chunk.deletedAt != null)
       throw createError({ statusCode: 400, statusMessage: '這條知識在回收桶裡，請先還原再操作。' })
+
+    // 期限到了，排程（cron-maintenance 的 expireKnowledgeCards）會把期限搬到 expiredAt、上架中的改成停用。
+    // ⛔ 這種不是「又被改過」：講那句的話，人會去找一個根本沒動過它的同事（code review `C-412`）
+    const recordedUntil = row.after?.activeUntil
+    if (typeof recordedUntil === 'string' && recordedUntil && chunk.activeUntil == null
+      && auditTimeText(chunk.expiredAt) === recordedUntil) {
+      throw createError({
+        statusCode: 409,
+        statusMessage: `這條知識的有效期限（${auditTimeLabel(recordedUntil)}）已經到了，系統自動把它下架，沒辦法一鍵改回去——要重新上架請到「知識庫」設新的期限。`,
+      })
+    }
     const now = { cardStatus: String(chunk.status ?? ''), activeUntil: auditTimeText(chunk.activeUntil) }
     if (!stillAsRecorded(now, row.after)) throw changedSinceError('這條知識')
 
     const status = String(row.before?.cardStatus)
     const until = row.before?.activeUntil
+    const untilDate = typeof until === 'string' && until ? new Date(until) : null
     const update: Rec = {
       status,
-      activeUntil: typeof until === 'string' && until ? Timestamp.fromDate(new Date(until)) : FieldValue.delete(),
+      activeUntil: untilDate ? Timestamp.fromDate(untilDate) : FieldValue.delete(),
       updatedAt: FieldValue.serverTimestamp(),
     }
     if (status === 'indexed') {
       // ⛔ 沒有向量的卡不能標可用：畫面顯示可用、AI 卻永遠撈不到（同 settings 那支的守門）
       if (!chunk.embedding)
         throw createError({ statusCode: 400, statusMessage: '這條知識 AI 還沒學會，請先在「知識庫」按「再試一次」。' })
+      // 原本的期限已經過了：改回可用，下一輪排程就把它下架，等於沒還原
+      if (untilDate && untilDate.getTime() <= Date.now()) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: `原本的有效期限（${auditTimeLabel(String(until))}）已經過了，改回去會馬上被系統下架——要重新上架請到「知識庫」設新的期限。`,
+        })
+      }
       update.expiredAt = FieldValue.delete()
     }
-    if (isRehearsal(ctx)) return REHEARSED
-    await ref.update(update)
-    return { message: '已經把這條知識的開關和期限改回原本的樣子。', ...swap(row) }
+
+    return async () => {
+      await ref.update(update)
+      return { message: '已經把這條知識的開關和期限改回原本的樣子。', ...swap(row) }
+    }
   },
 }
 
@@ -319,13 +390,16 @@ const broadcastSchedule: RevertHandler = {
     const was = row.before?.status
     if (!row.targetId || row.after?.status !== 'scheduled' || typeof row.after?.scheduleAt !== 'string')
       return { ok: false, reason: '這筆沒記到排了哪一則、排在什麼時候，還原不了——請到「推播」頁確認。' }
+    // 排程中的推播改了名字或訊息、重新確認同一個時間＝前後一模一樣。⛔ 給了按鈕的話，按下去什麼都沒變卻說「改回去了」
+    if (recordsNoChange(row))
+      return { ok: false, reason: '這筆的送出時間沒有變（改的是推播內容），紀錄沒記內容，沒辦法一鍵還原——請到「推播」頁確認。' }
     if (was === 'draft')
       return { ok: true, capability: 'broadcast.send', what: '取消這個排程、改回草稿（不會送出）' }
     if (was === 'scheduled' && typeof row.before?.scheduleAt === 'string')
       return { ok: true, capability: 'broadcast.send', what: `把送出時間改回 ${auditTimeLabel(row.before.scheduleAt)}` }
     return { ok: false, reason: '這筆排程之前的狀態認不得，還原不了——請到「推播」頁確認。' }
   },
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId } = ctx
     const toDraft = row.before?.status === 'draft'
     let back: Date | null = null
@@ -335,8 +409,7 @@ const broadcastSchedule: RevertHandler = {
     }
 
     const ref = db.collection('broadcasts').doc(String(row.targetId))
-    await db.runTransaction(async (tx) => {
-      const snap = await tx.get(ref)
+    const verify = (snap: DocumentSnapshot) => {
       const b = snap.data()
       if (!snap.exists || b?.workspaceId !== workspaceId) throw goneError('那則推播')
       if (b.status === 'processing' || b.status === 'completed')
@@ -345,16 +418,22 @@ const broadcastSchedule: RevertHandler = {
       const atMs = (b.scheduleAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0
       if (atMs - Date.now() < SCHEDULE_REVERT_MARGIN_MS)
         throw createError({ statusCode: 409, statusMessage: '這則推播兩分鐘內就要送出了，來不及還原——要停下來請到「推播」頁按取消。' })
-      if (isRehearsal(ctx)) return
-      // 改回草稿的寫法同「重設回草稿」（retry）：scheduleAt 清成 null
-      tx.update(ref, toDraft
-        ? { status: 'draft', scheduleAt: null, updatedAt: FieldValue.serverTimestamp() }
-        : { scheduleAt: back, updatedAt: FieldValue.serverTimestamp() })
-    })
-    if (isRehearsal(ctx)) return REHEARSED
-    return {
-      message: toDraft ? '已經取消排程，這則推播改回草稿，不會送出。' : `已經把送出時間改回 ${auditTimeLabel(String(row.before?.scheduleAt))}。`,
-      ...swap(row),
+    }
+    verify(await ref.get())
+
+    return async () => {
+      // ⛔ 交易裡再驗一次：排程器也是在交易裡把它改成「送出中」，兩邊不能各寫各的
+      await db.runTransaction(async (tx) => {
+        verify(await tx.get(ref))
+        // 改回草稿的寫法同「重設回草稿」（retry）：scheduleAt 清成 null
+        tx.update(ref, toDraft
+          ? { status: 'draft', scheduleAt: null, updatedAt: FieldValue.serverTimestamp() }
+          : { scheduleAt: back, updatedAt: FieldValue.serverTimestamp() })
+      })
+      return {
+        message: toDraft ? '已經取消排程，這則推播改回草稿，不會送出。' : `已經把送出時間改回 ${auditTimeLabel(String(row.before?.scheduleAt))}。`,
+        ...swap(row),
+      }
     }
   },
 }
@@ -389,6 +468,10 @@ const lineNotifyReceiving: RevertHandler = {
   plan(row) {
     if (row.targetId && LINE_USER_ID_RE.test(row.targetId))
       return { ok: false, reason: '這筆是拿掉名單上一個不是成員的 LINE 帳號；名單現在只收綁好的成員，沒辦法加回去。' }
+    // 整列關掉的那一種：紀錄只記了「收／不收」。整列打開＝三種都收，⛔ 原本只收一兩種的人會多收摘要和出大事，
+    // 畫面卻說「改回原本的樣子」（code review `C-412`）
+    if (row.before?.receiving === true)
+      return { ok: false, reason: '這筆是整列關掉他的 LINE 通知，紀錄沒記他原本收哪幾種，沒辦法一鍵還原——請到「設定 → LINE 通知」把他原本收的那幾種勾回來。' }
     const base = planFields(row, {
       allowed: ['notifyKinds', 'receiving'],
       capability: 'notify.manage',
@@ -401,7 +484,7 @@ const lineNotifyReceiving: RevertHandler = {
       return { ok: false, reason: '這筆記到的通知種類認不得，還原不了——請到「設定 → LINE 通知」改回來。' }
     return base
   },
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { workspaceId } = ctx
     const target = String(row.targetId)
     const now = await memberNotifyKindsNow(workspaceId, target)
@@ -409,26 +492,28 @@ const lineNotifyReceiving: RevertHandler = {
       throw createError({ statusCode: 400, statusMessage: '這位成員已經沒綁 LINE（或不在這個帳號了），改不回去。' })
 
     if ('receiving' in (row.before ?? {})) {
-      // 整列開關那一種（`C-270`）：在名單上＝收
-      if ((now.length > 0) !== (row.after?.receiving === true)) throw changedSinceError('這位成員的 LINE 通知')
-      if (isRehearsal(ctx)) return REHEARSED
-      const fail = notifyFailure(await setMemberNotifyReceiving(workspaceId, target, row.before?.receiving === true))
-      if (fail) throw fail
-      return { message: '已經把他的 LINE 通知改回原本的樣子。', ...swap(row) }
+      // 整列打開的那一種（`C-270`）：還原＝從名單拿掉（在名單上＝收）
+      if (now.length === 0) throw changedSinceError('這位成員的 LINE 通知')
+      return async () => {
+        const fail = notifyFailure(await setMemberNotifyReceiving(workspaceId, target, false))
+        if (fail) throw fail
+        return { message: '已經把他的 LINE 通知關回去了。', ...swap(row) }
+      }
     }
 
     const want = kindsFromLabels(row.before?.notifyKinds)!
     const was = kindsFromLabels(row.after?.notifyKinds)!
     if (now.length !== was.length || !was.every(k => now.includes(k))) throw changedSinceError('這位成員的 LINE 通知')
-    if (isRehearsal(ctx)) return REHEARSED
-    // ⛔ 先勾後取消：反過來的話中間那一刻三種都沒勾＝從名單拿掉，再勾回來可能剛好撞名單滿
-    const toggles = NOTIFY_KINDS.filter(k => want.includes(k) !== now.includes(k))
-      .sort((a, b) => Number(want.includes(b)) - Number(want.includes(a)))
-    for (const k of toggles) {
-      const fail = notifyFailure(await setMemberNotifyKind(workspaceId, target, k, want.includes(k)))
-      if (fail) throw fail
+    return async () => {
+      // ⛔ 先勾後取消：反過來的話中間那一刻三種都沒勾＝從名單拿掉，再勾回來可能剛好撞名單滿
+      const toggles = NOTIFY_KINDS.filter(k => want.includes(k) !== now.includes(k))
+        .sort((a, b) => Number(want.includes(b)) - Number(want.includes(a)))
+      for (const k of toggles) {
+        const fail = notifyFailure(await setMemberNotifyKind(workspaceId, target, k, want.includes(k)))
+        if (fail) throw fail
+      }
+      return { message: '已經把他收的 LINE 通知改回原本的樣子。', ...swap(row) }
     }
-    return { message: '已經把他收的 LINE 通知改回原本的樣子。', ...swap(row) }
   },
 }
 
@@ -443,7 +528,7 @@ const campaignPut: RevertHandler = {
     // 貼哪些標籤、觸發什麼動作：紀錄只記了「幾個」「哪一種」，寫不回去
     refuse: '這筆改了活動要貼的標籤或觸發的動作，紀錄只記了數量和種類，沒辦法一鍵還原——請到「加好友活動」頁改回來。',
   }),
-  async apply(row, ctx) {
+  async check(row, ctx) {
     const { db, workspaceId } = ctx
     const id = String(row.targetId)
     const ref = db.collection('leadCampaigns').doc(id)
@@ -460,26 +545,28 @@ const campaignPut: RevertHandler = {
       write.name = before.name.trim()
     }
     if ('isActive' in before) write.isActive = before.isActive !== false
-    if (isRehearsal(ctx)) return REHEARSED
-    await ref.update({ ...write, updatedAt: FieldValue.serverTimestamp() })
 
-    // ⛔ 開關一動，活動連結要跟著換（同 PUT /api/campaigns/:id）：只改 isActive 的話客人點舊連結還是進得去／撲空
-    if ('isActive' in write) {
-      const merged = { ...d, ...write }
-      await syncPublishedEntryUrlForCampaign(db, id, {
-        workspaceId,
-        liffId: String(merged.liffId ?? ''),
-        campaignCode: String(merged.campaignCode ?? ''),
-        isActive: merged.isActive !== false,
-        tagIds: merged.tagIds as string[] | undefined,
-        moduleId: merged.moduleId as string | null | undefined,
-        action: merged.action as never,
-        redirectUrl: String(merged.redirectUrl ?? '') || null,
-        publishedClaimId: (d.publishedClaimId as string | null | undefined) ?? null,
-        publishedCtaUrl: (d.publishedCtaUrl as string | null | undefined) ?? null,
-      })
+    return async () => {
+      await ref.update({ ...write, updatedAt: FieldValue.serverTimestamp() })
+
+      // ⛔ 開關一動，活動連結要跟著換（同 PUT /api/campaigns/:id）：只改 isActive 的話客人點舊連結還是進得去／撲空
+      if ('isActive' in write) {
+        const merged = { ...d, ...write }
+        await syncPublishedEntryUrlForCampaign(db, id, {
+          workspaceId,
+          liffId: String(merged.liffId ?? ''),
+          campaignCode: String(merged.campaignCode ?? ''),
+          isActive: merged.isActive !== false,
+          tagIds: merged.tagIds as string[] | undefined,
+          moduleId: merged.moduleId as string | null | undefined,
+          action: merged.action as never,
+          redirectUrl: String(merged.redirectUrl ?? '') || null,
+          publishedClaimId: (d.publishedClaimId as string | null | undefined) ?? null,
+          publishedCtaUrl: (d.publishedCtaUrl as string | null | undefined) ?? null,
+        })
+      }
+      return { message: '已經把這個活動改回原本的樣子。', ...swap(row) }
     }
-    return { message: '已經把這個活動改回原本的樣子。', ...swap(row) }
   },
 }
 

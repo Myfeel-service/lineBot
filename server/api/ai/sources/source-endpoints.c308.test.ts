@@ -164,6 +164,20 @@ describe('換了分組、學那一步出錯（`D-129`：系統會自己補，不
   })
 })
 
+describe('改設定的那筆紀錄只記真的改了的（`C-412`）', () => {
+  it('🔴 沒存商品名、同步頻率的資料搬分組 → 紀錄只有分組一格（以前多記「商品名：（空白）→ 空字串」，那筆就被當成動到商品名、不給還原）', async () => {
+    STORE.knowledgeFolders = { g2: { workspaceId: WS, name: '小滑手', order: 0 } }
+    syncSourceProductWithGroup.mockRejectedValueOnce(new Error('Gemini embed: 503'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    body = { folderId: 'g2' }
+    await run(putHandler)
+    const a = vi.mocked(writeAuditLog).mock.calls[0]![0]
+    expect(a.before).toEqual({ folderId: null })
+    expect(a.after).toEqual({ folderId: 'g2' })
+    warn.mockRestore()
+  })
+})
+
 describe('資料清單／明細帶得出新的兩格（給畫面用）', () => {
   it('gsheetExcludedTitles、blockedPendingDeletes 有值照給、沒有給預設', () => {
     expect(docToSourceSummary('x', { gsheetExcludedTitles: ['A', ' '], blockedPendingDeletes: 7 } as any))

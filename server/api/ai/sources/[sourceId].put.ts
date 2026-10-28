@@ -69,8 +69,10 @@ export default defineEventHandler(async (event) => {
    * `url` 改了會連比對基準一起重設（下一次同步會把卡片整批換掉）。
    */
   const keep = ['name', 'productName', 'url', 'folderId', 'refreshIntervalMinutes', 'onChangeBehavior'] as const
+  // ⛔ 兩邊都用整理過的那份比（code review `C-412`）：以前拿原始文件比整理過的，沒存商品名的資料
+  //    一搬分組就多記一行「商品名：（空白）→ ''」，那一筆還會被當成「動到商品名」不給還原
   const diff = diffChangedFields(
-    auditSnapshot(before?.data as Record<string, unknown> | undefined, { keep })!,
+    auditSnapshot(before ? docToSourceSummary(sourceId, before.data) as unknown as Record<string, unknown> : undefined, { keep })!,
     auditSnapshot(result as unknown as Record<string, unknown>, { keep })!,
   )
   // 重新收回來的列（`D-125`②）只寫在備註：那是一串標題，放進前後對照會被截斷、也看不懂

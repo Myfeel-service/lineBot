@@ -34,25 +34,17 @@ export interface RevertCtx {
   /** 成員權限那種要用：擁有者只有組織管理員／超管動得了、超管可以改自己（`G-96`／`G-101`） */
   isSuperAdmin?: boolean
   isOrgAdmin?: boolean
-  /**
-   * 只檢查、不寫入（2026-10-28 `D-156`）。為什麼要有：拿 MYFEEL 真資料預演，新增類 118 個還原鈕裡
-   * 大半按下去會被擋（模組建好後又改過、標籤已經貼了人、推播早就送出了）——
-   * 畫面給了按鈕、按下去卻說不行，比沒有按鈕更糟。
-   * - `precheck`：清單每一列都要算，只做便宜的檢查（讀那一份、看狀態、數幾個），沒過就不給按鈕
-   * - `dryRun`：按下「還原」那一刻，貴的也做（掃「誰在用它」），沒過就直接講原因、不跳確認框
-   * - 沒給＝真的還原
-   */
-  mode?: 'precheck' | 'dryRun'
 }
 
-/** 只檢查不寫入嗎（清單預查、按下去先預演） */
-export const isRehearsal = (ctx: RevertCtx) => ctx.mode === 'precheck' || ctx.mode === 'dryRun'
-
-/** 清單預查：貴的檢查（掃誰在用它、數活動加了幾位）留到按下去那一刻 */
-export const isPrecheck = (ctx: RevertCtx) => ctx.mode === 'precheck'
-
-/** 預演做完、沒有寫入時回的東西（呼叫端不會拿它記紀錄） */
-export const REHEARSED: RevertOutcome = { message: '', before: null, after: null }
+/**
+ * 檢查做到多深（2026-10-28 `D-156`）。為什麼要分：拿 MYFEEL 真資料預演，新增類 118 個還原鈕裡
+ * 大半按下去會被擋（模組建好後又改過、標籤已經貼了人、推播早就送出了）——
+ * 畫面給了按鈕、按下去卻說不行，比沒有按鈕更糟。
+ * - `list`：清單每一列都要算，只做便宜的（讀那一份、看狀態、數幾個），沒過就不給按鈕
+ * - `confirm`：按下「還原」那一刻，貴的也做（掃「誰在用它」，60 秒內掃過的可以直接用）
+ * - `apply`：按了「確定還原」、真的要動手之前，全部重查一次（不用掃過的結果）
+ */
+export type RevertStage = 'list' | 'confirm' | 'apply'
 
 /** 還原做完之後要記進「還原了這一筆」那筆紀錄的東西 */
 export interface RevertOutcome {
@@ -63,11 +55,21 @@ export interface RevertOutcome {
   after: Record<string, unknown> | null
 }
 
+/** 檢查過了、真的動手的那一步 */
+export type RevertCommit = () => Promise<RevertOutcome>
+
 export interface RevertHandler {
   /** 這筆能不能還原（只看紀錄本身，不讀資料庫——清單每一列都要算一次） */
   plan: (row: AuditRecordForRevert) => RevertPlan
-  /** 真的還原。現況不對（被改過、被用到了）一律 throw，訊息是給人看的 */
-  apply: (row: AuditRecordForRevert, ctx: RevertCtx) => Promise<RevertOutcome>
+  /**
+   * 現在還能不能還原：只讀，現況不對（被改過、被用到了）一律 throw，訊息是給人看的。
+   * 過了就回傳「動手」那一步。
+   * ⛔ 寫入只能放在回傳的那個函式裡：清單預查和按下去的預演只跑這一段、從不呼叫回傳的函式。
+   *    10-28 第一版是同一支函式靠 18 處「預演就停」各自擋（code review `C-412`）——
+   *    漏一處＝只是打開操作紀錄頁就真的還原，而且沒有確認框、沒有紀錄。
+   * ⛔ 要在交易裡改的那幾種，回傳的函式自己在交易裡**再驗一次**（檢查跟動手之間可能隔了一次掃描）。
+   */
+  check: (row: AuditRecordForRevert, ctx: RevertCtx, stage: RevertStage) => Promise<RevertCommit>
 }
 
 /**

@@ -120,6 +120,8 @@ export function configRefKindIsDeepLinkable(kind: ConfigRefKind): boolean {
  *   2. `tagging: { enabled, addTagIds }`（模組按鈕、圖文選單格子、客服預存）
  *   3. `{ type: 'tag', addTagIds }`（自動回應的貼標步驟）
  *   4. 任何 `tagIds` 陣列（活動的 `tagIds`、推播的 `audienceSource.tagIds`）
+ *   5. 推播的 `completionTagIds`（發完幫收到的人貼的標籤；2026-10-29 補 `E-45`——以前漏掉，
+ *      標籤停用前說「沒地方在用」，停用後那則推播發完照樣貼上去：`addTagsToUser` 不看標籤停用沒）
  *
  * ⚠️ **`tagging.enabled === false` 不算「用到」**：那是「存著但不會執行」，
  *    把它算進去的話，停用前的警告會講出一堆其實不會發生的事，人就不會再看那個警告了。
@@ -159,7 +161,7 @@ export function collectTagRefs(value: unknown, out: Set<string> = new Set()): Se
 
     for (const key of Object.keys(obj)) {
       if (key === 'tagging') continue
-      if ((key === 'tagIds' || key === 'addTagIds') && Array.isArray(obj[key])) {
+      if ((key === 'tagIds' || key === 'addTagIds' || key === 'completionTagIds') && Array.isArray(obj[key])) {
         add(obj[key] as string[])
         continue
       }

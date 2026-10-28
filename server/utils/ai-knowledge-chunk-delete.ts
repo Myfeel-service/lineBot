@@ -48,25 +48,32 @@ export async function softDeleteKnowledgeChunk(db: Firestore, workspaceId: strin
   // 「還剩幾條空間」的快取（60 秒）馬上作廢（`C-308`⑧）：照提示刪完馬上再加，以前還是說滿了
   invalidateKnowledgeChunkCount(workspaceId)
 
-  // 同步維護 source：manual 單張 → source 一起進回收桶；其他 → 重算 chunkCount
+  // 同步維護 source：manual 單張 → source 一起進回收桶；其他 → 重算 chunkCount。
+  // ⛔ 這一步出錯不往上丟（code review `C-412`）：這條已經進回收桶了，丟出去的話呼叫的那邊
+  //    不會寫操作紀錄（抽出來之前紀錄是先寫的），畫面還說刪除失敗。數字下次同步會重算
   if (sourceRef && sourceMine) {
-    const remaining = await countSourceChunks(db, workspaceId, existing.sourceId!)
-    // manual 來源只有「一張卡都不剩」才連坐進回收桶：
-    // 貼上文字匯入（C-47）是一個 manual source 掛多張卡，刪其中一張就收掉整個來源
-    // 會讓其他卡變成指向回收桶來源的隱形卡（列表看不到、卻還在被檢索）。
-    if (sourceData?.type === 'manual' && remaining === 0) {
-      await sourceRef.update({
-        isDeleted: true, // listSources 靠這個欄位在查詢層排除墓碑（見該函式註解）
-        deletedAt: FieldValue.serverTimestamp(),
-        purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
-        updatedAt: FieldValue.serverTimestamp(),
-      }).catch(() => {})
+    try {
+      const remaining = await countSourceChunks(db, workspaceId, existing.sourceId!)
+      // manual 來源只有「一張卡都不剩」才連坐進回收桶：
+      // 貼上文字匯入（C-47）是一個 manual source 掛多張卡，刪其中一張就收掉整個來源
+      // 會讓其他卡變成指向回收桶來源的隱形卡（列表看不到、卻還在被檢索）。
+      if (sourceData?.type === 'manual' && remaining === 0) {
+        await sourceRef.update({
+          isDeleted: true, // listSources 靠這個欄位在查詢層排除墓碑（見該函式註解）
+          deletedAt: FieldValue.serverTimestamp(),
+          purgeAfter: Timestamp.fromMillis(Date.now() + RECYCLE_RETENTION_DAYS * 86_400_000),
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+      }
+      else {
+        await sourceRef.update({
+          chunkCount: remaining,
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+      }
     }
-    else {
-      await sourceRef.update({
-        chunkCount: remaining,
-        updatedAt: FieldValue.serverTimestamp(),
-      }).catch(() => {})
+    catch (e) {
+      console.warn('[knowledge-delete] source upkeep failed:', existing.sourceId, e)
     }
   }
 
