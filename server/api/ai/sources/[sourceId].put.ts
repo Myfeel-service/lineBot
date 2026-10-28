@@ -10,7 +10,7 @@ import {
   updateSourceSettings,
 } from '~~/server/utils/ai-knowledge-sources'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
-import { RELEARN_PENDING_FIELD, syncSourceProductWithGroup } from '~~/server/utils/ai-knowledge-product-group'
+import { syncSourceAfterMove } from '~~/server/utils/ai-knowledge-source-move'
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
 import { aiUsageOfError, callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
@@ -98,25 +98,15 @@ export default defineEventHandler(async (event) => {
   if (movedFolder) {
     // ⛔ 同步失敗不可以讓整支回 500（`C-320` /code-review 第 3 條）：分組已經換好、操作紀錄已經寫了，
     // 回 500 的話畫面以為搬移失敗——加入視窗還會把剛建好、資料已經搬進去的分組當成空的刪掉。搬移照算成功，帶一句沒學成
-    try {
-      const sync = await syncSourceProductWithGroup(db, workspaceId, sourceId, { uid })
-      if (sync.changed) {
-        return {
-          ...sync.source,
-          groupSync: { productName: sync.productName, previous: sync.previous, indexed: sync.relearned.indexed, failed: sync.relearned.failed },
-        }
+    // （學失敗時留「還沒重新學」的記號、排程自己補，畫面只講「系統會自己補上」；規則在 syncSourceAfterMove）
+    const moved = await syncSourceAfterMove(db, workspaceId, sourceId, uid)
+    if (moved.error) return { ...result, groupSync: { error: true } }
+    const sync = moved.sync
+    if (sync.changed) {
+      return {
+        ...sync.source,
+        groupSync: { productName: sync.productName, previous: sync.previous, indexed: sync.relearned.indexed, failed: sync.relearned.failed },
       }
-    }
-    catch (e) {
-      console.warn(`[sources] ${sourceId} group product sync failed:`, (e as Error)?.message)
-      // 留「還沒重新學」的記號（`D-129`）：排程（relearnPendingProductSources）自己對齊組名、補學完，畫面只講「系統會自己補上」。
-      // 對齊那一步已經留過的話這裡是重寫一次；斷在對齊之前的（記號還沒寫）靠這一筆才找得到
-      try {
-        await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId)
-          .update({ [RELEARN_PENDING_FIELD]: true, updatedAt: FieldValue.serverTimestamp() })
-      }
-      catch { /* 記號寫不進去：資料剛被刪、或資料庫一時寫不進去——搬移照樣算成功 */ }
-      return { ...result, groupSync: { error: true } }
     }
   }
 

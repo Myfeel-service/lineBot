@@ -181,6 +181,12 @@ export interface ConfigReferenceIndex {
    * （這個 repo 已經發生過好幾次）。畫面看到這個陣列非空時要講「有幾類查不到」。
    */
   failedKinds: ConfigRefKind[]
+  /**
+   * 哪幾類筆數撞到掃描上限、後面的沒掃到（2026-10-28 補：上限那行註解一直寫「撞到要回報」，
+   * 實際上沒有任何旗標）。目前只有操作紀錄的「還原新增」在看（`D-156`）——
+   * 它要靠這份索引說「沒有地方在用」，⛔ 沒掃完就不能這樣說。刪除確認框還沒接（STATUS 有記）。
+   */
+  truncatedKinds?: ConfigRefKind[]
 }
 
 export function emptyReferenceIndex(): ConfigReferenceIndex {

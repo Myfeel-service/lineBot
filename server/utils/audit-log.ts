@@ -49,6 +49,12 @@ export interface AuditLogInput {
    */
   targetId?: string
   /**
+   * `audit/revert` 專用：還原的是哪一筆（2026-10-28 `D-156`）。
+   * 以前只寫在備註「（原紀錄 xxx）」裡，查不到——於是還原過的那一筆還掛著「還原」鈕，
+   * 再按一次會說「這段期間又被改過了」，人會跑去找一個不存在的同事。
+   */
+  revertOf?: string
+  /**
    * 組織層動作（建官方帳號、改組織發票抬頭、停用組織）動到的組織。
    * 2026-09-24 補（`C-254`）：這類動作沒有單一 workspace，但仍要查得到是誰做的。
    */
@@ -185,6 +191,7 @@ export async function writeAuditLog(input: AuditLogInput, db?: Firestore): Promi
       ...(lossy.hit ? { lossy: true } : {}),
       ...(input.note ? { note: String(input.note).slice(0, 500) } : {}),
       ...(input.targetId ? { targetId: String(input.targetId).slice(0, 200) } : {}),
+      ...(input.revertOf ? { revertOf: String(input.revertOf).slice(0, 200) } : {}),
       ...(input.orgId ? { orgId: String(input.orgId).slice(0, 200) } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
       createdAt: FieldValue.serverTimestamp(),

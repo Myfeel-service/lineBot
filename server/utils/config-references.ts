@@ -133,6 +133,7 @@ export async function scanConfigReferences(
       index.failedKinds.push(source.kind)
       continue
     }
+    if (snap.size >= SCAN_LIMIT) (index.truncatedKinds ??= []).push(source.kind)
     for (const doc of snap.docs) {
       const data = doc.data() as Record<string, unknown>
       const ref: ConfigRef = {

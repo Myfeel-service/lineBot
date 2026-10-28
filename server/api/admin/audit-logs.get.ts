@@ -2,7 +2,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDb, getFirebaseAuth } from '~~/server/utils/firebase'
 import { AUDIT_LOGS_COLLECTION } from '~~/server/utils/audit-log'
 import { AI_USAGE_COLLECTION, currentYyyyMm } from '~~/server/utils/ai-usage'
-import { planRevert } from '~~/server/utils/audit-revert'
+import { applyRevert, planRevert, revertedIdsAmong } from '~~/server/utils/audit-revert'
 import type { AuditActor, AuditLogRow } from '~~/shared/types/audit'
 
 /**
@@ -30,7 +30,7 @@ function parseActor(raw: unknown): AuditActor | null {
 }
 
 export default defineEventHandler(async (event) => {
-  const { workspaceId } = await requireCapability(event, 'audit.read')
+  const { workspaceId, uid, isSuperAdmin } = await requireCapability(event, 'audit.read')
   const query = getQuery(event)
 
   const limit = Math.min(MAX_LIMIT, Math.max(1, Number(query.limit) || DEFAULT_LIMIT))
@@ -96,7 +96,7 @@ export default defineEventHandler(async (event) => {
     return {
       id: d.id,
       revertible: plan.ok,
-      ...(plan.ok ? {} : { revertReason: plan.reason }),
+      ...(plan.ok ? { revertWhat: plan.what } : { revertReason: plan.reason }),
       action: String(data.action ?? ''),
       actor: data.actor === 'agent' || data.actor === 'system' ? data.actor : 'human',
       uid: String(data.uid ?? ''),
@@ -110,6 +110,54 @@ export default defineEventHandler(async (event) => {
       createdAt: typeof ts?.toMillis === 'function' ? ts.toMillis() : null,
     }
   })
+
+  // 已經還原過的那幾筆不再給「還原」鈕（`D-156`）：⛔ 不然再按一次會說「這段期間又被改過了」，
+  // 人會去找一個不存在的同事。只問「能還原的」那幾筆；查不到不影響清單本身
+  const revertibleIds = items.filter(i => i.revertible).map(i => i.id)
+  if (revertibleIds.length) {
+    try {
+      const done = await revertedIdsAmong(db, workspaceId, revertibleIds)
+      for (const i of items) {
+        if (!done.has(i.id)) continue
+        i.revertible = false
+        i.reverted = true
+        delete i.revertWhat
+      }
+    }
+    catch (e) {
+      // 查不到就照舊顯示還原鈕：按下去時 revert 那支還會再查一次、擋得住
+      console.error('[audit-logs] reverted lookup failed:', e)
+    }
+  }
+
+  /*
+   * 便宜的預查（`D-156`）：那一份還在不在、建好後有沒有被改過、推播送出了沒。
+   * 為什麼要有：拿 MYFEEL 真資料預演，新增類的還原鈕大半按下去會被擋——
+   * 給了按鈕、按下去卻說不行，比沒有按鈕更糟。擋得下來的這裡就收掉按鈕、直接寫原因。
+   * ⚠️ 只做便宜的（每列讀一兩筆）：「哪裡在用它」要掃六類設定，留到按下去那一刻。
+   * ⛔ 預查自己出錯（不是被規則擋）就照舊給按鈕：按下去時還會完整再查一次
+   */
+  await Promise.all(items.filter(i => i.revertible).map(async (i) => {
+    try {
+      await applyRevert({
+        id: i.id,
+        action: i.action,
+        before: i.before,
+        after: i.after,
+        ...(i.targetId ? { targetId: i.targetId } : {}),
+      }, { db, workspaceId, uid, isSuperAdmin, mode: 'precheck' })
+    }
+    catch (e: any) {
+      const status = Number(e?.statusCode ?? 0)
+      if (status < 400 || status >= 500 || !e?.statusMessage) {
+        console.error('[audit-logs] revert precheck failed:', i.id, i.action, e)
+        return
+      }
+      i.revertible = false
+      i.revertReason = String(e.statusMessage)
+      delete i.revertWhat
+    }
+  }))
 
   // uid → Email：畫面要顯示「誰」，只有 uid 等於沒回答。查不到就讓畫面顯示 uid 本身。
   const uids = [...new Set(items.map(i => i.uid).filter(Boolean))].slice(0, MAX_UID_LOOKUP)

@@ -784,8 +784,12 @@ export interface AuditLogRow {
   createdAt: number | null
   /** 這一筆能不能一鍵還原（後端算，⛔前端不要自己判斷） */
   revertible?: boolean
+  /** 能還原時，按下去會做什麼（一句話；新增類的確認框靠它講「會把什麼拿掉」，`D-156`） */
+  revertWhat?: string
   /** 不能還原時的原因（人看得懂的一句話，畫面直接顯示） */
   revertReason?: string
+  /** 已經還原過了（`D-156`）：畫面顯示「已還原」、不再給按鈕 */
+  reverted?: boolean
 }
 
 export interface AuditLogListResult {

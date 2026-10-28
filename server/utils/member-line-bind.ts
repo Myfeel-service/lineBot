@@ -458,6 +458,23 @@ export async function setMemberNotifyReceiving(workspaceId: string, uid: string,
 }
 
 /**
+ * 這位成員現在收哪幾種通知（不在名單上＝空陣列；沒綁 LINE／不是成員＝null）。
+ * 2026-10-28（`D-156`）操作紀錄的「還原」要先確認現況還是當時的「改之後」才動手。
+ * ⚠️ 規則跟 `setMemberNotifyKind` 交易裡算 `before` 那幾行同一套（舊的全帳號「出大事」開關關著＝每個人都不收出大事）。
+ */
+export async function memberNotifyKindsNow(workspaceId: string, uid: string): Promise<NotifyKind[] | null> {
+  const db = getDb()
+  const memberSnap = await db.collection('workspaceMembers').doc(memberDocId(uid, workspaceId)).get()
+  const lineUserId = memberSnap.exists ? normalizeLineUserId(memberSnap.data()?.lineUserId) : ''
+  if (!lineUserId) return null
+  const snap = await db.collection(AI_SETTINGS_COLLECTION).doc(workspaceId).get()
+  const raw = snap.exists ? snap.data()?.handoffNotify : undefined
+  const ids = effectiveNotifyIds(raw)
+  if (!notifyListHas(ids, lineUserId)) return []
+  return notifyKindsFor(normalizeNotifyOptOut(raw?.optOut, ids, { critOffForAll: raw?.criticalAlertPush === false }), lineUserId)
+}
+
+/**
  * - `changed`：還在名單上，收的種類變了；`added`：本來不在名單上，勾了一種就加進來
  * - `removed`：三種都不勾了＝從名單拿掉；`already`：本來就是這樣（什麼都沒寫）
  * - `full`：名單滿了沒加；`failed`：寫不進去

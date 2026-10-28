@@ -250,6 +250,8 @@
                   -->
                   <span v-if="h.unmergedAtMs" class="badge badge-orange">已解除合併</span>
                   <span v-else-if="h.unblockedAtMs" class="badge badge-gray">已可再被提議</span>
+                  <!-- 在「操作紀錄」收回了（`D-156`）：標籤已停用、這批好友身上也拿掉了，⛔ 不能還掛著「已建立」就算數 -->
+                  <span v-if="h.revertedAtMs" class="badge badge-orange">已收回（標籤已停用）</span>
                 </div>
                 <p class="tags-history-row__meta">
                   <!-- ⛔ 查不到是誰就整段不講：「由 同事決定」既沒資訊、中英夾雜的空格還會歪掉 -->

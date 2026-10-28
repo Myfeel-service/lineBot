@@ -129,6 +129,8 @@
                   <el-button v-if="row.revertible" size="small" :loading="reverting === row.id" @click="revert(row)">
                     還原
                   </el-button>
+                  <!-- 還原過的不再給按鈕（`D-156`）：再按一次只會得到一句「又被改過了」 -->
+                  <span v-else-if="row.reverted" class="text-xs text-muted">已還原</span>
                   <el-tooltip v-else-if="row.revertReason" :content="row.revertReason" placement="left">
                     <span class="text-xs text-muted">不能還原</span>
                   </el-tooltip>
@@ -265,12 +267,34 @@ async function load(cursor: string | null) {
  * ⛔ 後端會再驗一次「這段期間有沒有被改過」，前端這裡只是把話講清楚。
  */
 async function revert(row: AuditLogRow) {
+  // 先預演一次（`D-156`）：「哪裡在用它」這種貴的檢查只在這裡做。擋得下來就直接講原因、按鈕換成原因，
+  // ⛔ 不要先跳「確定還原嗎」、按了確定才說不行
+  reverting.value = row.id
+  try {
+    await apiFetch('/api/admin/audit-logs/revert', { method: 'POST', body: { id: row.id, dryRun: true } })
+  }
+  catch (e: any) {
+    const reason = e?.statusMessage || e?.data?.statusMessage
+    showToast(reason || '還原失敗，請到對應頁面確認現在的設定。', 'error')
+    if (reason) {
+      row.revertible = false
+      row.revertReason = reason
+    }
+    return
+  }
+  finally {
+    reverting.value = ''
+  }
+
   const summary = changes(row)
   // ⛔ 沒列完的也要講：按下去會一起被改回去，只給人看其中幾行等於沒問過
   const omitted = summary.omitted ? `\n（另外還有 ${summary.omitted} 項也會一起改回去）` : ''
-  const lines = summary.lines.map(c => `${c.label}：${c.after} → ${c.before}`).join('\n')
+  // 新增類（`D-156`）：還原＝把剛建的那個拿掉，「名稱：X → （空白）」講不出這件事，改講後端給的那一句
+  const lines = auditIsCreate(row.before) && row.revertWhat
+    ? row.revertWhat
+    : summary.lines.map(c => `${c.label}：${c.after} → ${c.before}`).join('\n')
   const go = await ElMessageBox.confirm(
-    `要把這筆改回去嗎？\n\n${lines || auditActionLabel(row.action)}${omitted}`,
+    `要把這筆改回去嗎？\n\n${lines || row.revertWhat || auditActionLabel(row.action)}${omitted}`,
     '還原這一筆',
     { confirmButtonText: '確定還原', cancelButtonText: '取消', type: 'warning' },
   ).then(() => true).catch(() => false)

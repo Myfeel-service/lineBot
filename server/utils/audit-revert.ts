@@ -13,28 +13,26 @@
  * - ⛔ **還原本身也是一次操作**：它會再寫一筆稽核，⛔不刪、不改原本那一筆——
  *   能被改寫的紀錄就不叫紀錄。
  */
-import type { Firestore } from 'firebase-admin/firestore'
-import { FieldValue } from 'firebase-admin/firestore'
-import type { Capability } from '~~/shared/permissions'
+import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { auditActionLabel } from '~~/shared/types/audit'
-import { writeAuditLog } from './audit-log'
+import { AUDIT_LOGS_COLLECTION, writeAuditLog } from './audit-log'
 import { getAiSettings, setAiSettings } from './ai-settings'
 import { invalidateScriptsCache, SCRIPTS_COLLECTION } from './ai-scripts'
 import { invalidateScriptHealthCache } from './script-health'
+import { isRehearsal, matchesRecorded, type AuditRecordForRevert, type RevertCtx, type RevertHandler, type RevertPlan } from './audit-revert-common'
+import { FIELD_REVERT_HANDLERS } from './audit-revert-fields'
+import { CREATE_REVERT_HANDLERS } from './audit-revert-creates'
 
-/** 一筆稽核紀錄裡，還原用得到的部分 */
-export interface AuditRecordForRevert {
-  id: string
-  action: string
-  before?: Record<string, unknown> | null
-  after?: Record<string, unknown> | null
-  targetId?: string
-  /**
-   * 這筆紀錄存的時候有東西被遮罩／截斷／砍掉（`writeAuditLog` 標的）。
-   * ⛔ 有這個旗標就不准還原：寫回去會把 60 個敏感詞變成 50 個、把長字串變成
-   *    「…(截斷,原 N 字)」，而畫面還會跟人說「已經改回原本的值」。
-   */
-  lossy?: boolean
+export type { AuditRecordForRevert, RevertPlan } from './audit-revert-common'
+
+/**
+ * 其他動作怎麼還原（2026-10-28 `D-156`）：一種動作一個處理器，各自守原本那個動作的護欄。
+ * ①改一個值（`audit-revert-fields.ts`）②新增的東西、沒被用到才拿掉（`audit-revert-creates.ts`）。
+ * 這支檔案下面那兩種（AI 設定、流程上下架）是最早做的，照舊留在這裡。
+ */
+const REVERT_HANDLERS: Record<string, RevertHandler> = {
+  ...FIELD_REVERT_HANDLERS,
+  ...CREATE_REVERT_HANDLERS,
 }
 
 /** 舊紀錄沒有 lossy 旗標，只能認淨化留下的痕跡（遮罩與截斷標記） */
@@ -44,25 +42,6 @@ function looksTruncated(v: unknown): boolean {
   if (v && typeof v === 'object') return Object.values(v as Record<string, unknown>).some(looksTruncated)
   return false
 }
-
-/**
- * 現值是否仍與紀錄裡的「改之後」相符。
- * ⛔ 子物件只比**紀錄裡有寫到的那幾格**：稽核存的是「這次動到的部分」
- *   （例如只有 handoffNotify.slaRemindMinutes），拿它跟完整設定整包比一定不相等，
- *   結果會變成「永遠說被改過、永遠不能還原」。
- */
-function matchesRecorded(current: unknown, recorded: unknown): boolean {
-  if (recorded && typeof recorded === 'object' && !Array.isArray(recorded)) {
-    if (!current || typeof current !== 'object') return false
-    return Object.entries(recorded as Record<string, unknown>)
-      .every(([k, v]) => matchesRecorded((current as Record<string, unknown>)[k], v))
-  }
-  return JSON.stringify(current ?? null) === JSON.stringify(recorded ?? null)
-}
-
-export type RevertPlan =
-  | { ok: true, capability: Capability, what: string }
-  | { ok: false, reason: string }
 
 /**
  * 可以還原的「AI 設定」欄位白名單。
@@ -102,6 +81,9 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
         + '還原會少東西，所以不給還原——請到對應的設定頁自己改回來。',
     }
   }
+
+  const handler = REVERT_HANDLERS[row.action]
+  if (handler) return handler.plan(row)
 
   if (row.action === 'agent-op/script-set-enabled') {
     if (!row.targetId)
@@ -153,13 +135,53 @@ export function planRevert(row: AuditRecordForRevert): RevertPlan {
   return { ok: false, reason: `「${label}」這種動作沒有辦法還原（它不是把某個值改成另一個值）。` }
 }
 
-/** 真的還原。回傳一句白話結果；失敗一律 throw（訊息是給人看的） */
-export async function applyRevert(
-  row: AuditRecordForRevert,
-  ctx: { db: Firestore, workspaceId: string, uid: string },
-): Promise<string> {
+/**
+ * 這筆已經被還原過了嗎（`D-156`）：回傳那筆「還原了…」紀錄的 id，沒有就 null。
+ * 查的是 `revertOf` 單一欄位等號——Firestore 自動有索引，⛔ 不用部署。
+ * ⚠️ 10-28 以前的還原紀錄沒有這一格（只寫在備註），查不到；那之前 MYFEEL 一筆還原都沒有。
+ */
+export async function findRevertOf(db: Firestore, workspaceId: string, id: string): Promise<string | null> {
+  const snap = await db.collection(AUDIT_LOGS_COLLECTION).where('revertOf', '==', id).limit(5).get()
+  return snap.docs.find(d => d.get('workspaceId') === workspaceId)?.id ?? null
+}
+
+/** 清單那一頁裡哪幾筆已經還原過（Firestore 的 `in` 一次最多 30 個） */
+export async function revertedIdsAmong(db: Firestore, workspaceId: string, ids: string[]): Promise<Set<string>> {
+  const out = new Set<string>()
+  for (let i = 0; i < ids.length; i += 30) {
+    const snap = await db.collection(AUDIT_LOGS_COLLECTION).where('revertOf', 'in', ids.slice(i, i + 30)).get()
+    for (const d of snap.docs) {
+      if (d.get('workspaceId') === workspaceId) out.add(String(d.get('revertOf')))
+    }
+  }
+  return out
+}
+
+/**
+ * 真的還原。回傳一句白話結果；失敗一律 throw（訊息是給人看的）。
+ * `ctx.mode` 是 precheck／dryRun 時只檢查不寫入、也不記紀錄（擋得下來一樣 throw，沒擋就回空字串）。
+ */
+export async function applyRevert(row: AuditRecordForRevert, ctx: RevertCtx): Promise<string> {
   const plan = planRevert(row)
   if (!plan.ok) throw createError({ statusCode: 400, statusMessage: plan.reason })
+
+  const handler = REVERT_HANDLERS[row.action]
+  if (handler) {
+    const out = await handler.apply(row, ctx)
+    if (isRehearsal(ctx)) return ''
+    await writeAuditLog({
+      workspaceId: ctx.workspaceId,
+      uid: ctx.uid,
+      actor: 'human',
+      action: 'audit/revert',
+      ...(row.targetId ? { targetId: row.targetId } : {}),
+      revertOf: row.id,
+      before: out.before,
+      after: out.after,
+      note: `還原了「${auditActionLabel(row.action)}」（原紀錄 ${row.id}）`,
+    }, ctx.db)
+    return out.message
+  }
 
   if (row.action === 'agent-op/script-set-enabled') {
     const ref = ctx.db.collection(SCRIPTS_COLLECTION).doc(String(row.targetId))
@@ -177,6 +199,7 @@ export async function applyRevert(
       })
     }
 
+    if (isRehearsal(ctx)) return ''
     const target = row.before?.enabled === true
     await ref.update({ enabled: target, updatedAt: FieldValue.serverTimestamp() })
     // ⛔ 送訊息熱路徑的 60 秒快取也要清，否則「還原了」之後客人還會被舊狀態接走一分鐘
@@ -188,6 +211,7 @@ export async function applyRevert(
       actor: 'human',
       action: 'audit/revert',
       targetId: row.targetId,
+      revertOf: row.id,
       before: { enabled: current },
       after: { enabled: target },
       note: `還原了「${auditActionLabel(row.action)}」（原紀錄 ${row.id}）`,
@@ -208,12 +232,14 @@ export async function applyRevert(
     })
   }
 
+  if (isRehearsal(ctx)) return ''
   await setAiSettings(ctx.workspaceId, before as never, ctx.db)
   await writeAuditLog({
     workspaceId: ctx.workspaceId,
     uid: ctx.uid,
     actor: 'human',
     action: 'audit/revert',
+    revertOf: row.id,
     before: after,
     after: before,
     note: `還原了「${auditActionLabel(row.action)}」（原紀錄 ${row.id}）`,
