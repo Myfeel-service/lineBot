@@ -6,6 +6,10 @@ vi.mock('firebase-admin/firestore', () => ({
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
 vi.mock('./broadcast-send', () => ({ executeBroadcastSend: vi.fn() }))
+// narrowcast 往前推那一步有自己的測試（broadcast-narrowcast.test.ts）；這裡量的是看門狗與到期排程
+vi.mock('./broadcast-narrowcast', () => ({
+  advanceNarrowcastBroadcasts: vi.fn(async () => ({ checked: 0, called: 0, finished: 0, fellBack: 0, failed: 0 })),
+}))
 vi.mock('./audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 
 import { runDueScheduledBroadcasts } from './run-due-scheduled-broadcasts'
@@ -230,6 +234,22 @@ describe('看門狗：收殮卡死在 processing 的推播', () => {
 
     expect(out.reaped).toBe(1)
     expect(txUpdates[0]!.patch.failureReason).toBe(BROADCAST_STUCK_PER_RECIPIENT)
+  })
+
+  /**
+   * `D-154`②③：narrowcast 的「發送中」是在等 LINE 準備名單／送完，有自己的時限與收尾
+   * （`advanceNarrowcastBroadcasts`）。⛔ 看門狗收了它的話，LINE 那邊照樣會送——畫面卻寫失敗、叫人重發＝客人收兩次。
+   */
+  it('⛔ narrowcast 的發送中（等 LINE 準備名單）不收，就算超過 10 分鐘', async () => {
+    const { txUpdates } = makeDb([{
+      id: 'b11',
+      data: { workspaceId: 'w1', status: 'processing', startedAt: ts(30 * MIN), updatedAt: ts(25 * MIN), sendMode: 'narrowcast' },
+    }])
+
+    const out = await runDueScheduledBroadcasts()
+
+    expect(out.reaped).toBe(0)
+    expect(txUpdates).toHaveLength(0)
   })
 
   it('一人一則但連受眾快照都還沒寫（還沒呼叫 LINE）→ 照舊講「沒有人收到，可以放心重發」', async () => {

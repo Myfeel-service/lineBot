@@ -1,5 +1,6 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { executeBroadcastSend } from './broadcast-send'
+import { advanceNarrowcastBroadcasts, type AdvanceStats } from './broadcast-narrowcast'
 import { getDb } from './firebase'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
 import { BROADCAST_ALL_RECIPIENTS_FAILED, BROADCAST_STUCK_PER_RECIPIENT, BROADCAST_STUCK_SAFE_TO_RESEND, BROADCAST_STUCK_UNVERIFIED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
@@ -24,6 +25,8 @@ export type RunDueScheduledBroadcastsResponse = {
   pendingFuture?: number
   /** 本輪被看門狗收殮成 failed 的卡死推播數 */
   reaped?: number
+  /** `D-154`②③：本輪往前推的 narrowcast 推播（等名單→送出→收結果） */
+  narrowcast?: AdvanceStats
 }
 
 /**
@@ -73,6 +76,11 @@ async function reapStuckProcessingBroadcasts(
   for (const doc of snap.docs) {
     const data = doc.data()
     if (workspaceId && String(data.workspaceId || '') !== workspaceId) continue
+    /**
+     * `D-154`②③：narrowcast 的推播「發送中」是在等 LINE 準備名單／送完（正常要一兩分鐘、可能更久），
+     * 不是卡死——它有自己的時限與收尾（`advanceNarrowcastBroadcasts`），⛔ 看門狗不要收它。
+     */
+    if (data.sendMode === 'narrowcast') continue
 
     const startedAt = parseFirestoreDate(data.startedAt)
     const updatedAt = parseFirestoreDate(data.updatedAt)
@@ -143,6 +151,12 @@ export async function runDueScheduledBroadcasts(
     throw new Error('runDueScheduledBroadcasts: 帶了 opts 就要有 workspaceId（全站只給不帶參數的排程器）')
   }
 
+  // `D-154`②③：先把 narrowcast 的推播往前推一步（名單好了就送、送完就收結果）
+  const narrowcast = await advanceNarrowcastBroadcasts(db, workspaceId).catch((e) => {
+    console.error('[broadcast-scheduler] narrowcast 往前推失敗', e)
+    return undefined
+  })
+
   // 看門狗先跑：到期佇列空的時候（最常見）也要能收殮
   const reaped = await reapStuckProcessingBroadcasts(db, workspaceId).catch((e) => {
     console.error('[broadcast-scheduler] 看門狗查詢失敗', e)
@@ -175,7 +189,7 @@ export async function runDueScheduledBroadcasts(
     catch {
       /* 略過除錯查詢 */
     }
-    return { triggered: 0, results: [], pendingFuture, reaped }
+    return { triggered: 0, results: [], pendingFuture, reaped, narrowcast }
   }
 
   console.log(`[broadcast-scheduler] 找到 ${snap.docs.length} 個到期排程推播`)
@@ -203,14 +217,17 @@ export async function runDueScheduledBroadcasts(
         targetId: id,
         after: {
           name,
-          status: result.allFailed ? 'failed' : 'completed',
+          // narrowcast（`D-154`）這一下只交出名單，還沒送：⛔ 不可以記成「送出了」
+          status: result.pending ? 'processing' : result.allFailed ? 'failed' : 'completed',
           totalCount: result.totalCount,
           sentCount: result.sentCount,
           failedCount: result.failedCount,
         },
-        ...(result.allFailed
-          ? { note: BROADCAST_ALL_RECIPIENTS_FAILED }
-          : result.postSendError ? { note: `送出後記帳未完成：${result.postSendError}` } : {}),
+        ...(result.pending
+          ? { note: `名單已交給 LINE（約 ${result.totalCount} 人），LINE 準備好就送出` }
+          : result.allFailed
+            ? { note: BROADCAST_ALL_RECIPIENTS_FAILED }
+            : result.postSendError ? { note: `送出後記帳未完成：${result.postSendError}` } : {}),
       })
     }
     catch (e: unknown) {
@@ -237,5 +254,6 @@ export async function runDueScheduledBroadcasts(
     triggered,
     results,
     reaped,
+    narrowcast,
   }
 }

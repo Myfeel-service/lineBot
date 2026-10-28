@@ -67,11 +67,35 @@ export async function fetchBroadcastLineInsight(
   unit: string | null | undefined,
   startedAt: Date | null,
   completedAt: Date | null,
+  /**
+   * `D-154`②③：用 narrowcast 送的推播沒有彙總單位，改拿 LINE 給的那一則編號問
+   * （`getMessageEvent`，LINE 給的是同一種「打開的人／點連結的人」）。有這個就不看 unit。
+   */
+  lineRequestId?: string | null,
 ): Promise<{
   lineUniqueImpression: number | null
   lineUniqueClick: number | null
   lineInsightError?: string
 }> {
+  const requestId = String(lineRequestId || '').trim()
+  if (requestId) {
+    try {
+      const insight = await getInsightClient(workspaceId)
+      const res = await insight.getMessageEvent(requestId)
+      const imp = pickUniqueImpression(res.overview as InsightOverview | undefined, res.messages as InsightMsg[] | undefined)
+      const clk = pickUniqueClick(res.overview as InsightOverview | undefined, res.clicks as InsightClick[] | undefined)
+      return {
+        lineUniqueImpression: typeof imp === 'number' ? imp : null,
+        lineUniqueClick: typeof clk === 'number' ? clk : null,
+      }
+    }
+    catch (e: unknown) {
+      const msg = e instanceof HTTPFetchError ? `${e.status} ${e.body || e.message}`.trim() : e instanceof Error ? e.message : 'insight_failed'
+      console.warn('[broadcast-line-insight] requestId', requestId, msg)
+      return { lineUniqueImpression: null, lineUniqueClick: null, lineInsightError: msg }
+    }
+  }
+
   let u = (unit || broadcastAggregationUnit(campaignId)).trim()
   /** LINE 僅接受 1～30 字元；舊版若曾寫入過長字串則改以 campaignId 雜湊查詢 */
   if (u.length > 30) u = broadcastAggregationUnit(campaignId)

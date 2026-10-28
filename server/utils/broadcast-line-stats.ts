@@ -149,7 +149,7 @@ export async function snapshotBroadcastLineStats(
   const snap = await db.collection('broadcasts')
     .where('lineStatsNextAt', '<=', now)
     .orderBy('lineStatsNextAt')
-    .select('workspaceId', 'status', 'sentCount', 'startedAt', 'completedAt', 'lineAggregationUnit', 'lineInsightAggregationApplied', 'lineStats', 'lineStatsNextAt')
+    .select('workspaceId', 'status', 'sentCount', 'startedAt', 'completedAt', 'lineAggregationUnit', 'lineInsightAggregationApplied', 'lineRequestId', 'lineStats', 'lineStatsNextAt')
     .limit(DUE_SCAN_LIMIT + 1)
     .get()
   const docs = snap.docs.slice(0, DUE_SCAN_LIMIT)
@@ -208,6 +208,8 @@ export async function snapshotBroadcastLineStats(
       v.lineAggregationUnit ?? null,
       startedAt != null ? new Date(startedAt) : null,
       new Date(completedAt),
+      // `D-154`②③：narrowcast 送的拿這個問
+      v.lineRequestId ?? null,
     )
     const stored: StoredLineStats = r.lineInsightError
       ? {

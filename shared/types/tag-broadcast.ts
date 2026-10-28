@@ -263,7 +263,14 @@ export type BroadcastStatus =
 
 export type BroadcastChannel = 'line'
 
-export type BroadcastAudienceSourceType = 'all' | 'tags' | 'audience' | 'import'
+/**
+ * `followUp`（`D-154`②③，2026-10-28）：發給另一則推播「沒打開／點了連結／沒點連結」的人。
+ * 這群人是 LINE 依那則的打開／點擊紀錄挑的，**我們不知道是誰**（LINE 不給名單），見 shared/broadcast-follow-up.ts。
+ */
+export type BroadcastAudienceSourceType = 'all' | 'tags' | 'audience' | 'import' | 'followUp'
+
+/** 補發的三種對象 */
+export type BroadcastFollowUpTarget = 'unopened' | 'clicked' | 'unclicked'
 
 export interface BroadcastAudienceSource {
   type: BroadcastAudienceSourceType
@@ -273,6 +280,44 @@ export interface BroadcastAudienceSource {
   audienceId?: string
   /** type === 'import' 時使用（LINE userId 陣列） */
   importedUserIds?: string[]
+  /** type === 'followUp' 時使用：補發的是哪一則、給哪一群 */
+  sourceBroadcastId?: string
+  followUpTarget?: BroadcastFollowUpTarget
+  /** 建草稿當下那一則的名字（畫面講「補發給「X」沒打開的人」用；那一則之後改名不影響） */
+  sourceName?: string
+}
+
+/**
+ * LINE「先上傳名單、再發給名單」那種送法（narrowcast）的進度（`D-154`②③）。
+ *
+ * 為什麼要分好幾步、跨好幾輪排程：上傳的名單 LINE 要先「準備好」才能送，2026-10-28 實測
+ * 一個人的名單也要 87 秒——等不起，所以送出那一下只上傳名單，之後每一輪排程
+ * （`advanceNarrowcastBroadcasts`）往前推一步。整條見 server/utils/broadcast-narrowcast.ts。
+ */
+export interface BroadcastNarrowcastState {
+  /**
+   * audience：等名單準備好（還沒送，任何失敗都可以改用一般方式送）
+   * calling：正在叫 LINE 送（先記這一步才叫，斷掉的話下一輪用同一個重送編號再叫一次，LINE 不會重複送）
+   * sending：LINE 收下了、還在送
+   * done：送完（成功或失敗都寫在推播本身）
+   */
+  phase: 'audience' | 'calling' | 'sending' | 'done'
+  /** 這一則要等哪幾份名單準備好（一般推播＝上傳的那一份；補發＝LINE 圈的那一份） */
+  waitAudienceGroupIds: number[]
+  /** 上傳的那份名單（一般推播才有；之後補發要用「這份扣掉看過的」） */
+  uploadAudienceGroupId?: number | null
+  /** 送給誰（LINE 的 recipient 物件，JSON 字串） */
+  recipientJson: string
+  /** 送什麼（已包好點擊追蹤的 LINE 訊息，JSON 字串）——送出那一下就定了，模組之後被改也不影響 */
+  messagesJson: string
+  /** 名單交給 LINE 的時間（毫秒）；等太久就放棄 */
+  preparedAt: number
+  /** 開始叫 LINE 送的時間（毫秒） */
+  callingAt?: number | null
+  /** LINE 收下的時間（毫秒） */
+  acceptedAt?: number | null
+  /** 最近一次往前推卻卡住的原因（給人查問題用；不影響流程） */
+  lastError?: string | null
 }
 
 export interface BroadcastDoc {
@@ -320,7 +365,16 @@ export interface BroadcastDoc {
    * ⚠️ 沒有這一欄＝2026-10-15 以前送的＝群發，名字那一格客人收到的是**空白**。
    *    後台回頭看已送出的推播時靠它決定預覽要畫名字還是空白，⛔ 不可以一律畫名字。
    */
-  sendMode?: 'perRecipient' | 'multicast'
+  sendMode?: 'perRecipient' | 'multicast' | 'narrowcast'
+  /** `D-154`②③：用 narrowcast 送的進度（`sendMode === 'narrowcast'` 才有） */
+  narrowcast?: BroadcastNarrowcastState | null
+  /**
+   * narrowcast 送出後 LINE 給的編號：打開／點連結的人數要拿它去問（這種送法沒有 `lineAggregationUnit`），
+   * 之後補發也要靠它請 LINE 圈出看過／點過的人。
+   */
+  lineRequestId?: string | null
+  /** 本來要用 narrowcast、改用一般方式送的原因（報表講「這則為什麼不能補發」） */
+  narrowcastFallback?: string | null
   /**
    * 發送成功後，要幫**真的收到的人**貼上的標籤（`C-213`，2026-09-22）。選填。
    *

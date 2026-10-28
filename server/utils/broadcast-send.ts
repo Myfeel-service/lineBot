@@ -1,14 +1,16 @@
-import { v4 as uuidv4, v5 as uuidv5 } from 'uuid'
+import { v5 as uuidv5 } from 'uuid'
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
 import { CLICK_TRACKING_VERSION, wrapBroadcastMessagesForClickTracking } from './broadcast-click-track'
 import { multicastMessage, pushMessagesPerRecipient } from './line'
 import { renderModuleToLineMessages } from './handler'
 import { attributeContextForUser, renderBroadcastMessagesForSend } from './render-attributes'
+import { broadcastOutcomePatch, writeFailedDeliveries, type BroadcastLineOutcome } from './broadcast-outcome'
+import { narrowcastDisabled, startFollowUpNarrowcast, startNarrowcast } from './broadcast-narrowcast'
 import { findSendVariables } from '~~/shared/preview-variables'
 import { countTaggedUriButtons } from '~~/shared/flow-uri-tagging'
 import { broadcastAggregationUnit } from '~~/shared/broadcast-insight'
-import { lineStatsNextDueAt } from '~~/shared/broadcast-line-stats'
+import { FOLLOW_UP_PERSONALIZED_ERROR, planNarrowcastSend } from '~~/shared/broadcast-follow-up'
 /**
  * ⛔ 「這則推播會不會被換成模組內容」的判斷**不在這支檔案裡自己寫一份**（`C-245`）：
  * 後台預覽要靠同一個判斷決定「要畫卡片還是畫模組內容」，兩邊各寫一份就會漂開，
@@ -21,8 +23,8 @@ import { addTagsToUser } from './tagging'
 import { workspaceBroadcastTier } from './broadcast-plan-gate'
 import { broadcastPlanBlockReason } from '~~/shared/billing/plans'
 import { claimBroadcastForSend, type BroadcastSendSource } from './broadcast-claim'
-import { BROADCAST_ALL_RECIPIENTS_FAILED, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
-import type { BroadcastDoc, BroadcastDeliveryDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
+import { FOLLOW_UP_FAILURE_PREFIX, humanizeBroadcastSendFailure } from '~~/shared/broadcast-failure'
+import type { AudienceFilter } from '~~/shared/types/tag-broadcast'
 
 export type ExecuteBroadcastSendOptions = {
   /** manual：後台立即發送（僅 draft）；scheduler：Cron 到期排程 */
@@ -81,6 +83,12 @@ export async function executeBroadcastSend(
    *    只看它的話紀錄會寫「送出了」，跟推播本身的「失敗」講反（2026-10-10 審查抓到）。
    */
   allFailed: boolean
+  /**
+   * `D-154`②③：用 narrowcast 送的，這一下只把名單交給 LINE，推播還在「發送中」——
+   * LINE 準備好名單才會送（排程每一輪往前推，見 broadcast-narrowcast.ts）。
+   * ⛔ 呼叫端這時不可以講「送出了 N 人」：sentCount 還是 0，人數要等 LINE 回報。
+   */
+  pending?: boolean
 }> {
   const source = options.source ?? 'manual'
   const runtimeConfig = useRuntimeConfig()
@@ -103,36 +111,10 @@ export async function executeBroadcastSend(
    * 之後任何一步（deliveries 記錄、最終統計）掛掉,都不可再把整筆標成 failed——
    * 否則後台顯示「失敗／成功 0」,老闆會誤以為客人沒收到並重發。
    */
-  type LineOutcome = {
-    successCount: number
-    failedCount: number
-    allFailed: boolean
-    aggregationUnit: string | null
-    aggregationApplied: boolean
-    /** 一人一則送時整批停下來的原因（本月額度用完這種），每一位都沒送到時拿來當失敗原因 */
-    stoppedReason?: string | null
-  }
-  let lineOutcome: LineOutcome | null = null
+  let lineOutcome: BroadcastLineOutcome | null = null
 
-  /** 發送結果的唯一寫法：三處寫入（checkpoint／最終／catch）都由此產生，避免欄位各寫一套而漂移 */
-  const statsPatchFor = (o: LineOutcome) => ({
-    status: o.allFailed ? 'failed' as const : 'completed' as const,
-    sentCount: o.successCount,
-    failedCount: o.failedCount,
-    completedAt: FieldValue.serverTimestamp(),
-    lineAggregationUnit: o.aggregationUnit,
-    lineInsightAggregationApplied: o.aggregationApplied,
-    // 每一條寫 failed 的路徑都要留下人看得懂的原因（小幫手警示已承諾「進去看失敗原因」）；
-    // 成功時明確清成 null，才不會留著上一輪嘗試的舊原因
-    // ⚠️ 一人一則送到一半整批停下來（額度用完）時講那個原因，⛔ 不要說成「多半是封鎖了」
-    failureReason: o.allFailed ? (o.stoppedReason || BROADCAST_ALL_RECIPIENTS_FAILED) : null,
-    /**
-     * `D-121`：排上「發完第 1 天去問 LINE 的打開／點連結人數」。排程只讀這個時間到了的推播
-     * （`server/utils/broadcast-line-stats.ts`），⛔ 少了這一欄這則就永遠不會被問到。
-     * 一個人都沒送到的沒有人數可問，不排。
-     */
-    lineStatsNextAt: o.successCount > 0 ? lineStatsNextDueAt(Date.now(), null) : FieldValue.delete(),
-  })
+  /** 發送結果的唯一寫法（checkpoint／最終／catch／narrowcast 送完共用，見 broadcast-outcome.ts） */
+  const statsPatchFor = broadcastOutcomePatch
 
   try {
     /**
@@ -178,8 +160,13 @@ export async function executeBroadcastSend(
     else if (data.audienceSource.type === 'import') {
       resolvedUserIds = data.audienceSource.importedUserIds ?? []
     }
+    /**
+     * `D-154`②③ 補發：對象是 LINE 依另一則的打開／點擊紀錄挑的，**我們不知道是誰**——
+     * 名單留空，送的時候把「發給誰」交給 LINE（broadcast-narrowcast.ts 的 startFollowUpNarrowcast）。
+     */
+    const isFollowUp = data.audienceSource.type === 'followUp'
 
-    if (!resolvedUserIds.length) {
+    if (!resolvedUserIds.length && !isFollowUp) {
       throw new Error('Resolved audience is empty')
     }
 
@@ -242,17 +229,35 @@ export async function executeBroadcastSend(
      *      以前推播裡這種按鈕的開關是開的、標籤就是沒貼（`C-238`）
      * ⛔ 不要全部改成一人一則：每人內容都一樣的推播一人一則送不會多得到任何東西，只會更慢、多打幾千次 LINE。
      */
-    const sendMode: 'perRecipient' | 'multicast' =
-      findSendVariables(contentForVariables).length > 0 || taggedUriButtons > 0
-        ? 'perRecipient'
-        : 'multicast'
+    const personalized = findSendVariables(contentForVariables).length > 0 || taggedUriButtons > 0
+    // 補發是 LINE 挑人、大家同一份內容：放了名字／點了就貼標的按鈕就送不了（驗證視窗也會先講）
+    if (isFollowUp && personalized) throw new Error(FOLLOW_UP_PERSONALIZED_ERROR)
+    /**
+     * `D-154`②③：其他的（大家同一份內容）改用 narrowcast 送——只有這樣送，之後才能
+     * 「補發給沒打開的人」「發給點了／沒點連結的人」。不適合的照舊群發，原因記在推播上（報表講）。
+     */
+    const narrowcastPlan = personalized || isFollowUp
+      ? null
+      : planNarrowcastSend({
+          disabled: narrowcastDisabled(),
+          recipientCount: resolvedUserIds.length,
+          completionTagCount: Array.isArray((data as any).completionTagIds) ? (data as any).completionTagIds.length : 0,
+        })
+    let sendMode: 'perRecipient' | 'multicast' | 'narrowcast' = personalized
+      ? 'perRecipient'
+      : isFollowUp || narrowcastPlan?.use ? 'narrowcast' : 'multicast'
 
     // ── 寫入受眾快照（status 已在 claim 時改為 processing）────────────
     const snapshotAt = FieldValue.serverTimestamp()
     await ref.update({
       totalCount: resolvedUserIds.length,
       'audienceSnapshot.resolvedUserIds': resolvedUserIds,
-      'audienceSnapshot.estimatedCount': resolvedUserIds.length,
+      // 補發不知道是誰：留著建草稿時估的人數（從原本那則的人數算的），⛔ 不要蓋成 0
+      ...(isFollowUp ? {} : { 'audienceSnapshot.estimatedCount': resolvedUserIds.length }),
+      // 上一輪（重設再發之前）的 narrowcast 進度與編號不可以留著
+      narrowcast: FieldValue.delete(),
+      lineRequestId: null,
+      narrowcastFallback: narrowcastPlan && !narrowcastPlan.use ? narrowcastPlan.fallback : null,
       /**
        * 這一次是群發還是一人一則（`D-118` A）。⚠️ 後台回頭看已送出的推播時靠它決定預覽畫名字還是空白
        * （這一欄之前送的都是群發＝名字是空白）；看門狗也靠它判斷「重發會不會重複」。
@@ -293,8 +298,35 @@ export async function executeBroadcastSend(
       .filter((r) => Boolean(r.lineUserId))
     const lineUserIds = recipients.map((r) => r.lineUserId)
 
-    if (!lineUserIds.length) {
+    if (!lineUserIds.length && !isFollowUp) {
       throw new Error('No valid LINE user IDs in audience')
+    }
+
+    /**
+     * `D-154`②③ narrowcast：這一下只把名單交給 LINE，推播留在「發送中」；
+     * LINE 準備好名單才送（排程每一輪往前推，見 broadcast-narrowcast.ts）。
+     * 交不出去＝什麼都還沒送：一般推播當場改用群發（下面那條路），補發沒有退路就標失敗。
+     */
+    if (sendMode === 'narrowcast') {
+      const started = isFollowUp
+        ? await startFollowUpNarrowcast({ db, ref, workspaceId, data, messages: wrapForLine(outboundMessages) })
+        : await startNarrowcast({ ref, workspaceId, name: String(data.name ?? ''), lineUserIds, messages: wrapForLine(outboundMessages) })
+      if (started.ok) {
+        return {
+          success: true,
+          campaignId: id,
+          totalCount: isFollowUp ? started.estimate : resolvedUserIds.length,
+          sentCount: 0,
+          failedCount: 0,
+          postSendError: null,
+          allFailed: false,
+          pending: true,
+        }
+      }
+      if (isFollowUp) throw new Error(`${FOLLOW_UP_FAILURE_PREFIX}${started.reason}`)
+      console.warn(`[broadcast/send] ${id} 改用群發：${started.reason}`)
+      sendMode = 'multicast'
+      await ref.update({ sendMode, narrowcastFallback: started.reason, updatedAt: FieldValue.serverTimestamp() })
     }
 
     // 重發過的推播要換一個彙總單位，否則 LINE 會把上一次的開封／點擊算進這一次
@@ -418,51 +450,9 @@ export async function executeBroadcastSend(
     // 成功者不逐筆記錄：受眾名單已存在 audienceSnapshot，成功＝名單減掉失敗名單，
     // 且 LINE 的「成功」只代表它收下訊息、不代表客人看到（那是報表的開封數）。
     // 全員送達時這裡一筆都不寫，直接消掉了 3000＋人推播最容易逾時的一步。
-    let postSendError: string | null = null
     const failedSet = new Set(failedIds)
     const failedRecipients = recipients.filter(r => failedSet.has(r.lineUserId))
-
-    if (failedRecipients.length) {
-      try {
-        const BATCH_LIMIT = 400
-        let batch = db.batch()
-        let opsInBatch = 0
-
-        const flushBatch = async () => {
-          if (opsInBatch > 0) {
-            await batch.commit()
-            batch = db.batch()
-            opsInBatch = 0
-          }
-        }
-
-        const createdAt = FieldValue.serverTimestamp()
-
-        for (const r of failedRecipients) {
-          const deliveryDoc: BroadcastDeliveryDoc = {
-            campaignId: id,
-            userId: r.docId,
-            deliveryStatus: 'failed',
-            // 群發是一批最多 500 人一起回覆結果，拿不到每個人各自的原因；一人一則有
-            failureReason: failureReasons[r.lineUserId] ?? 'LINE multicast failed',
-            sentAt: null,
-            createdAt,
-          }
-
-          const deliveryRef = db.collection('broadcasts').doc(id).collection('deliveries').doc(uuidv4())
-          batch.set(deliveryRef, deliveryDoc)
-          opsInBatch++
-
-          if (opsInBatch >= BATCH_LIMIT) await flushBatch()
-        }
-
-        await flushBatch()
-      }
-      catch (e) {
-        postSendError = `沒收到的名單未寫完：${e instanceof Error ? e.message : String(e)}`
-        console.error('[broadcast/send] 失敗名單寫入失敗（訊息已送出，不影響推播結果）:', e)
-      }
-    }
+    const postSendError = await writeFailedDeliveries(db, id, failedRecipients, failureReasons)
 
     // ── 補記 postSendError（checkpoint 若失敗，這裡順便再寫一次結果）──
     await ref.update({

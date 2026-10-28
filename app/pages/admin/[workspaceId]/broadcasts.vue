@@ -174,6 +174,17 @@
           </div>
         </div>
 
+        <!-- `D-154`②③：narrowcast 的「發送中」是在等 LINE 準備名單／送完，要講出來，不然以為卡住了 -->
+        <div v-if="selectedItem?.status === 'processing' && detailSendMode === 'narrowcast'" class="message-card bc-section-card">
+          <div class="card-section-stack">
+            <p class="bc-processing-note">
+              {{ form.audienceType === 'followUp'
+                ? 'LINE 正在圈出要補發的那群人，好了就會送出，可能要等一段時間。這頁開著會自己更新，送完就看得到成效報表。'
+                : '名單已交給 LINE，LINE 準備好就會送出，通常一兩分鐘。這頁開著會自己更新，送完就看得到成效報表。' }}
+            </p>
+          </div>
+        </div>
+
         <!-- `D-131`：方案不含推播（免費）——整則都發不出去，所以講在最上面、「驗證並發送」鎖住。
              ⛔ 已經發出去的不講（那時候講方案沒有用）。試發給自己看不受方案限制，照常可以按。 -->
         <div v-if="!isReadOnly && planLock === 'all'" class="message-card bc-section-card" data-tour="bc-plan-lock">
@@ -198,7 +209,12 @@
               <!-- `D-131`：方案選不到的對象先鎖住，就在選項正下方講要哪個方案（以前選得到、按送出才失敗）。
                    ⛔ 已經選著的（小幫手擬的、從好友頁／好友統計／檔期帶過來的）照樣顯示選著＋鎖住，不偷偷改成全部好友——
                       改發送對象＝改了收件人，要他自己決定。 -->
-              <el-radio-group v-model="form.audienceType" :disabled="isLocked">
+              <!-- `D-154`②③：補發的對象是 LINE 依原本那則挑的，⛔ 不給改（改了就不是「補發給沒打開的人」了） -->
+              <template v-if="form.audienceType === 'followUp'">
+                <p class="bc-follow-up-audience">{{ followUpAudienceLine }}</p>
+                <p class="tags-hint">這群人是 LINE 依原本那則的紀錄挑的，不能改；要換對象請另外新增一則。</p>
+              </template>
+              <el-radio-group v-else v-model="form.audienceType" :disabled="isLocked">
                 <el-radio value="all">全部好友</el-radio>
                 <el-radio value="tags" :disabled="audienceOptionLocked('tags')">依標籤篩選</el-radio>
                 <el-radio value="import" :disabled="audienceOptionLocked('import')">匯入名單</el-radio>
@@ -352,8 +368,9 @@
               `C-213`：發完幫收到的人貼記號。
               ⛔ 這一格的標籤是**貼上去**不是拿來篩人，所以給得起「＋ 新標籤」
               （跟上面「發送對象」那一格刻意相反）。
+              `D-154`②③：補發不給這一格——LINE 只回人數、不回是誰收到，貼不了。
             -->
-            <div class="admin-field-group">
+            <div v-if="form.audienceType !== 'followUp'" class="admin-field-group">
               <AdminFieldLabel text="發完之後，幫收到的人貼一個記號（選填）" tight />
               <AdminTagPicker
                 :model-value="form.completionTagIds"
@@ -480,6 +497,28 @@
               >
                 顯示「—」：LINE 的數字通常不是即時的；而且人數少於 20 時，LINE 基於隱私不給數字（跟聊天室看到的「已讀」不一定同步）。
               </p>
+            </div>
+            <!--
+              `D-154`②③：再發一則給沒打開／點了／沒點連結的人。按了只建草稿（內容照這則），⛔ 不直接送。
+              能不能發、約幾位、不能時的原因都由後端同一支算（`followUpAvailability`），畫面不自己判。
+            -->
+            <div v-if="report.followUp?.options?.length || report.followUp?.reason" class="admin-field-group">
+              <AdminFieldLabel text="再發一則給" tight />
+              <template v-if="report.followUp.options.length && can('broadcast.write')">
+                <div class="bc-follow-up-actions">
+                  <el-button
+                    v-for="o in report.followUp.options"
+                    :key="o.target"
+                    :loading="followUpCreating === o.target"
+                    :disabled="!!followUpCreating"
+                    @click="createFollowUp(o.target)"
+                  >
+                    {{ o.button }}（{{ o.approx ? '約 ' : '' }}{{ Number(o.estimate).toLocaleString() }} 位）
+                  </el-button>
+                </div>
+                <p class="text-xs text-muted">按了會先存成草稿，內容照這則，改好再發。</p>
+              </template>
+              <p v-if="report.followUp.reason" class="bc-insight-warn text-muted">{{ report.followUp.reason }}</p>
             </div>
           </div>
         </div>
@@ -732,6 +771,8 @@ import {
 } from '~~/shared/broadcast-schedule-time'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
 import { describeOpenRateChange } from '~~/shared/broadcast-open-compare'
+import { followUpAudienceText } from '~~/shared/broadcast-follow-up'
+import type { BroadcastAudienceSource, BroadcastFollowUpTarget } from '~~/shared/types/tag-broadcast'
 // `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
 import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
 import { taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
@@ -915,7 +956,8 @@ const { showToast } = useAdminToast()
 
 const defaultForm = () => ({
   name: '',
-  audienceType: 'all' as 'all' | 'tags' | 'import',
+  // `followUp`（`D-154`②③）：從成效報表「補發給沒打開的人」那幾顆建的，對象是 LINE 挑的、畫面上不給改
+  audienceType: 'all' as 'all' | 'tags' | 'import' | 'followUp',
   tagIds: [] as string[],
   importText: '',
   contentAction: normalizeUnifiedAction({ type: 'message', text: '' }, 'A') as UnifiedAction,
@@ -1075,7 +1117,21 @@ function bcMetaText(bc: any): string {
   return parts.join(' · ')
 }
 
+/**
+ * 補發草稿（`D-154`②③）的發送對象原樣（哪一則、給哪一群）。存檔時一定要原樣送回去：
+ * 存檔那支把發送對象整個換掉，少帶一格就再也不知道要補發給誰。
+ */
+const followUpSource = ref<BroadcastAudienceSource | null>(null)
+/** 發送對象那一格：補發給「小滑手_開賣」沒打開的人（約 1,699 位） */
+const followUpAudienceLine = computed(() => {
+  const s = followUpSource.value
+  if (!s) return ''
+  const n = Number(selectedItem.value?.audienceSnapshot?.estimatedCount ?? 0)
+  return followUpAudienceText(s.sourceName, s.followUpTarget) + (n > 0 ? `（約 ${n.toLocaleString()} 位）` : '')
+})
+
 function buildAudienceSource() {
+  if (form.value.audienceType === 'followUp' && followUpSource.value) return followUpSource.value
   if (form.value.audienceType === 'all') return { type: 'all' }
   if (form.value.audienceType === 'tags') return { type: 'tags', tagIds: form.value.tagIds }
   return { type: 'import', importedUserIds: importUserIds.value }
@@ -1328,6 +1384,8 @@ function loadFormFromItem(item: any) {
    */
   detailSentContent.value = item.sentContent ?? null
   detailSendMode.value = typeof item.sendMode === 'string' ? item.sendMode : null
+  // ⛔ 每次都覆寫（不是補發就清掉），不然下一則會帶著上一則的補發對象存檔
+  followUpSource.value = src.type === 'followUp' ? { ...src } : null
   form.value = {
     name: item.name ?? '',
     audienceType: src.type ?? 'all',
@@ -1602,6 +1660,32 @@ async function duplicateBroadcast() {
   }
 }
 
+/**
+ * `D-154`②③：成效報表「補發給沒打開的人／發給點了／沒點連結的人」→ 建一則草稿再打開它（同「複製」那條路）。
+ * 原本那則已經發出去了（唯讀），不會有沒存的修改，不用先問。
+ */
+const followUpCreating = ref<BroadcastFollowUpTarget | null>(null)
+async function createFollowUp(target: BroadcastFollowUpTarget) {
+  if (!assertCan('broadcast.write') || !selectedId.value) return
+  const sourceId = selectedId.value
+  followUpCreating.value = target
+  try {
+    // 掛在「複製」那支（帶 followUpTarget）：⛔ 不另開路由，見 broadcast-follow-up-draft.ts
+    const created = await apiFetch<any>(`/api/broadcast/${sourceId}/duplicate`, { method: 'POST', body: { followUpTarget: target } })
+    showToast('已存成一則草稿，改好再發', 'success')
+    await loadData()
+    await selectItem(created, { skipDiscardConfirm: true })
+    await nextTick()
+    listEl.value?.querySelector(`[data-agent-target="${created.id}"]`)?.scrollIntoView({ block: 'nearest' })
+  }
+  catch (e: any) {
+    showToast(e?.data?.statusMessage || '沒建成，請再按一次', 'error')
+  }
+  finally {
+    followUpCreating.value = null
+  }
+}
+
 function closeValidateDialog() {
   validateDialogVisible.value = false
   confirmDialogError.value = ''
@@ -1748,10 +1832,13 @@ async function confirmSendNow() {
   try {
     const res = await apiFetch<any>(`/api/broadcast/${id}/send`, { method: 'POST' })
     // postSendError＝訊息已送出、只是記錄沒整理完；不能報成發送失敗，否則會被重發一次
+    // pending（`D-154`②③）＝名單交給 LINE 了、還沒送：⛔ 不可以講「發送完成 成功 0」
     showToast(
-      res.postSendError
-        ? `已送出 成功 ${res.sentCount} / 失敗 ${res.failedCount}（發送後的紀錄未整理完，詳見成效報表）`
-        : `發送完成 成功 ${res.sentCount} / 失敗 ${res.failedCount}`,
+      res.pending
+        ? `名單已交給 LINE（約 ${res.totalCount} 人），LINE 準備好就送出，通常一兩分鐘。這頁開著會自己更新。`
+        : res.postSendError
+          ? `已送出 成功 ${res.sentCount} / 失敗 ${res.failedCount}（發送後的紀錄未整理完，詳見成效報表）`
+          : `發送完成 成功 ${res.sentCount} / 失敗 ${res.failedCount}`,
       res.postSendError ? 'warning' : 'success',
     )
     closeValidateDialog()
@@ -1856,6 +1943,7 @@ async function processDueScheduledBroadcasts() {
     const res = await apiFetch<{
       triggered: number
       reaped?: number
+      narrowcast?: { called: number; finished: number; fellBack: number; failed: number }
       results: Array<{ id: string; success: boolean; error?: string }>
     }>(
       '/api/broadcast/process-due',
@@ -1863,7 +1951,10 @@ async function processDueScheduledBroadcasts() {
     )
     // reaped＝有卡死的單被標成失敗，畫面上那列還寫著「發送中」→ 一樣要重載，
     // 否則使用者盯著的還是舊狀態，也看不到失敗原因與重發按鈕
-    if (res.triggered > 0 || (res.reaped ?? 0) > 0) {
+    // `D-154`②③：narrowcast 往前推了一步（送出了、送完了、改用群發了）也一樣
+    const nc = res.narrowcast
+    const narrowcastMoved = nc ? nc.called + nc.finished + nc.fellBack + nc.failed : 0
+    if (res.triggered > 0 || (res.reaped ?? 0) > 0 || narrowcastMoved > 0) {
       await loadData()
       if (selectedId.value) {
         const found = broadcasts.value.find((b) => b.id === selectedId.value)

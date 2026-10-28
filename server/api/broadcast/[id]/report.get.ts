@@ -2,6 +2,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { fetchBroadcastLineInsight } from '~~/server/utils/broadcast-line-insight'
 import { findPreviousSameAudienceOpen } from '~~/server/utils/broadcast-previous-open'
+import { followUpAvailability } from '~~/shared/broadcast-follow-up'
 import { lineUserIdFromFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 import { lineStatsExpired, parseStoredLineStats } from '~~/shared/broadcast-line-stats'
@@ -111,6 +112,7 @@ export default defineEventHandler(async (event) => {
             data.lineAggregationUnit ?? null,
             startedAt,
             completedAt,
+            data.lineRequestId ?? null,
           )
 
   /**
@@ -144,6 +146,24 @@ export default defineEventHandler(async (event) => {
           return null
         })
     : null
+
+  /**
+   * `D-154`②③：能不能「補發給沒打開的人／發給點了／沒點連結的人」、各約幾位；不能的話講原因。
+   * ⛔ 建草稿的端點（follow-up.post.ts）用同一支判斷，畫面說能發、按下去卻被擋就是兩邊各判一份。
+   */
+  const followUp = followUpAvailability({
+    status: data.status,
+    sendMode: data.sendMode ?? null,
+    isFollowUp: data.audienceSource?.type === 'followUp',
+    lineRequestId: data.lineRequestId ?? null,
+    uploadAudienceGroupId: data.narrowcast?.uploadAudienceGroupId ?? null,
+    narrowcastFallback: data.narrowcastFallback ?? null,
+    completedMs,
+    sentCount: data.sentCount,
+    opened: uniqueImpression,
+    clicked: uniqueClick,
+    nowMs: Date.now(),
+  })
 
   return {
     campaignId: id,
@@ -181,6 +201,8 @@ export default defineEventHandler(async (event) => {
     openRate: openRate != null ? Math.round(openRate * 10000) / 10000 : null,
     /** 上一則發給同一群人的推播與它的打開比例（`D-154`①）；沒有可比的＝null */
     previousSameAudience,
+    /** 「再發一則給…」能出現哪幾顆、不能時的原因（`D-154`②③） */
+    followUp,
     clicksByLinkKey,
     startedAt: data.startedAt,
     completedAt: data.completedAt,

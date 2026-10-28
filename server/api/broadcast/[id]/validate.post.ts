@@ -4,6 +4,10 @@ import { resolveAudienceUserIds } from '~~/server/utils/audience'
 import { broadcastPlanBlockFor } from '~~/server/utils/broadcast-plan-gate'
 import { getLineMessageQuota } from '~~/server/utils/line'
 import { extractBroadcastTriggerModuleId } from '~~/shared/broadcast-content'
+import { FOLLOW_UP_PERSONALIZED_ERROR, followUpSourceProblem } from '~~/shared/broadcast-follow-up'
+import { findSendVariables } from '~~/shared/preview-variables'
+import { countTaggedUriButtons } from '~~/shared/flow-uri-tagging'
+import { parseFirestoreDate } from '~~/shared/firestore-date'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -56,12 +60,15 @@ export default defineEventHandler(async (event) => {
    * ⚠️ 判斷「是不是模組型」用**送出端同一支函式**，不要照 `messages[0].type` 自己看。
    */
   const triggerModuleId = extractBroadcastTriggerModuleId(data.messages)
+  /** 模組型的模組內容（補發要看它有沒有放名字／點了就貼標的按鈕） */
+  let moduleMessages: unknown[] | null = null
   /*
    * `D-118`：以前這裡會提醒「名字那一格每位客人看到的都是空白」（群發拿不到客人資料）。
    * 2026-10-15 改成用了變數就一人一則送、每位換上自己的名字（`broadcast-send.ts`），這句提醒就拿掉了。
    */
   if (triggerModuleId) {
     const flow = await getDoc<Record<string, unknown>>('flows', triggerModuleId)
+    if (flow && Array.isArray(flow.messages)) moduleMessages = flow.messages
     const flowName = String(flow?.name || '').trim()
     if (!flow || flow.workspaceId !== workspaceId) {
       errors.push('這則推播要送出的機器人模組已經不存在了（可能被刪掉），現在發出去會整則失敗。請改選一個還在的模組。')
@@ -96,8 +103,34 @@ export default defineEventHandler(async (event) => {
    * ⛔ 以前這裡連封鎖的一起數，「預估發送人數」比真的送出去的多，跟 LINE 剩下的則數一比會誤報「不夠送」。
    */
   let resolvedUserIds: string[] = []
+  /** 補發（`D-154`）：不知道是誰，人數用建草稿時從原本那則估的 */
+  let followUpEstimate: number | null = null
   try {
-    if (data.audienceSource.type === 'all') {
+    if (data.audienceSource.type === 'followUp') {
+      followUpEstimate = Number(data.audienceSnapshot?.estimatedCount) || 0
+      const srcId = String(data.audienceSource.sourceBroadcastId || '')
+      const src = srcId ? (await db.collection('broadcasts').doc(srcId).get()).data() as BroadcastDoc | undefined : undefined
+      const problem = followUpSourceProblem(
+        src
+          ? {
+              workspaceId: src.workspaceId,
+              sendMode: src.sendMode ?? null,
+              lineRequestId: src.lineRequestId ?? null,
+              uploadAudienceGroupId: src.narrowcast?.uploadAudienceGroupId ?? null,
+              completedMs: parseFirestoreDate(src.completedAt)?.getTime() ?? null,
+            }
+          : null,
+        workspaceId,
+        Date.now(),
+      )
+      if (problem) errors.push(`${problem}，沒辦法補發。`)
+      // 送出端用送出去的那一份判斷（`broadcast-send.ts`）；這裡先看存好的內容，大多數情況在按確認前就講得出來
+      const content = moduleMessages ?? data.messages
+      if (findSendVariables(content).length > 0 || countTaggedUriButtons(content as any[]) > 0) {
+        errors.push(FOLLOW_UP_PERSONALIZED_ERROR)
+      }
+    }
+    else if (data.audienceSource.type === 'all') {
       let query = db.collection('users').select('isBlocked') as FirebaseFirestore.Query
       query = query.where('workspaceId', '==', workspaceId)
       const usersSnap = await query.get()
@@ -131,14 +164,14 @@ export default defineEventHandler(async (event) => {
     errors.push('受眾解析失敗，請稍後再試')
   }
 
-  if (!resolvedUserIds.length && !errors.length) {
+  if (!resolvedUserIds.length && followUpEstimate == null && !errors.length) {
     errors.push('受眾人數為 0，無法發送')
   }
 
   return {
     valid: errors.length === 0,
     errors,
-    estimatedCount: resolvedUserIds.length,
+    estimatedCount: followUpEstimate ?? resolvedUserIds.length,
     previewUserIds: resolvedUserIds.slice(0, 5),
     lineQuota: await lineQuotaP,
   }

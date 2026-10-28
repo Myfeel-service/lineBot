@@ -3,6 +3,9 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { newBroadcastDraftDoc } from '~~/server/utils/broadcast-draft'
+import { createFollowUpDraft } from '~~/server/utils/broadcast-follow-up-draft'
+import { isFollowUpTarget } from '~~/shared/broadcast-follow-up'
+import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
  * POST /api/broadcast/:id/duplicate
@@ -32,6 +35,16 @@ export default defineEventHandler(async (event) => {
   // ⛔ 別家的跟不存在的一樣回 404，不告訴對方「別家有這一則」
   if (!src || src.workspaceId !== workspaceId) {
     throw createError({ statusCode: 404, statusMessage: '找不到這則推播，可能已經被刪掉了' })
+  }
+
+  // `D-154`②③：帶 followUpTarget＝複製成「補發給沒打開的人」那種草稿（見 broadcast-follow-up-draft.ts）
+  const body = await readBody<{ followUpTarget?: unknown } | null>(event).catch(() => null)
+  if (body?.followUpTarget !== undefined) {
+    if (!isFollowUpTarget(body.followUpTarget)) throw createError({ statusCode: 400, statusMessage: '要補發給哪一群人？' })
+    const { id, doc } = await createFollowUpDraft({
+      db, uid, workspaceId, sourceId, src: src as BroadcastDoc, target: body.followUpTarget,
+    })
+    return { id, ...doc }
   }
 
   const messages = Array.isArray(src.messages) ? src.messages : []

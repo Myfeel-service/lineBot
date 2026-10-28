@@ -7,6 +7,7 @@
  * 不能只有看門狗那條有寫（2026-08-13 code review 抓到）。
  */
 import { broadcastLockText } from './billing/plans'
+import { FOLLOW_UP_PERSONALIZED_ERROR } from './broadcast-follow-up'
 
 /** 看門狗：卡死在發送中，且確定還沒呼叫 LINE（認領後沒有第二筆寫入） */
 export const BROADCAST_STUCK_SAFE_TO_RESEND
@@ -33,11 +34,22 @@ export const BROADCAST_ALL_RECIPIENTS_FAILED
   = 'LINE 回報名單上每一位都沒收到，多半是這些人已經封鎖或刪除官方帳號。重發前建議先確認名單。'
 
 /**
+ * `D-154`②③ 補發在交給 LINE 之前就失敗（原本那則不在了、LINE 圈不出名單…）：
+ * 送出端丟出來的錯誤以這句開頭，後面接的已經是給人看的原因。
+ */
+export const FOLLOW_UP_FAILURE_PREFIX = '補發沒有送出：'
+
+/**
  * 把發送流程內部的錯誤訊息換成操作的人看得懂的一句話。
  * 認得的照字面翻；認不得的保留原文當線索（工程要查得到），但前面先講清楚「還沒送出」。
  */
 export function humanizeBroadcastSendFailure(rawReason: string): string {
   const reason = String(rawReason || '').trim()
+
+  if (reason.startsWith(FOLLOW_UP_FAILURE_PREFIX)) {
+    return `${reason}。沒有送出任何訊息，處理好之後可以按「重設為草稿」再發一次。`
+  }
+  if (reason === FOLLOW_UP_PERSONALIZED_ERROR) return `${reason}這則沒有送出任何訊息。`
 
   // 方案不含這種推播（`D-131`）：原因本身就是推播頁鎖住時那一句，照原句講、補上「沒送出」
   if (reason === broadcastLockText('none') || reason === broadcastLockText('basic')) {

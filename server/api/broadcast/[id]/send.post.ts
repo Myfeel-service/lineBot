@@ -4,7 +4,8 @@ import { broadcastScheduleAtToDate } from '~~/server/utils/broadcast-schedule'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getDoc } from '~~/server/utils/firebase'
 import { writeAuditLog } from '~~/server/utils/audit-log'
-import { BROADCAST_ALL_RECIPIENTS_FAILED } from '~~/shared/broadcast-failure'
+import { BROADCAST_ALL_RECIPIENTS_FAILED, FOLLOW_UP_FAILURE_PREFIX } from '~~/shared/broadcast-failure'
+import { FOLLOW_UP_PERSONALIZED_ERROR } from '~~/shared/broadcast-follow-up'
 import { broadcastLockText } from '~~/shared/billing/plans'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
@@ -61,15 +62,18 @@ export default defineEventHandler(async (event) => {
       after: {
         name: doc.name ?? '',
         // 每一位都沒送到＝推播本身是 failed，紀錄要講同一件事（同排程那支，2026-10-10 審查）
-        ...(result.allFailed ? { status: 'failed' } : {}),
+        // narrowcast（`D-154`）這一下只交出名單、還沒送：⛔ 不可以記成「送給 0 人」
+        ...(result.pending ? { status: 'processing' } : result.allFailed ? { status: 'failed' } : {}),
         totalCount: result.totalCount,
         sentCount: result.sentCount,
         failedCount: result.failedCount,
       },
-      note: result.allFailed
-        ? `沒送出去：${BROADCAST_ALL_RECIPIENTS_FAILED}`
-        : `送給 ${result.sentCount} 人${result.failedCount ? `（${result.failedCount} 人沒送成功）` : ''}`
-          + (result.postSendError ? `；送出後記帳未完成：${result.postSendError}` : ''),
+      note: result.pending
+        ? `名單已交給 LINE（約 ${result.totalCount} 人），LINE 準備好就送出`
+        : result.allFailed
+          ? `沒送出去：${BROADCAST_ALL_RECIPIENTS_FAILED}`
+          : `送給 ${result.sentCount} 人${result.failedCount ? `（${result.failedCount} 人沒送成功）` : ''}`
+            + (result.postSendError ? `；送出後記帳未完成：${result.postSendError}` : ''),
     })
 
     return result
@@ -84,7 +88,9 @@ export default defineEventHandler(async (event) => {
     if (msg === broadcastLockText('none') || msg === broadcastLockText('basic')) {
       throw createError({ statusCode: 403, statusMessage: msg })
     }
-    if (msg.includes('Cannot send') || msg.includes('No messages') || msg.includes('audience')) {
+    if (msg.includes('Cannot send') || msg.includes('No messages') || msg.includes('audience')
+      // 補發交給 LINE 之前就失敗（`D-154`）：原因本身是給人看的句子，照原句回
+      || msg.startsWith(FOLLOW_UP_FAILURE_PREFIX) || msg === FOLLOW_UP_PERSONALIZED_ERROR) {
       throw createError({ statusCode: 400, statusMessage: msg })
     }
     throw createError({ statusCode: 500, statusMessage: msg })

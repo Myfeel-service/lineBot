@@ -440,6 +440,33 @@
   margin: 0;
 }
 
+/* `D-154`②③：成效報表「再發一則給」那排按鈕（窄的時候換行） */
+.bc-follow-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+
+  .el-button + .el-button {
+    margin-left: 0;
+  }
+}
+
+/* `D-154`②③：補發草稿的發送對象（那一行就是對象本身，用正文色） */
+.bc-follow-up-audience {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* `D-154`②③：narrowcast 發送中（在等 LINE 準備名單）——是狀態說明不是錯誤，用正文色 */
+.bc-processing-note {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 /* `D-154`①：打開比例底下「跟上一則發給同一群人的比」。是結果不是附註，用正文色不用灰 */
 .bc-open-compare {
   font-size: 0.8125rem;

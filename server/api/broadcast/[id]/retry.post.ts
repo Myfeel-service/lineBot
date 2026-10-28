@@ -88,10 +88,15 @@ export default defineEventHandler(async (event) => {
       failureReason: null,
       lineAggregationUnit: null,
       lineInsightAggregationApplied: null,
+      // `D-154`②③：上一輪 narrowcast 的進度與 LINE 編號（之後補發靠它圈名單，⛔ 不可以留著指到沒送成的那一次）
+      narrowcast: null,
+      lineRequestId: null,
+      narrowcastFallback: null,
       'audienceSnapshot.resolvedUserIds': [],
       // 估算人數也要跟著歸零：那個數字來自沒送成功的那一次，留著會讓草稿在列表上
       // 顯示「206 人」，看起來像已經算好了受眾（真正的人數要等下一次送出才會重算）
-      'audienceSnapshot.estimatedCount': 0,
+      // ⚠️ 補發（`D-154`）例外：它的人數是建草稿時從原本那則估的、送出端不會重算，歸零就再也看不到
+      ...(existing.audienceSource?.type === 'followUp' ? {} : { 'audienceSnapshot.estimatedCount': 0 }),
       // 下一次發送要換一個 LINE 彙總單位，開封／點擊才不會跟上一次疊在一起
       retryCount: FieldValue.increment(1),
       updatedAt: FieldValue.serverTimestamp(),

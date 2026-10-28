@@ -87,6 +87,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'broadcast.create': '建了推播草稿',
   // 名字接在後面的是**複製出來的那一則**（「…(複製)」）；從哪一則複製的記在 note，細節欄講出來
   'broadcast.duplicate': '複製出一則推播草稿',
+  // `D-154`②③：成效報表「補發給沒打開的人／發給點了／沒點連結的人」建的草稿（名字接在後面的是新那一則）
+  'broadcast.followUp': '建了一則補發的推播草稿',
   'broadcast.put': '改了推播',
   'broadcast.send': '送出了推播',
   'broadcast.schedule': '排定了推播',
@@ -443,7 +445,7 @@ export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
   role: { owner: '擁有者', admin: '管理員', agent: '客服', viewer: '觀察者' },
   // ⚠️ 紀錄裡只存受眾的**種類**，不存名單本身：一則推播的名單可能有上千個 userId，
   //    整包存進來會被截成 50 個並把整筆標成 lossy（連還原都不給按），而且沒有人看得懂。
-  audienceSource: { all: '全部好友', tags: '依標籤挑', audience: '指定受眾', import: '匯入的名單' },
+  audienceSource: { all: '全部好友', tags: '依標籤挑', audience: '指定受眾', import: '匯入的名單', followUp: '補發（LINE 挑人）' },
 }
 
 /**
@@ -689,9 +691,17 @@ const AUDIT_DETAIL_FORMATTERS: Record<string, (row: AuditRowLike) => string[]> =
     const from = String(row.note ?? '').trim()
     return [from ? `從「${from}」複製` : '從另一則推播複製（沒記到是哪一則）']
   },
+  // 從成效報表「補發給沒打開的人」那幾顆建的（`D-154`②③）：標題是新那一則，這裡講從哪一則、給哪一群
+  'broadcast.followUp': (row) => {
+    const from = String(row.note ?? '').trim()
+    const who = String(row.after?.followUpLabel ?? '').trim()
+    return [`${from ? `從「${from}」` : '從另一則推播'}補發${who ? `給${who}` : ''}`]
+  },
   'broadcast.scheduledSend': (row) => {
     const a = row.after ?? {}
     if (a.status === 'failed') return [`沒送出去：${String(row.note ?? '').trim() || '原因沒記到'}`]
+    // narrowcast（`D-154`）：排程到點只交出名單、LINE 準備好才送——⛔ 不可以講成「送到 0 人，全部送到」
+    if (a.status === 'processing') return [String(row.note ?? '').trim() || '名單已交給 LINE，LINE 準備好就送出']
     const sent = Number(a.sentCount ?? 0)
     const failed = Number(a.failedCount ?? 0)
     return [`送到 ${sent} 人${failed ? `，${failed} 人沒送成功` : '，全部送到'}`]

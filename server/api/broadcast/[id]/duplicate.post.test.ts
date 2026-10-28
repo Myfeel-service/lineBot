@@ -19,6 +19,8 @@ vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn(async () => {
 
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getRouterParam', () => 'bc-src')
+// 一般複製沒有 body（`followUpTarget` 那條補發見 broadcast-follow-up-draft.test.ts）
+vi.stubGlobal('readBody', async () => undefined)
 vi.stubGlobal('createError', (o: { statusCode?: number, statusMessage?: string }) =>
   Object.assign(new Error(o.statusMessage ?? 'e'), o))
 
