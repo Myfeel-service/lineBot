@@ -1418,9 +1418,16 @@ const regularFlows = computed(() => flows.value.filter((f) => !f.isSystem))
 
 // ── 資料夾分組 ─────────────────────────────────────
 const uncategorizedFlows = computed(() => regularFlows.value.filter(f => !(f as any).folderId))
+/**
+ * ⛔ 資料夾要拿**完整**清單分組（`allFlows`），不是側欄分頁後的 `regularFlows`（`C-419`）。
+ * 以前用分頁那段：排序在後面的模組還沒「載入」，MYFEEL「客服」61 個開頁時顯示「（0）資料夾為空」，
+ * 刪資料夾的確認框也照這個數字問「要刪除這個**空**資料夾嗎？」——按下去 61 個全被移到未分類。
+ * 資料夾自己會收合，打開就該看到全部；分頁只留給未分類那一段。
+ */
 const flowsByFolder = computed(() => {
   const map: Record<string, typeof regularFlows.value> = {}
-  for (const f of regularFlows.value) {
+  for (const f of allFlows.value) {
+    if (f.isSystem) continue
     const fid = (f as any).folderId
     if (!fid) continue
     if (!map[fid]) map[fid] = [] as any
@@ -1799,7 +1806,8 @@ async function onFlowFolderDrop(folderId: string | null) {
   dragOverFolderId.value = null
   draggedFlowId.value = null
   if (!flowId) return
-  const flow = flows.value.find(f => f.id === flowId) as any
+  // 完整清單裡找：資料夾裡的列不受側欄分頁限制（`C-419`），拖的可能是還沒「載入」到的那段
+  const flow = allFlows.value.find(f => f.id === flowId) as any
   if (!flow) return
   if ((flow.folderId ?? null) === folderId) return
   // 樂觀更新
@@ -1893,7 +1901,7 @@ const folderRowDragOverId = ref<string | null>(null)
 
 function draggedFlowFolderId(): string | null {
   if (!draggedFlowId.value) return null
-  const flow = flows.value.find(f => f.id === draggedFlowId.value) as any
+  const flow = allFlows.value.find(f => f.id === draggedFlowId.value) as any
   return flow?.folderId ?? null
 }
 
