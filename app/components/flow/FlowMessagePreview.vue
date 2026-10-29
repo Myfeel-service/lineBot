@@ -28,12 +28,39 @@
           <!-- 文字（無按鈕＝純氣泡；有按鈕＝卡片，`C-397` 前是按鈕範本） -->
           <template v-if="msg.type === 'text'">
             <!--
+              `C-416` 文字加了圖＝一張卡：跟卡片訊息的單張卡同一個樣子，圖照原比例不裁、按鈕沒存樣式算綠色。
+              比例、按鈕樣式都吃 `shared/text-image-card.ts`，跟送出端同一份。
+            -->
+            <div v-if="textImageUrl(msg)" class="fmp-carousel">
+              <div class="fmp-cc fmp-cc--card fmp-cc--single">
+                <div class="fmp-cc-img fmp-cc-img--fit" :style="{ aspectRatio: textImageAspect(msg.imageWidth, msg.imageHeight).css }">
+                  <img :src="textImageUrl(msg)" alt="">
+                </div>
+                <div class="fmp-cc-body">
+                  <p v-if="cardText(msg.title)" class="fmp-cc-title"><PreviewText :text="cardText(msg.title)" /></p>
+                  <p class="fmp-cc-text"><PreviewText :text="cardText(keptText(msg))" /></p>
+                  <div v-if="droppedText(msg)" class="fmp-card-cut">
+                    <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（LINE 單則文字只收 {{ textMeasure(msg).limit }} 字）</span>
+                    <p class="fmp-card-cut-text"><PreviewText :text="droppedText(msg)" /></p>
+                  </div>
+                </div>
+                <div v-if="hasButtons(msg)" class="fmp-cc-btns">
+                  <span
+                    v-for="(b, bi) in msg.buttons"
+                    :key="bi"
+                    class="fmp-btn"
+                    :class="{ 'fmp-btn--primary': textImageButtonStyle(b) === 'primary' }"
+                  ><PreviewText :text="b.label || '按鈕'" /></span>
+                </div>
+              </div>
+            </div>
+            <!--
               ⛔ 純文字氣泡也要講被丟掉的那一段（`C-229` 補）。原本這裡只畫 `keptText`，
               超過 5000 字的部分**在預覽裡無聲消失**——看起來一切正常，客人卻收到半截，
               跟 `H-27` 當初那條「有按鈕時只收 160 字」是同一個病，只是躲在另一個分支。
               ⚠️ 推播的純文字欄位沒有字數上限，所以這條路是真的走得到的。
             -->
-            <template v-if="!hasButtons(msg)">
+            <template v-else-if="!hasButtons(msg)">
               <div class="fmp-bubble"><PreviewText :text="keptText(msg)" /></div>
               <div v-if="droppedText(msg)" class="fmp-bubble-cut">
                 <span class="fmp-card-cut-label">↓ 以下 {{ visibleLength(droppedText(msg)) }} 字送不出去（LINE 單則文字只收 {{ textMeasure(msg).limit }} 字）</span>
@@ -158,6 +185,7 @@ import { resolveCarouselImageAspectRatio, resolveFlexImageCarouselAspectRatio } 
 import { PRESET_BOUNDS_PCT } from '~~/shared/rich-layout-presets'
 import { LINE_TEXT_MESSAGE_MAX, measureLineText, messageHasButtons } from '~~/shared/line-text-limits'
 import { cardButtonStyle } from '~~/shared/card-message'
+import { textImageAspect, textImageButtonStyle, textMessageImageUrl } from '~~/shared/text-image-card'
 import { splitPreviewMarks } from '~~/shared/preview-variables'
 
 const props = defineProps<{
@@ -197,6 +225,9 @@ function droppedText(msg: any): string {
 /** 字數不算範例的標記（`D-128`：預覽的範例值前後夾了看不見的記號，`PreviewText` 用來標黃色） */
 function visibleLength(s: string): number {
   return splitPreviewMarks(s).reduce((n, seg) => n + seg.text.length, 0)
+}
+function textImageUrl(msg: any): string {
+  return textMessageImageUrl(msg)
 }
 function imgUrl(msg: any): string {
   return msg.previewImageUrl || msg.originalContentUrl || ''

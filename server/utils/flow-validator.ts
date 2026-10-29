@@ -2,6 +2,7 @@ import { createError } from 'h3'
 import { flowTaggedPostbackError, validateUnifiedAction } from '~~/shared/action-schema'
 import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
 import { cardMessageError } from '~~/shared/card-message'
+import { textImageError } from '~~/shared/text-image-card'
 
 const FLOW_MESSAGE_LIMIT = 5
 const USER_INPUT_ATTRIBUTE_RE = /^[A-Za-z][A-Za-z0-9_]{0,49}$/
@@ -168,6 +169,9 @@ function validateMessageByType(msg: any): void {
     if (!String(msg?.text || '').trim()) fail('文字模組：回覆文字不可為空')
     validateTextLength(msg)
     validateTextButtons(msg)
+    // 加了圖的那幾格（`C-416`，前後端同一支）
+    const imageError = textImageError(msg)
+    if (imageError) fail(imageError)
     return
   }
   if (type === 'image') {

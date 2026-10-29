@@ -314,6 +314,9 @@
 }
 .fmp-cc-img--square { aspect-ratio: 1 / 1; }
 .fmp-cc-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* `C-416` 文字加圖：送出端用 aspectMode fit（不裁），預覽跟著不裁；量不到比例或太長時跟 LINE 一樣留白 */
+.fmp-cc-img--fit { background: #fff; }
+.fmp-cc-img--fit img { object-fit: contain; }
 .fmp-cc-img .fmp-media-ph { min-height: 0; height: 100%; }
 .fmp-cc-body { padding: 0.5rem 0.6rem; flex: 1; }
 .fmp-cc-title {

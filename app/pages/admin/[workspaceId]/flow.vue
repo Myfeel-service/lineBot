@@ -27,19 +27,33 @@
         </AdminOperateGate>
       </div>
       <div v-else ref="listEl" class="split-list" data-tour="flow-list" @scroll.passive="onSidebarListScroll">
-        <!-- 系統模組永遠在最上方（不可分組） -->
-        <AdminSplitListItem
-          v-for="flow in systemFlows"
-          :key="flow.id"
-          :data-tour="`flow-sys-${flow.moduleType}`"
-          :title="`${flow.name}`"
-          :active="selectedId === flow.id"
-          :meta-text="moduleTypeLabel(flow.moduleType)"
-          chip-tone="neutral"
-          @select="selectFlow(flow)"
-        />
+        <!--
+          `C-418`：有客人走不到的模組才出現。橘點就是走不到（這排的「客人走不到」兼當圖例）；
+          只看走不到的時候每一列都是，就不再畫點。
+        -->
+        <div v-if="unreachableIds.size" class="flow-list-filter" data-tour="flow-list-filter">
+          <el-radio-group v-model="listFilter" size="small">
+            <el-radio-button value="all">全部 {{ regularFlowTotal }}</el-radio-button>
+            <el-radio-button value="unreachable"><span class="flow-unreachable-dot" aria-hidden="true" />客人走不到 {{ unreachableIds.size }}</el-radio-button>
+          </el-radio-group>
+          <p v-if="showUnreachableOnly" class="flow-list-filter__hint">沒有任何自動回應、選單、按鈕會叫出這些模組</p>
+        </div>
 
-        <!-- 未分類的 regular flows（可拖曳重排序，沿用原本機制） -->
+        <!-- 系統模組永遠在最上方（不可分組）；它們是事件叫出來的，永遠不算走不到 -->
+        <template v-if="!showUnreachableOnly">
+          <AdminSplitListItem
+            v-for="flow in systemFlows"
+            :key="flow.id"
+            :data-tour="`flow-sys-${flow.moduleType}`"
+            :title="`${flow.name}`"
+            :active="selectedId === flow.id"
+            :meta-text="moduleTypeLabel(flow.moduleType)"
+            chip-tone="neutral"
+            @select="selectFlow(flow)"
+          />
+        </template>
+
+        <!-- 未分類的 regular flows（可拖曳重排序，沿用原本機制；只看走不到的時候不給拖） -->
         <div
           v-for="flow in uncategorizedFlows"
           :key="flow.id"
@@ -48,14 +62,16 @@
           :class="{
             'flow-sidebar-row--dragging': flowListDragIndex === regularFlowIndex(flow.id),
             'flow-sidebar-row--drag-over': flowListDragOverIndex === regularFlowIndex(flow.id) && flowListDragIndex !== regularFlowIndex(flow.id),
+            'flow-sidebar-row--unreachable': !showUnreachableOnly && unreachableIds.has(flow.id),
           }"
+          :title="!showUnreachableOnly && unreachableIds.has(flow.id) ? UNREACHABLE_ROW_TITLE : undefined"
           @dragover.prevent="onFlowListDragOver($event, regularFlowIndex(flow.id))"
           @dragenter.prevent
           @dragleave="onFlowListDragLeave"
           @drop="onFlowListDrop($event, regularFlowIndex(flow.id))"
         >
           <span
-            v-if="can('marketing.write')"
+            v-if="can('marketing.write') && !showUnreachableOnly"
             class="drag-handle flow-sidebar-drag-handle"
             draggable="true"
             aria-label="拖曳搬移 / 排序"
@@ -66,6 +82,7 @@
           <AdminSplitListItem
             class="flow-sidebar-row__item"
             :title="flow.name"
+            :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
             :active="selectedId === flow.id"
             @select="selectFlow(flow)"
           />
@@ -85,6 +102,7 @@
 
         <!-- 每個資料夾 -->
         <template v-for="folder in flowFolders" :key="folder.id">
+          <template v-if="!showUnreachableOnly || unreachableCountByFolder[folder.id]">
           <div
             class="src-folder-header"
             :class="{
@@ -98,7 +116,7 @@
             @drop.prevent="onFlowFolderDrop(folder.id)"
           >
             <span
-              v-if="can('marketing.write')"
+              v-if="can('marketing.write') && !showUnreachableOnly"
               class="drag-handle flow-sidebar-drag-handle src-folder-drag-handle"
               draggable="true"
               aria-label="拖曳排序資料夾"
@@ -107,10 +125,20 @@
               @dragend.stop="onFolderHeaderDragEnd"
             >⠿</span>
             <span class="src-folder-label">
-              <span class="src-folder-arrow">{{ isFlowFolderExpanded(folder.id) ? '▾' : '▸' }}</span>
+              <span class="src-folder-arrow">{{ isFlowFolderExpanded(folder.id) || showUnreachableOnly ? '▾' : '▸' }}</span>
               <el-icon><Folder /></el-icon> {{ folder.name }}
-              <span class="src-folder-count">（{{ flowCountByFolder[folder.id] ?? 0 }}）</span>
+              <span class="src-folder-count">（{{ showUnreachableOnly ? unreachableCountByFolder[folder.id] : (flowCountByFolder[folder.id] ?? 0) }}）</span>
             </span>
+            <!--
+              ⛔ 只放「● 數字」：側欄窄，寫成「28 個走不到」會把左邊資料夾名字的「（61）」擠掉（實機截圖看到的）。
+              橘點的意思上面篩選那排寫著；完整的話放在滑過去的提示。
+            -->
+            <span
+              v-if="!showUnreachableOnly && unreachableCountByFolder[folder.id]"
+              class="src-folder-unreachable"
+              :title="`${unreachableCountByFolder[folder.id]} 個客人走不到`"
+              :aria-label="`${unreachableCountByFolder[folder.id]} 個客人走不到`"
+            ><span class="flow-unreachable-dot" aria-hidden="true" />{{ unreachableCountByFolder[folder.id] }}</span>
             <AdminOperateGate capability="marketing.write">
               <span class="src-folder-actions">
                 <el-tooltip content="編輯資料夾" placement="top" :show-after="300">
@@ -119,23 +147,25 @@
               </span>
             </AdminOperateGate>
           </div>
-          <template v-if="isFlowFolderExpanded(folder.id)">
+          <template v-if="isFlowFolderExpanded(folder.id) || showUnreachableOnly">
             <div
-              v-for="flow in flowsByFolder[folder.id] ?? []"
+              v-for="flow in visibleFlowsByFolder[folder.id] ?? []"
               :key="flow.id"
               :data-flow-id="flow.id"
               class="flow-sidebar-row src-row--in-folder"
               :class="{
                 'flow-sidebar-row--dragging': draggedFlowId === flow.id,
                 'flow-sidebar-row--drag-over': folderRowDragOverId === flow.id && draggedFlowId !== flow.id,
+                'flow-sidebar-row--unreachable': !showUnreachableOnly && unreachableIds.has(flow.id),
               }"
+              :title="!showUnreachableOnly && unreachableIds.has(flow.id) ? UNREACHABLE_ROW_TITLE : undefined"
               @dragover.prevent="onFolderRowDragOver($event, folder.id, flow.id)"
               @dragenter.prevent
               @dragleave="onFolderRowDragLeave(flow.id)"
               @drop.prevent="onFolderRowDrop(folder.id, flow.id)"
             >
               <span
-                v-if="can('marketing.write')"
+                v-if="can('marketing.write') && !showUnreachableOnly"
                 class="drag-handle flow-sidebar-drag-handle"
                 draggable="true"
                 aria-label="拖曳搬移"
@@ -145,16 +175,18 @@
               <AdminSplitListItem
                 class="flow-sidebar-row__item"
                 :title="flow.name"
+                :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
                 :active="selectedId === flow.id"
                 @select="selectFlow(flow)"
               />
             </div>
             <div
-              v-if="!(flowsByFolder[folder.id] ?? []).length"
+              v-if="!showUnreachableOnly && !(flowsByFolder[folder.id] ?? []).length"
               class="src-folder-empty"
             >
               （資料夾為空；可從外面拖一筆過來）
             </div>
+          </template>
           </template>
         </template>
 
@@ -270,26 +302,21 @@
         <div class="fem-header" data-tour="flow-messages">
           <AdminPanelTitle tag="span" text="回覆訊息" tight />
           <div class="msg-type-btns">
-            <el-tooltip content="純文字回覆，可再加最多 4 顆按鈕" placement="bottom" :show-after="300">
+            <!--
+              `C-416`：照「客人會看到什麼」排；影片、圖片輪播（2026-10-29 盤點所有帳號 0 則）收進「更多」。
+              卡片訊息只講「好幾張左右滑」——一張圖配文字用「＋ 文字」加圖片（以前店家找不到能放圖的那格，只好圖一則、字一則）。
+            -->
+            <el-tooltip content="一段文字；上面可加圖片、下面可加最多 4 顆按鈕" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-text" @click="addMessage('text')">＋ 文字</el-button>
             </el-tooltip>
-            <el-tooltip content="傳一張圖片給客人" placement="bottom" :show-after="300">
+            <el-tooltip content="傳一張圖片給客人（客人點了可以看大圖）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-image" @click="addMessage('image')">＋ 圖片</el-button>
-            </el-tooltip>
-            <el-tooltip content="傳一段影片（檔案最大 5 MB）" placement="bottom" :show-after="300">
-              <el-button size="small" data-tour="fmt-video" @click="addMessage('video')">＋ 影片</el-button>
             </el-tooltip>
             <el-tooltip content="一張大圖，圖上可切出多個可點區塊" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-rich" @click="addMessage('richMessage')">＋ 圖文訊息</el-button>
             </el-tooltip>
-            <el-tooltip content="大圖、標題、內文、按鈕；放兩張以上客人會左右滑" placement="bottom" :show-after="300">
+            <el-tooltip content="多張卡片左右滑（例如商品目錄）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-carousel" @click="addMessage('flexImageCarousel')">＋ 卡片訊息</el-button>
-            </el-tooltip>
-            <el-tooltip v-if="showLegacyCarousel" content="舊版多卡左右滑，建議改用「卡片訊息」" placement="bottom" :show-after="300">
-              <el-button size="small" @click="addMessage('carousel')">＋ 輪播（舊）</el-button>
-            </el-tooltip>
-            <el-tooltip v-if="showLegacyImageCarousel" content="整排純圖片左右滑，點圖可觸發動作" placement="bottom" :show-after="300">
-              <el-button size="small" @click="addMessage('imageCarousel')">＋ 圖片輪播</el-button>
             </el-tooltip>
             <el-tooltip content="訊息下方一排可點的小按鈕，客人點一下就送出" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-quick" @click="addMessage('quickReply')">＋ 快速回覆</el-button>
@@ -297,6 +324,16 @@
             <el-tooltip v-if="showUserInput" content="向客人提問並收集回覆（例：電話、Email）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-userinput" @click="addMessage('userInput')">＋ 用戶輸入</el-button>
             </el-tooltip>
+            <el-dropdown trigger="click" @command="(type) => addMessage(String(type))">
+              <el-button size="small" data-tour="fmt-more">更多 ▾</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="video" data-tour="fmt-video">＋ 影片（最大 5 MB）</el-dropdown-item>
+                  <el-dropdown-item v-if="showLegacyImageCarousel" command="imageCarousel">＋ 圖片輪播（整排純圖左右滑）</el-dropdown-item>
+                  <el-dropdown-item v-if="showLegacyCarousel" command="carousel">＋ 輪播（舊）</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-button class="fem-preview-toggle" size="small" @click="previewOpen = !previewOpen">
               {{ previewOpen ? '隱藏預覽' : '顯示預覽' }}
             </el-button>
@@ -333,6 +370,45 @@
             >
               <!-- Text -->
               <div v-if="msg.type === 'text'" class="message-bubble-wrap">
+                <!--
+                  `C-416`：文字上面可以放一張圖——有圖就送成一張卡（圖＋標題＋內文＋按鈕，像別家那種），沒圖跟以前一樣。
+                  ⛔ 不要做成「圖一格、字一格，再按鈕合起來」：那是要店家先拆開再補救（老闆 10-29 問「為何圖片跟文字要拆開」）。
+                  想分開送的照舊拉「＋ 圖片」「＋ 文字」兩格。規則在 `shared/text-image-card.ts`。
+                -->
+                <template v-if="textMessageImageUrl(msg) || textImageOpen.has(msg)">
+                  <div class="admin-field-group" data-tour="text-image">
+                    <div class="flow-text-image-head">
+                      <AdminFieldLabel tight>
+                        圖片 <span class="text-muted">(選填，放在文字上面；有圖就送成一張卡片)</span>
+                      </AdminFieldLabel>
+                      <el-button link type="danger" size="small" @click="removeTextImage(msg)">移除圖片</el-button>
+                    </div>
+                    <FlowUploadZone
+                      :model-value="textMessageImageUrl(msg)"
+                      type="image"
+                      label="點擊上傳圖片"
+                      @update:model-value="(v) => setTextImage(msg, v)"
+                      @image-sized="(size) => applyTextImageSize(msg, size)"
+                    />
+                    <p v-if="textMessageImageUrl(msg) && msg.buttons?.length" class="text-xs text-muted">客人點圖片＝按第 1 顆按鈕</p>
+                  </div>
+                  <div v-if="textMessageImageUrl(msg)" class="admin-field-group">
+                    <AdminFieldLabel tight>
+                      標題 <span class="text-muted">(選填，最多 {{ TEXT_IMAGE_TITLE_MAX }} 字)</span>
+                    </AdminFieldLabel>
+                    <div class="flow-input-inset-wrap flow-input-inset-wrap--sm control-full">
+                      <VariableTextField v-model="msg.title" :known-keys="variableKeys" placeholder="標題（選填）" :maxlength="TEXT_IMAGE_TITLE_MAX" />
+                      <FlowVariableInset
+                        size="sm"
+                        :options="variableTokenOptions"
+                        @pick="(token, range) => insertVariableToken(msg, 'title', String(token), range)"
+                      />
+                    </div>
+                  </div>
+                </template>
+                <el-button v-else plain size="small" class="control-dashed-add" data-tour="text-add-image" @click="openTextImage(msg)">
+                  ⊕ 加圖片（選填）
+                </el-button>
                 <div class="admin-field-group">
                   <AdminFieldLabel tight>
                     回覆文字 <span class="text-muted">(最多 {{ LINE_TEXT_MESSAGE_MAX }} 字)</span>
@@ -383,6 +459,20 @@
                         >
                           ✕
                         </el-button>
+                      </template>
+                      <!-- 有圖＝一張卡，按鈕才有綠色／文字連結可選（沒圖的「文字＋按鈕」維持 `C-397` 的樣子） -->
+                      <template v-if="textMessageImageUrl(msg)" #bottom-extra>
+                        <div class="admin-field-group">
+                          <AdminFieldLabel text="樣式" tight />
+                          <el-radio-group
+                            :model-value="textImageButtonStyle(btn)"
+                            size="small"
+                            @update:model-value="(v) => (btn.style = v)"
+                          >
+                            <el-radio-button value="primary">綠色按鈕</el-radio-button>
+                            <el-radio-button value="link">文字連結</el-radio-button>
+                          </el-radio-group>
+                        </div>
                       </template>
                     </FlowActionEditor>
                   </div>
@@ -1194,6 +1284,7 @@ import {
   measureLineText,
 } from '~~/shared/line-text-limits'
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
+import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1306,6 +1397,28 @@ const moduleUsageText = computed(() => {
   return `客人會從 ${n} 個地方走到這裡`
 })
 
+// ── 清單：客人走不到的模組（`C-418`）────────────────────
+/**
+ * 跟標題下那句「⚠️ 客人走不到這裡」同一把尺（同一份索引），只是一次標在整份清單上——
+ * 以前要一個一個點進去才看得到（MYFEEL 91 個自建模組裡 28 個沒有任何入口）。
+ * ⛔ 三態：索引還在讀、有哪一類查不到、或掃描撞到上限沒掃完，都**不標**——「查不到」講成「走不到」會害人刪掉在用的模組。
+ * ⚠️ 系統模組（歡迎、真人客服）是事件叫出來的，不在索引裡，永遠不標。
+ * 刪不刪由店家決定，這裡只標出來（✪ 開頭那種是店家自己留著複製用的範本）。
+ */
+const unreachableIds = computed(() => {
+  const ids = new Set<string>()
+  if (configRefsLoading.value || configRefs.value.failedKinds.length || configRefs.value.truncatedKinds?.length) return ids
+  for (const f of allFlows.value) {
+    if (f.isSystem) continue
+    if (!(configRefs.value.modules[f.id]?.length)) ids.add(f.id)
+  }
+  return ids
+})
+const listFilter = ref<'all' | 'unreachable'>('all')
+const showUnreachableOnly = computed(() => listFilter.value === 'unreachable' && unreachableIds.value.size > 0)
+const regularFlowTotal = computed(() => allFlows.value.filter(f => !f.isSystem).length)
+const UNREACHABLE_ROW_TITLE = '客人走不到：沒有任何自動回應、選單、按鈕會叫出這個模組'
+
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
@@ -1417,7 +1530,10 @@ const systemFlows = computed(() => flows.value.filter((f) => f.isSystem))
 const regularFlows = computed(() => flows.value.filter((f) => !f.isSystem))
 
 // ── 資料夾分組 ─────────────────────────────────────
-const uncategorizedFlows = computed(() => regularFlows.value.filter(f => !(f as any).folderId))
+// 只看客人走不到的時候不分頁（篩出來的本來就不多，分頁會讓排在後面的那幾個看不到）
+const uncategorizedFlows = computed(() => showUnreachableOnly.value
+  ? allFlows.value.filter(f => !f.isSystem && !(f as any).folderId && unreachableIds.value.has(f.id))
+  : regularFlows.value.filter(f => !(f as any).folderId))
 /**
  * ⛔ 資料夾要拿**完整**清單分組（`allFlows`），不是側欄分頁後的 `regularFlows`（`C-419`）。
  * 以前用分頁那段：排序在後面的模組還沒「載入」，MYFEEL「客服」61 個開頁時顯示「（0）資料夾為空」，
@@ -1439,6 +1555,23 @@ const flowCountByFolder = computed<Record<string, number>>(() => {
   const m: Record<string, number> = {}
   for (const folder of flowFolders.value) m[folder.id] = (flowsByFolder.value[folder.id] ?? []).length
   return m
+})
+/** 每個資料夾裡客人走不到的幾個（`C-418`）。⛔ 資料夾編輯／刪除講的「底下 N 筆」照舊用上面那個全部的數 */
+const unreachableCountByFolder = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {}
+  for (const folder of flowFolders.value) {
+    m[folder.id] = (flowsByFolder.value[folder.id] ?? []).filter(f => unreachableIds.value.has(f.id)).length
+  }
+  return m
+})
+/** 畫面上每個資料夾要列哪些：只看走不到的時候只列那幾個 */
+const visibleFlowsByFolder = computed(() => {
+  if (!showUnreachableOnly.value) return flowsByFolder.value
+  const map: Record<string, typeof regularFlows.value> = {}
+  for (const [fid, list] of Object.entries(flowsByFolder.value)) {
+    map[fid] = list.filter(f => unreachableIds.value.has(f.id))
+  }
+  return map
 })
 function regularFlowIndex(id: string): number {
   return regularFlows.value.findIndex(f => f.id === id)
@@ -1565,6 +1698,40 @@ function isCarouselType(type: string) {
 /** 超出幾字；沒超出回 0（模板用它決定要不要出警告） */
 function textOverflowOf(msg: any): number {
   return measureLineText(String(msg?.text || '')).overflow
+}
+
+// ── 文字加圖（`C-416`）────────────────────────────────
+/** 按了「加圖片」、還沒上傳的那幾則（只是畫面狀態，不存進模組） */
+const textImageOpen = shallowReactive(new Set<any>())
+function openTextImage(msg: any) {
+  textImageOpen.add(msg)
+}
+/**
+ * ⚠️ 上傳框上那顆「更換圖片」的做法是先把網址清空、讓人重選——所以清空**不等於**不要圖了：
+ * 只清圖和量到的寬高，標題留著、框也留著（不然換張圖就把標題弄丟）。真的不要圖走「移除圖片」。
+ */
+function setTextImage(msg: any, url: string) {
+  if (url) {
+    msg.imageUrl = url
+    return
+  }
+  delete msg.imageUrl
+  delete msg.imageWidth
+  delete msg.imageHeight
+  textImageOpen.add(msg)
+}
+/** 移除圖片＝回到純文字：標題一起清掉（沒圖時不會送，留著只會在下次加圖時冒出來），框收起來 */
+function removeTextImage(msg: any) {
+  delete msg.imageUrl
+  delete msg.title
+  delete msg.imageWidth
+  delete msg.imageHeight
+  textImageOpen.delete(msg)
+}
+/** 上傳時量到的寬高＝卡片上的圖照原比例（`shared/text-image-card.ts` 的 textImageAspect） */
+function applyTextImageSize(msg: any, size: { width: number; height: number }) {
+  msg.imageWidth = size.width
+  msg.imageHeight = size.height
 }
 
 // ── Load ──────────────────────────────────────────────
@@ -2860,6 +3027,11 @@ function validateMessages(messages: any[]): string | null {
           return '文字模組：已啟用貼標，請至少選擇一個標籤'
         }
       }
+    }
+    // 加了圖的那幾格（`C-416`，後端 `flow-validator.ts` 叫同一支）
+    if (msg?.type === 'text') {
+      const imageError = textImageError(msg)
+      if (imageError) return imageError
     }
 
     // Validate quick replies

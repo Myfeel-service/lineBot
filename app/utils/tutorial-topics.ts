@@ -1074,7 +1074,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'text',
         title: '文字',
         description:
-          '點「<strong>＋ 文字</strong>」加一則純文字（可放表情符號、自動帶入客人暱稱，文字下還能加按鈕）。下方就是它的知識。',
+          '點「<strong>＋ 文字</strong>」加一則文字（可放表情符號、自動帶入客人暱稱）。文字上面可以<strong>加圖片</strong>、下面可以加按鈕——有圖就會變成卡片。下方就是它的知識。',
         placement: 'bottom',
       },
       {
@@ -1086,11 +1086,12 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         placement: 'bottom',
       },
       {
-        target: '[data-tour="fmt-video"]',
+        // `C-416`：影片收進「更多」（下拉選單沒打開時「＋ 影片」不在畫面上，導覽指「更多」那顆）
+        target: '[data-tour="fmt-more"]',
         demoType: 'video',
         title: '影片',
         description:
-          '點「<strong>＋ 影片</strong>」加一段影片，再給一張預覽縮圖，客人按了才播放。',
+          '影片收在「<strong>更多</strong>」裡：點「更多」→「<strong>＋ 影片</strong>」加一段影片，再給一張預覽縮圖，客人按了才播放。',
         placement: 'bottom',
       },
     ],
@@ -1136,7 +1137,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requires: 'marketing.write',
     icon: Files,
     label: '卡片訊息怎麼填',
-    blurb: '大圖、標題、內文、按鈕的卡。打開一則帶你填。',
+    blurb: '多張卡片左右滑（像商品目錄）。打開一則帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -1168,7 +1169,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'flexImageCarousel',
         title: '要不要多加幾張',
         description:
-          '只放一張就是單張卡片；按這顆多加幾張，客人在聊天室能<strong>左右滑</strong>。商品、方案並排介紹最好用。',
+          '按這顆多加幾張，客人在聊天室能<strong>左右滑</strong>。商品、方案並排介紹最好用。只要一張圖配一段字，用「<strong>＋ 文字</strong>」加圖片就好。',
         placement: 'left',
       },
     ],

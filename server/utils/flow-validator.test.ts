@@ -97,3 +97,25 @@ describe('卡片訊息', () => {
     expect(save([{ type: 'carousel', columns: [] }])).toThrowError(/輪播（舊）：至少要有 1 個欄位/)
   })
 })
+
+describe('`C-416` 文字加圖', () => {
+  const IMG = 'https://storage.googleapis.com/b/uploads/w/a.jpg'
+
+  it('加了圖的文字照樣是 5000 字上限（不是卡片訊息的 1000）', () => {
+    expect(save([{ type: 'text', text: '飛'.repeat(5000), imageUrl: IMG, buttons: [BUTTON] }])).not.toThrow()
+    expect(save([{ type: 'text', text: '飛'.repeat(5001), imageUrl: IMG }])).toThrowError(/最多 5000 字/)
+  })
+
+  it('標題最多 80 字：81 字擋', () => {
+    expect(save([{ type: 'text', text: '內文', imageUrl: IMG, title: '題'.repeat(80) }])).not.toThrow()
+    expect(save([{ type: 'text', text: '內文', imageUrl: IMG, title: '題'.repeat(81) }])).toThrowError(/標題最多 80 字/)
+  })
+
+  it('對照組：沒有圖的時候標題不會送，也不檢查（不會因為殘留的標題擋住存檔）', () => {
+    expect(save([{ type: 'text', text: '內文', title: '題'.repeat(81) }])).not.toThrow()
+  })
+
+  it('有圖也一樣要有文字（這格是「文字」，只要圖＋按鈕請用卡片訊息）', () => {
+    expect(save([{ type: 'text', text: '  ', imageUrl: IMG }])).toThrowError(/回覆文字不可為空/)
+  })
+})

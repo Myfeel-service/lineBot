@@ -28,7 +28,8 @@ import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpe
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
 import { buildTextButtonsCard } from '~~/shared/text-buttons-card'
-import { CARD_BODY_MAX, CARD_BUTTON_PRIMARY_COLOR, CARD_TITLE_MAX, cardButtonStyle } from '~~/shared/card-message'
+import { CARD_BODY_MAX, CARD_BUTTON_PRIMARY_COLOR, CARD_TITLE_MAX, cardButtonStyle, type CardButtonStyle } from '~~/shared/card-message'
+import { textImageAspect, textImageButtonStyle, textMessageImageUrl } from '~~/shared/text-image-card'
 import {
   LINE_ACTION_LABEL_MAX,
   LINE_CARD_BODY_DEFAULT,
@@ -1329,9 +1330,11 @@ function buildFlexCarouselButtonAction(
 function buildFlexImageCarouselBody(
   col: any,
   attributes: Record<string, string>,
+  // 「＋文字」加了圖也走這支（`C-416`），內文上限跟純文字一樣 5000
+  bodyMax: number = CARD_BODY_MAX,
 ): Record<string, unknown> | undefined {
   const title = truncateLineText(renderWithAttributes(col?.title || '', attributes).trim(), CARD_TITLE_MAX)
-  const text = truncateLineText(renderWithAttributes(col?.text || '', attributes).trim(), CARD_BODY_MAX)
+  const text = truncateLineText(renderWithAttributes(col?.text || '', attributes).trim(), bodyMax)
   const contents: Record<string, unknown>[] = []
   // `C-398`（`D-153` ⑵ 拍板 B）：字級放大、內文顏色加深——所有卡片一起換，舊卡片不用改資料。
   // ⚠️ 對話頁靠 `weight: 'bold'` 認標題（`AdminPanel.vue` 的 parseFlexImageCarouselBody），內文不可以加粗
@@ -1370,13 +1373,16 @@ function buildFlexImageCarouselFooter(
   userId: string,
   publicBaseOverride: string,
   lineChannelSecret: string,
+  // 「＋文字」加了圖也走這支（`C-416`）：按鈕最多 4 顆、沒存樣式的算綠色（`shared/text-image-card.ts`）
+  opts: { max?: number, styleOf?: (action: any) => CardButtonStyle } = {},
 ): Record<string, unknown> | undefined {
   const buttons: Record<string, unknown>[] = []
-  for (const action of (actions ?? []).slice(0, 3)) {
+  const styleOf = opts.styleOf ?? cardButtonStyle
+  for (const action of (actions ?? []).slice(0, opts.max ?? 3)) {
     const flexAction = buildFlexCarouselButtonAction(action, attributes, userId, publicBaseOverride, lineChannelSecret)
     if (!flexAction) continue
     // `C-398`：可選綠色實心按鈕；沒存樣式的（以前做的）照舊是文字連結
-    buttons.push(cardButtonStyle(action) === 'primary'
+    buttons.push(styleOf(action) === 'primary'
       ? { type: 'button', style: 'primary', color: CARD_BUTTON_PRIMARY_COLOR, height: 'md', action: flexAction }
       : { type: 'button', style: 'link', height: 'sm', action: flexAction })
   }
@@ -1393,6 +1399,52 @@ function buildFlexImageCarouselFooter(
     footer.paddingTop = '0px'
   }
   return footer
+}
+
+/**
+ * 「＋文字」加了圖（`C-416`）：大圖＋標題＋內文＋按鈕的一張卡，規則在 `shared/text-image-card.ts`。
+ * 組法跟卡片訊息的單張卡同一套（body／footer 共用），所以對話頁照卡片訊息的認法畫得回來。
+ * ⚠️ 用只放一張的輪播送、不用單張卡：整組上限 50 KB（單張卡 30 KB），而且對話頁認得這種形狀。
+ */
+function buildTextImageCard(
+  msg: any,
+  attributes: Record<string, string>,
+  userId: string,
+  publicBaseOverride: string,
+  lineChannelSecret: string,
+): messagingApi.FlexMessage {
+  const buttons = (Array.isArray(msg.buttons) ? msg.buttons : [])
+    // 沒存 type 的舊資料一律當「傳送文字」，跟「文字＋按鈕」那條一樣
+    .map((b: any) => ({ ...b, type: b?.type || 'message' }))
+  const aspect = textImageAspect(msg.imageWidth, msg.imageHeight)
+  const hero: Record<string, unknown> = {
+    type: 'image',
+    url: renderWithAttributes(textMessageImageUrl(msg), attributes),
+    size: 'full',
+    aspectRatio: aspect.lineAspectRatio,
+    // 不裁：比例照原圖，量不到或太長才會留白
+    aspectMode: 'fit',
+  }
+  // 點圖片＝按第 1 顆按鈕
+  const firstAction = buttons.length
+    ? buildFlexCarouselButtonAction(buttons[0], attributes, userId, publicBaseOverride, lineChannelSecret)
+    : null
+  if (firstAction) hero.action = firstAction
+  const bubble: Record<string, unknown> = { type: 'bubble', size: 'mega', hero }
+  const body = buildFlexImageCarouselBody({ title: msg.title, text: msg.text }, attributes, LINE_TEXT_MESSAGE_MAX)
+  if (body) bubble.body = body
+  const footer = buildFlexImageCarouselFooter(buttons, attributes, userId, publicBaseOverride, lineChannelSecret, {
+    max: 4,
+    styleOf: textImageButtonStyle,
+  })
+  if (footer) bubble.footer = footer
+  // 通知列＝內文本身（跟純文字一樣；對話紀錄存的也是這句），內文空白才用標題
+  const altText = lineAltText(msg.text, attributes, '') || lineAltText(msg.title, attributes, '卡片訊息')
+  return {
+    type: 'flex',
+    altText,
+    contents: { type: 'carousel', contents: [bubble] },
+  } as unknown as messagingApi.FlexMessage
 }
 
 /** Flex：底圖 + 依編輯器座標疊透明點擊區（類似圖文選單），可保留 postback 觸發模組 */
@@ -1534,6 +1586,11 @@ function buildLineMessages(
 ): messagingApi.Message[] {
   if (!dbMessages) return []
   return dbMessages.flatMap((msg) => {
+    // ── 文字加了圖 → 一張卡（`C-416`，規則見 `shared/text-image-card.ts`）──
+    if (msg.type === 'text' && textMessageImageUrl(msg)) {
+      return [buildTextImageCard(msg, attributes, userId, publicBaseOverride, lineChannelSecret)]
+    }
+
     // ── Text with buttons → 卡片（`C-397`：以前走按鈕範本只收 160 字，形狀與理由見 `shared/text-buttons-card.ts`）──
     if (msg.type === 'text' && msg.buttons && msg.buttons.length > 0) {
       const renderedText = renderWithAttributes(msg.text || '', attributes)

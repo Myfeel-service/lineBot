@@ -556,6 +556,44 @@
   padding-left: 0.35rem;
 }
 
+/* ─── 文字加圖（`C-416`）：「圖片」標題那一行右邊放「移除圖片」 ─── */
+.flow-text-image-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* ─── 清單：客人走不到的模組（`C-418`）────────────────── */
+.flow-list-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.25rem 0.25rem 0.5rem;
+
+  /* 兩格平分整條寬（el-radio-group 預設縮成內容寬，要撐開得夾父層） */
+  .el-radio-group { display: flex; width: 100%; }
+  .el-radio-button { flex: 1; }
+  .el-radio-button__inner { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
+}
+.flow-list-filter__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.flow-unreachable-dot {
+  flex: none;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+.flow-sidebar-row--unreachable {
+  .split-list-name { color: var(--text-muted); }
+  .split-list-item__title-icon { color: var(--color-warning); }
+}
+
 /* ─── Drag Handle ──────────────────────────────────────── */
 .drag-handle {
   display: flex;
@@ -1036,6 +1074,15 @@
   font-size: 0.75rem;
   font-weight: 400;
   color: var(--text-muted);
+}
+/* 資料夾標題旁「N 個走不到」（`C-418`）：放在名字外面，名字長被截斷時這句還看得到 */
+.src-folder-unreachable {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: #b45309; /* 跟徽章 `.badge-orange` 的字同一個琥珀（小字對比要夠，`--color-warning` 太淡） */
 }
 .src-folder-actions {
   display: inline-flex;
