@@ -84,6 +84,15 @@
             <el-button v-if="!previewing" size="small" text @click="clearFile">換一個</el-button>
           </div>
         </template>
+        <!-- 從雲端硬碟挑的那一份（`C-299`）：跟選了檔案一樣只顯示名字＋換一份。網址就在背後的框裡，
+             判別、讀不讀得到、整理並加入都照「貼上連結」那條走（示意頁 NJf194P5z5KE66CsmdrzVe 改完三） -->
+        <template v-else-if="pickedSheetShown">
+          <div class="kb-drop__file">
+            <el-icon class="kb-drop__sheet-icon"><IconSheet /></el-icon>
+            <span class="kb-drop__filename">{{ pickedSheet?.name || 'Google 試算表' }}</span>
+            <el-button v-if="!previewing" size="small" text @click="clearPickedSheet">換一份</el-button>
+          </div>
+        </template>
         <template v-else>
           <!-- 整理中要鎖住（`D-41` 死路⑪）：原本整理跑到一半還能換檔案／改內容，
                畫面顯示的是新檔名、實際在整理的卻是舊的那份（runPreview 早就把檔案抓走了）。 -->
@@ -150,6 +159,11 @@
         -->
         <div v-if="mode === 'gsheet'" class="kb-gsheet-share">
           <p v-if="gsheetProbing" class="kb-gsheet-share__state">正在確認我讀不讀得到⋯</p>
+          <!-- 剛幫他開的新表（`C-299`）：沒資料是正常的，⛔ 不畫紅叉——事情做對了，只是還沒填 -->
+          <p v-else-if="createdSheetEmpty" class="kb-gsheet-share__state is-ok">✓ 開好了，也幫你共用好了</p>
+          <!-- 挑好了、自動共用沒成功（示意頁「例外」那張）：講 Google 擋的原因，蓋掉探測那句「照三步共用」——
+               公司擋對外共用時三步也會被擋，那句是錯的建議 -->
+          <p v-else-if="pickFailureShown" class="kb-gsheet-share__state is-blocked">✗ Google 不讓我們把這份加進共用</p>
           <p
             v-else-if="gsheetProbe"
             class="kb-gsheet-share__state"
@@ -169,7 +183,10 @@
               沒分享：三步教學**在這裡再出現一次**（2026-10-12 `D-124` 新手走查）。起步那一格只在框還空的時候看得到，
               先貼了連結的人一走到「讀不到」，三步和截圖全都不見了，只剩一串帳號——最需要教的那一刻反而沒有。
             -->
-            <ol v-if="gsheetProbe?.status === 'no_access'" class="kb-start__steps kb-gsheet-share__steps">
+            <p v-if="!gsheetProbing && createdSheetEmpty" class="kb-gsheet-share__note">打開它，一列填一題（客人會問的問題、答案），填好回來按「填好了，再測一次」。</p>
+            <p v-else-if="!gsheetProbing && pickFailureShown" class="kb-gsheet-share__note">{{ pickShareFailure?.message }}</p>
+            <!-- 公司擋了對外共用：手動三步一樣會被擋，不教（`C-299` 情境 7） -->
+            <ol v-if="gsheetProbe?.status === 'no_access' && !pickDomainBlocked" class="kb-start__steps kb-gsheet-share__steps">
               <li>打開這份試算表，按右上角<strong>「共用」</strong></li>
               <li>
                 貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
@@ -178,12 +195,23 @@
               <li>回來按下面的「分享好了，再測一次」</li>
             </ol>
             <div class="kb-gsheet-share__row">
+              <el-button v-if="createdSheetEmpty" size="small" type="primary" tag="a" :href="pickedSheet?.url" target="_blank" rel="noopener">打開試算表</el-button>
               <el-button size="small" :loading="gsheetProbing" @click="probeGsheet(gsheetInput.trim(), true)">
-                {{ gsheetProbe?.status === 'no_access' ? '分享好了，再測一次' : '再測一次' }}
+                {{ createdSheetEmpty ? '填好了，再測一次' : gsheetProbe?.status === 'no_access' && !pickDomainBlocked ? '分享好了，再測一次' : '再測一次' }}
+              </el-button>
+              <!-- Google 那邊暫時出狀況、授權過期、猜不出原因：再挑一次多半就好了（授權還在，不會再問一次「允許」） -->
+              <el-button
+                v-if="pickFailureShown && pickShareFailure?.kind !== 'cannot_share' && pickShareFailure?.kind !== 'domain_blocked'"
+                size="small"
+                :loading="picking"
+                @click="onPickFromDrive"
+              >
+                再挑一次
               </el-button>
             </div>
             <!-- 伺服器原文只在「我們也猜不出原因」時給：沒分享那種的原文就是上面那句再講一次，還帶著 Google 的英文 -->
-            <p v-if="gsheetProbe?.detail && gsheetProbe.status !== 'no_access'" class="kb-gsheet-share__detail">{{ gsheetProbe.detail }}</p>
+            <p v-if="pickFailureShown && pickShareFailure?.detail" class="kb-gsheet-share__detail">{{ pickShareFailure.detail }}</p>
+            <p v-else-if="gsheetProbe?.detail && gsheetProbe.status !== 'no_access'" class="kb-gsheet-share__detail">{{ gsheetProbe.detail }}</p>
           </template>
         </div>
 
@@ -333,7 +361,27 @@
           試算表：五步壓成三步（`D-123`）；三張真截圖一律攤開（2026-10-15 老闆：不要收起來，原本收在「看圖怎麼按」）。
           帳號、截圖、圖上編號的規矩都在 KnowledgeSheetShareHow（讀不到時那一塊共用同一份）。
         -->
+        <!--
+          `C-299`（2026-10-29）：Google 那邊設好了就換成一顆挑檔按鈕——挑完系統自己共用給系統帳號，
+          那串帳號、三張截圖、三個步驟都不用了（示意頁 NJf194P5z5KE66CsmdrzVe 改完一）。
+          三步手動共用留給兩種時候：這個網站沒設定挑檔（環境變數缺）、或 Google 的授權視窗沒成功（上面講一句為什麼）。
+          挑好但共用沒成功的那種，三步出現在判別結果那一塊（讀不到時本來就會教）。
+        -->
+        <div v-else-if="startOpen === 'sheet' && drivePicker.enabled && !pickAuthMessage" class="kb-start__panel">
+          <p class="kb-start__ptxt kb-start__ptxt--lead">
+            之後改表格，AI <strong>每小時自己跟著更新</strong>。
+          </p>
+          <el-button type="primary" :loading="picking" @click="onPickFromDrive">從 Google 雲端硬碟挑一份試算表</el-button>
+          <p class="kb-start__ptxt kb-start__pick-more">
+            還沒有表？<button type="button" class="kb-start__fold" :disabled="picking" @click="onCreateSheet">幫我開一份新的</button>
+          </p>
+          <!-- 2026-10-28 跟老闆講過「會提醒店家表放公司帳號」：系統帳號讀得到跟誰挑的無關，唯一救不回來的是表本身跟著個人帳號被刪 -->
+          <p class="kb-start__ptxt kb-start__ptxt--dim">表放在店裡的公司 Google 帳號比較保險：個人帳號刪掉，表也會跟著不見。</p>
+        </div>
         <div v-else-if="startOpen === 'sheet'" class="kb-start__panel">
+          <p v-if="pickAuthMessage" class="kb-start__ptxt kb-start__pick-error">
+            {{ pickAuthMessage }}<button type="button" class="kb-start__fold" @click="pickAuthMessage = ''">回到挑檔</button>
+          </p>
           <p class="kb-start__ptxt kb-start__ptxt--lead">
             設定一次約 3 分鐘；之後改表格，AI <strong>每小時自己跟著更新</strong>。
           </p>
@@ -1256,6 +1304,8 @@ import { ElMessageBox } from 'element-plus'
 import { Document as IconFile, EditPen as IconPen, Grid as IconSheet, Link as IconWeb, QuestionFilled } from '@element-plus/icons-vue'
 import { canReplaceSource, detectImportKind, detectSheetAmongUrls, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN, sheetLinkOf } from '~~/shared/knowledge-import-detect'
 import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
+import type { DriveShareFailure } from '~~/shared/google-drive-share'
+import { useGoogleDrivePicker, type PickedSheet, type PickOutcome } from '~/composables/useGoogleDrivePicker'
 import {
   KNOWLEDGE_FILE_ACCEPT,
   KNOWLEDGE_FILE_KIND_LABEL,
@@ -1323,7 +1373,7 @@ const emit = defineEmits<{
 }>()
 
 
-const { apiFetch, workspaceId } = useWorkspace()
+const { apiFetch, workspaceId, currentWorkspaceName } = useWorkspace()
 const { startAdHocTour, tourOpen, endTour } = useTutorial()
 
 /**
@@ -1740,16 +1790,27 @@ const gsheetReadable = computed(() => (GSHEET_PROBE_READABLE as readonly string[
 const gsheetProbing = ref(false)
 let gsheetProbedUrl = ''
 let gsheetProbeTimer: ReturnType<typeof setTimeout> | null = null
+/** 剛從雲端硬碟挑完、也共用好、還沒探測過的那一份（`C-299`；探測第一次讀不到就等一下再讀，見 probeGsheet） */
+let justSharedUrl = ''
 
 async function probeGsheet(url: string, force = false) {
   if (!url || !GSHEET_PATTERN.test(url)) return
   if (!force && url === gsheetProbedUrl) return
   gsheetProbing.value = true
   try {
-    const res = await apiFetch<GsheetProbe>('/api/ai/knowledge/gsheet-probe', {
+    const probe = () => apiFetch<GsheetProbe>('/api/ai/knowledge/gsheet-probe', {
       method: 'POST',
       body: { url },
     })
+    let res = await probe()
+    // 剛幫他共用好的那一份（`C-299`）：Google 偶爾要幾秒才生效。第一次讀不到就等一下再讀一次，
+    // 「正在確認」照樣轉著——⛔ 不然會閃一下「照三步手動共用」，叫他去做一件剛剛已經做好的事
+    if (res.status === 'no_access' && justSharedUrl === url) {
+      justSharedUrl = ''
+      await new Promise(r => setTimeout(r, 3000))
+      if (gsheetInput.value.trim() !== url) return
+      res = await probe()
+    }
     // 使用者在等待期間換了連結 → 過期結果丟掉（否則會拿舊表的綠勾蓋在新表上）
     if (gsheetInput.value.trim() !== url) return
     gsheetProbedUrl = url
@@ -1802,6 +1863,90 @@ onMounted(async () => {
   }
   catch { /* 提示性質，讀不到就不顯示 */ }
 })
+
+// ── 從 Google 雲端硬碟挑（`C-299`）──────────────────────────
+// 挑完／開好、也共用好了，就等於幫他把連結貼進框裡：後面判別、探測、整理並加入全部照「貼上連結」那條走，
+// 伺服器一行沒改（怎麼挑、怎麼共用見 useGoogleDrivePicker）。
+const drivePicker = useGoogleDrivePicker()
+/** 挑的（或幫他開的）那一份。框裡的網址被他改掉之後就不算數（見 pickedSheetShown） */
+const pickedSheet = ref<PickedSheet | null>(null)
+/** 挑好了、自動共用沒成功（探測讀得到的話不講——說不定早就共用過） */
+const pickShareFailure = ref<DriveShareFailure | null>(null)
+/** Google 授權視窗沒成功、或新表沒開成：試算表那格退回三步手動共用，最上面講這一句 */
+const pickAuthMessage = ref('')
+/** 「幫我開一份新的」開出來的那一份：探測說沒資料是正常的（見 createdSheetEmpty） */
+const createdSheetId = ref('')
+const picking = ref(false)
+
+const pickedSheetShown = computed(() => !!pickedSheet.value && pasteInput.value.trim() === pickedSheet.value.url)
+const pickFailureShown = computed(() => pickedSheetShown.value && !!pickShareFailure.value && !gsheetReadable.value)
+/** 公司擋了對外共用：三步手動共用一樣會被擋，不教、按鈕也不寫「分享好了」（`C-299` 情境 7） */
+const pickDomainBlocked = computed(() => pickFailureShown.value && pickShareFailure.value?.kind === 'domain_blocked')
+const createdSheetEmpty = computed(() =>
+  pickedSheetShown.value && createdSheetId.value === pickedSheet.value?.id && gsheetProbe.value?.status === 'no_data')
+
+// 打開試算表那一格就先把 Google 的程式庫載好：等按下去才載，授權視窗會被瀏覽器當彈出廣告擋掉
+watch(startOpen, (v) => { if (v === 'sheet') drivePicker.warmUp() }, { immediate: true })
+
+// ⛔ 這兩支的第一個 await 之前就要叫出 Google 授權視窗（pickAndShare 裡第一行就叫），前面不能再 await 任何東西
+async function onPickFromDrive() {
+  if (picking.value || !needShareEmail()) return
+  picking.value = true
+  try {
+    applyPickOutcome(await drivePicker.pickAndShare(shareEmail.value), false)
+  }
+  finally {
+    picking.value = false
+  }
+}
+
+async function onCreateSheet() {
+  if (picking.value || !needShareEmail()) return
+  picking.value = true
+  try {
+    const shop = currentWorkspaceName.value?.trim()
+    applyPickOutcome(await drivePicker.createAndShare(shareEmail.value, shop ? `${shop} 常見問題` : '常見問題'), true)
+  }
+  finally {
+    picking.value = false
+  }
+}
+
+/** 共用給誰是開窗時問伺服器的（gsheet-account）；那支失敗的話挑了也共用不了，⛔ 不要讓他白挑一趟 */
+function needShareEmail(): boolean {
+  if (shareEmail.value) return true
+  showToast('還沒拿到要共用的系統帳號，請關掉視窗再開一次', 'error')
+  return false
+}
+
+function applyPickOutcome(outcome: PickOutcome, created: boolean) {
+  if (!outcome) return // 他自己把 Google 的視窗關了
+  if (outcome.kind === 'failed') {
+    pickAuthMessage.value = outcome.message
+    return
+  }
+  pickAuthMessage.value = ''
+  pickedSheet.value = outcome.sheet
+  pickShareFailure.value = outcome.kind === 'shareFailed' ? outcome.failure : null
+  createdSheetId.value = created ? outcome.sheet.id : ''
+  justSharedUrl = outcome.kind === 'shared' ? outcome.sheet.url : ''
+  if (pasteInput.value.trim() === outcome.sheet.url) {
+    // 同一份再挑一次（例如擁有者剛放行）：框裡的字沒變、watch 不會動，自己測
+    void probeGsheet(outcome.sheet.url, true)
+  }
+  else {
+    pasteInput.value = outcome.sheet.url
+  }
+}
+
+/** 換一份：回到空的框，試算表那格還開著、挑檔按鈕就在眼前（跟檔案的「換一個」一樣） */
+function clearPickedSheet() {
+  pickedSheet.value = null
+  pickShareFailure.value = null
+  createdSheetId.value = ''
+  justSharedUrl = ''
+  pasteInput.value = ''
+}
 
 // ── Overview（列表頁總表）──────────────────────────────
 // 預覽階段不再請 AI 做總表（`D-123`②：改成加完之後在結果頁問，見 overviewOffer）；
@@ -3978,6 +4123,12 @@ function resetAll() {
   //    而結果早就被清成 null → 綠勾與「正在確認」都不會出現，畫面停在「還沒證明讀得到」。
   gsheetProbe.value = null
   gsheetProbedUrl = ''
+  // 從雲端硬碟挑的那一份跟著框一起清（`C-299`）；Google 的授權還留在記憶體裡，下一份不會再問一次「允許」
+  pickedSheet.value = null
+  pickShareFailure.value = null
+  pickAuthMessage.value = ''
+  createdSheetId.value = ''
+  justSharedUrl = ''
   sourceMeta.value = { type: '', name: '', url: '', productName: '', contentHash: '' }
   // 換一份就全部歸位：守門旗標若留著，接下來每一份都不再檢查重複（`C-134`）
   // 分組（`C-320`）也歸位；這次開窗建過的分組（localGroups）留著——下一份同一個商品要比得到它

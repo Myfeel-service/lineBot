@@ -275,6 +275,16 @@ export default defineNuxtConfig({
        * 未設則退回下載 public/templates/faq-sheet-template.xlsx。
        */
       faqTemplateSheetUrl: process.env.PUBLIC_FAQ_TEMPLATE_SHEET_URL ?? '',
+      /**
+       * 「從 Google 雲端硬碟挑一份試算表」（`C-299`，見 app/composables/useGoogleDrivePicker.ts）。
+       * 三個都是會進前端的公開值（Google 本來就要它們出現在網頁裡），不是密鑰；但金鑰字串不進 repo，照樣走環境變數。
+       * 都在 `linebot-e8dda`：用戶端 ID＝網頁用戶端「MiniMe 試算表挑檔」、金鑰＝「MiniMe Sheets Picker」（只准 Picker）、
+       * App ID＝專案編號。用戶端與金鑰都綁了網址，換網域要先去 Google 加。缺任何一個 → 畫面退回三步手動共用。
+       * ⚠️ build 時計算：設好後要重新 build/部署才會生效（同 paymentEnabled）。
+       */
+      googlePickerClientId: process.env.PUBLIC_GOOGLE_PICKER_CLIENT_ID ?? '',
+      googlePickerApiKey: process.env.PUBLIC_GOOGLE_PICKER_API_KEY ?? '',
+      googlePickerAppId: process.env.PUBLIC_GOOGLE_PICKER_APP_ID ?? '',
     },
   },
 })
