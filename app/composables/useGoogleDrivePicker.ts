@@ -1,4 +1,4 @@
-import { classifyDriveShareError, classifyGoogleAuthError, googleSheetUrl, type DriveShareFailure } from '~~/shared/google-drive-share'
+import { classifyDriveShareError, classifyGoogleAuthError, createSheetFailureMessage, googleSheetUrl, type DriveShareFailure } from '~~/shared/google-drive-share'
 
 /**
  * 「從 Google 雲端硬碟挑一份試算表」（`C-299`）：Google 的挑檔視窗＋挑完自動共用給系統帳號。
@@ -8,13 +8,14 @@ import { classifyDriveShareError, classifyGoogleAuthError, googleSheetUrl, type 
  *   ② Google 的挑檔視窗（Picker）選一份試算表
  *   ③ 用同一把授權呼叫 Drive `permissions.create`，把那一份共用給系統帳號（檢視者、不寄通知信）
  * 之後就是「貼上連結」那條路：判別、探測讀不讀得到、整理並加入、每小時同步，全部照舊用系統帳號。
- * ⛔ 授權只留在這個分頁的記憶體裡（約一小時、重整就沒了），不送伺服器、不存——不存才不必管換人接、失效、加密
- *    （報告 `docs/KB-IMPORT-DECISIONS-FOLLOWUP-EVAL-20261012.md` 第五節）。
+ * ⛔ 授權只留在這個畫面的記憶體裡（約一小時、離開知識庫這頁或登出就沒了，見 held），不送伺服器、不存——
+ *    不存才不必管換人接、失效、加密（報告 `docs/KB-IMPORT-DECISIONS-FOLLOWUP-EVAL-20261012.md` 第五節）。
  *
  * Google 那邊的設定（2026-10-29 做好，在 `linebot-e8dda`）：Picker／Drive API、同意畫面加 `drive.file`、
  * 網頁用戶端「MiniMe 試算表挑檔」、只准 Picker 的金鑰「MiniMe Sheets Picker」。三個值走環境變數
  * （`PUBLIC_GOOGLE_PICKER_*`，見 nuxt.config）；沒設就 `enabled=false`，畫面退回原本的三步手動共用。
- * ⚠️ 用戶端與金鑰都綁了網址（lineminime.com、www、bot.myfeel-tw.com、localhost:3000）：換網域或本機換埠就跳不出來。
+ * ⚠️ 用戶端與金鑰都綁了網址（lineminime.com、www、bot.myfeel-tw.com、localhost:3000、localhost:3100）：
+ *    換網域或本機換埠就跳不出來。
  */
 
 const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
@@ -48,12 +49,14 @@ class GoogleAuthError extends Error {
   constructor(readonly type: string) { super(type) }
 }
 
-// ── 模組層狀態：Google 的程式庫一頁只載一次，授權一個分頁共用一把 ──
+/** Google 給的一把授權：字串＋什麼時候該當作過期（已經扣掉 TOKEN_MARGIN_MS） */
+interface Grant { token: string, expiresAt: number }
+
+// ── 模組層狀態：只放「Google 的程式庫一頁只載一次」那些。⛔ 授權本身不放這裡（見 useGoogleDrivePicker 裡的 held） ──
 const scriptLoads = new Map<string, Promise<void>>()
 let ready: Promise<void> | null = null
 let tokenClient: { requestAccessToken: (o?: { prompt?: string }) => void } | null = null
-let pending: { resolve: (t: string) => void, reject: (e: unknown) => void } | null = null
-let cached = { token: '', expiresAt: 0 }
+let pending: { resolve: (g: Grant) => void, reject: (e: unknown) => void } | null = null
 
 function loadScript(src: string): Promise<void> {
   let p = scriptLoads.get(src)
@@ -90,8 +93,7 @@ function prepare(clientId: string): Promise<void> {
           if (resp?.error) return p.reject(new GoogleAuthError(String(resp.error)))
           // 新版同意畫面可以只勾一部分權限：沒勾到 drive.file 等於沒授權
           if (!w.google.accounts.oauth2.hasGrantedAllScopes(resp, DRIVE_FILE_SCOPE)) return p.reject(new GoogleAuthError('scope_not_granted'))
-          cached = { token: String(resp.access_token), expiresAt: Date.now() + Number(resp.expires_in ?? 3600) * 1000 - TOKEN_MARGIN_MS }
-          p.resolve(cached.token)
+          p.resolve({ token: String(resp.access_token), expiresAt: Date.now() + Number(resp.expires_in ?? 3600) * 1000 - TOKEN_MARGIN_MS })
         },
         error_callback: (e: any) => {
           const p = pending
@@ -107,9 +109,9 @@ function prepare(clientId: string): Promise<void> {
   return ready
 }
 
-function requestToken(): Promise<string> {
-  if (cached.token && Date.now() < cached.expiresAt) return Promise.resolve(cached.token)
-  return new Promise<string>((resolve, reject) => {
+/** 跳 Google 授權視窗要一把新的。⛔ 會開視窗，所以呼叫鏈上不能先 await 別的東西（見 pickAndShare） */
+function requestGrant(): Promise<Grant> {
+  return new Promise<Grant>((resolve, reject) => {
     // 上一次的視窗被他晾著沒回應：當作關掉了，換這一次
     pending?.reject(new GoogleAuthError('popup_closed'))
     pending = { resolve, reject }
@@ -165,10 +167,7 @@ async function shareWithViewer(fileId: string, email: string, token: string): Pr
 }
 
 async function failureOf(res: Response): Promise<DriveShareFailure> {
-  const body = await res.json().catch(() => null)
-  const failure = classifyDriveShareError(res.status, body)
-  if (failure.kind === 'expired') cached = { token: '', expiresAt: 0 }
-  return failure
+  return classifyDriveShareError(res.status, await res.json().catch(() => null))
 }
 
 /**
@@ -210,6 +209,16 @@ export function useGoogleDrivePicker() {
   const apiKey = String(cfg.googlePickerApiKey || '')
   const appId = String(cfg.googlePickerAppId || '')
   const enabled = !!(clientId && apiKey && appId)
+  const { $auth } = useNuxtApp()
+
+  /**
+   * 手上這把授權。⛔ 放在這個畫面自己身上、不放模組層，而且記著是哪個後台帳號拿的（2026-10-29 `/code-review`）：
+   * 登出只換頁、不重新載入網頁，放模組層的話，共用電腦上 A 挑過表、登出，B 一小時內登入按挑檔，
+   * 不會再跳授權視窗、直接打開 A 的雲端硬碟，還能把 A 的表接進 B 的帳號。
+   * 現在離開知識庫這頁（登出一定會離開）就跟著消失；同一頁裡換了登入的人也不認。
+   */
+  let held: Grant & { uid: string } = { token: '', expiresAt: 0, uid: '' }
+  const currentUid = () => String(($auth as { currentUser?: { uid?: string } | null })?.currentUser?.uid ?? '')
 
   /** 先把 Google 的程式庫載好（打開試算表那一格時呼叫）：按下去才載的話，授權視窗會被瀏覽器當成彈出廣告擋掉 */
   function warmUp() {
@@ -226,8 +235,7 @@ export function useGoogleDrivePicker() {
     if (typeof token !== 'string') return token
     const sheet = await openPicker(token, apiKey, appId)
     if (!sheet) return null
-    const failure = await shareWithViewer(sheet.id, shareWith, token)
-    return failure ? { kind: 'shareFailed', sheet, failure } : { kind: 'shared', sheet }
+    return share(sheet, shareWith, token)
   }
 
   /** 「還沒有表？幫我開一份新的」：開一份只有欄位名稱的新表 → 共用給 `shareWith`。呼叫規矩同 pickAndShare */
@@ -235,16 +243,45 @@ export function useGoogleDrivePicker() {
     const token = await authorize()
     if (typeof token !== 'string') return token
     const made = await createSheet(title, token)
-    if (!('id' in made)) return { kind: 'failed', message: made.kind === 'unknown' ? 'Google 沒讓我們開新表。可以再按一次，或自己在 Google 試算表開一份再回來挑。' : made.message }
-    const failure = await shareWithViewer(made.id, shareWith, token)
-    return failure ? { kind: 'shareFailed', sheet: made, failure } : { kind: 'shared', sheet: made }
+    if (!('id' in made)) {
+      if (made.kind === 'expired') forget()
+      return { kind: 'failed', message: createSheetFailureMessage(made) }
+    }
+    return share(made, shareWith, token)
+  }
+
+  /**
+   * 挑好了、共用沒成功（Google 暫時出狀況、授權過期、猜不出原因）→ 同一份再共用一次，不用再開挑檔視窗重挑。
+   * 那一份在他挑的時候就交給我們這個 App 了（`drive.file` 認的是 App，不是哪一把授權），換一把新的也碰得到。
+   * 呼叫規矩同 pickAndShare：授權過期的話要開視窗重拿，只能在按鈕裡叫。
+   */
+  async function shareAgain(sheet: PickedSheet, shareWith: string): Promise<PickOutcome> {
+    const token = await authorize()
+    if (typeof token !== 'string') return token
+    return share(sheet, shareWith, token)
+  }
+
+  async function share(sheet: PickedSheet, shareWith: string, token: string): Promise<PickOutcome> {
+    const failure = await shareWithViewer(sheet.id, shareWith, token)
+    // 過期的那把丟掉：他按「再試一次」時才會跳視窗拿新的（背景重拿會被瀏覽器當彈出廣告擋掉，所以不偷偷重試）
+    if (failure?.kind === 'expired') forget()
+    return failure ? { kind: 'shareFailed', sheet, failure } : { kind: 'shared', sheet }
+  }
+
+  function forget() {
+    held = { token: '', expiresAt: 0, uid: '' }
   }
 
   /** 拿授權；拿不到就回成畫面要的結果（一句話，或 null＝他自己關掉）。⛔ 這裡第一行就要叫出視窗，前面不能有 await */
   async function authorize(): Promise<string | Exclude<PickOutcome, { kind: 'shared' | 'shareFailed' }>> {
-    const tokenP = tokenClient ? requestToken() : prepare(clientId).then(requestToken)
+    const uid = currentUid()
+    const reusable = !!held.token && held.uid === uid && Date.now() < held.expiresAt
+    const grantP = reusable ? null : (tokenClient ? requestGrant() : prepare(clientId).then(requestGrant))
+    if (!grantP) return held.token
     try {
-      return await tokenP
+      const grant = await grantP
+      held = { ...grant, uid }
+      return grant.token
     }
     catch (e) {
       const type = e instanceof GoogleAuthError ? e.type : 'unknown'
@@ -254,5 +291,5 @@ export function useGoogleDrivePicker() {
     }
   }
 
-  return { enabled, warmUp, pickAndShare, createAndShare }
+  return { enabled, warmUp, pickAndShare, createAndShare, shareAgain }
 }

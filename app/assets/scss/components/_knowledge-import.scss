@@ -1008,12 +1008,14 @@
  * Google 的挑檔視窗（`C-299`）是 Google 自己插在 <body> 最後面的，z-index 約 1000，
  * 會被 Element Plus 對話框（2000 起跳）蓋住——看起來就是「按了沒反應」。拉到對話框與導覽（el-tour 3000）之上。
  * ⚠️ 它的 z-index 寫在 inline style，所以要 !important。
+ * ⚠️ 不能只比 2000 高一點（原本寫 4000，2026-10-29 `/code-review`）：Element 每開一個提示、下拉、對話框層級就往上加 1，
+ *    後台用一整天會超過 4000，對話框又蓋回挑檔視窗上面。給到遠超過一天用得到的量。
  */
 .picker-dialog-bg {
-  z-index: 4000 !important;
+  z-index: 100000 !important;
 }
 .picker-dialog {
-  z-index: 4001 !important;
+  z-index: 100001 !important;
 }
 
 /*
@@ -1169,6 +1171,9 @@
     font-size: 12px;
     line-height: 1.7;
     color: var(--el-text-color-regular);
+
+    /* 按「再試一次」時 Google 視窗沒成功：跟上面的紅叉同一個紅 */
+    &.is-error { color: var(--el-color-danger); }
   }
 
   /* Google 原始訊息:留著給查不出來的情況,但壓成灰小字(它不是給一般使用者讀的) */

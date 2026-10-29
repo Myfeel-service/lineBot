@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyDriveShareError, classifyGoogleAuthError, googleSheetUrl } from './google-drive-share'
+import { classifyDriveShareError, classifyGoogleAuthError, createSheetFailureMessage, googleSheetUrl } from './google-drive-share'
 import { GSHEET_PATTERN } from './knowledge-import-detect'
 
 /**
@@ -40,6 +40,26 @@ describe('classifyDriveShareError', () => {
     const r = classifyDriveShareError(404, err(404, 'notFound', 'File not found: abc.'))
     expect(r.kind).toBe('unknown')
     expect(r.detail).toBe('File not found: abc.')
+  })
+})
+
+describe('createSheetFailureMessage', () => {
+  it('⛔ 開新表被擋（403 沒有代碼）不可以講成「只有擁有者能共用」——新表沒有擁有者的問題（2026-10-29 /code-review）', () => {
+    const f = classifyDriveShareError(403, { error: { code: 403, message: 'The caller does not have permission' } })
+    expect(f.kind).toBe('cannot_share') // 共用那邊的分類照舊
+    const m = createSheetFailureMessage(f)
+    expect(m).toContain('沒讓我們開新表')
+    expect(m).not.toContain('擁有者')
+  })
+  it('暫時出狀況、授權過期 → 叫他再按一次「幫我開一份新的」，不是「再挑一次」', () => {
+    for (const code of [429, 401]) {
+      const m = createSheetFailureMessage(classifyDriveShareError(code, null))
+      expect(m).toContain('再按一次「幫我開一份新的」')
+      expect(m).not.toContain('挑')
+    }
+  })
+  it('猜不出來 → 附 Google 原文', () => {
+    expect(createSheetFailureMessage(classifyDriveShareError(400, err(400, 'badRequest', 'Invalid value')))).toContain('Invalid value')
   })
 })
 

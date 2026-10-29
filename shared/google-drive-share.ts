@@ -13,9 +13,12 @@ export type DriveShareFailureKind =
   | 'cannot_share'
   /** 公司版 Google 擋了對外共用 → 他自己手動共用也一樣會被擋，給別條路 */
   | 'domain_blocked'
-  /** Google 那邊暫時出狀況（太頻繁、伺服器錯、斷線）→ 再挑一次 */
+  /** Google 那邊暫時出狀況（太頻繁、伺服器錯、斷線）→ 同一份再共用一次 */
   | 'temporary'
-  /** 授權過期（挑太久才回來）→ 呼叫端自己重拿一次授權再試，不用讓店家知道 */
+  /**
+   * 授權過期（挑檔視窗開太久才挑）→ 呼叫端把那把丟掉，請他按「再試一次」。
+   * ⛔ 不在背景偷偷重拿：拿新的要跳 Google 視窗，不是他按按鈕開的會被瀏覽器當彈出廣告擋掉（2026-10-29 `/code-review`）
+   */
   | 'expired'
   /** 猜不出來 → ⛔ 照實說，附 Google 原文 */
   | 'unknown'
@@ -48,7 +51,7 @@ export function classifyDriveShareError(status: number, body: GoogleApiErrorBody
   const reasons = (body?.error?.errors ?? []).map(e => String(e.reason ?? ''))
   const raw = String(body?.error?.message ?? '').slice(0, 300)
 
-  if (status === 401) return { kind: 'expired', message: 'Google 的授權過期了，請再挑一次。' }
+  if (status === 401) return { kind: 'expired', message: 'Google 的授權過期了（挑檔視窗開太久）。按「再試一次」，會再跳一次 Google 的視窗。' }
   if (reasons.some(r => DOMAIN_BLOCK_REASONS.has(r)) || (status === 400 && /domain|organization|網域|機構/i.test(raw))) {
     return {
       kind: 'domain_blocked',
@@ -62,13 +65,25 @@ export function classifyDriveShareError(status: number, body: GoogleApiErrorBody
     }
   }
   if (status === 0 || status === 429 || status >= 500 || reasons.some(r => /rateLimit|backendError|internalError/i.test(r))) {
-    return { kind: 'temporary', message: 'Google 那邊暫時沒回應，請再挑一次。' }
+    return { kind: 'temporary', message: 'Google 那邊暫時沒回應，請按「再試一次」。' }
   }
   return {
     kind: 'unknown',
-    message: 'Google 沒讓這次共用成功。可以再挑一次，或照下面三步手動共用。',
+    message: 'Google 沒讓這次共用成功。可以按「再試一次」，或照下面三步手動共用。',
     detail: raw || (status ? `HTTP ${status}` : undefined),
   }
+}
+
+/**
+ * 「幫我開一份新的」開新表失敗時講什麼。Google 回錯誤的格式跟共用一樣，所以先用 classifyDriveShareError 分類，
+ * ⛔ 但不能直接拿它的那句話：那幾句是講「共用」的——開新表被擋時說「這份只有擁有者能共用」，新表根本沒有擁有者的問題
+ * （2026-10-29 `/code-review`）。
+ */
+export function createSheetFailureMessage(f: DriveShareFailure): string {
+  if (f.kind === 'temporary') return 'Google 那邊暫時沒回應，請再按一次「幫我開一份新的」。'
+  if (f.kind === 'expired') return 'Google 的授權過期了，請再按一次「幫我開一份新的」。'
+  const why = f.detail ? `（Google 的說法：${f.detail}）` : ''
+  return `Google 沒讓我們開新表${why}。可以再按一次，或自己在 Google 試算表開一份再回來挑。`
 }
 
 /**
