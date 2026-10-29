@@ -1132,7 +1132,7 @@
       </div>
       <p v-if="flowFolderEditTarget" class="folder-form-hint">
         目前底下 {{ flowCountByFolder[flowFolderEditTarget.id] ?? 0 }} 筆模組。
-        若刪除，底下的模組會自動移到「未分類」，**不會**被刪掉。
+        若刪除，底下的模組會自動移到「未分類」，<strong>不會</strong>被刪掉。
       </p>
     </div>
     <template #footer>
