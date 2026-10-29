@@ -50,6 +50,11 @@ interface KindSource {
   nameOf: (data: Record<string, unknown>) => string
   /** 這一筆算不算「停用中」 */
   inactiveOf: (data: Record<string, unknown>) => boolean
+  /**
+   * 這條路是不是已經帶不了客人進來（`ConfigRef.closed`，`C-422` ⑥）。沒給＝永遠帶得到。
+   * ⛔ 只給「關掉就真的不會再觸發」的：已經送到客人聊天室的東西（模組、推播、客服預存），上面的按鈕照樣按得到。
+   */
+  closedOf?: (data: Record<string, unknown>) => boolean
   /** 要拿去走訪的那一塊（給 undefined 代表整份文件都掃） */
   scope?: (data: Record<string, unknown>) => unknown
 }
@@ -75,6 +80,8 @@ const SOURCES: KindSource[] = [
     collection: SCRIPTS_COLLECTION,
     nameOf: d => String(d.name ?? '(未命名流程)'),
     inactiveOf: d => d.enabled === false,
+    // 關掉＝關鍵字不會再觸發；它帶出的快速回覆在下一則訊息後就消失，留在聊天室也按不到
+    closedOf: d => d.enabled === false,
     scope: d => d.nodes,
   },
   {
@@ -82,6 +89,8 @@ const SOURCES: KindSource[] = [
     collection: 'leadCampaigns',
     nameOf: d => String(d.name ?? '(未命名活動)'),
     inactiveOf: d => d.isActive === false,
+    // 關掉＝活動連結失效
+    closedOf: d => d.isActive === false,
   },
   {
     kind: 'broadcast',
@@ -89,6 +98,8 @@ const SOURCES: KindSource[] = [
     nameOf: d => String(d.name ?? '(未命名推播)'),
     // 已發送／失敗／取消的推播不會再送出去，但它仍然「用到」那顆標籤（回頭看成效時要對得上）
     inactiveOf: d => d.status !== 'draft' && d.status !== 'scheduled',
+    // ⛔ 只有取消的算：發完、發送中、失敗（可能送出一部分）的已經在客人聊天室，上面的按鈕照樣按得到
+    closedOf: d => d.status === 'cancelled',
   },
   {
     kind: 'supportPreset',
@@ -97,6 +108,43 @@ const SOURCES: KindSource[] = [
     inactiveOf: d => d.enabled === false,
   },
 ]
+
+/** 這一塊裡用到了哪幾份舊版圖文訊息（`{ type: 'richMessageRef', richMessageId }`） */
+function collectRichMessageRefIds(value: unknown, out: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) collectRichMessageRefIds(item, out)
+  }
+  else if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    if (obj.type === 'richMessageRef') {
+      const id = String(obj.richMessageId ?? '').trim()
+      if (id) out.add(id)
+    }
+    for (const key of Object.keys(obj)) collectRichMessageRefIds(obj[key], out)
+  }
+  return out
+}
+
+/**
+ * 舊版圖文訊息：模組裡只存 id，上面的按鈕在 `richMessages` 那一份（`C-422` ②）。
+ * 不展開的話，只被這種圖文訊息上的按鈕叫的模組會被標成「客人走不到」——店家可能就刪掉還在用的。
+ * 回傳「哪一份圖文訊息的按鈕指向哪幾個模組」；查不到回 null（呼叫端要照三態處理，⛔ 不可以當成沒有按鈕）。
+ */
+async function loadRichMessageModuleRefs(
+  db: FirebaseFirestore.Firestore,
+  workspaceId: string,
+): Promise<{ map: Map<string, Set<string>>, truncated: boolean } | null> {
+  try {
+    const snap = await db.collection('richMessages').where('workspaceId', '==', workspaceId).limit(SCAN_LIMIT).get()
+    const map = new Map<string, Set<string>>()
+    for (const doc of snap.docs) map.set(doc.id, collectModuleRefs(doc.data()))
+    return { map, truncated: snap.docs.length >= SCAN_LIMIT }
+  }
+  catch (e) {
+    console.error('[config-references] 掃 richMessages 失敗：', e)
+    return null
+  }
+}
 
 export async function scanConfigReferences(
   db: FirebaseFirestore.Firestore,
@@ -107,6 +155,7 @@ export async function scanConfigReferences(
   if (cached && cached.expires > Date.now()) return cached.data
 
   const index = emptyReferenceIndex()
+  const richMessagesPromise = loadRichMessageModuleRefs(db, workspaceId)
 
   const results = await Promise.all(SOURCES.map(async (source) => {
     try {
@@ -128,6 +177,8 @@ export async function scanConfigReferences(
     }
   }))
 
+  const richMessages = await richMessagesPromise
+
   for (const { source, snap, ok } of results) {
     if (!ok || !snap) {
       index.failedKinds.push(source.kind)
@@ -141,10 +192,24 @@ export async function scanConfigReferences(
         id: doc.id,
         label: source.nameOf(data),
         ...(source.inactiveOf(data) ? { inactive: true } : {}),
+        ...(source.closedOf?.(data) ? { closed: true } : {}),
       }
       const scope = source.scope ? source.scope(data) : data
 
-      for (const moduleId of collectModuleRefs(scope)) {
+      const moduleIds = collectModuleRefs(scope)
+      const richIds = collectRichMessageRefIds(scope)
+      if (richIds.size) {
+        // ⛔ 圖文訊息那份查不到／沒掃完：這一類的「走不到」講不準，照三態標起來，不可以當成那幾份沒有按鈕
+        if (!richMessages) {
+          if (!index.failedKinds.includes(source.kind)) index.failedKinds.push(source.kind)
+        }
+        else {
+          if (richMessages.truncated && !index.truncatedKinds?.includes(source.kind)) (index.truncatedKinds ??= []).push(source.kind)
+          for (const rid of richIds) for (const moduleId of richMessages.map.get(rid) ?? []) moduleIds.add(moduleId)
+        }
+      }
+
+      for (const moduleId of moduleIds) {
         // 模組指回自己不算「有人會叫出它」——它自己並不是一條入口
         if (source.kind === 'flow' && moduleId === doc.id) continue
         addConfigRef(index.modules, moduleId, ref)

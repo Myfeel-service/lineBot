@@ -1278,7 +1278,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '[data-tour="rm-title"]',
         title: '圖文選單是什麼',
         description:
-          '圖文選單是 LINE 聊天室<strong>下方的圖片選單</strong>，客人點一個區塊就觸發動作（開網址、送訊息…），是很常用的固定入口。我直接帶你進新增畫面示範 →',
+          '圖文選單是 LINE 聊天室<strong>下方的圖片選單</strong>，客人點一個區塊就觸發動作（開啟網址、傳送文字、觸發機器人模組…），是很常用的固定入口。我直接帶你進新增畫面示範 →',
         placement: 'right',
       },
       {

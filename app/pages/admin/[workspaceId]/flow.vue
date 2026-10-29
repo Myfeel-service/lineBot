@@ -17,16 +17,16 @@
 
     <!-- ── Sidebar List ── -->
     <template #sidebar-list>
-      <div v-if="loading && !flows.length" class="split-sidebar-loading">
+      <div v-if="loading && !allFlows.length" class="split-sidebar-loading">
         <div class="spinner" />
       </div>
-      <div v-else-if="!flows.length" class="split-sidebar-empty">
+      <div v-else-if="!allFlows.length" class="split-sidebar-empty">
         <span>尚無模組</span>
         <AdminOperateGate capability="marketing.write">
           <el-button size="small" type="primary" plain @click="openCreate">立即新增</el-button>
         </AdminOperateGate>
       </div>
-      <div v-else ref="listEl" class="split-list" data-tour="flow-list" @scroll.passive="onSidebarListScroll">
+      <div v-else ref="listEl" class="split-list" data-tour="flow-list">
         <!--
           `C-418`：有客人走不到的模組才出現。橘點就是走不到（這排的「客人走不到」兼當圖例）；
           只看走不到的時候每一列都是，就不再畫點。
@@ -145,7 +145,7 @@
               @dragend.stop="onFolderHeaderDragEnd"
             >⠿</span>
             <span class="src-folder-label">
-              <span class="src-folder-arrow">{{ isFlowFolderExpanded(folder.id) || showFilteredOnly ? '▾' : '▸' }}</span>
+              <span class="src-folder-arrow">{{ isFlowFolderShownOpen(folder.id) ? '▾' : '▸' }}</span>
               <el-icon><Folder /></el-icon> {{ folder.name }}
               <span class="src-folder-count">（{{ showFilteredOnly ? filteredCountByFolder[folder.id] : (flowCountByFolder[folder.id] ?? 0) }}）</span>
             </span>
@@ -167,7 +167,7 @@
               </span>
             </AdminOperateGate>
           </div>
-          <template v-if="isFlowFolderExpanded(folder.id) || showFilteredOnly">
+          <template v-if="isFlowFolderShownOpen(folder.id)">
             <div
               v-for="flow in visibleFlowsByFolder[folder.id] ?? []"
               :key="flow.id"
@@ -209,11 +209,6 @@
           </template>
           </template>
         </template>
-
-        <div v-if="loadingMore" class="admin-sidebar-load-more">
-          <div class="spinner" />
-          <span>載入更多…</span>
-        </div>
       </div>
     </template>
 
@@ -1346,7 +1341,7 @@
 import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, Plus } from '@element-plus/icons-vue'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
-import { emptyReferenceIndex, type ConfigReferenceIndex } from '~~/shared/config-references'
+import { emptyReferenceIndex, refStillReaches, type ConfigReferenceIndex } from '~~/shared/config-references'
 import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
@@ -1410,15 +1405,11 @@ const { can, assertCan, guardCan } = useAdminOperateGuard()
 const richMessages = ref<any[]>([])
 const {
   allFlows,
-  flows,
   modulePickerOptions,
   loading,
-  loadingMore,
   listEl,
   load: loadFlows,
-  onScroll: onSidebarListScroll,
   setRegularFlowsOrder,
-  ensureFlowVisible,
 } = useFlowWorkspaceList()
 const saving = ref(false)
 const duplicating = ref(false)
@@ -1436,7 +1427,7 @@ const { tags: allTags, loadTags } = useAdminTagList()
 useAdminTagRefresh().onAdminTagListChanged(() => loadTags({ status: 'active' }))
 // `D-86`：同理，這一頁的模組下拉也很多個（每顆按鈕、輪播每張卡各一），
 // 在其中一個就地建了模組，其他幾個要跟著看得到。
-useAdminFlowRefresh().onAdminFlowListChanged(() => void loadFlows(true))
+useAdminFlowRefresh().onAdminFlowListChanged(() => void loadFlows())
 
 /**
  * C-209：「這個模組會在這些時候發出」。
@@ -1447,6 +1438,11 @@ useAdminFlowRefresh().onAdminFlowListChanged(() => void loadFlows(true))
  */
 const configRefs = ref<ConfigReferenceIndex>(emptyReferenceIndex())
 const configRefsLoading = ref(true)
+/**
+ * 第一份索引回來了沒（查好或查失敗都算）。之後存檔重查的那一兩秒，清單照舊用上一份——
+ * ⛔ `C-422` ③：以前一重查「走不到」整份清空，篩選那排消失再出現、「沒人收到」的數字跟著跳。
+ */
+const configRefsReady = ref(false)
 async function loadConfigRefs(fresh = false) {
   configRefsLoading.value = true
   try {
@@ -1468,24 +1464,27 @@ async function loadConfigRefs(fresh = false) {
   }
   finally {
     configRefsLoading.value = false
+    configRefsReady.value = true
   }
 }
 const moduleUsageRefs = computed(() =>
   selectedId.value ? (configRefs.value.modules[selectedId.value] ?? []) : [],
 )
+/** 還帶得了客人進來的那幾條（`C-422` ⑥：關掉的自動回應、活動，取消的推播不算，規則在 `refStillReaches`） */
+const moduleUsageReachableCount = computed(() => moduleUsageRefs.value.filter(refStillReaches).length)
 /** ⛔ 「這次查不到」不可以講成「沒有人用」——那句話會害人把還在服務客人的模組刪掉 */
 const moduleUsageUnknown = computed(() =>
   configRefsLoading.value || configRefs.value.failedKinds.length > 0,
 )
 const moduleUsageNone = computed(() =>
-  !moduleUsageUnknown.value && moduleUsageRefs.value.length === 0,
+  !moduleUsageUnknown.value && moduleUsageReachableCount.value === 0,
 )
 /** 灰字那一行要接的那句話；點下去才展開細節（浮層，不動版面） */
 const moduleUsageText = computed(() => {
   if (configRefsLoading.value) return '正在查客人從哪裡走進來…'
   if (configRefs.value.failedKinds.length) return '⚠️ 這次查不到客人從哪裡走進來'
-  const n = moduleUsageRefs.value.length
-  if (!n) return '⚠️ 客人走不到這裡'
+  const n = moduleUsageReachableCount.value
+  if (!n) return moduleUsageRefs.value.length ? '⚠️ 客人走不到這裡（指過來的都關掉了）' : '⚠️ 客人走不到這裡'
   return `客人會從 ${n} 個地方走到這裡`
 })
 
@@ -1499,10 +1498,10 @@ const moduleUsageText = computed(() => {
  */
 const unreachableIds = computed(() => {
   const ids = new Set<string>()
-  if (configRefsLoading.value || configRefs.value.failedKinds.length || configRefs.value.truncatedKinds?.length) return ids
+  if (!configRefsReady.value || configRefs.value.failedKinds.length || configRefs.value.truncatedKinds?.length) return ids
   for (const f of allFlows.value) {
     if (f.isSystem) continue
-    if (!(configRefs.value.modules[f.id]?.length)) ids.add(f.id)
+    if (!(configRefs.value.modules[f.id] ?? []).some(refStillReaches)) ids.add(f.id)
   }
   return ids
 })
@@ -1563,6 +1562,16 @@ const selectedFlowUsageText = computed(() => {
   return n ? `${flowUsagePeriod.value} ${n} 位客人收到` : `${flowUsagePeriod.value}沒有客人收到`
 })
 const FLOW_USAGE_TITLE = '客人按按鈕或選單、打關鍵字、加好友時送出的才算；推播、試發不算'
+
+/**
+ * 篩選那一格的模組都處理掉了（接上入口、刪掉）就回到「全部」。
+ * ⛔ `C-422` ③：以前留在「走不到」，那一格消失、清單看起來是全部；之後又冒出一個走不到的，清單會自己切回篩選。
+ * ⚠️ 要放在 `unusedIds`、`flowUsage` 宣告之後：watch 一建立就會讀它們。
+ */
+watch([() => unreachableIds.value.size, () => unusedIds.value.size], ([unreachable, unused]) => {
+  if (listFilter.value === 'unreachable' && !unreachable && configRefsReady.value) listFilter.value = 'all'
+  if (listFilter.value === 'unused' && !unused && flowUsage.value) listFilter.value = 'all'
+})
 
 // ── 試算表改了、還寫著舊字的模組（`C-429`）──────────────────
 /**
@@ -1641,8 +1650,23 @@ function saveFlowFolderExpandedState() {
   try { localStorage.setItem(FLOW_FOLDER_LS_KEY.value, JSON.stringify([...flowExpandedFolders.value])) }
   catch { /* */ }
 }
-function isFlowFolderExpanded(id: string) { return flowExpandedFolders.value.has(id) }
+/**
+ * 篩選中（走不到／沒人收到）資料夾預設全打開；點標題照樣收得起來，但只收這一次的畫面、⛔ 不動記住的收合狀態。
+ * `C-422` ⑤：以前篩選中點了沒反應（箭頭明明是可以收的樣子），卻偷偷改了記住的狀態，回到「全部」才發現亂掉。換篩選就全打開重來。
+ */
+const filterCollapsedFolders = ref<Set<string>>(new Set())
+watch(listFilter, () => { filterCollapsedFolders.value = new Set() })
+function isFlowFolderShownOpen(id: string) {
+  return showFilteredOnly.value ? !filterCollapsedFolders.value.has(id) : flowExpandedFolders.value.has(id)
+}
 function toggleFlowFolder(id: string) {
+  if (showFilteredOnly.value) {
+    const next = new Set(filterCollapsedFolders.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    filterCollapsedFolders.value = next
+    return
+  }
   if (flowExpandedFolders.value.has(id)) flowExpandedFolders.value.delete(id)
   else flowExpandedFolders.value.add(id)
   flowExpandedFolders.value = new Set(flowExpandedFolders.value)
@@ -1655,7 +1679,7 @@ const dragOverFolderId = ref<string | null>(null)
 
 const isDraggingFromFolder = computed(() => {
   if (!draggedFlowId.value) return false
-  const flow = flows.value.find(f => f.id === draggedFlowId.value)
+  const flow = allFlows.value.find(f => f.id === draggedFlowId.value)
   return !!(flow as any)?.folderId
 })
 
@@ -1708,19 +1732,18 @@ const { markClean, confirmLeaveIfDirty, hasUnsavedChanges } = useUnsavedChanges(
  * 平常點側欄不會踩到（點得到就一定在畫面上），`D-86` 的 `?id=` 深連結一路踩穿。
  */
 const selectedFlow = computed(() => allFlows.value.find(f => f.id === selectedId.value) ?? null)
-const systemFlows = computed(() => flows.value.filter((f) => f.isSystem))
-const regularFlows = computed(() => flows.value.filter((f) => !f.isSystem))
+const systemFlows = computed(() => allFlows.value.filter((f) => f.isSystem))
+const regularFlows = computed(() => allFlows.value.filter((f) => !f.isSystem))
 
 // ── 資料夾分組 ─────────────────────────────────────
-// 只看客人走不到的時候不分頁（篩出來的本來就不多，分頁會讓排在後面的那幾個看不到）
+// 篩選中（走不到／沒人收到）只列那一批
 const uncategorizedFlows = computed(() => filteredIds.value
   ? allFlows.value.filter(f => !f.isSystem && !(f as any).folderId && filteredIds.value!.has(f.id))
   : regularFlows.value.filter(f => !(f as any).folderId))
 /**
- * ⛔ 資料夾要拿**完整**清單分組（`allFlows`），不是側欄分頁後的 `regularFlows`（`C-419`）。
- * 以前用分頁那段：排序在後面的模組還沒「載入」，MYFEEL「客服」61 個開頁時顯示「（0）資料夾為空」，
- * 刪資料夾的確認框也照這個數字問「要刪除這個**空**資料夾嗎？」——按下去 61 個全被移到未分類。
- * 資料夾自己會收合，打開就該看到全部；分頁只留給未分類那一段。
+ * ⛔ 資料夾要拿**完整**清單分組（`C-419`）。以前側欄分段畫、資料夾拿畫出來那段分：排序在後面的模組還沒「載入」，
+ * MYFEEL「客服」61 個開頁時顯示「（0）資料夾為空」，刪資料夾的確認框也照這個數字問「要刪除這個**空**資料夾嗎？」
+ * ——按下去 61 個全被移到未分類。`C-422` 起整頁都不分段了（見 `useFlowWorkspaceList`）。
  */
 const flowsByFolder = computed(() => {
   const map: Record<string, typeof regularFlows.value> = {}
@@ -1784,7 +1807,7 @@ const attributeOptions = computed(() => {
   }
 
   collectAttributes(form.value.messages)
-  for (const flow of flows.value) {
+  for (const flow of allFlows.value) {
     collectAttributes(flow?.messages ?? [])
   }
 
@@ -1805,7 +1828,7 @@ const variableTokenOptions = computed(() => {
   }
 
   collectAttributes(form.value.messages)
-  for (const flow of flows.value) {
+  for (const flow of allFlows.value) {
     collectAttributes(flow?.messages ?? [])
   }
 
@@ -2000,7 +2023,7 @@ async function loadRichMessages() {
 onMounted(async () => {
   loadFlowFolderExpandedState()
   await Promise.all([
-    loadFlows(true),
+    loadFlows(),
     loadRichMessages(),
     loadTags({ status: 'active' }),
     loadFlowFolders(),
@@ -2034,9 +2057,9 @@ function openFlowFromQuery() {
    */
   const flow = allFlows.value.find(f => f.id === wanted)
   if (flow) {
-    // 先讓它出現在側欄上，再選它——否則右邊開了、左邊卻沒有那一列
-    ensureFlowVisible(wanted)
     selectFlow(flow, { skipDiscardConfirm: true })
+    // 左邊也要看得到那一列：在收著的資料夾裡就打開，捲到看得見——否則右邊開了、左邊卻找不到它
+    void revealFlowRow(flow, listEl.value?.scrollTop ?? 0)
   }
   else showToast('找不到這個模組，可能已經被刪掉了', 'error')
   void router.replace({ query: { ...route.query, id: undefined } })
@@ -2127,7 +2150,8 @@ async function deleteFlowFolderFromModal() {
   try {
     await apiFetch(`/api/flow-folders/${target.id}`, { method: 'DELETE' })
     flowFolders.value = flowFolders.value.filter(f => f.id !== target.id)
-    for (const f of flows.value) {
+    // ⛔ 完整清單（`C-422`）：以前只改到畫出來那段，排後面的還掛著已刪的資料夾＝從畫面上消失
+    for (const f of allFlows.value) {
       if ((f as any).folderId === target.id) (f as any).folderId = null
     }
     showToast(count ? `已刪除資料夾，${count} 個模組已移至未分類` : '已刪除空資料夾', 'success')
@@ -2233,7 +2257,7 @@ async function onFlowFolderDrop(folderId: string | null) {
   dragOverFolderId.value = null
   draggedFlowId.value = null
   if (!flowId) return
-  // 完整清單裡找：資料夾裡的列不受側欄分頁限制（`C-419`），拖的可能是還沒「載入」到的那段
+  // 完整清單裡找（`C-419`：以前側欄分段畫，拖的可能是還沒「載入」到的那段）
   const flow = allFlows.value.find(f => f.id === flowId) as any
   if (!flow) return
   if ((flow.folderId ?? null) === folderId) return
@@ -2247,7 +2271,7 @@ async function onFlowFolderDrop(folderId: string | null) {
   }
   catch (err: any) {
     showToast(err?.statusMessage || '搬移失敗', 'error')
-    await loadFlows(true)
+    await loadFlows()
   }
 }
 
@@ -2316,7 +2340,7 @@ async function reorderRegularFlowById(movedId: string, targetId: string) {
       method: 'POST',
       body: { orderedIds: nextRegular.map((f) => f.id) },
     })
-    await loadFlows(true)
+    await loadFlows()
   } catch {
     allFlows.value = previousFlows
     showToast('排序儲存失敗', 'error')
@@ -2389,7 +2413,7 @@ async function seedSystemModules() {
     } else {
       showToast('系統模組已存在，無需重建', 'success')
     }
-    await loadFlows(true)
+    await loadFlows()
   } catch {
     showToast('初始化失敗', 'error')
   } finally {
@@ -3009,9 +3033,13 @@ async function submitForm() {
         },
       })
       showToast('模組已建立', 'success')
-      await loadFlows(true)
-      const newFlow = flows.value.find(f => f.id === res.id) ?? flows.value[0]
-      if (newFlow) selectFlow(newFlow, { skipDiscardConfirm: true })
+      await loadFlows()
+      // ⛔ 找不到就不選（`C-422`：以前退回選第一個＝打開別的模組，人會以為剛建的長那樣）
+      const newFlow = allFlows.value.find(f => f.id === res.id)
+      if (newFlow) {
+        selectFlow(newFlow, { skipDiscardConfirm: true })
+        void revealFlowRow(newFlow, listEl.value?.scrollTop ?? 0)
+      }
       isCreating.value = false
     } else {
       await apiFetch(`/api/flow/${selectedId.value}`, {
@@ -3023,7 +3051,7 @@ async function submitForm() {
         },
       })
       showToast('模組已更新', 'success')
-      await loadFlows(true)
+      await loadFlows()
       markClean()
     }
     // C-209：這次存檔可能改掉了「這個模組的按鈕指向誰」，帶 fresh 重算引用索引
@@ -3102,7 +3130,7 @@ async function deleteFlow() {
     selectedId.value = null
     form.value = defaultForm()
     markClean()
-    await loadFlows(true)
+    await loadFlows()
     // 被刪的這個模組自己的按鈕也算別人的入口，重算一次，其他模組的「客人會從 N 個地方走到這裡」才不會多算它
     void loadConfigRefs(true)
   } catch {
@@ -3146,14 +3174,12 @@ async function duplicateFlow() {
     })
     showToast('模組已複製', 'success')
     /**
-     * 重載會把側欄分頁縮回第一頁；這中間只要有任何東西量了一次版面（例如「⋯」選單收起來），
-     * 捲動位置就會被夾到那份較短清單的底部——實走量過一次跳了 387px。記下來、排好後放回去，
-     * 新的那列才會出現在人剛剛看的那一格（它排在原模組正上方）。
-     * ⚠️ 2026-10-09 早上一度以為「不會被夾」把這段拿掉，實走在選單改成共用元件後就紅了——時機決定的事不要賭。
+     * 記下捲動位置、排好後放回去，新的那列才會出現在人剛剛看的那一格（它排在原模組正上方）。
+     * 當初是因為重載會把側欄分頁縮回第一頁、捲動被夾到較短清單的底部（實走量過一次跳了 387px）；
+     * `C-422` 拿掉分頁後照理不會夾，但⚠️ 2026-10-09 早上一度以為「不會被夾」把這段拿掉，實走就紅了——時機決定的事不要賭。
      */
     const keepScrollTop = listEl.value?.scrollTop ?? 0
-    await loadFlows(true)
-    // ⛔ 找 `allFlows` 不是 `flows`：重載會把側欄分頁縮回第一頁，原模組排在那之後的話新的那列還沒渲染出來
+    await loadFlows()
     const newFlow = allFlows.value.find(f => f.id === res.id)
     if (newFlow) {
       selectFlow(newFlow, { skipDiscardConfirm: true })
@@ -3167,12 +3193,11 @@ async function duplicateFlow() {
 }
 
 /**
- * 讓側欄看得到這一列（複製完用）：分頁還沒載到的補載、所在資料夾收著的打開，捲到看得見為止。
+ * 讓側欄看得到這一列（複製、新增完、`?id=` 連過來用）：所在資料夾收著的打開，捲到看得見為止。
  * ⚠️ 原模組是從連結（`?id=`）直接打開的話，它的資料夾可能收著、那一列根本沒畫出來——
  *    不做這一步，複製品就「建好了卻找不到」。
  */
 async function revealFlowRow(flow: any, scrollTop: number) {
-  ensureFlowVisible(flow.id)
   const folderId = flow.folderId
   if (folderId && !flowExpandedFolders.value.has(folderId)) {
     flowExpandedFolders.value = new Set([...flowExpandedFolders.value, folderId])
@@ -3187,6 +3212,13 @@ async function revealFlowRow(flow: any, scrollTop: number) {
 
 function normalizeMessages(messages: any[]) {
   return (messages ?? []).map((msg) => {
+    // `C-422` ⑦：沒圖的文字不會送標題、畫面上也看不到標題格——藏著的舊標題拿掉，免得下次加圖時冒出來跟著送出去。
+    // ⚠️ 圖片框開著（按了「更換圖片」還沒選）的不動：選了新圖，標題要還在
+    if (msg.type === 'text' && msg.title !== undefined && !textMessageImageUrl(msg) && !textImageOpen.has(msg)) {
+      const { title: _hiddenTitle, ...rest } = msg
+      return rest
+    }
+
     if (msg.type === 'quickReply') {
       return {
         ...msg,
@@ -3340,6 +3372,9 @@ function validateMessages(messages: any[]): string | null {
     if (msg?.type === 'text') {
       const imageError = textImageError(msg)
       if (imageError) return imageError
+      // `C-422` ⑦：按了「更換圖片」（或「加圖片」）還沒選圖——以前照存，舊標題藏著留下來，下次加圖又冒出來跟著送出去。
+      // 只看畫面上的圖片框開著沒，所以不放進前後端共用的那支
+      if (!textMessageImageUrl(msg) && textImageOpen.has(msg)) return '文字模組：圖片還沒選。選一張圖，或按「移除圖片」改回純文字'
     }
 
     // Validate quick replies

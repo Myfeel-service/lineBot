@@ -87,6 +87,56 @@ describe('scanConfigReferences', () => {
     expect(refsOf(index.tags, 't1').every(r => r.inactive)).toBe(true)
   })
 
+  it('`C-422` ⑥ 關掉的自動回應、活動、取消的推播標 closed（帶不了客人進來）；⛔ 發完的推播、停用的模組不標（按鈕已經在客人聊天室）', async () => {
+    const ws = freshWs()
+    const to = (id: string) => [{ type: 'module', moduleId: id }]
+    const db = makeDb({
+      flows: [{ id: 'f-off', workspaceId: ws, name: '停用的模組', isActive: false, messages: [{ actions: to('m1') }] }],
+      scripts: [{ id: 's-off', workspaceId: ws, name: '關掉的自動回應', enabled: false, nodes: to('m1') }],
+      leadCampaigns: [{ id: 'c-off', workspaceId: ws, name: '關掉的活動', isActive: false, moduleId: 'm1', action: to('m1') }],
+      broadcasts: [
+        { id: 'b-sent', workspaceId: ws, name: '發完了', status: 'completed', content: to('m1') },
+        { id: 'b-cancel', workspaceId: ws, name: '取消了', status: 'cancelled', content: to('m1') },
+        { id: 'b-failed', workspaceId: ws, name: '失敗（可能送出一部分）', status: 'failed', content: to('m1') },
+      ],
+    })
+    const index = await scanConfigReferences(db, ws)
+    const closed = Object.fromEntries(refsOf(index.modules, 'm1').map(r => [(r as any).id, !!(r as any).closed]))
+    expect(closed).toEqual({ 'f-off': false, 's-off': true, 'c-off': true, 'b-sent': false, 'b-cancel': true, 'b-failed': false })
+  })
+
+  it('`C-422` ② 舊版圖文訊息：模組只存 id，上面的按鈕要算成「那個模組叫得出它」', async () => {
+    const ws = freshWs()
+    const db = makeDb({
+      flows: [{ id: 'f1', workspaceId: ws, name: '商品目錄', messages: [{ type: 'richMessageRef', richMessageId: 'rm1' }] }],
+      richMessages: [{ id: 'rm1', workspaceId: ws, actions: [{ slot: 'A', type: 'module', moduleId: 'm-detail' }, { slot: 'B', type: 'uri', uri: 'https://a' }] }],
+    })
+    const index = await scanConfigReferences(db, ws)
+    expect(refsOf(index.modules, 'm-detail').map(r => (r as any).id)).toEqual(['f1'])
+    expect(index.failedKinds).toEqual([])
+  })
+
+  it('⛔ `C-422` ② 對照組：圖文訊息那份查不到＝用到它的那一類講不準，進 failedKinds（不可以講成走不到）', async () => {
+    const ws = freshWs()
+    const db = makeDb({
+      flows: [{ id: 'f1', workspaceId: ws, name: '商品目錄', messages: [{ type: 'richMessageRef', richMessageId: 'rm1' }] }],
+    }, ['richMessages'])
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const index = await scanConfigReferences(db, ws)
+    err.mockRestore()
+    expect(index.failedKinds).toEqual(['flow'])
+  })
+
+  it('圖文訊息查不到、但沒有人用舊版圖文訊息＝不影響（照常算）', async () => {
+    const ws = freshWs()
+    const db = makeDb({ flows: [{ id: 'f1', workspaceId: ws, name: 'A', messages: [{ actions: [{ type: 'module', moduleId: 'm1' }] }] }] }, ['richMessages'])
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const index = await scanConfigReferences(db, ws)
+    err.mockRestore()
+    expect(index.failedKinds).toEqual([])
+    expect(refsOf(index.modules, 'm1')).toHaveLength(1)
+  })
+
   it('⛔ 三態：某一類查不到要進 failedKinds，不可以當成「沒有人用」', async () => {
     const ws = freshWs()
     const db = makeDb(
