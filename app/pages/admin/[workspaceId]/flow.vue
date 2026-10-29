@@ -31,6 +31,8 @@
           `C-418`：有客人走不到的模組才出現。橘點就是走不到（這排的「客人走不到」兼當圖例）；
           只看走不到的時候每一列都是，就不再畫點。
         -->
+        <!-- `C-425`：每一列右邊的數字是什麼（只講一次，不在每一列重複） -->
+        <p v-if="flowUsagePeriod" class="flow-list-usage-note" :title="FLOW_USAGE_TITLE">右邊數字＝{{ flowUsagePeriod }}幾位客人收到</p>
         <div v-if="unreachableIds.size" class="flow-list-filter" data-tour="flow-list-filter">
           <el-radio-group v-model="listFilter" size="small">
             <el-radio-button value="all">全部 {{ regularFlowTotal }}</el-radio-button>
@@ -49,6 +51,8 @@
             :active="selectedId === flow.id"
             :meta-text="moduleTypeLabel(flow.moduleType)"
             chip-tone="neutral"
+            time-in-title-row
+            :chip-text="flowUsageChip(flow.id)"
             @select="selectFlow(flow)"
           />
         </template>
@@ -84,6 +88,8 @@
             :title="flow.name"
             :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
             :active="selectedId === flow.id"
+            time-in-title-row
+            :chip-text="flowUsageChip(flow.id)"
             @select="selectFlow(flow)"
           />
         </div>
@@ -177,6 +183,8 @@
                 :title="flow.name"
                 :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
                 :active="selectedId === flow.id"
+                time-in-title-row
+                :chip-text="flowUsageChip(flow.id)"
                 @select="selectFlow(flow)"
               />
             </div>
@@ -260,6 +268,11 @@
                 empty-text="沒有任何地方會叫出這個模組，存檔了也一樣。到「自動回應」設一組關鍵字（或用最上面那一列「客人加好友時」），也可以在圖文選單、活動上指過來。"
               />
             </el-popover>
+            <!-- `C-425`：走得到不等於有人用——接在同一行灰字後面 -->
+            <template v-if="selectedFlowUsageText">
+              <span class="flow-usage-sep">·</span>
+              <span class="flow-usage-count" data-tour="flow-usage-count" :title="FLOW_USAGE_TITLE">{{ selectedFlowUsageText }}</span>
+            </template>
           </template>
         </template>
       </AdminEditorHeaderTitle>
@@ -277,6 +290,12 @@
       </div>
       <div class="flex gap-1 admin-header-actions">
         <el-button @click="cancelEdit">取消</el-button>
+        <AdminOperateGate capability="marketing.write">
+          <!-- `C-426`：先傳到手機看，沒問題再存（存了就對客人生效） -->
+          <el-button :disabled="!form.messages.length" data-tour="flow-test-send" @click="openTestSend">
+            傳給我自己看
+          </el-button>
+        </AdminOperateGate>
         <AdminOperateGate capability="marketing.write">
           <el-button type="primary" :loading="saving" @click="submitForm">
             {{ isCreating ? '建立模組' : '儲存變更' }}
@@ -305,24 +324,23 @@
             <!--
               `C-416`：照「客人會看到什麼」排；影片、圖片輪播（2026-10-29 盤點所有帳號 0 則）收進「更多」。
               卡片訊息只講「好幾張左右滑」——一張圖配文字用「＋ 文字」加圖片（以前店家找不到能放圖的那格，只好圖一則、字一則）。
+              `C-424`：用戶輸入也收進「更多」（全站 2 則，1 則是測試帳號）；要收電話、訂單編號用自動回應的「問一題」。
+              文字的按鈕跟快速回覆以前都寫「在下面」，店家分不出差別——提示改講客人那邊實際怎麼樣。
             -->
-            <el-tooltip content="一段文字；上面可加圖片、下面可加最多 4 顆按鈕" placement="bottom" :show-after="300">
+            <el-tooltip content="一段文字；上面可加圖片、下面可加最多 4 顆按鈕（按鈕跟著這則訊息，客人往回捲也點得到）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-text" @click="addMessage('text')">＋ 文字</el-button>
             </el-tooltip>
             <el-tooltip content="傳一張圖片給客人（客人點了可以看大圖）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-image" @click="addMessage('image')">＋ 圖片</el-button>
             </el-tooltip>
-            <el-tooltip content="一張大圖，圖上可切出多個可點區塊" placement="bottom" :show-after="300">
+            <el-tooltip content="一整張圖，客人點了開網址或觸發模組；也可以把圖切成好幾塊各自點" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-rich" @click="addMessage('richMessage')">＋ 圖文訊息</el-button>
             </el-tooltip>
             <el-tooltip content="多張卡片左右滑（例如商品目錄）" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-carousel" @click="addMessage('flexImageCarousel')">＋ 卡片訊息</el-button>
             </el-tooltip>
-            <el-tooltip content="訊息下方一排可點的小按鈕，客人點一下就送出" placement="bottom" :show-after="300">
+            <el-tooltip content="聊天室最下面浮出一排選項，客人點一下就送出；點過或有新訊息就消失。一定排在最後一則" placement="bottom" :show-after="300">
               <el-button size="small" data-tour="fmt-quick" @click="addMessage('quickReply')">＋ 快速回覆</el-button>
-            </el-tooltip>
-            <el-tooltip v-if="showUserInput" content="向客人提問並收集回覆（例：電話、Email）" placement="bottom" :show-after="300">
-              <el-button size="small" data-tour="fmt-userinput" @click="addMessage('userInput')">＋ 用戶輸入</el-button>
             </el-tooltip>
             <el-dropdown trigger="click" @command="(type) => addMessage(String(type))">
               <el-button size="small" data-tour="fmt-more">更多 ▾</el-button>
@@ -330,14 +348,16 @@
                 <el-dropdown-menu>
                   <el-dropdown-item command="video" data-tour="fmt-video">＋ 影片（最大 5 MB）</el-dropdown-item>
                   <el-dropdown-item v-if="showLegacyImageCarousel" command="imageCarousel">＋ 圖片輪播（整排純圖左右滑）</el-dropdown-item>
+                  <el-dropdown-item v-if="showUserInput" command="userInput" data-tour="fmt-userinput">＋ 用戶輸入（問一句，客人回了就接到下一個模組）</el-dropdown-item>
                   <el-dropdown-item v-if="showLegacyCarousel" command="carousel">＋ 輪播（舊）</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
-            <el-button class="fem-preview-toggle" size="small" @click="previewOpen = !previewOpen">
-              {{ previewOpen ? '隱藏預覽' : '顯示預覽' }}
-            </el-button>
           </div>
+          <!-- `C-424`：預覽開關不是第七種訊息——拉出加訊息那排、靠右、長得不一樣 -->
+          <el-button class="fem-preview-toggle" link size="small" @click="previewOpen = !previewOpen">
+            {{ previewOpen ? '隱藏預覽' : '顯示預覽' }}
+          </el-button>
         </div>
 
         <!-- 卡片區 | 即時預覽（兩欄，都在工具列下方） -->
@@ -819,8 +839,18 @@
                   </div>
                 </div>
 
+                <!--
+                  `C-424`：以前寫「把回覆存成你設定的屬性（若有填寫）」，但存屬性那格是關著的（`showUserInputAttribute`），
+                  店家會以為電話被存起來了。照實講：答案只留在對話；24 小時內客人下一句不管講什麼都當答案。
+                -->
                 <div class="ui-warning-text">
-                  用戶在聊天室看到這則提問後輸入回覆，系統會在 24 小時內把回覆存成你設定的屬性（若有填寫），並自動觸發你選擇的下一個模組。注意：超過 24 小時後，則不會觸發下一個行動，也不會將回覆存為自訂屬性。
+                  <template v-if="showUserInputAttribute">
+                    客人看到這則提問後回的下一句話，會在 24 小時內存成你設定的屬性（若有填寫），並接著送出你選的下一個模組。超過 24 小時就不會了。
+                  </template>
+                  <template v-else>
+                    客人看到這則提問後，24 小時內傳的<strong>下一句話</strong>（不管講什麼）都會當成回答，接著送出你選的下一個模組。回答只留在對話紀錄裡，<strong>不會另外存起來</strong>。
+                    要收電話、訂單編號這類資料，請用「自動回應」的「問一題」：會檢查格式、也會存進客人資料。
+                  </template>
                 </div>
               </div>
             </FlowMessageCardShell>
@@ -1251,6 +1281,27 @@
     </template>
   </el-dialog>
 
+  <!--
+    `C-426`：傳給我自己看。卡片長相、圖片比例、網址點不點得開只有手機看得準。
+    ⛔ 送的是畫面上這一份、**不幫你存**——模組一存就對客人生效，「先存再試」等於先上線再看（跟推播試發相反）。
+  -->
+  <AdminTestSendDialog
+    v-model="testSendVisible"
+    title="傳給我自己看"
+    submit-label="傳送"
+    done-tail="去手機上看一眼，沒問題再回來按「儲存」。"
+    :send="sendFlowTest"
+  >
+    <template #hint>
+      <p class="tags-hint">
+        送的是<b>畫面上這一份</b>，還沒存檔也可以；<b>不會幫你存</b>，客人收到的還是存好的那一份。
+      </p>
+      <p class="tags-hint">
+        內容裡的 LINE 名稱會換成收件人自己的；他按按鈕會照常回覆，跟客人按一樣。
+      </p>
+    </template>
+  </AdminTestSendDialog>
+
 </template>
 
 
@@ -1285,6 +1336,9 @@ import {
 } from '~~/shared/line-text-limits'
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
 import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
+import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
+import { replaceSheetFieldTokens, sheetFieldLabel, sheetRowKey } from '~~/shared/sheet-field'
+import { FLOW_SHEET_PICKER_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1418,6 +1472,44 @@ const listFilter = ref<'all' | 'unreachable'>('all')
 const showUnreachableOnly = computed(() => listFilter.value === 'unreachable' && unreachableIds.value.size > 0)
 const regularFlowTotal = computed(() => allFlows.value.filter(f => !f.isSystem).length)
 const UNREACHABLE_ROW_TITLE = '客人走不到：沒有任何自動回應、選單、按鈕會叫出這個模組'
+
+// ── 近 30 天幾位客人收到（`C-425`）────────────────────
+/**
+ * 「客人走得到」不等於「客人有在用」：MYFEEL 48 個商品模組近 30 天只有 16 個被點過，畫面上看不出來。
+ * 數字是送出時記的（`server/utils/flow-usage.ts`），⛔ 不是開頁去翻對話。
+ * 從上線那天才開始記：不滿 30 天時講「M/D 起」，⛔ 不可以說成「近 30 天」。
+ * ⛔ 三態：還在讀、讀不到、整個帳號這段期間一筆都沒有（剛上線）都**不顯示數字**——空白不等於 0 位。
+ */
+interface FlowUsageSummary { from: string; to: string; trackedSince: string | null; modules: Record<string, { users: number; sends: number }> }
+const flowUsage = ref<FlowUsageSummary | null>(null)
+async function loadFlowUsage() {
+  // 借清單那支路由回（不另開：路由型別已經貼著上限，見 `server/api/flow/list.get.ts`）
+  try { flowUsage.value = await apiFetch<FlowUsageSummary>('/api/flow/list?part=usage') }
+  catch { flowUsage.value = null }
+}
+/** 「近 30 天」或「10/30 起」 */
+const flowUsagePeriod = computed(() => {
+  const u = flowUsage.value
+  if (!u?.trackedSince) return ''
+  if (u.trackedSince <= u.from) return '近 30 天'
+  const [, m, d] = u.trackedSince.split('-')
+  return `${Number(m)}/${Number(d)} 起`
+})
+function flowUsageUsers(id: string): number | null {
+  if (!flowUsagePeriod.value) return null
+  return flowUsage.value?.modules[id]?.users ?? 0
+}
+function flowUsageChip(id: string): string {
+  const n = flowUsageUsers(id)
+  return n === null ? '' : `${n} 人`
+}
+const selectedFlowUsageText = computed(() => {
+  if (!selectedId.value) return ''
+  const n = flowUsageUsers(selectedId.value)
+  if (n === null) return ''
+  return n ? `${flowUsagePeriod.value} ${n} 位客人收到` : `${flowUsagePeriod.value}沒有客人收到`
+})
+const FLOW_USAGE_TITLE = '客人按按鈕或選單、打關鍵字、加好友時送出的才算；推播、傳給自己看不算'
 
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)
@@ -1633,7 +1725,58 @@ const variableKeys = computed(() => variableTokenOptions.value.map(o => o.value)
  * 以前直接畫 form.messages，預覽上印著「Hi {{displayName}}」（老闆 10-17 截圖：左右都一樣、像程式碼）。
  * ⛔ 一律回新的物件（renderPreviewVariablesDeep 不就地改），範例值不會寫進正在編的模組
  */
-const previewMessages = computed(() => renderPreviewVariablesDeep(form.value.messages ?? [], { mark: true }))
+const previewMessages = computed(() => renderPreviewVariablesDeep(withSheetValues(form.value.messages ?? []), { mark: true }))
+
+// ── `C-423`：試算表的一格（插入選單在 `FlowVariableInset`，送出端在 `server/utils/sheet-field-hydrate.ts`）──
+const sheetSources = ref<SheetPickerSource[] | null>(null)
+const sheetSourcesLoading = ref(false)
+const sheetSourcesError = ref('')
+async function loadSheetSources(fresh = false) {
+  sheetSourcesLoading.value = true
+  sheetSourcesError.value = ''
+  try {
+    sheetSources.value = (await apiFetch<{ sources: SheetPickerSource[] }>(`/api/flow/list?part=sheet-fields${fresh ? '&fresh=1' : ''}`)).sources
+  }
+  catch (e: any) {
+    sheetSourcesError.value = e?.data?.statusMessage || '讀不到試算表，請關掉再打開一次'
+  }
+  finally {
+    sheetSourcesLoading.value = false
+  }
+}
+provide(FLOW_SHEET_PICKER_KEY, { sources: sheetSources, loading: sheetSourcesLoading, error: sheetSourcesError, reload: loadSheetSources })
+const formUsesSheetField = computed(() => JSON.stringify(form.value.messages ?? []).includes('{{sheet:'))
+// 打開的模組用到了才去讀（大部分模組沒有，不多花讀取）
+watch(formUsesSheetField, (uses) => {
+  if (uses && !sheetSources.value && !sheetSourcesLoading.value) void loadSheetSources()
+}, { immediate: true })
+
+/**
+ * 預覽：試算表的一格換成現在寫的。⛔ 不標黃——黃色是「範例」，這是真的會送出去的字。
+ * 還沒讀到先畫「［列・欄］」；讀到了卻找不到才講找不到（送出時會用存檔當時的內容）。
+ */
+function withSheetValues<T>(messages: T): T {
+  if (!formUsesSheetField.value) return messages
+  const byRow = new Map<string, Record<string, string>>()
+  for (const s of sheetSources.value ?? []) {
+    if (!s.headers) continue
+    for (const r of s.rows) if (!byRow.has(sheetRowKey(r.title))) byRow.set(sheetRowKey(r.title), r.values)
+  }
+  const fill = (value: unknown): unknown => {
+    if (typeof value === 'string') {
+      return replaceSheetFieldTokens(value, (ref) => {
+        if (!sheetSources.value) return `［${sheetFieldLabel(ref)}］`
+        return byRow.get(sheetRowKey(ref.row))?.[ref.field] ?? `（試算表上找不到「${sheetFieldLabel(ref)}」）`
+      })
+    }
+    if (Array.isArray(value)) return value.map(fill)
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([k]) => k !== 'sheetSnapshots').map(([k, v]) => [k, fill(v)]))
+    }
+    return value
+  }
+  return fill(messages) as T
+}
 
 /**
  * `range` 是使用者按下插入鈕當下的游標位置（由 FlowVariableInset 記下來），
@@ -1751,6 +1894,8 @@ onMounted(async () => {
     loadConfigRefs(),
   ])
   openFlowFromQuery()
+  // `C-425`：不擋清單，晚一點到也沒關係（到之前不顯示數字）
+  void loadFlowUsage()
 })
 
 /**
@@ -2161,6 +2306,27 @@ function cancelEdit() {
 }
 
 // ── Messages ──────────────────────────────────────────
+/**
+ * `C-424`：快速回覆、用戶輸入只能是最後一則——LINE 只在最後一則顯示快速回覆的按鈕，
+ * 排在中間的照樣送得出去、按鈕卻默默不見。最後一則是它們的時候，新加的插在它們前面。
+ */
+const TRAILING_ONLY_TYPES = new Set(['quickReply', 'userInput'])
+function insertMessage(msg: any) {
+  const list = form.value.messages
+  const last = list[list.length - 1]
+  if (last && TRAILING_ONLY_TYPES.has(last.type)) list.splice(list.length - 1, 0, msg)
+  else list.push(msg)
+}
+/** 拖完之後把快速回覆／用戶輸入擺回最後；真的有搬才講一聲 */
+function keepTrailingOnlyLast() {
+  const list = form.value.messages
+  const idx = list.findIndex((m: any) => TRAILING_ONLY_TYPES.has(m?.type))
+  if (idx === -1 || idx === list.length - 1) return
+  const [item] = list.splice(idx, 1)
+  list.push(item)
+  showToast(`${msgTypeLabel(item.type)}一定要在最後一則（LINE 只在最後一則顯示它的按鈕），已幫你擺回最後`, 'warning')
+}
+
 function addMessage(type: string) {
   if (form.value.messages.length >= FLOW_MESSAGE_LIMIT) {
     showToast(`單一模組最多只能儲存 ${FLOW_MESSAGE_LIMIT} 則訊息`, 'error')
@@ -2171,11 +2337,11 @@ function addMessage(type: string) {
   if (type === 'carousel' && !showLegacyCarousel) return
 
   if (type === 'text') {
-    form.value.messages.push({ type: 'text', text: '', buttons: [] })
+    insertMessage({ type: 'text', text: '', buttons: [] })
   } else if (type === 'image') {
-    form.value.messages.push({ type: 'image', originalContentUrl: '', previewImageUrl: '' })
+    insertMessage({ type: 'image', originalContentUrl: '', previewImageUrl: '' })
   } else if (type === 'video') {
-    form.value.messages.push({
+    insertMessage({
       type: 'video',
       originalContentUrl: '',
       previewImageUrl: '',
@@ -2183,7 +2349,7 @@ function addMessage(type: string) {
       videoHeight: undefined,
     })
   } else if (type === 'richMessage') {
-    form.value.messages.push({
+    insertMessage({
       type: 'richMessage',
       altText: '',
       transparentBackground: false,
@@ -2194,26 +2360,26 @@ function addMessage(type: string) {
       actions: createRichMessageActions('single'),
     })
   } else if (type === 'richMessageRef') {
-    form.value.messages.push({
+    insertMessage({
       type: 'richMessageRef',
       richMessageId: '',
       richMessageName: '',
     })
   } else if (type === 'carousel') {
-    form.value.messages.push({
+    insertMessage({
       type: 'carousel',
       altText: '',
       imageAspectRatio: DEFAULT_CAROUSEL_IMAGE_ASPECT_RATIO,
       columns: [newCarouselColumn()],
     })
   } else if (type === 'imageCarousel') {
-    form.value.messages.push({
+    insertMessage({
       type: 'imageCarousel',
       altText: '',
       columns: [newImageCarouselColumn()],
     })
   } else if (type === 'flexImageCarousel') {
-    form.value.messages.push({
+    insertMessage({
       type: 'flexImageCarousel',
       altText: '',
       enableImage: true,
@@ -2226,7 +2392,7 @@ function addMessage(type: string) {
       showToast('每個流程只能有一張「快速回覆」或「用戶輸入卡片」', 'error')
       return
     }
-    form.value.messages.push({
+    insertMessage({
       type: 'quickReply',
       text: '',
       quickReplies: [newQuickReplyAction()]
@@ -2237,7 +2403,7 @@ function addMessage(type: string) {
       showToast('每個流程只能有一張「快速回覆」或「用戶輸入卡片」', 'error')
       return
     }
-    form.value.messages.push({
+    insertMessage({
       type: 'userInput',
       text: '',
       attribute: '',
@@ -2611,6 +2777,7 @@ function onDrop(e: DragEvent, dropIndex: number) {
   if (fromIndex !== null && fromIndex !== dropIndex) {
     const item = form.value.messages.splice(fromIndex, 1)[0]
     form.value.messages.splice(dropIndex, 0, item)
+    keepTrailingOnlyLast()
   }
   dragIndex.value = null
   dragOverIndex.value = null
@@ -2752,6 +2919,30 @@ async function submitForm() {
   } finally {
     saving.value = false
   }
+}
+
+// ── `C-426`：傳給我自己看（收件人名單在共用的 `AdminTestSendDialog`，跟推播試發同一份）──
+const testSendVisible = ref(false)
+
+function openTestSend() {
+  if (!assertCan('marketing.write')) return
+  // 存不了的就先講，不打開框（框裡也會再檢查一次：打開之後還可能繼續改）
+  const error = validateMessages(normalizeMessages(form.value.messages))
+  if (error) return showToast(error, 'error')
+  testSendVisible.value = true
+}
+
+/** 送畫面上這一份（⛔ 不存）。回傳字串＝沒送、把這句講給人聽 */
+async function sendFlowTest(lineUserIds: string[]) {
+  const messages = normalizeMessages(form.value.messages)
+  if (!messages.length) return '先加一則訊息再傳'
+  const error = validateMessages(messages)
+  if (error) return error
+  return apiFetch<{ messageCount: number; sent: Array<{ lineUserId: string; displayName: string; ok: boolean; error?: string }> }>(
+    // 借新增模組那支路由（什麼都不建，見 `server/api/flow/create.post.ts` 最上面）
+    '/api/flow/create?part=test-send',
+    { method: 'POST', body: { messages, lineUserIds, name: form.value.name, flowId: selectedId.value ?? undefined } },
+  )
 }
 
 // 右上「⋯」選單：複製 / 刪除
@@ -3004,6 +3195,8 @@ function validateMessages(messages: any[]): string | null {
 
   const lastMsg = messages[messages.length - 1]
   if (uiCount > 0 && lastMsg?.type !== 'userInput') return '用戶輸入卡片必須放在所有訊息的最結尾'
+  // `C-424`：跟後端 `flow-validator.ts` 同一句
+  if (qrCount > 0 && lastMsg?.type !== 'quickReply') return QUICK_REPLY_NOT_LAST_MESSAGE
 
   for (const [msgIdx, msg] of (messages ?? []).entries()) {
     // 每則訊息的驗證包成 IIFE，回傳的錯誤自動帶上「第 N 則」位置，方便定位

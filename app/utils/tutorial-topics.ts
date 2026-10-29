@@ -1102,7 +1102,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requires: 'marketing.write',
     icon: Postcard,
     label: '圖文訊息怎麼填',
-    blurb: '一張大圖切成多個可點區塊。打開一條帶你填。',
+    blurb: '一整張圖，點了開網址；也能切成好幾塊各自點。打開一條帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -1180,7 +1180,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requires: 'marketing.write',
     icon: Pointer,
     label: '快速回覆怎麼填',
-    blurb: '訊息下方一排建議按鈕。打開一張帶你填。',
+    blurb: '聊天室最下面一排選項，客人點過就消失。打開一張帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
@@ -1196,7 +1196,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'quickReply',
         title: '主要文字',
         description:
-          '快速回覆是在訊息<strong>下方冒出一排建議按鈕</strong>。先在這裡打主要的回覆文字。',
+          // `C-424`：以前寫「訊息下方」，跟文字底下的按鈕分不出來
+          '快速回覆是在聊天室<strong>最下面浮出一排選項</strong>，客人點了或有新訊息就消失，所以它一定排在最後一則。先在這裡打主要的回覆文字。',
         placement: 'top',
       },
       {
@@ -1223,15 +1224,16 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     requiresFeature: 'userInput',
     icon: EditPen,
     label: '用戶輸入卡怎麼填',
-    blurb: '問問題、收答案、還能觸發下一步。打開一張帶你填。',
+    blurb: '問客人一句，客人回了就接到下一個模組。打開一張帶你填。',
     route: wid => `/admin/${wid}/flow`,
     steps: [
       {
-        target: '[data-tour="fmt-userinput"]',
+        // `C-424`：用戶輸入收進「更多」（下拉選單沒打開時那一項不在畫面上，導覽指「更多」那顆）
+        target: '[data-tour="fmt-more"]',
         demoType: 'userInput',
         title: '先加一張用戶輸入卡',
         description:
-          '點「<strong>＋ 用戶輸入</strong>」這顆就會加一張。我幫你開好了，往下教你填每個欄位 →',
+          '用戶輸入收在「<strong>更多</strong>」裡：點「更多」→「<strong>＋ 用戶輸入</strong>」就會加一張。我幫你開好了，往下教你填每個欄位 →',
         placement: 'bottom',
       },
       {
@@ -1239,7 +1241,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'userInput',
         title: '提問',
         description:
-          '用戶輸入卡能<strong>問客人問題、收答案</strong>。先在這裡打你要問的問題。',
+          // `C-424`：以前寫「收答案」，但答案沒有另外存（存屬性那格是關著的）
+          '用戶輸入卡會<strong>問客人一句話</strong>，客人回的下一句就接到你選的模組；回答只留在對話紀錄裡。先在這裡打你要問的問題。',
         placement: 'top',
       },
       {
@@ -1256,7 +1259,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'userInput',
         title: '觸發下一步（特殊）',
         description:
-          '客人回答後，<strong>自動接著跑哪個模組</strong>——這就是把多步驟串成流程的關鍵，做表單、預約都靠它。看完囉，按「結束」我會幫你把示範草稿清掉。',
+          '客人回答後，<strong>自動接著送哪個模組</strong>（例如問完備註就轉真人客服）。要收電話、訂單編號這類資料，用「自動回應」的「問一題」比較好：會檢查格式、也會存起來。看完囉，按「結束」我會幫你把示範草稿清掉。',
         placement: 'top',
       },
     ],

@@ -24,6 +24,9 @@ vi.mock('~~/server/utils/workspace-system-modules', async () => {
   return { ...actual, seedWorkspaceSystemModules: vi.fn(async () => []) }
 })
 
+vi.mock('~~/server/utils/flow-usage', () => ({ readFlowUsage: vi.fn(async () => ({ from: 'a', to: 'b', trackedSince: null, modules: {} })) }))
+vi.mock('~~/server/utils/sheet-field-hydrate', () => ({ loadSheetRows: vi.fn(async () => ({ rows: new Map(), sources: [{ id: 's1' }] })) }))
+
 let currentQuery: Record<string, unknown> = {}
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('getQuery', () => currentQuery)
@@ -232,5 +235,27 @@ describe('模組清單（E-23）', () => {
     const res: any = await (handler as any)({} as never)
     const ids = (Array.isArray(res) ? res : res.items ?? []).map((f: any) => f.id)
     expect(ids).toContain(`${WS}_welcome`)
+  })
+})
+
+describe('借這支路由回模組頁另外要的兩份（不另開：路由型別已經貼著上限）', () => {
+  it('`C-425` ?part=usage：回近 30 天幾位客人收到，不撈模組', async () => {
+    const { readFlowUsage } = await import('~~/server/utils/flow-usage')
+    vi.mocked(listDocs).mockClear()
+    currentQuery = { part: 'usage' }
+    const res: any = await (handler as any)({} as never)
+    currentQuery = {}
+    expect(vi.mocked(readFlowUsage)).toHaveBeenCalledWith(WS)
+    expect(res).toMatchObject({ trackedSince: null, modules: {} })
+    expect(vi.mocked(listDocs)).not.toHaveBeenCalled()
+  })
+
+  it('`C-423` ?part=sheet-fields：回每一份試算表；&fresh=1 不用快取', async () => {
+    const { loadSheetRows } = await import('~~/server/utils/sheet-field-hydrate')
+    currentQuery = { part: 'sheet-fields', fresh: '1' }
+    const res: any = await (handler as any)({} as never)
+    currentQuery = {}
+    expect(vi.mocked(loadSheetRows)).toHaveBeenCalledWith(WS, { fresh: true })
+    expect(res).toEqual({ sources: [{ id: 's1' }] })
   })
 })

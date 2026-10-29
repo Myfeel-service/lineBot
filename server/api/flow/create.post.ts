@@ -12,8 +12,17 @@ import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-r
 import { assertPlanAllows } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
+import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
+import { flowTestSend } from '~~/server/utils/flow-test-send'
 
 export default defineEventHandler(async (event) => {
+  /*
+   * `C-426`「傳給我自己看」借這支路由（`?part=test-send`）：什麼都不建，只把畫面上那一份送給試發名單上的人。
+   * ⛔ 為什麼不開新路由：Nitro 的路由型別聯集已經貼著 TypeScript 深度上限，多一支就讓不相干的檔報 TS2589（見 list.get.ts）。
+   * ⛔ 放在方案閘門前面：「先看一眼」不綁方案（同推播試發 `C-248`）。權限在 flowTestSend 裡自己驗。
+   */
+  if (getQuery(event).part === 'test-send') return flowTestSend(event)
+
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
   await assertPlanAllows(workspaceId, planAllowsScripting, '這個方案不含流程自動化功能，請升級方案後再使用')
@@ -53,7 +62,8 @@ export default defineEventHandler(async (event) => {
   const id = uuidv4()
   const doc = await createDoc('flows', id, {
     name: validName,
-    messages,
+    // `C-423`：用了「試算表的一格」的，記下每一格當下的內容（送出時換不到才用）
+    messages: await attachSheetSnapshots(messages, workspaceId),
     isActive: isActive ?? true,
     // 自建模組一律 bot_flow：body 帶什麼都不看（口徑見 shared/types/conversation-stats.ts）
     moduleType: 'bot_flow' as ModuleType,

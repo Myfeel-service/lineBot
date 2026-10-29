@@ -206,6 +206,8 @@ export async function syncGoogleSheetSource(
       try {
         await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
           lastFetchedAt: FieldValue.serverTimestamp(),
+          // `C-423`：欄名也記（機器人模組從卡片切「某一格」只認這份）；內容沒變也寫，上線前建的來源靠這裡補上
+          gsheetFieldHeaders: sheet.fieldHeaders,
           // 上次被排程擋下（表格一次少太多列），這次表格又跟卡片對得上了＝沒有要確認的刪除（`C-308`⑤）
           ...(Number(data.blockedPendingDeletes ?? 0) > 0 ? { blockedPendingDeletes: 0 } : {}),
         })
@@ -413,6 +415,7 @@ export async function syncGoogleSheetSource(
       contentHash: newHash,
       chunkCount,
       lastFetchedAt: FieldValue.serverTimestamp(),
+      gsheetFieldHeaders: sheet.fieldHeaders,
       updatedAt: FieldValue.serverTimestamp(),
       outdatedAt: null,
       // C-44：被手動編輯鎖住、與表格分歧的條數。來源頁用它常駐提示

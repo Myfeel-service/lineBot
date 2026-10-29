@@ -43,6 +43,8 @@ import { clearClaimPushMarkFailure, recordClaimPushMarkFailure } from './claim-p
 import { createImagemapImageToken } from './line-imagemap-image-token'
 import { createUriTagToken } from './line-action-tag-token'
 import { addTagsToUser } from './tagging'
+import { recordModuleSent } from './flow-usage'
+import { hydrateSheetFields } from './sheet-field-hydrate'
 import {
   ensureConversationSession,
   enterModule,
@@ -1050,24 +1052,28 @@ async function loadRichMessageSnapshot(id: string, workspaceId: string): Promise
   return entry.payload
 }
 
+/**
+ * 送出前把模組補齊：舊版圖文訊息換成最新那份；`C-423` 起「試算表的一格」換成知識卡上現在寫的。
+ * ⭐ 每一條送模組的路（按鈕、關鍵字、加好友、推播、傳給自己看…）都先經過這裡再組 LINE 訊息，所以兩件事都放這一處。
+ */
 async function hydrateRichMessageRefs(messages: any[], workspaceId: string): Promise<any[]> {
   if (!Array.isArray(messages) || messages.length === 0) return []
   const hydrated = [...messages]
   const ids = Array.from(new Set(hydrated
     .filter((msg: any) => msg?.type === 'richMessageRef' && msg?.richMessageId)
     .map((msg: any) => String(msg.richMessageId))))
-  if (ids.length === 0) return hydrated
+  if (ids.length === 0) return hydrateSheetFields(hydrated, workspaceId)
 
   const snapshots = await Promise.all(ids.map((id) => loadRichMessageSnapshot(id, workspaceId)))
   const snapshotMap = new Map<string, any | null>()
   ids.forEach((id, index) => snapshotMap.set(id, snapshots[index] ?? null))
 
-  return hydrated.map((msg: any) => {
+  return hydrateSheetFields(hydrated.map((msg: any) => {
     if (msg?.type !== 'richMessageRef') return msg
     const latest = msg?.richMessageId ? snapshotMap.get(String(msg.richMessageId)) : null
     if (latest) return { ...msg, payload: latest }
     return msg
-  })
+  }), workspaceId)
 }
 
 function resolveRichMessageLayoutId(raw: unknown): string {
@@ -1974,6 +1980,38 @@ function buildLineMessages(
   })
 }
 
+/**
+ * 一組模組格式的訊息 → 送得出去的 LINE 訊息（跟正式回覆同一條路：先把圖文訊息補齊、再組）。
+ * `C-426`：模組「傳給我自己看」送的是**還沒存檔**的那一份，沒有模組 id 可查，所以把組裝這段拆出來共用；
+ * ⛔ 別另外組一份——試的跟正式送的不一樣就白試了（`C-243` 修過的病）。
+ */
+export async function renderFlowMessagesForSend(
+  messages: any[],
+  options: { workspaceId: string; requestOrigin?: string; userId?: string },
+): Promise<{
+  hydratedMessages: any[]
+  renderFor: (attributes: Record<string, string>, userId?: string) => messagingApi.Message[]
+}> {
+  const wid = requireWorkspaceId(options.workspaceId, 'renderFlowMessagesForSend')
+  const { channelSecret } = await getLineWorkspaceCredentials(wid)
+  const hydratedMessages = await hydrateRichMessageRefs(messages, wid)
+  /**
+   * `D-118` A：推播一人一則送時，模組只抓一次、每一位用自己的 `attributes` 重組一次（不再讀資料庫）。
+   * ⚠️ 名字換進去之後才截斷（`buildLineMessages` 本來就這樣做），⛔ 不要先組好再換字——
+   *    換完可能超過 LINE 的字數上限，那一位就整則被退回。
+   * `C-322`：帶了 `userId` 的話，開了貼標的網址按鈕會換成那一位專屬的貼標連結（`/api/t/`）。
+   *   推播一人一則送時每一位帶自己的；試發不帶（⛔ 看稿的同事點了不該被貼上標籤）。
+   */
+  const renderFor = (attributes: Record<string, string>, userId?: string) => buildLineMessages(
+    hydratedMessages,
+    attributes,
+    options.requestOrigin || '',
+    userId ?? options.userId ?? '',
+    channelSecret,
+  )
+  return { hydratedMessages, renderFor }
+}
+
 export async function renderModuleToLineMessages(
   moduleId: string,
   options: {
@@ -1993,22 +2031,7 @@ export async function renderModuleToLineMessages(
   //    （呼叫端會講「模組已經不存在」，跟 `validate.post` 同一個判斷）
   const flow = await getFlowByModuleId(moduleId, wid)
   if (!flow) return null
-  const { channelSecret } = await getLineWorkspaceCredentials(wid)
-  const hydratedMessages = await hydrateRichMessageRefs(flow.messages as any[], wid)
-  /**
-   * `D-118` A：推播一人一則送時，模組只抓一次、每一位用自己的 `attributes` 重組一次（不再讀資料庫）。
-   * ⚠️ 名字換進去之後才截斷（`buildLineMessages` 本來就這樣做），⛔ 不要先組好再換字——
-   *    換完可能超過 LINE 的字數上限，那一位就整則被退回。
-   * `C-322`：帶了 `userId` 的話，開了貼標的網址按鈕會換成那一位專屬的貼標連結（`/api/t/`）。
-   *   推播一人一則送時每一位帶自己的；試發不帶（⛔ 看稿的同事點了不該被貼上標籤）。
-   */
-  const renderFor = (attributes: Record<string, string>, userId?: string) => buildLineMessages(
-    hydratedMessages,
-    attributes,
-    options.requestOrigin || '',
-    userId ?? options.userId ?? '',
-    channelSecret,
-  )
+  const { hydratedMessages, renderFor } = await renderFlowMessagesForSend(flow.messages as any[], options)
   const lineMessages = renderFor(options.attributes ?? {})
   /**
    * `C-246`：連**編輯器格式的那一份**一起交出來（圖文訊息已塞進 `payload`）。
@@ -2993,6 +3016,8 @@ async function handleIncomingText(
               console.error('[session] enterModule error:', e),
             )
           }
+          // `C-425`：模組近 30 天幾位客人收到（回覆送出後才記；不會丟錯）
+          await recordModuleSent(wid, moduleId, lineUserId)
         } else {
           console.warn('[userInput] next flow has no renderable messages, skipping reply:', moduleId)
         }
@@ -3558,6 +3583,8 @@ async function replyWithFlowModule(params: {
       console.error('[session] enterModule error:', e),
     )
   }
+  // `C-425`：模組近 30 天幾位客人收到（關鍵字、加好友、自動回應送的都走這裡；回覆送出後才記、不會丟錯）
+  await recordModuleSent(wid, moduleId, lineUserId)
   return true
 }
 
@@ -5227,6 +5254,8 @@ export async function handlePostbackEvent(
             console.error('[session] enterModule error:', e),
           )
         }
+        // `C-425`：模組近 30 天幾位客人收到（按鈕、圖文選單走這裡；回覆送出後才記、不會丟錯）
+        await recordModuleSent(workspaceId, moduleId, userId)
       }
     } else {
       // 空按鈕：客人按了、一則訊息都沒送出。上面那筆客人動作紀錄就是對話上唯一的痕跡

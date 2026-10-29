@@ -17,9 +17,13 @@ vi.mock('~~/server/utils/billing', () => ({ assertPlanAllows: vi.fn(async () => 
 vi.mock('~~/server/utils/broken-module-refs', () => ({ invalidateBrokenModuleRefsCache: vi.fn() }))
 vi.mock('~~/server/utils/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }))
 
+vi.mock('~~/server/utils/flow-test-send', () => ({ flowTestSend: vi.fn(async () => ({ ok: true, messageCount: 1, sent: [] })) }))
+
 let currentBody: Record<string, unknown> = {}
+let currentQuery: Record<string, unknown> = {}
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
 vi.stubGlobal('readBody', async () => currentBody)
+vi.stubGlobal('getQuery', () => currentQuery)
 vi.stubGlobal('createError', (o: { statusCode?: number, statusMessage?: string }) =>
   Object.assign(new Error(o.statusMessage ?? 'e'), o))
 
@@ -108,5 +112,30 @@ describe('POST /api/flow/create：insertBeforeId（複製模組）', () => {
     }) as never)
     await run({ insertBeforeId: 'promo-b' })
     expect(wheres).toContainEqual(['workspaceId', '==', WS])
+  })
+})
+
+describe('`C-426` 借這支路由「傳給我自己看」（?part=test-send）', () => {
+  it('⛔ 什麼都不建、不看方案：直接交給 flowTestSend', async () => {
+    const { flowTestSend } = await import('~~/server/utils/flow-test-send')
+    const { assertPlanAllows } = await import('~~/server/utils/billing')
+    currentQuery = { part: 'test-send' }
+    try {
+      const res = await run({})
+      expect(res).toMatchObject({ ok: true })
+      expect(vi.mocked(flowTestSend)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(createDoc)).not.toHaveBeenCalled()
+      expect(vi.mocked(assertPlanAllows)).not.toHaveBeenCalled()
+    }
+    finally {
+      currentQuery = {}
+    }
+  })
+
+  it('對照組：沒帶 part 照常建模組，不會跑去送', async () => {
+    const { flowTestSend } = await import('~~/server/utils/flow-test-send')
+    await run({})
+    expect(vi.mocked(flowTestSend)).not.toHaveBeenCalled()
+    expect(vi.mocked(createDoc)).toHaveBeenCalledTimes(1)
   })
 })

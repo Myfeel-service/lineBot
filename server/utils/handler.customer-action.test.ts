@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.stubGlobal('useRuntimeConfig', () => ({}))
 
 vi.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: () => '__ts__', delete: () => '__del__' },
+  FieldValue: {
+    serverTimestamp: () => '__ts__',
+    delete: () => '__del__',
+    increment: (n: number) => ({ __inc: n }),
+    arrayUnion: (...v: unknown[]) => ({ __union: v }),
+  },
   Timestamp: { now: () => ({ toMillis: () => 0 }), fromMillis: (m: number) => ({ toMillis: () => m, __ms: m }) },
 }))
 vi.mock('./firebase', () => ({ getDb: vi.fn() }))
@@ -118,6 +123,28 @@ describe('客人按了按鈕 → 對話裡要留一行紀錄', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]!.data.text).toBe('客人點了「真人客服」')
     expect(actions[0]!.data.payload).toMatchObject({ actionType: 'button_module', moduleId: 'mod-live' })
+  })
+
+  it('`C-425`：按到模組、回覆送出去了 → 記進「近 30 天幾位客人收到」', async () => {
+    const { db, writes } = makeDb({
+      flowsById: { 'mod-usage': { workspaceId: 'ws-ca-u', name: '出貨進度', isActive: true, messages: [{ type: 'text', text: '10 月底出貨' }], moduleType: 'bot_flow' } },
+    })
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(postbackEvent('triggerModule=mod-usage'), { workspaceId: 'ws-ca-u' })
+
+    const usage = writes.filter(w => w.path.startsWith('flowUsageDaily/ws-ca-u_'))
+    expect(usage).toHaveLength(1)
+    expect(usage[0]!.data.modules['mod-usage']).toEqual({ sends: { __inc: 1 }, users: { __union: [LINE_UID] } })
+  })
+
+  it('`C-425` 對照組：按到失效的按鈕（一則都沒送）→ 不記', async () => {
+    const { db, writes } = makeDb()
+    vi.mocked(getDb).mockReturnValue(db as any)
+
+    await handlePostbackEvent(postbackEvent('triggerModule=mod-usage-dead'), { workspaceId: 'ws-ca-ud' })
+
+    expect(writes.filter(w => w.path.startsWith('flowUsageDaily/'))).toHaveLength(0)
   })
 
   it('那一行的時間用 LINE 事件時間：否則會排到自己的回覆後面（客人先按、我們才回）', async () => {

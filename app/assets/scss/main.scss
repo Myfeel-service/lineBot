@@ -52,6 +52,8 @@
 // 知識庫改版（`C-315`／`C-317`，D-126）：右邊「問 AI 一題」、「補一條知識」小視窗
 @use "./components/knowledge-ask";
 @use "./components/knowledge-add-one";
+// 試發框：推播試發、機器人模組「傳給我自己看」（`C-426`）共用
+@use "./components/test-send-dialog";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

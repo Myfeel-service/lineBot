@@ -191,7 +191,8 @@ describe('syncGoogleSheetSource 守知識量額度', () => {
     expect(enrichCardsWithLlm).not.toHaveBeenCalled()
     expect(regenerateOverviewCard).not.toHaveBeenCalled()
     expect(ops).toHaveLength(1)
-    expect(Object.keys(ops[0]!.payload!)).toEqual(['lastFetchedAt']) // 不動 quotaSkippedCount
+    // 不動 quotaSkippedCount。欄名（`C-423`）跟時間同一次寫：機器人模組切「某一格」要用，上線前建的來源靠這裡補上
+    expect(Object.keys(ops[0]!.payload!)).toEqual(['lastFetchedAt', 'gsheetFieldHeaders'])
   })
 
   it('沒有少收過的來源：表格沒變照舊直接跳過，連額度都不去數（平常同步不多讀）', async () => {

@@ -5,7 +5,8 @@
  *   CHECK_BASE_URL=http://localhost:3000 node --env-file=.env_myfeel scripts/flow-text-image-check.mjs
  *
  * 驗三件事：
- *   A. 工具列照「客人會看到什麼」排；影片、圖片輪播收進「更多」（打開才看得到）
+ *   A. 工具列照「客人會看到什麼」排；影片、圖片輪播、用戶輸入收進「更多」（打開才看得到）；
+ *      間距一樣寬、預覽開關靠右跟那排分開（`C-424`）
  *   B. 「＋ 文字」加圖片：上傳（攔下 `/api/upload` 回一張 400×300 的圖，不真的上傳）→ 預覽畫成一張卡、比例 4:3 不裁、
  *      按鈕預設綠色、出現「點圖片＝第 1 顆按鈕」與標題欄；「更換圖片」標題還在（對照組：以前會被一起清掉）；
  *      「移除圖片」→ 標題消失、預覽回到文字＋按鈕
@@ -176,13 +177,37 @@ await waitFor(() => document.querySelector('.msg-type-btns'))
 await sleep(500)
 await closeTours()
 const toolbar = await page.evaluate(() => [...document.querySelectorAll('.msg-type-btns > button, .msg-type-btns > .el-dropdown > button')].map(b => b.innerText.trim()))
-const want = ['＋ 文字', '＋ 圖片', '＋ 圖文訊息', '＋ 卡片訊息', '＋ 快速回覆', '＋ 用戶輸入', '更多 ▾']
-check('A1 工具列順序；影片、圖片輪播不在外面', want.every((t, i) => toolbar[i] === t) && !toolbar.some(t => t.includes('影片') || t.includes('圖片輪播')),
+// `C-424`：用戶輸入也收進「更多」（全站 2 則）；預覽開關不在這一排
+const want = ['＋ 文字', '＋ 圖片', '＋ 圖文訊息', '＋ 卡片訊息', '＋ 快速回覆', '更多 ▾']
+check('A1 工具列順序；影片、圖片輪播、用戶輸入不在外面', toolbar.length === want.length && want.every((t, i) => toolbar[i] === t),
   toolbar.join('｜'))
+// `C-424`：間距一樣寬（以前 Element 的相鄰按鈕左邊距疊在 gap 上：前六顆約 18px、「更多」前後約 6px）；預覽開關靠右、跟加訊息那排分開
+const layout = await page.evaluate(() => {
+  const items = [...document.querySelectorAll('.msg-type-btns > button, .msg-type-btns > .el-dropdown')]
+  const rects = items.map(el => el.getBoundingClientRect())
+  const gaps = rects.slice(1).map((r, i) => Math.round(r.left - rects[i].right))
+  const toggle = document.querySelector('.fem-preview-toggle')
+  const header = document.querySelector('.fem-header')
+  const tr = toggle?.getBoundingClientRect()
+  const hr = header?.getBoundingClientRect()
+  return {
+    gaps,
+    toggleInRow: !!toggle?.closest('.msg-type-btns'),
+    toggleRightGap: tr && hr ? Math.round(hr.right - tr.right) : -1,
+    toggleFromRow: tr && rects.length ? Math.round(tr.left - rects[rects.length - 1].right) : -1,
+  }
+})
+check('A3 加訊息那排間距一樣寬', layout.gaps.length > 0 && new Set(layout.gaps).size === 1, `間距 ${layout.gaps.join('/')}px`)
+check('A4 預覽開關不在加訊息那排、靠右、跟那排拉開', !layout.toggleInRow && layout.toggleRightGap >= 0 && layout.toggleRightGap <= 24 && layout.toggleFromRow > 24,
+  `在那排裡 ${layout.toggleInRow}、離右邊 ${layout.toggleRightGap}px、離那排 ${layout.toggleFromRow}px`)
+await page.screenshot({ path: join(SHOT_DIR, 'flow-toolbar.png'), clip: await page.evaluate(() => {
+  const r = document.querySelector('.fem-header').getBoundingClientRect()
+  return { x: r.left, y: r.top, width: r.width, height: r.height }
+}) })
 await page.evaluate(() => document.querySelector('[data-tour="fmt-more"]')?.click())
 await sleep(500)
 const more = await page.evaluate(() => [...document.querySelectorAll('.el-dropdown-menu__item')].filter(i => i.offsetParent !== null).map(i => i.innerText.trim()))
-check('A2 打開「更多」看得到影片、圖片輪播', more.some(t => t.startsWith('＋ 影片')) && more.some(t => t.startsWith('＋ 圖片輪播')), more.join('｜'))
+check('A2 打開「更多」看得到影片、圖片輪播、用戶輸入', more.some(t => t.startsWith('＋ 影片')) && more.some(t => t.startsWith('＋ 圖片輪播')) && more.some(t => t.startsWith('＋ 用戶輸入')), more.join('｜'))
 await page.keyboard.press('Escape')
 await sleep(300)
 

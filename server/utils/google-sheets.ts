@@ -38,6 +38,8 @@ export interface ReadSheetResult {
   mergeCount: number
   /** 匯入健檢統計（列數、被略過/合併/沒答案等），給 sheetHealthWarnings 用 */
   stats: SheetImportStats
+  /** 各分頁卡片內文裡的欄名（照出現順序、不重複）；機器人模組切「某一格」用（`C-423`） */
+  fieldHeaders: string[]
   /**
    * 沒讀的分頁（使用說明頁等）；預覽要講「跳過了哪幾頁」。
    * Numbers 的「輸出摘要」不在這裡（放 stats.exportSummarySheets）：這裡的頁預覽會講成「看起來是使用說明」，
@@ -395,6 +397,7 @@ export async function readGoogleSheetAsCards(
   const collector = createCardCollector({ legacy })
   const titles: string[] = []
   const emptySheets: string[] = []
+  const fieldHeaders: string[] = []
   let mergeCount = 0
 
   for (const t of targets) {
@@ -417,7 +420,7 @@ export async function readGoogleSheetAsCards(
       continue
     }
     // values 從 A1 起算（前面的空白列也會回空陣列），第 i 個就是試算表的第 i+1 列
-    const { cards: sheetCards, stats } = rowsToCards(rows, { legacy, firstRow: 1 })
+    const { cards: sheetCards, stats, fieldHeaders: sheetFieldHeaders } = rowsToCards(rows, { legacy, firstRow: 1 })
     if (!sheetCards.length) {
       // 跟 Excel 同一套（`C-296` 審查）：整頁空白不講，有字卻一條都整理不出來的才講
       if (hasAnyText(rows)) emptySheets.push(t.title)
@@ -427,6 +430,7 @@ export async function readGoogleSheetAsCards(
     titles.push(t.title)
     mergeCount += countVerticalMerges(t.merges)
     collector.addSheet(sheetCards, stats, t.title)
+    for (const h of sheetFieldHeaders) if (!fieldHeaders.includes(h)) fieldHeaders.push(h)
   }
 
   if (!collector.stats.rowCount) {
@@ -442,6 +446,7 @@ export async function readGoogleSheetAsCards(
     sheetTitle: titles.join('、') || targets[0]?.title || 'Sheet1',
     mergeCount,
     stats: collector.stats,
+    fieldHeaders,
     skippedSheets: legacy ? skippedSheetNames(allTitles, readTitles) : splitSkippedSheets(allTitles, readTitles, collector.stats),
     emptySheets,
   }
@@ -725,13 +730,13 @@ function appendNewLines(existing: string, add: string): string {
 export function rowsToCards(
   rawRows: string[][],
   opts: { legacy?: boolean, firstRow?: number } = {},
-): { cards: SheetCard[]; stats: SheetImportStats } {
+): { cards: SheetCard[]; stats: SheetImportStats; fieldHeaders: string[] } {
   const legacy = opts.legacy === true
   const firstRow = opts.firstRow ?? 1
   const indexed = (rawRows ?? [])
     .map((cells, index) => ({ cells: Array.isArray(cells) ? cells : [], index }))
     .filter(r => r.cells.some(c => String(c ?? '').trim()))
-  if (indexed.length < 2) return { cards: [], stats: emptySheetStats() }
+  if (indexed.length < 2) return { cards: [], stats: emptySheetStats(), fieldHeaders: [] }
 
   const { headerAt, titles: titleRows } = legacy ? { headerAt: 0, titles: [] as string[] } : locateHeaderRow(indexed)
   const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
@@ -837,7 +842,16 @@ export function rowsToCards(
     ...(legacy ? {} : { continuedExamples, cappedOut: [...cappedOut], ...(serialColumns.length ? { serialColumns } : {}) }),
     ...(titleRows.length ? { headerRows: [headers.filter(Boolean).slice(0, HEALTH_LIST_MAX).join('、')] } : {}),
   }
-  return { cards, stats }
+  /**
+   * `C-423`：卡片內文裡「欄名：值」的欄名（第一欄是名稱，不算）。機器人模組要從卡片切出「出貨時間」那一格，
+   * 只認這份清單——內文自己也常有「依原廠公告：」這種冒號，用猜的切不準（MYFEEL 實測）。
+   * 兩欄表的內文就是第二欄整段、沒有「欄名：」，所以整段算第二欄。
+   */
+  const twoColumnTable = mode.legacy ? headers.length <= 2 : mode.tableWidth <= 2
+  const fieldHeaders = twoColumnTable
+    ? [String(headers[1] ?? '').trim() || '內容']
+    : headers.slice(1).map(h => String(h ?? '').trim()).filter(Boolean)
+  return { cards, stats, fieldHeaders }
 }
 
 const SERIAL_CELL = /^\d{1,4}\.?$/

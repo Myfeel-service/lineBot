@@ -119,3 +119,18 @@ describe('`C-416` 文字加圖', () => {
     expect(save([{ type: 'text', text: '  ', imageUrl: IMG }])).toThrowError(/回覆文字不可為空/)
   })
 })
+
+describe('`C-424` 快速回覆一定要在最後一則', () => {
+  // LINE 只顯示最後一則上的快速回覆——排在中間的文字送得到、按鈕默默不見
+  const QR = { type: 'quickReply', text: '想看哪一類？', quickReplies: [{ action: { type: 'message', label: '新品', text: '新品' } }] }
+  const IMAGE = { type: 'image', originalContentUrl: 'https://example.com/a.jpg', previewImageUrl: 'https://example.com/a.jpg' }
+
+  it('快速回覆後面還有一則：存檔擋下，並講為什麼', () => {
+    expect(save([QR, IMAGE])).toThrowError(/快速回覆要放在最後一則.*只會在最後一則訊息下面顯示/)
+  })
+
+  it('對照組：圖片在前、快速回覆在最後（正式庫 58 則都是這樣）照樣存得起來', () => {
+    expect(save([IMAGE, QR])).not.toThrow()
+    expect(save([QR])).not.toThrow()
+  })
+})

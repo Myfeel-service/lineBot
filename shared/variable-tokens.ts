@@ -18,8 +18,28 @@
  *    當成變數的話送出去會變空白。
  */
 
+import { replaceSheetFieldTokens, sheetFieldLabel, sheetFieldRefFromLabel, sheetFieldToken } from './sheet-field'
+
 /** 膠囊左右的邊界（U+202F 窄的不換行空白） */
 export const VAR_TOKEN_EDGE = ' '
+
+/**
+ * 膠囊裡的字最長幾個字。`C-423` 起有「試算表的一格」膠囊（「Giaretti 珈樂堤《小滑手》…・出貨時間」），
+ * 商品名可以很長（知識卡標題上限 200 字）；邊界字元平常沒人打，放寬不會把兩顆膠囊連成一顆。
+ */
+const CAPSULE_RE_SOURCE = `${VAR_TOKEN_EDGE}([^${VAR_TOKEN_EDGE}\\n]{1,240})${VAR_TOKEN_EDGE}`
+
+/**
+ * 膠囊上的字 → 存的格式（不認得＝null）：先認客人資料變數，再認「列・欄」（只在模組這種 send 模式）。
+ * 跟 `variableTokenRanges` 同一條規則：畫成膠囊的，存的時候就一定換得回來。
+ */
+function storedForLabel(label: string, mode: VariableKeyMode, known?: readonly string[]): string | null {
+  const key = keyForLabel(label, mode, known)
+  if (key) return `{{${key}}}`
+  if (mode !== 'send') return null
+  const ref = sheetFieldRefFromLabel(label)
+  return ref ? sheetFieldToken(ref) : null
+}
 
 /** 送出端認得的變數名（`renderWithAttributes`）：英文開頭 */
 const SEND_KEY = '[A-Za-z][A-Za-z0-9_]*'
@@ -99,7 +119,11 @@ function keyForLabel(label: string, mode: VariableKeyMode, known?: readonly stri
 /** 存的格式 → 顯示用的字（`{{displayName}}` → 膠囊）。不是字串的照原樣回（表單初始值可能是 undefined） */
 export function toDisplayText(stored: string, mode: VariableKeyMode = 'send'): string {
   if (typeof stored !== 'string' || !stored.includes('{{')) return stored
-  return stored.replace(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'), (_m, key: string) => displayTokenFor(key, mode))
+  const out = stored.replace(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'), (_m, key: string) => displayTokenFor(key, mode))
+  // `C-423`：試算表的一格 → 膠囊「列・欄」（只有模組這種 send 模式有）
+  return mode === 'send'
+    ? replaceSheetFieldTokens(out, ref => `${VAR_TOKEN_EDGE}${sheetFieldLabel(ref)}${VAR_TOKEN_EDGE}`)
+    : out
 }
 
 /**
@@ -110,9 +134,12 @@ export function variableSegments(stored: string, mode: VariableKeyMode = 'send')
   const text = typeof stored === 'string' ? stored : ''
   const out: Array<{ text: string, key?: string }> = []
   let at = 0
-  for (const m of text.matchAll(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'))) {
+  // `C-423`：模組（send）裡的試算表一格也算一段，key 是整個存的格式
+  const sheet = mode === 'send' ? '|\\{\\{sheet:[^{}|\\n]*\\|[^{}|\\n]*\\}\\}' : ''
+  for (const m of text.matchAll(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}${sheet}`, 'g'))) {
     if (m.index! > at) out.push({ text: text.slice(at, m.index) })
-    out.push({ text: variableLabel(m[1]!, mode), key: m[1]! })
+    if (m[1]) out.push({ text: variableLabel(m[1], mode), key: m[1] })
+    else out.push({ text: toDisplayText(m[0], mode).replaceAll(VAR_TOKEN_EDGE, ''), key: m[0] })
     at = m.index! + m[0].length
   }
   if (at < text.length) out.push({ text: text.slice(at) })
@@ -136,10 +163,7 @@ export function toStoredText(display: string, mode: VariableKeyMode = 'send', ex
   let out = display
   // ① 膠囊（插入按鈕插的、或從別的框貼過來的）
   if (out.includes(VAR_TOKEN_EDGE)) {
-    out = out.replace(/ ([^ \n]{1,60}) /g, (m, label: string) => {
-      const key = keyForLabel(label, mode, extraKeys)
-      return key ? `{{${key}}}` : m
-    })
+    out = out.replace(new RegExp(CAPSULE_RE_SOURCE, 'g'), (m, label: string) => storedForLabel(label, mode, extraKeys) ?? m)
     // 刪掉一半的膠囊（選一段字剪掉）留下的邊界字元：拿掉，剩下的字當一般文字
     out = out.replace(/ /g, '')
   }
@@ -166,10 +190,12 @@ export interface VariableTokenRange {
 export function variableTokenRanges(display: string, mode: VariableKeyMode = 'send'): VariableTokenRange[] {
   const out: VariableTokenRange[] = []
   if (typeof display !== 'string' || !display.includes(VAR_TOKEN_EDGE)) return out
-  const re = / ([^ \n]{1,60}) /g
-  for (const m of display.matchAll(re)) {
-    const key = keyForLabel(m[1]!, mode)
-    if (key) out.push({ start: m.index!, end: m.index! + m[0].length, key })
+  for (const m of display.matchAll(new RegExp(CAPSULE_RE_SOURCE, 'g'))) {
+    const stored = storedForLabel(m[1]!, mode)
+    if (!stored) continue
+    // 客人資料變數給變數名；`C-423` 試算表的一格給整個存的格式（`{{sheet:…}}`）
+    const key = stored.startsWith('{{sheet:') ? stored : stored.slice(2, -2)
+    out.push({ start: m.index!, end: m.index! + m[0].length, key })
   }
   return out
 }

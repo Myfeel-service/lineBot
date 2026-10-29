@@ -113,6 +113,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'flow.put': '改了一個機器人模組',
   'flow.delete': '刪掉了一個機器人模組',
   'flow.reorder': '調整了機器人模組的順序',
+  // `C-426`：送的是畫面上那一份（可能還沒存檔），什麼都沒改
+  'flow.testSend': '把機器人模組傳到手機看',
   'flowFolder.create': '新增了模組資料夾',
   'flowFolder.put': '改了模組資料夾',
   'flowFolder.delete': '刪掉了模組資料夾',
@@ -699,6 +701,19 @@ const AUDIT_DETAIL_FORMATTERS: Record<string, (row: AuditRowLike) => string[]> =
         ? `每人送${each}，共 ${count} 位：${many}`
         : `送${each}給 LINE 好友「${who || '（沒記到名字）'}」`,
       ...(mod ? [`內容是模組「${mod}」`] : []),
+    ]
+  },
+  // `C-426`：跟推播試發同一種講法（每人送幾則、給誰），⛔ 不走「欄位：值」對照
+  'flow.testSend': (row) => {
+    const a = row.after ?? {}
+    const many = String(a.recipientNames ?? '').trim()
+    const count = Number(a.recipientCount)
+    const n = Number(a.messagesCount)
+    const each = Number.isFinite(n) && n > 0 ? ` ${n} 則` : ''
+    return [
+      Number.isFinite(count) && count > 1
+        ? `每人送${each}，共 ${count} 位：${many}`
+        : `送${each}給 LINE 好友「${many || '（沒記到名字）'}」`,
     ]
   },
   'broadcast.schedule': (row) => {

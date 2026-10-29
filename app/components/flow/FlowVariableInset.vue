@@ -23,16 +23,82 @@
               <span v-if="opt.hint" class="flow-var-inset__item-hint">{{ opt.hint }}</span>
             </span>
           </el-dropdown-item>
+          <!-- `C-423`：只有模組頁有（那邊送出端才會換這種標記） -->
+          <el-dropdown-item v-if="sheetPicker" divided :command="SHEET_COMMAND" data-tour="var-sheet-field">
+            <span class="flow-var-inset__item">
+              <span class="flow-var-inset__item-label">試算表的一格</span>
+              <span class="flow-var-inset__item-hint">例：Giaretti 的出貨時間。改試算表，這裡跟 AI 一起變</span>
+            </span>
+          </el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+
+    <!--
+      `C-423`：挑「哪一份試算表 → 哪一列 → 哪一欄」，下面直接秀現在寫的內容（挑對了沒一眼看得出來）。
+      插進去的是一顆膠囊「列・欄」；送出時換成那張知識卡上當下寫的。
+    -->
+    <el-dialog
+      v-if="sheetPicker && sheetOpen"
+      v-model="sheetOpen"
+      title="帶出試算表上的一格"
+      width="min(520px, 92vw)"
+      append-to-body
+      class="flow-sheet-dialog"
+    >
+      <div v-if="sheetPicker.loading.value && !sheetPicker.sources.value" class="tags-loading">
+        <div class="spinner" />
+        <span>讀試算表中…</span>
+      </div>
+      <p v-else-if="sheetPicker.error.value" class="flow-sheet-dialog__error">{{ sheetPicker.error.value }}</p>
+      <p v-else-if="!sheetSources.length" class="flow-sheet-dialog__empty">
+        這個帳號還沒有接 Google 試算表。到「AI 知識庫 → 加入知識 → Google 試算表」接一份（一列一個商品、第一列寫欄名），這裡就挑得到。
+      </p>
+      <div v-else class="admin-field-stack">
+        <div class="admin-field-group">
+          <AdminFieldLabel text="哪一份試算表" tight />
+          <el-select v-model="sheetSourceId" class="control-full" @change="onSheetSourceChange">
+            <el-option v-for="s in sheetSources" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </div>
+        <p v-if="pickedSource && !pickedSource.headers" class="flow-sheet-dialog__empty">
+          這份試算表要再同步一次才挑得到欄位：到「AI 知識庫」打開這份資料按「立即同步」，或等一小時內自動同步。
+        </p>
+        <template v-else-if="pickedSource">
+          <div class="admin-field-group">
+            <AdminFieldLabel text="哪一列（第一欄的名稱）" tight />
+            <el-select v-model="sheetRow" filterable class="control-full" placeholder="打字找商品">
+              <el-option v-for="r in pickedSource.rows" :key="r.title" :label="r.title" :value="r.title" />
+            </el-select>
+          </div>
+          <div class="admin-field-group">
+            <AdminFieldLabel text="哪一欄" tight />
+            <el-select v-model="sheetField" class="control-full">
+              <el-option v-for="h in pickedSource.headers" :key="h" :label="h" :value="h" />
+            </el-select>
+          </div>
+          <div v-if="sheetRow && sheetField" class="admin-field-group">
+            <AdminFieldLabel text="現在寫的是" tight />
+            <p v-if="pickedValue" class="flow-sheet-dialog__value">{{ pickedValue }}</p>
+            <p v-else class="flow-sheet-dialog__empty">這一列的「{{ sheetField }}」是空的——插進去的話客人會看到空白，先到試算表填好。</p>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="sheetOpen = false">取消</el-button>
+        <el-button type="primary" :disabled="!sheetRow || !sheetField || !pickedSource?.headers" @click="insertSheetField">插入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, inject, nextTick, ref } from 'vue'
 import type { CaretRange } from '~/utils/insert-token-at-caret'
 import { insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+import { FLOW_SHEET_PICKER_KEY } from '~/utils/flow-sheet-picker'
+import { sheetFieldLabel } from '~~/shared/sheet-field'
+import { VAR_TOKEN_EDGE } from '~~/shared/variable-tokens'
 
 /**
  * token＝插進輸入框的字。`D-128` 起是膠囊的顯示用字（`displayTokenFor`），輸入框要是 `VariableTextField`；
@@ -65,7 +131,9 @@ const emit = defineEmits<{
  */
 const glyph = computed(() => (props.size === 'sm' ? '＋ 客人資料' : '＋ 插入客人資料'))
 const ariaLabel = '插入客人資料'
-const hint = '插入客人的資料（例：LINE 名稱），送出時換成每位客人自己的'
+const hint = computed(() => (sheetPicker
+  ? '插入客人的資料（例：LINE 名稱），或試算表上的一格（例：出貨時間）'
+  : '插入客人的資料（例：LINE 名稱），送出時換成每位客人自己的'))
 
 const rootEl = ref<HTMLElement | null>(null)
 
@@ -137,7 +205,51 @@ function insertByBrowser(field: HTMLTextAreaElement | HTMLInputElement, token: s
   return ok && field.value === insertTokenAtCaret(before, token, range).text
 }
 
+// ── `C-423`：試算表的一格 ──────────────────────────────────
+const SHEET_COMMAND = '__sheet_field__'
+const sheetPicker = inject(FLOW_SHEET_PICKER_KEY, null)
+const sheetOpen = ref(false)
+const sheetSourceId = ref('')
+const sheetRow = ref('')
+const sheetField = ref('')
+/** 打開小視窗那一刻的游標（選完回來插在原位） */
+let sheetCaret: CaretRange | null = null
+const sheetSources = computed(() => sheetPicker?.sources.value ?? [])
+const pickedSource = computed(() => sheetSources.value.find(s => s.id === sheetSourceId.value) ?? null)
+const pickedValue = computed(() => pickedSource.value?.rows.find(r => r.title === sheetRow.value)?.values[sheetField.value] ?? '')
+
+function onSheetSourceChange() {
+  sheetRow.value = ''
+  sheetField.value = pickedSource.value?.headers?.[0] ?? ''
+}
+
+async function openSheetPicker(range: CaretRange | null) {
+  sheetCaret = range
+  sheetOpen.value = true
+  // 每次打開都重讀一次（剛改完試算表、按了同步，要看得到新的）
+  await sheetPicker?.reload(true)
+  if (!pickedSource.value) {
+    // 預設挑第一份「知道有哪幾欄」的
+    sheetSourceId.value = (sheetSources.value.find(s => s.headers) ?? sheetSources.value[0])?.id ?? ''
+    onSheetSourceChange()
+  }
+}
+
+function insertSheetField() {
+  if (!sheetRow.value || !sheetField.value) return
+  const token = `${VAR_TOKEN_EDGE}${sheetFieldLabel({ row: sheetRow.value, field: sheetField.value })}${VAR_TOKEN_EDGE}`
+  sheetOpen.value = false
+  caretRange = sheetCaret
+  void onCommand(token)
+}
+
 async function onCommand(cmd: string | number | object) {
+  if (cmd === SHEET_COMMAND) {
+    const range = caretRange
+    caretRange = null
+    void openSheetPicker(range)
+    return
+  }
   const token = String(cmd)
   const range = caretRange
   caretRange = null

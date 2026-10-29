@@ -865,3 +865,19 @@ describe('probeGoogleSheetAccess（finding 6）', () => {
     expect(res).toMatchObject({ hasData: true, narrowTitles: [] })
   })
 })
+
+describe('`C-423` 卡片內文的欄名（機器人模組切「某一格」用）', () => {
+  it('多欄表：第一欄（名稱）以外有名字的欄，照順序', () => {
+    const { fieldHeaders } = rowsToCards([['商品', '出貨時間', '商品頁面', ''], ['Giaretti', '10 月底', 'https://a.example', 'x']], { legacy: true })
+    expect(fieldHeaders).toEqual(['出貨時間', '商品頁面'])
+  })
+
+  it('兩欄表：內文就是第二欄整段，欄名算第二欄的；第二欄沒名字就叫「內容」', () => {
+    expect(rowsToCards([['問題', '回答'], ['退款多久', '7 天']], { legacy: false }).fieldHeaders).toEqual(['回答'])
+    expect(rowsToCards([['問題', ''], ['退款多久', '7 天']], { legacy: true }).fieldHeaders).toEqual(['內容'])
+  })
+
+  it('沒有資料的表：空的', () => {
+    expect(rowsToCards([['商品', '出貨時間']], { legacy: false }).fieldHeaders).toEqual([])
+  })
+})

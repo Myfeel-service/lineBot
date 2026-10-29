@@ -8,6 +8,7 @@ import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-r
 import { assertPlanAllows } from '~~/server/utils/billing'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
+import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
@@ -31,7 +32,8 @@ export default defineEventHandler(async (event) => {
   if (name !== undefined) updates.name = assertValidFlowName(name)
   if (messages !== undefined) {
     assertValidFlowMessages(messages)
-    updates.messages = messages
+    // `C-423`：用了「試算表的一格」的，記下每一格當下的內容（送出時換不到才用）
+    updates.messages = await attachSheetSnapshots(messages, workspaceId)
   }
   if (isActive !== undefined) updates.isActive = isActive
   // 系統模組不分組（永遠在頂端）；只有 regular flow 可以指定 folderId

@@ -3,6 +3,7 @@ import { flowTaggedPostbackError, validateUnifiedAction } from '~~/shared/action
 import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
 import { cardMessageError } from '~~/shared/card-message'
 import { textImageError } from '~~/shared/text-image-card'
+import { quickReplyNotLastError } from '~~/shared/flow-message-order'
 
 const FLOW_MESSAGE_LIMIT = 5
 const USER_INPUT_ATTRIBUTE_RE = /^[A-Za-z][A-Za-z0-9_]{0,49}$/
@@ -216,6 +217,8 @@ export function assertValidFlowMessages(messages: unknown): asserts messages is 
   if (userInputCount > 0 && messages[messages.length - 1]?.type !== 'userInput') {
     fail('用戶輸入卡片必須放在所有訊息的最結尾')
   }
+  const quickReplyOrderError = quickReplyNotLastError(messages)
+  if (quickReplyOrderError) fail(quickReplyOrderError)
 
   for (const msg of messages) {
     validateMessageByType(msg)
