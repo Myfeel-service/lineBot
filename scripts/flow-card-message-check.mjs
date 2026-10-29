@@ -162,7 +162,7 @@ check('B4 內文上限 1000', fresh.bodyLabel.includes('最多 1000 字'), `「$
 check('B5 只有一張時預覽畫成單張寬卡（真的有 240px 以上，還是空的卡也一樣）', fresh.single === 1 && fresh.singleWidth >= 240,
   `單張寬卡 ${fresh.single}、寬 ${fresh.singleWidth}px`)
 
-const addedBtn = await clickByText('⊕ 新增按鈕（非必需）', '.carousel-sub-card', 'last')
+const addedBtn = await clickByText('⊕ 新增按鈕（選填）', '.carousel-sub-card', 'last')
 await sleep(600)
 const withBtn = await page.evaluate(() => ({
   style: [...document.querySelectorAll('.carousel-sub-card')].at(-1)?.querySelector('.el-radio-button.is-active')?.innerText.trim() ?? '(沒選)',

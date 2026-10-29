@@ -1125,7 +1125,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'richMessage',
         title: '上傳大圖 + 綁動作',
         description:
-          '在這裡上傳底圖。<strong>上傳後</strong>，圖上每個區塊就能各自綁一個動作（開網址、觸發模組、傳訊息…）——這是圖文訊息最強的地方。',
+          '在這裡上傳底圖。<strong>上傳後</strong>，圖上每個區塊就能各自綁一個動作（開啟網址、傳送文字、觸發機器人模組）——這是圖文訊息最強的地方。',
         placement: 'top',
       },
     ],
@@ -1203,7 +1203,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         demoType: 'quickReply',
         title: '每顆按鈕',
         description:
-          '一顆按鈕 = 一個建議選項：設<strong>顯示文字</strong>、選客人點了要做什麼（回傳訊息／開網址／觸發模組）。',
+          '一顆按鈕 = 一個建議選項：設<strong>顯示文字</strong>、選客人點了要做什麼（開啟網址／傳送文字／觸發機器人模組）。',
         placement: 'top',
       },
       {
@@ -1313,7 +1313,7 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         target: '',
         title: '幫每個區塊綁動作',
         description:
-          '上傳背景圖後，下方會出現「<strong>區塊設定</strong>」：幫每一個區塊綁一個動作——<strong>開網址、傳訊息、觸發模組、切換到另一個選單</strong>都行。'
+          '上傳背景圖後，下方會出現「<strong>區塊設定</strong>」：幫每一個區塊綁一個動作——<strong>開啟網址、傳送文字、觸發機器人模組、切換選單</strong>都行。'
           // 2026-09-29（`D-109`）：「客人看到的樣子」是唯一驗得到「客人按下去會怎樣」的地方，以前沒人講。
           // 它要上傳圖之後才出現，所以寫在這張置中卡裡、不另開一步去指一個還不存在的東西。
           + '右邊還會出現「<strong>客人看到的樣子</strong>」：<strong>點任何一格試按</strong>，就看得到客人按下去會收到什麼（試按不會真的送出、也不會貼標籤）。',

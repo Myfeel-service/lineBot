@@ -388,7 +388,7 @@
                   </div>
                 </div>
                 <el-button v-if="!msg.buttons || msg.buttons.length < 4" plain size="small" class="control-dashed-add" @click="addButton(msg)">
-                  ⊕ 新增按鈕 (非必需)
+                  ⊕ 新增按鈕（選填）
                 </el-button>
               </div>
 
@@ -486,11 +486,11 @@
                 <div class="card-section-stack">
                   <div class="admin-field-group">
                     <AdminFieldLabel tight>
-                      提醒文字 <span class="text-muted">(最多 400 字)</span>
+                      提醒文字 <span class="text-muted">(必填，最多 400 字)</span>
                     </AdminFieldLabel>
                     <el-input
                       v-model="msg.altText"
-                      placeholder="提醒文字（最多 400 字）"
+                      placeholder="客人的通知和聊天列表會顯示這行字"
                       maxlength="400"
                     />
                   </div>
@@ -566,7 +566,7 @@
                 <div class="carousel-alt-wrap card-section-stack">
                   <div class="admin-field-group" data-tour="quick-prompt">
                     <AdminFieldLabel tight>
-                      搭配的文字內容 <span class="text-muted">(必需輸入，最多 5000 字)</span>
+                      搭配的文字內容 <span class="text-muted">(必填，最多 5000 字)</span>
                     </AdminFieldLabel>
                     <div class="flow-textarea-wrapper flow-textarea-wrapper--var-inset">
                       <VariableTextField
@@ -609,7 +609,7 @@
                       <div class="carousel-actions" data-tour="quick-button">
                       <FlowActionEditor
                         :action="qr.action"
-                        :type-options="quickReplyActionTypeOptions"
+                        :type-options="standardActionTypeOptions"
                         :module-options="modulePickerOptions"
                         :tag-options="allTags"
                         :enable-tagging="true"
@@ -657,7 +657,7 @@
                       type="textarea"
                       :known-keys="variableKeys"
                       :rows="3"
-                      placeholder="請輸入你的問題 (必需輸入)"
+                      placeholder="請輸入你的問題"
                       maxlength="500"
                       resize="none"
                     />
@@ -758,13 +758,13 @@
                 <div class="carousel-alt-wrap card-section-stack">
                   <div class="admin-field-group">
                     <AdminFieldLabel tight>
-                      訊息提醒文字 <span class="text-muted">(最多 400 字)</span>
+                      提醒文字 <span class="text-muted">(選填，最多 400 字)</span>
                     </AdminFieldLabel>
                     <div class="flow-input-inset-wrap control-full">
                       <VariableTextField
                         v-model="msg.altText"
                         :known-keys="variableKeys"
-                        :placeholder="msg.type === 'carousel' ? '訊息提醒文字（客人裝置顯示不出卡片時，改顯示這行字，最多 400 字）' : '訊息提醒文字（最多 400 字）'"
+                        :placeholder="`沒填的話，客人的通知會顯示「${ALT_TEXT_FALLBACK[msg.type]}」`"
                         maxlength="400"
                       />
                       <FlowVariableInset
@@ -1074,7 +1074,7 @@
                         class="control-dashed-add"
                         @click="addFlexImageCarouselButton(col)"
                       >
-                        ⊕ 新增按鈕（非必需）
+                        ⊕ 新增按鈕（選填）
                       </el-button>
                     </div>
                   </div>
@@ -1521,23 +1521,24 @@ const MSG_META: Record<string, { label: string; badge: string }> = {
   userInput:     { label: '用戶輸入卡片', badge: 'badge-red' },
 }
 
-const standardActionTypeOptions = [
-  { value: 'uri', label: '開網址' },
-  { value: 'message', label: '傳文字' },
-  { value: 'module', label: '觸發模組' },
-]
+/** 卡片類沒填提醒文字時送出端補的字（跟 `server/utils/handler.ts` 各處 `lineAltText` 的預設字一致） */
+const ALT_TEXT_FALLBACK: Record<string, string> = {
+  carousel: '輪播訊息',
+  imageCarousel: '圖片輪播',
+  flexImageCarousel: '卡片訊息',
+}
 
-const quickReplyActionTypeOptions = [
-  { value: 'message', label: '傳送文字' },
+// `C-417`：按鈕、快速回覆、圖片動作同一套名字與順序，跟圖文選單（`AdminAreaActionEditor`）、活動、客服預存一致。
+// 以前這頁自己有三套（「開網址／傳文字」「傳送文字／開啟網址」「未有行動」），同一個動作在隔壁格叫另一個名字。
+const standardActionTypeOptions = [
   { value: 'uri', label: '開啟網址' },
-  { value: 'module', label: '觸發模組' },
+  { value: 'message', label: '傳送文字' },
+  { value: 'module', label: '觸發機器人模組' },
 ]
 
 const imageCarouselActionTypeOptions = [
-  { value: 'none', label: '未有行動' },
-  { value: 'uri', label: '開啟網址' },
-  { value: 'message', label: '傳送文字' },
-  { value: 'module', label: '觸發模組' },
+  { value: 'none', label: '不觸發動作' },
+  ...standardActionTypeOptions,
 ]
 
 function msgTypeLabel(type: string) {
