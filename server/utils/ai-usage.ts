@@ -23,6 +23,7 @@ import { AI_BUDGET_ERROR_REASON } from './ai-usage-calls'
 import { capMapSize } from './bounded-cache'
 import { aiCallsTowardCeiling } from '~~/shared/billing/call-ceiling'
 import { taipeiYyyyMm } from '~~/shared/time'
+import { aiBudgetMessage, aiBudgetResumeLabel } from '~~/shared/ai-budget'
 import type { AiBudgetKind, AiCostBucketId, AiModelTokenCounts, AiUsageDoc } from '~~/shared/types/ai-knowledge'
 
 export const AI_USAGE_COLLECTION = 'aiUsage'
@@ -183,6 +184,12 @@ export interface UsageDelta {
    */
   backgroundTokens?: number
   /**
+   * 後台自用那桶（test*）裡，**被「後台自用」那本帳擋的那幾件**用掉的部分（`C-414`）：小幫手、擬推播文案、
+   * 圖文選單底圖、節慶建議。子集慣例同上；測試對話、AI 產生腳本這些沒被擋的不算進來（數了卻不擋＝擋錯人）。
+   * ⛔ 不要手寫：一律用 `ai-usage-calls.ts` 的 `asAssistUsage` 包。
+   */
+  assistTokens?: number
+  /**
    * 生成 token 照模型拆的明細（`D-130`②）：上面那幾個總數的**子集**，算錢時照各模型單價。
    * ⛔ 不要手寫：一律用 `ai-usage-calls.ts` 的 `usageFromCalls` 產生，它保證總數與明細寫在同一桶、數字一致。
    */
@@ -275,6 +282,7 @@ async function writeAiUsage(workspaceId: string, delta: UsageDelta, db: Firestor
   if (delta.testInvocations) updates.testInvocations = FieldValue.increment(delta.testInvocations)
   if (delta.buildEmbeddingTokens) updates.buildEmbeddingTokens = FieldValue.increment(delta.buildEmbeddingTokens)
   if (delta.backgroundTokens) updates.backgroundTokens = FieldValue.increment(delta.backgroundTokens)
+  if (delta.assistTokens) updates.assistTokens = FieldValue.increment(delta.assistTokens)
   // 巢狀 map ＋ merge:true＝只動到有寫的那幾格（其他模型、其他桶的明細不會被蓋掉）
   const modelTokens = modelTokenIncrements(delta.modelTokens)
   if (modelTokens) updates.modelTokens = modelTokens
@@ -425,22 +433,22 @@ type BudgetCounts = {
   importOutputTokens: number
   buildEmbeddingTokens: number
   backgroundTokens: number
-  testInputTokens: number
-  testOutputTokens: number
-  testEmbeddingTokens: number
+  assistTokens: number
 }
 
 /**
  * 某一本帳這個月用了多少（純函式，給測試直接驗口徑）。
  *   knowledge  ＝ 整理桶（import 進出＋建索引向量）扣掉背景那份
  *   background ＝ backgroundTokens（整理桶的子集）
- *   assist     ＝ 後台自用桶（test*）
+ *   assist     ＝ assistTokens（後台自用桶的子集：只有圈在這本裡的那幾件）
  * `C-413` 上線前的舊資料沒有 backgroundTokens：整桶都算店家那本（寧可多算，上限遠高於實際用量）。
+ * ⛔ assist 不可以數整個後台自用桶（`C-414`）：那桶還有測試對話、AI 產生腳本、小幫手確認後的操作——
+ *    都沒有被這本擋，數進來的話店家在測試對話多聊幾句，小幫手、擬文案就跟著停，測試對話卻照跑。
  */
 export function aiBudgetUsed(data: Partial<AiUsageDoc> | null | undefined, kind: AiBudgetKind): number {
   const n = (v: unknown) => Math.max(0, Number(v ?? 0) || 0)
   if (kind === 'background') return n(data?.backgroundTokens)
-  if (kind === 'assist') return n(data?.testInputTokens) + n(data?.testOutputTokens) + n(data?.testEmbeddingTokens)
+  if (kind === 'assist') return n(data?.assistTokens)
   const build = n(data?.importInputTokens) + n(data?.importOutputTokens) + n(data?.buildEmbeddingTokens)
   return Math.max(0, build - n(data?.backgroundTokens))
 }
@@ -474,9 +482,7 @@ export async function getMaintenanceBudgetStatus(
       importOutputTokens: Number(data?.importOutputTokens ?? 0),
       buildEmbeddingTokens: Number(data?.buildEmbeddingTokens ?? 0),
       backgroundTokens: Number(data?.backgroundTokens ?? 0),
-      testInputTokens: Number(data?.testInputTokens ?? 0),
-      testOutputTokens: Number(data?.testOutputTokens ?? 0),
-      testEmbeddingTokens: Number(data?.testEmbeddingTokens ?? 0),
+      assistTokens: Number(data?.assistTokens ?? 0),
     }
     maintBudgetCache.set(workspaceId, { expiresAt: Date.now() + 60_000, counts })
   }
@@ -485,30 +491,8 @@ export async function getMaintenanceBudgetStatus(
   return { used, cap, blocked: used >= cap, kind }
 }
 
-/** 下個月 1 號（台灣日曆月）：「X 月 1 日恢復」 */
-export function aiBudgetResumeLabel(date = new Date()): string {
-  const month = Number(currentYyyyMm(date).slice(4))
-  return `${month === 12 ? 1 : month + 1} 月 1 日`
-}
-
-/**
- * 擋下來時給人看的話（`C-413`，照示意頁 `RsVDnyeaVEbv76CgZ3TRoA` 的字）：發生什麼、幾號恢復、還照常的是什麼。
- * ⛔ 不講 token、不講 M——以前是「本月 AI 整理用量已達安全上限（20.0M/20M token）」，店家看不懂。
- * 加入知識視窗的「擋在門口」那張卡拿 title／body 分兩行排；錯誤訊息用兩句接起來。
- */
-export function aiBudgetMessage(kind: AiBudgetKind, date = new Date()): { title: string; body: string } {
-  const resume = aiBudgetResumeLabel(date)
-  if (kind === 'background') {
-    return { title: `這個月 AI 讀對話（貼標建議、找新標籤）到上限了，${resume}恢復`, body: '回答客人不受影響。' }
-  }
-  if (kind === 'assist') {
-    return { title: `這個月小幫手、擬文案、畫選單底圖這類後台 AI 到上限了，${resume}恢復`, body: '回答客人不受影響。' }
-  }
-  return {
-    title: `這個月加入資料到上限了，${resume}恢復`,
-    body: '這段期間網頁、試算表改了，AI 也要等到那天才跟上；已經放進去的照常回答客人。需要更多請跟我們聯絡。',
-  }
-}
+/** 擋下來時講的話搬到 shared（`C-414`）：資料頁、標籤頁要在讀的當下組「幾號恢復」。這裡轉出去給既有的呼叫端 */
+export { aiBudgetMessage, aiBudgetResumeLabel }
 
 /**
  * 某一本帳超過上限就丟 429（給入口端點與 gemini 出口共用）；不指定就是「店家加資料」那本。

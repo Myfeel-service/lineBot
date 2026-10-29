@@ -2,8 +2,10 @@ import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
+import { assertMaintenanceBudget } from '~~/server/utils/ai-usage'
 import {
   buildSourceClearFailure,
+  buildSourceFailure,
   getSource,
   KNOWLEDGE_SOURCES_COLLECTION,
   loadAppliedPage,
@@ -77,7 +79,8 @@ export default defineEventHandler(async (event) => {
     const msg = String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200)
     const failCount = Number((source.data as any).checkFailCount ?? 0) + 1
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-      failureReason: `更新失敗：${msg}`,
+      // 走 buildSourceFailure（`C-414`）：上次「上限先停」的記號一起收掉，不然 404 會被講成「等下個月就好」、換網址那格也藏起來
+      ...buildSourceFailure(`更新失敗：${msg}`),
       checkFailCount: failCount,
       lastCheckedAt: FieldValue.serverTimestamp(),
       ...(failCount >= 3 ? { status: 'failed' } : {}),
@@ -142,6 +145,10 @@ export default defineEventHandler(async (event) => {
       fetchedChars: extracted.text.trim().length,
     }
   }
+
+  // 要請 AI 重新整理了：這個月加入資料到上限就在這裡講（`C-414`）。⛔ 要在下面清失敗標記之前——
+  // 不然「這個月先停」的記號被清掉、資料頁回到正常，工作開了才在背景撞上限
+  await assertMaintenanceBudget(workspaceId, db, 'knowledge')
 
   // 抓取成功（有內容、要進重切）→ 同樣清掉失敗標記與退避計數，理由同上
   await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({

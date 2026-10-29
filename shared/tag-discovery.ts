@@ -25,6 +25,7 @@ import type { TagCategory } from './types/tag-broadcast'
 import { daysBetween, taipeiDate } from './time'
 import { SIMILAR_MAX_HITS, findSimilarNames, normalizeTagName } from './tag-similarity'
 import { isAiJudgedTag } from './tag-admin'
+import { aiBudgetMessage } from './ai-budget'
 
 /** 收件匣上限：沒人清就先不加（同 userTagSuggestions 的精神，別變成沒人看的牆） */
 export const MAX_PENDING_DISCOVERIES = 6
@@ -283,6 +284,11 @@ export interface TagDiscoveryDoc {
    *   （同知識庫 requestGapScan 的做法）。
    */
   rescanRequestedMs?: number
+  /**
+   * 這個月 AI 讀對話到上限、先停（`C-414`）：哪個月停的（taipeiYyyyMm）。排程看這格就走、不再查用量；
+   * 過了這個月自然不算數（見 shared/ai-budget 的 budgetPauseActive）。畫面不讀這格，自己即時查（月中才撞到的也講得出來）。
+   */
+  budgetPausedMonth?: string
   updatedAt?: unknown
   createdAt?: unknown
 }
@@ -407,6 +413,8 @@ export interface DiscoveryStateInput {
   handledThisVisit: boolean
   /** 上次掃描的結果明細；沒有（舊資料）就退回泛用句子，⛔不要硬掰一個原因 */
   lastScan?: DiscoveryScanOutcome | null
+  /** 這個月 AI 讀對話到上限、先停（`C-414`，伺服器即時查的）：要講原因跟幾號恢復，⛔ 不能講成「沒發現主題」 */
+  budgetPaused?: boolean
   now?: number
 }
 
@@ -478,6 +486,12 @@ export function discoveryState(input: DiscoveryStateInput): { tone: DiscoverySta
     }
   }
 
+  // 這個月到上限先停（`C-414`）排在「壞掉」前面：停的期間不會再記失敗，留著的失敗是之前的事，現在的原因是這個
+  if (input.budgetPaused) {
+    const m = aiBudgetMessage('background', new Date(now))
+    return { tone: 'warning', text: `${m.title}。${m.body}` }
+  }
+
   // ⛔ 壞掉最優先：壞掉時 lastScanMs 可能是 0（從沒成功過）也可能很舊，
   //    兩種都不能顯示成「還沒跑」或「沒發現主題」那種無害的話
   if (input.stalled) {
@@ -537,6 +551,8 @@ export interface DiscoveryTimingInput {
   lastScanMs: number
   /** 比 lastScanMs 新＝有人按了「立即掃描一次」，還沒被排程撿走 */
   rescanRequestedMs?: number
+  /** 這個月到上限先停（`C-414`）：「下次自動掃描」講不出誠實的日子（上面那句已經講了幾號恢復），整行不出現 */
+  budgetPaused?: boolean
   now?: number
 }
 
@@ -554,7 +570,7 @@ function shortDate(ymd: string): string {
 
 export function discoveryTiming(input: DiscoveryTimingInput): string | null {
   const now = input.now ?? Date.now()
-  if (!input.enabled) return null
+  if (!input.enabled || input.budgetPaused) return null
 
   // 排隊中最優先：按了按鈕之後最想知道的是「所以到底會不會跑、什麼時候」
   if ((input.rescanRequestedMs ?? 0) > input.lastScanMs) {

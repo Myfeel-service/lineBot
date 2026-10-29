@@ -16,7 +16,7 @@
 
 import { generateJson, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
+import { asAssistUsage, runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { splitProfileProducts } from '~~/server/utils/festival-tailor'
 import { storeProfileForPrompt, type StoreProfileDoc } from '~~/shared/types/store-profile'
 import { BROADCAST_DRAFT_VARIANTS } from '~~/shared/broadcast-draft-handoff'
@@ -218,7 +218,8 @@ async function runCopyGeneration(
         maxOutputTokens: 900,
         thinkingBudget: 0,
       }), 'assist'),
-    calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
+    // 標成後台自用那本（`C-414`）：每月上限只數圈在那本裡的這幾件
+    calls => recordAiUsage(workspaceId, asAssistUsage({ ...usageFromCalls('test', calls), testInvocations: 1 })),
   )
 
   const raw = Array.isArray(data?.variants) ? data.variants : []

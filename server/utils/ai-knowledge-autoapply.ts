@@ -32,7 +32,7 @@ import { invalidateKnowledgeChunkCount } from './ai-knowledge-quota'
 import { listChunksBySource, loadAppliedPage, sourceNumbersVolatile } from './ai-knowledge-sources'
 import { regenerateOverviewCard } from './ai-overview'
 import { recordAiUsage } from './ai-usage'
-import { callsOf, usageFromCalls } from './ai-usage-calls'
+import { callsOf, isAiBudgetError, usageFromCalls } from './ai-usage-calls'
 
 /** 變動比例上限:修改張數 / 舊卡總數 超過即退人工(整頁改版的訊號) */
 export const MAX_AUTO_MODIFIED_RATIO = 0.3
@@ -170,6 +170,7 @@ export interface AutoApplyResult {
 /**
  * 對「已確認變動」的 URL 來源試跑自動套用。任何內部錯誤都 fail-open:
  * 回 manual 讓呼叫端走既有的「標記+通知人工審」,絕不讓排程因此中斷。
+ * 唯一例外是每月上限擋下（`C-414`）：丟回去給 checkOneSource 標成「這個月先停」（它自己接得住，排程不會斷）。
  */
 export async function tryAutoApplyMinorChange(
   db: Firestore,
@@ -266,6 +267,8 @@ export async function tryAutoApplyMinorChange(
     return { applied: true, noop: false, updated, failed, reason: '' }
   }
   catch (e: any) {
+    // 每月上限擋下（`C-414`）不是「比對出錯」：丟回排程標成「這個月先停」，不然會被講成「有變動，要你看一下」
+    if (isAiBudgetError(e)) throw e
     console.warn(`[auto-apply] ${sourceId} 自動套用失敗,退回人工審:`, e)
     return manual('自動比對過程出錯')
   }
@@ -462,6 +465,8 @@ export async function tryAutoApplyPageChange(
     }
   }
   catch (e) {
+    // 同上（`C-414`）：上限擋下丟回排程，⛔ 不標「有變動」——他點進去按立即更新也一樣被擋
+    if (isAiBudgetError(e)) throw e
     console.warn(`[autoapply] ${sourceId} 照網頁自動更新失敗，留給人看:`, e)
     return manualOf('other', 0, true)
   }

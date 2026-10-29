@@ -275,10 +275,15 @@ export interface KnowledgeSourceDoc {
   status: KnowledgeSourceStatus
   failureReason?: string
   /**
-   * failureReason 是哪一種（`C-413`）：`ai_budget`＝這個月加入資料到上限、自動更新先停（不是資料壞了）。
-   * 資料頁靠它別教人「去分享試算表／換網址」；成功同步時跟 failureReason 一起清掉。
+   * 停下來是哪一種（`C-413`）：`ai_budget`＝這個月加入資料到上限、自動更新先停（不是資料壞了）。
+   * 資料頁靠它別教人「去分享試算表／換網址」；成功同步時一起清掉。
+   * `C-414` 起停下來的那種不存 failureReason（話在讀的當下才組，見 shared/ai-budget），只存下面那個月份。
+   * ⛔ 寫失敗原因一律走 `buildSourceFailure`（會一起收掉這一格）：只寫原因不收它，上次留下的 'ai_budget'
+   *    會把這次真的壞掉（404、表格少了 40 列）講成「等下個月就好」。
    */
   failureKind?: 'ai_budget'
+  /** failureKind='ai_budget' 是哪個月停的（taipeiYyyyMm）：過了這個月就不算數，不用誰回頭清（見 budgetPauseActive） */
+  budgetPausedMonth?: string
   /** 排程變動偵測連續失敗次數；成功即清除。≥3 次會把 status 標成 failed */
   checkFailCount?: number
   /** 排程變動偵測最後一次「嘗試」時間（成功或失敗），退避基準；lastFetchedAt 保留「最後成功」語意 */
@@ -587,6 +592,11 @@ export interface AiUsageDoc {
    * 是那桶的**子集**（同 importInputTokens ⊆ inputTokens 的慣例），只拿來把每月上限拆帳，算錢照舊。
    */
   backgroundTokens?: number
+  /**
+   * 後台自用那桶（test*）裡，被「後台自用」那本帳擋的那幾件用掉的部分（`C-414`，2026-10-29 起才有）：
+   * 小幫手、擬推播文案、圖文選單底圖、節慶建議。測試對話、AI 產生腳本不算（沒被擋的不數）。子集，只拿來拆帳。
+   */
+  assistTokens?: number
   /**
    * 生成 token 照「哪顆模型」拆的明細（`D-130`②，2026-10-19 起才有）：`modelTokens.<桶>.<模型 key>.{input,output}`。
    * 桶＝conversation／build／test（對應上面三組總數），模型 key 見 `server/utils/ai-cost-buckets.ts`。

@@ -180,6 +180,19 @@ export function asBackgroundUsage(delta: UsageDelta): UsageDelta {
   return t > 0 ? { ...delta, backgroundTokens: (Number(delta.backgroundTokens ?? 0) || 0) + t } : delta
 }
 
+/**
+ * 被「後台自用」那本帳擋的那幾件（小幫手、擬推播文案、圖文選單底圖、節慶建議）的用量（`C-414`）：
+ * 照記進後台自用桶（test*，算錢不變），另外把同一筆標成 `assistTokens`——那本帳只數這一格。
+ * ⛔ 只包圈在後台自用那本（runWithLlmBudget 帶 'assist'）裡的那幾件；測試對話、AI 產生腳本沒被擋，包了等於拿別人的用量擋小幫手。
+ *    ai-budget-kinds.test.ts 兩個方向都守著。
+ */
+export function asAssistUsage(delta: UsageDelta): UsageDelta {
+  const t = (Number(delta.testInputTokens ?? 0) || 0)
+    + (Number(delta.testOutputTokens ?? 0) || 0)
+    + (Number(delta.testEmbeddingTokens ?? 0) || 0)
+  return t > 0 ? { ...delta, assistTokens: (Number(delta.assistTokens ?? 0) || 0) + t } : delta
+}
+
 /** 把幾筆用量加成一筆（數字相加、模型明細逐桶逐模型相加），給「一次記帳」用 */
 export function mergeUsage(...deltas: Array<UsageDelta | null | undefined>): UsageDelta {
   const out: Record<string, unknown> = {}

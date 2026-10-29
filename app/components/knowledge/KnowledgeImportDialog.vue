@@ -21,7 +21,8 @@
         加入知識
         <!-- 這段導覽教的是「給資料 → 看整理結果」；一次好幾份的清單與結果頁上它要指的東西都不在，
              按下去只會指著空氣（2026-10-11 審查），這兩個畫面就不放問號 -->
-        <span v-if="step !== 'fileBatch' && step !== 'result'" class="page-help">
+        <!-- 門口擋著時也不放（`C-414`）：它要指的投放框、起步四格、「整理並加入」都收起來了 -->
+        <span v-if="step !== 'fileBatch' && step !== 'result' && !addBlock" class="page-help">
           <el-tooltip content="在畫面上帶我走一遍" placement="bottom">
             <el-button
               class="page-help-btn"
@@ -130,8 +131,9 @@
         </template>
       </p>
 
-      <!-- 判別結果:先講「這是什麼」,再講唯一真正要知道的差異(會不會自動更新) -->
-      <div v-if="detected" class="kb-detected" :class="`kb-detected--${detected.syncTone}`">
+      <!-- 判別結果:先講「這是什麼」,再講唯一真正要知道的差異(會不會自動更新)。
+           門口擋著時不出現（`C-414`）：開帳精靈帶網址進來的話框裡已經有東西，這一塊連同「看清單挑選」會從門口那張卡底下冒出來 -->
+      <div v-if="detected && !addBlock" class="kb-detected" :class="`kb-detected--${detected.syncTone}`">
         <p class="kb-detected__head">
           <span class="kb-detected__label">{{ detected.label }}</span>
           <span class="kb-detected__sync">{{ detected.sync }}</span>
@@ -1322,7 +1324,7 @@ const emit = defineEmits<{
 
 
 const { apiFetch, workspaceId } = useWorkspace()
-const { startAdHocTour } = useTutorial()
+const { startAdHocTour, tourOpen, endTour } = useTutorial()
 
 /**
  * 標題旁那顆問號：在**這個視窗裡**帶走一遍。
@@ -2343,6 +2345,7 @@ async function loadSitePages(url: string): Promise<number> {
  * 他還沒勾過任何一頁時，先照空間幫他勾常被問的頁（規則在 utils/kb-site-pages）；勾過就不動他的選擇。
  */
 function openSitePages() {
+  if (stoppedAtDoor()) return
   if (!sitePages.value.some(p => p.checked)) {
     const order = recommendSitePages(sitePages.value, { room: roomLeft.value, maxPages: MAX_SITE_BATCH })
     const rank = new Map(order.map((u, i) => [u, i]))
@@ -2403,11 +2406,13 @@ async function runUrlList() {
 
 /** 主按鈕：好幾個網址走整站那條路，其餘照常整理並加入 */
 function onPrimaryClick() {
+  if (stoppedAtDoor()) return
   if (urlList.value) void runUrlList()
   else void runPreview()
 }
 
 async function runDiscover() {
+  if (stoppedAtDoor()) return
   discovering.value = true
   try {
     await loadSitePages(urlInput.value.trim())
@@ -2447,6 +2452,8 @@ watch([mode, pasteInput], () => {
   if (url === peekedUrl) return // 已經探過這個網址
   sitePeekCount.value = 0
   peekTimer = setTimeout(async () => {
+    // 門口擋著（`C-414`）就不探：開帳精靈帶網址進來時框裡已經有字，探到了也加不進去（額度在開窗時讀，等這一秒通常讀好了）
+    if (addBlock.value) return
     sitePeeking.value = true
     try {
       const n = await loadSitePages(url)
@@ -2472,6 +2479,7 @@ const MAX_SITE_BATCH = 50
 async function runSiteImport() {
   const targets = sitePages.value.filter(p => p.checked && p.status !== 'done')
   if (!targets.length) return
+  if (stoppedAtDoor()) return
   if (targets.length > MAX_SITE_BATCH) {
     return showToast(`一次最多加入 ${MAX_SITE_BATCH} 頁，請先取消勾選一些（可以分批）`, 'error')
   }
@@ -2814,6 +2822,18 @@ const addBlock = computed<{ kind: 'budget' | 'full', title: string, body: string
 /** 門口那張卡的「升級方案」：跟這個視窗裡其他「升級方案」連結去同一頁 */
 function goBilling() {
   if (billingLink.value) void navigateTo(billingLink.value)
+}
+
+/**
+ * 門口擋著的時候每一個「開始整理」的入口都要再擋一次（`C-414`）。只收起投放框不夠：
+ * 開帳精靈帶網址進來的話，框裡早就有東西，整站清單、「整理並加入」都還按得到——每一頁先花一次 AI 整理，
+ * 整理完才在加入那一下被擋（正是門口擋要拿掉的那種「錢花了才說放不進去」）。
+ * 回 true＝擋下了（跳一句門口那張卡的標題）。
+ */
+function stoppedAtDoor(): boolean {
+  if (!addBlock.value) return false
+  showToast(addBlock.value.title, 'warning')
+  return true
 }
 
 /**
@@ -3577,6 +3597,16 @@ function replaceWithFile(file: File, target: { id: string, name: string, chunkCo
   void runPreview()
 }
 defineExpose({ replaceWithFile })
+
+/**
+ * 門口擋著時導覽沒東西可指（`C-414`）：「知識庫：建立與匯入」是從資料頁一路點進這個視窗的，
+ * 開了窗、讀到額度才知道擋著——那時就收掉導覽，留門口那張卡講原因跟下一步。
+ * ⛔ 不讓它繼續走：後面三步要指的投放框、起步四格、「整理並加入」都收起來了，每一步聚光燈打在空的位置上。
+ * ⚠️ 放在這裡：addBlock 讀到的 previewStillRunning、replaceIntentName 宣告在上面，watch 一建立就會讀
+ */
+watch([addBlock, () => props.modelValue, tourOpen], ([block, open, touring]) => {
+  if (block && open && touring) endTour()
+})
 
 /** 取消整理:輪詢停掉、畫面回到可操作狀態（composable 早就有 cancel，只是這個視窗沒接） */
 function cancelPreview() {

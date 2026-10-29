@@ -18,7 +18,11 @@ vi.mock('./gemini', () => ({ generateJson: vi.fn(), runWithLlmBudget: vi.fn() })
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 // ⛔ 要回 Promise：主程式對它 `.catch(...)`，回 undefined 會在每一輪結尾炸掉，
 // 而那個錯誤被外層 try/catch 吞掉——測試照樣綠，但後面的程式其實一行都沒跑到
-vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./ai-usage', () => ({
+  recordAiUsage: vi.fn(async () => {}),
+  // 預設沒到上限（`C-414` 那組自己改）
+  getMaintenanceBudgetStatus: vi.fn(async () => ({ used: 0, cap: 1, blocked: false, kind: 'background' })),
+}))
 vi.mock('./inactive-tag', () => ({ INACTIVE_TAG_CODE: 'sys_inactive' }))
 vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(async () => ({ added: [] })) }))
 vi.mock('./scanner-health', () => ({ recordScannerFailure: vi.fn(async () => {}) }))
@@ -30,6 +34,8 @@ vi.mock('./scanner-health', () => ({ recordScannerFailure: vi.fn(async () => {})
 
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
+import { getMaintenanceBudgetStatus } from './ai-usage'
+import { taipeiYyyyMm } from '~~/shared/time'
 import { addTagsToUser } from './tagging'
 import {
   buildSuggestPrompt,
@@ -486,6 +492,8 @@ function fakeScanDb(opts: {
    * 交易重讀的時候才會看到這份，開頭那次讀還是舊的。
    */
   concurrentEdit?: () => { pending?: any[], dismissedTagIds?: string[] }
+  /** 掃描器自己的狀態文件多帶的欄位（`C-414`：這個月先停的記號） */
+  cronState?: Record<string, unknown>
 }) {
   const writes: Array<{ col: string, id: string, data: any }> = []
   const chain = (result: any) => {
@@ -526,7 +534,7 @@ function fakeScanDb(opts: {
               exists: name === 'cronState' || (name === 'userTagSuggestions' && !!opts.pending),
               // 游標要有值，否則掃描器只會把游標定在「現在」就走人（開關剛打開的行為）
               data: () => (name === 'cronState'
-                ? { cursorMs: 1 }
+                ? { cursorMs: 1, ...opts.cronState }
                 : (opts.pending
                     ? { workspaceId: 'ws1', userId: id, pending: opts.pending, hasPending: true, dismissedTagIds: opts.dismissedTagIds ?? [] }
                     : undefined)),
@@ -803,5 +811,66 @@ describe('scanTagSuggestions：送到模型手上的 prompt 真的只有「這�
 
     const state = writes.find(w => w.col === 'cronState')
     expect(state!.data.lastRound).toMatchObject({ sessions: 1, suggested: 0, tooFewLines: 1, noWindow: 0 })
+  })
+})
+
+/**
+ * `C-414`：這個月 AI 讀對話到上限（背景那本），貼標建議要停在原地。
+ * ⛔ 以前每一場各自撞 429：逐字稿照讀、算成「失敗」、游標照樣往前——那段期間的對話永遠拿不到建議。
+ */
+describe('scanTagSuggestions：背景那本到上限就停在原地（`C-414`）', () => {
+  const START = 1_700_000_000_000
+  const talk = [
+    { direction: 'incoming', text: '請問出貨進度', atMs: START + 10 },
+    { direction: 'incoming', text: '可以提早出貨嗎', atMs: START + 20 },
+  ]
+  const budgetError = () => Object.assign(new Error('x'), { statusCode: 429, data: { reason: 'ai_budget' } })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getAiSettings).mockResolvedValue({ autoTagSuggest: { enabled: true } } as any)
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValue({ used: 0, cap: 1, blocked: false, kind: 'background' })
+  })
+
+  it('開頭就到上限：⛔ 不讀對話、不叫 AI、游標不動；記下這個月先停（查的是背景那本）', async () => {
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValue({ used: 9, cap: 1, blocked: true, kind: 'background' })
+    const { db, writes } = fakeScanDb({ sessionOpenedAtMs: START, messages: talk })
+    const sessionsRead = vi.spyOn(db, 'collection')
+    await scanTagSuggestions(db)
+    expect(getMaintenanceBudgetStatus).toHaveBeenCalledWith('ws1', db, 'background')
+    expect(sessionsRead.mock.calls.map(c => c[0])).not.toContain('conversationSessions')
+    expect(runWithLlmBudget).not.toHaveBeenCalled()
+    const state = writes.filter(w => w.col === 'cronState').map(w => w.data)
+    expect(state).toEqual([expect.objectContaining({ budgetPausedMonth: taipeiYyyyMm() })])
+    expect(state[0]).not.toHaveProperty('cursorMs')
+  })
+
+  it('這個月已經記過先停：連用量都不查', async () => {
+    const { db, writes } = fakeScanDb({ sessionOpenedAtMs: START, messages: talk, cronState: { budgetPausedMonth: taipeiYyyyMm() } })
+    await scanTagSuggestions(db)
+    expect(getMaintenanceBudgetStatus).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
+  })
+
+  it('跑到一半撞到上限：⛔ 不算失敗、游標退回這一場前面（下個月還會建議到）', async () => {
+    vi.mocked(runWithLlmBudget).mockRejectedValue(budgetError())
+    const { db, writes } = fakeScanDb({ sessionOpenedAtMs: START, messages: talk })
+    await scanTagSuggestions(db)
+    const state = writes.find(w => w.col === 'cronState' && 'lastRound' in w.data)!.data
+    expect(state.cursorMs).toBe(1) // 假 db 的游標起點：沒往前
+    expect(state.lastRound.failed).toBe(0)
+    expect(state.budgetPausedMonth).toBe(taipeiYyyyMm())
+  })
+
+  it('別種失敗照舊：算一場失敗、游標照走（一場壞掉不卡住整條）', async () => {
+    vi.mocked(runWithLlmBudget).mockRejectedValue(new Error('JSON 壞了'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { db, writes } = fakeScanDb({ sessionOpenedAtMs: START, messages: talk })
+    await scanTagSuggestions(db)
+    warn.mockRestore()
+    const state = writes.find(w => w.col === 'cronState' && 'lastRound' in w.data)!.data
+    expect(state.cursorMs).toBe(START + 3600_000)
+    expect(state.lastRound.failed).toBe(1)
+    expect(state).not.toHaveProperty('budgetPausedMonth')
   })
 })

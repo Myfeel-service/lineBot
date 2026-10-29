@@ -23,21 +23,28 @@
         <!-- ⛔ 讀不到必須排在所有「沒有建議」的說法之前(`D-41` 死路②):
              退成「還沒分析過」的話,壞掉跟真的沒缺口在畫面上完全一樣 -->
         <template v-else-if="loadFailed">：讀不到（不是沒有）</template>
+        <!-- 這個月 AI 讀對話到上限（`C-414`）：沒在分析，⛔ 不能講成「目前沒有」 -->
+        <template v-else-if="budgetPaused">：這個月先不分析</template>
         <!-- 掃描失敗要說出來：不講的話標題是「目前沒有」，看起來像真的沒缺口 -->
         <template v-else-if="lastError">：上次分析沒跑成</template>
         <template v-else-if="!lastScanAtMs">：還沒分析過</template>
         <template v-else-if="gapEvents > 0">：還沒有同一類被問兩次的</template>
         <template v-else>：目前沒有</template>
       </span>
-      <span v-if="scanRequested" class="kb-suggest-head__aside">已排入重新掃描，約 10 分鐘內完成</span>
-      <el-button v-else-if="canEdit" link type="primary" size="small" class="kb-suggest-head__aside" :loading="refreshing" @click="requestRefresh">
-        重新掃描
-      </el-button>
+      <!-- 先停的時候不給「重新掃描」（`C-414`）：排程不會掃，按了只會說排進去了 -->
+      <template v-if="!budgetPaused">
+        <span v-if="scanRequested" class="kb-suggest-head__aside">已排入重新掃描，約 10 分鐘內完成</span>
+        <el-button v-else-if="canEdit" link type="primary" size="small" class="kb-suggest-head__aside" :loading="refreshing" @click="requestRefresh">
+          重新掃描
+        </el-button>
+      </template>
     </div>
     <p v-if="loadFailed" class="kb-suggest-hint">
       這一區的資料沒讀到，所以<strong>現在無法判斷有沒有要補的知識</strong>。重新整理頁面再看一次；一直這樣請告訴我們。
       <span v-if="loadError" class="text-xs text-muted">（{{ loadError }}）</span>
     </p>
+    <!-- 先停的原因跟幾號恢復（`C-414`）：清單上已經有的照樣可以處理，只是不會再長新的 -->
+    <p v-else-if="budgetPaused" class="kb-suggest-hint">{{ budgetPausedText }}</p>
     <!-- 有清單時標題講的是條數，上次分析失敗只能在這裡講（沒清單時標題已經講了） -->
     <p v-else-if="lastError && items.length" class="kb-suggest-hint">上次分析失敗了，可以再按一次「重新掃描」。</p>
     <p v-else-if="!items.length && !lastError && lastScanAtMs && gapEvents > 0" class="kb-suggest-hint">
@@ -105,6 +112,7 @@ import { MagicStick } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { useAdminToast } from '~~/app/composables/useAdminToast'
 import type { KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
+import { aiBudgetMessage } from '~~/shared/ai-budget'
 import { apiErrorText } from '~/utils/api-error-text'
 import { suggestionTopicLabel } from '~/utils/kb-suggestion-label'
 import { defaultAnsweredQueries } from '~/utils/kb-suggestion-answered'
@@ -165,6 +173,12 @@ const addOneOpen = ref(false)
 const addOneSuggestion = ref<AddOneSuggestion | null>(null)
 
 const lastError = ref('')
+/** 這個月 AI 讀對話到上限、整理答不出來的問題先停（`C-414`，伺服器即時查的） */
+const budgetPaused = ref(false)
+const budgetPausedText = computed(() => {
+  const m = aiBudgetMessage('background')
+  return `${m.title}。${m.body}`
+})
 
 /** 這一組全部的客人原句（`C-311`）：伺服器還沒給 queries（舊版）就退回樣本句 */
 const groupQueries = (s: SuggestionRow) => (s.queries?.length ? s.queries : s.sampleQueries)
@@ -183,11 +197,12 @@ async function load() {
   try {
     const res = await apiFetch<{
       items: SuggestionRow[]
-      scan: { lastScanAtMs: number; requested: boolean; lastError: string; lastScanGapEvents: number }
+      scan: { lastScanAtMs: number; requested: boolean; lastError: string; lastScanGapEvents: number; budgetPaused?: boolean }
     }>('/api/ai/knowledge/suggestions')
     items.value = res.items ?? []
     loadFailed.value = false
     lastError.value = res.scan?.lastError ?? ''
+    budgetPaused.value = res.scan?.budgetPaused === true
     lastScanAtMs.value = res.scan?.lastScanAtMs ?? 0
     gapEvents.value = res.scan?.lastScanGapEvents ?? 0
     scanRequested.value = !!res.scan?.requested

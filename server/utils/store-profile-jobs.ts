@@ -432,14 +432,6 @@ function siteCardsSourceIdPrefix(jobId: string): string {
   return `onb_${jobId}_`
 }
 
-/**
- * 維運額度用完（`assertMaintenanceBudget` 丟的那一種 429；⚠️ Gemini 自己的 429 是一時過載，要重試不是停）。
- * 認法收在 `isAiBudgetError`（`C-413` 訊息改白話之後，舊的比對文字「AI 整理用量」就對不到了）。
- */
-function isMaintenanceBudgetError(e: unknown): boolean {
-  return isAiBudgetError(e)
-}
-
 /** 下個月 1 號（台北）再過 3 天：額度擋下時，工作（含頁面內文）要留到額度回來之後 */
 function afterNextMonthStartMs(now = Date.now()): number {
   const tp = new Date(now + 8 * 3600_000)
@@ -578,7 +570,8 @@ export async function advanceSiteCards(
           r = await runWithLlmBudget(wid, () => chunkSegment(page.text.slice(0, SEGMENT_CHAR_LEN), `開帳時讀的網站頁面：${page.url}`), 'knowledge')
         }
         catch (e) {
-          if (isMaintenanceBudgetError(e)) throw e
+          // 維運額度用完（`assertMaintenanceBudget` 的 429）丟出去停在原地；⚠️ Gemini 自己的 429 是一時過載，照下面重試
+          if (isAiBudgetError(e)) throw e
           const lost = aiUsageOfError(e)
           if (lost) calls.push(lost)
           state.tries = (state.tries ?? 0) + 1
@@ -673,7 +666,7 @@ export async function advanceSiteCards(
     state.status = !state.pending && state.pagesDone >= state.pagesTotal ? 'done' : 'queued'
   }
   catch (e) {
-    if (isMaintenanceBudgetError(e)) {
+    if (isAiBudgetError(e)) {
       // 停在原地等（不算失敗、不前進）。⚠️ 工作原本 24 小時就刪——要「額度回來會接著整理」成立，就得留到下個月
       state.status = 'queued'
       state.error = `這個月的整理額度用完了，還有 ${Math.max(0, state.pagesTotal - state.pagesDone)} 頁沒整理；額度恢復後會自動接著整理`

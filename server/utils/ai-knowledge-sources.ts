@@ -23,6 +23,8 @@ import type {
   SourceOutdatedReasonKind,
 } from '~~/shared/types/ai-knowledge'
 import { NUMERIC_DRIFT_LEARN_ROUNDS } from '~~/shared/knowledge-fingerprint'
+import { aiBudgetMessage, budgetPauseActive } from '~~/shared/ai-budget'
+import { taipeiYyyyMm } from '~~/shared/time'
 import type { KnowledgeRelearnState } from '~~/shared/knowledge-relearn'
 // ⚠️ 這支會繞一圈 import 回本檔（folder-guard → ai-knowledge-folders → 本檔）。安全的前提是
 //    兩邊都只在函式裡用對方的東西、頂層不讀——動這三支檔案的頂層時要記得這個圈。
@@ -59,8 +61,9 @@ export interface SourceSummary {
   /** 所屬資料夾；null = 未分類 */
   folderId: string | null
   status: KnowledgeSourceStatus
+  /** 停下來是因為上限（pausedByBudget）時，是讀的當下組的那句（`C-414`：資料上不存，存了會過期） */
   failureReason?: string
-  /** 停下來是因為這個月加入資料到上限（`C-413`），不是資料壞了：資料頁別教人去分享試算表／換網址 */
+  /** 停下來是因為這個月加入資料到上限（`C-413`），不是資料壞了：資料頁別教人去分享試算表／換網址。只認這個月停的 */
   pausedByBudget: boolean
   chunkCount: number
   refreshIntervalMinutes: number
@@ -142,6 +145,8 @@ function tsToMs(raw: unknown): number {
 
 /** 把 raw doc 轉成 UI 友善的 summary（時間戳轉 ms、有預設值） */
 export function docToSourceSummary(id: string, raw: SourceDocWithSummary): SourceSummary {
+  const paused = raw.failureKind === 'ai_budget' && budgetPauseActive(raw.budgetPausedMonth)
+  const pausedText = paused ? aiBudgetMessage('knowledge') : null
   return {
     id,
     type: (raw.type ?? 'file') as KnowledgeSourceType,
@@ -149,8 +154,8 @@ export function docToSourceSummary(id: string, raw: SourceDocWithSummary): Sourc
     url: String(raw.url ?? ''),
     folderId: raw.folderId ?? null,
     status: (raw.status ?? 'ready') as KnowledgeSourceStatus,
-    failureReason: raw.failureReason,
-    pausedByBudget: raw.failureKind === 'ai_budget' && !!raw.failureReason,
+    failureReason: pausedText ? `${pausedText.title}。${pausedText.body}` : raw.failureReason,
+    pausedByBudget: paused,
     chunkCount: Number(raw.chunkCount ?? 0),
     refreshIntervalMinutes: Number(raw.refreshIntervalMinutes ?? 0),
     onChangeBehavior: raw.onChangeBehavior === 'log_only' ? 'log_only' : 'notify',
@@ -830,8 +835,36 @@ export function buildSourceClearFailure(currentStatus?: string) {
   return {
     failureReason: FieldValue.delete(),
     failureKind: FieldValue.delete(),
+    budgetPausedMonth: FieldValue.delete(),
     checkFailCount: FieldValue.delete(),
     ...(currentStatus === 'failed' ? { status: 'ready' as const } : {}),
+  }
+}
+
+/**
+ * 寫失敗原因（`C-414`）：一律走這支，「是哪一種」跟原因一起寫。
+ * ⛔ 以前各處只寫 failureReason：上個月留下的「上限擋下」記號沒收掉，這次網址 404、表格少了 40 列，
+ *    資料頁照樣講「自動更新先停下來了、下個月恢復」，叫他等一個不會自己好的東西。
+ * 失敗次數、status 各處的規則不一樣（排程累到 3 次才標 failed、大量刪除當場標），由呼叫端自己加。
+ */
+export function buildSourceFailure(reason: string) {
+  return {
+    failureReason: reason,
+    failureKind: FieldValue.delete(),
+    budgetPausedMonth: FieldValue.delete(),
+  }
+}
+
+/**
+ * 這個月加入資料到上限、自動更新先停（`C-414`）。不是資料壞了，所以先把舊的失敗收乾淨：
+ * 失敗次數歸零、「同步失敗」退回正常——不然體檢、每日摘要天天叫他去修一個修不了、下個月自己會好的東西。
+ * 不存那句話：只存哪個月停的，資料頁讀的當下才組「X 月 1 日恢復」（過了月自然失效）。
+ */
+export function buildSourceBudgetPause(currentStatus?: string, date = new Date()) {
+  return {
+    ...buildSourceClearFailure(currentStatus),
+    failureKind: 'ai_budget' as const,
+    budgetPausedMonth: taipeiYyyyMm(date),
   }
 }
 

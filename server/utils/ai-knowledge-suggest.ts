@@ -16,9 +16,11 @@ import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { HANDOFF_EVENTS_COLLECTION } from './ai-handoff-events'
 import { AI_FEEDBACK_EVENTS_COLLECTION } from './ai-feedback-events'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
-import { embedQuery, generateJson, estimateTokens } from './gemini'
-import { recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
-import { aiUsageOfError, asBackgroundUsage, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { embedQuery, generateJson, estimateTokens, runWithLlmBudget } from './gemini'
+import { getMaintenanceBudgetStatus, recordAiUsage, AI_USAGE_COLLECTION, currentYyyyMm, type UsageDelta } from './ai-usage'
+import { aiUsageOfError, asBackgroundUsage, callsOf, isAiBudgetError, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { budgetPauseActive } from '~~/shared/ai-budget'
+import { taipeiYyyyMm } from '~~/shared/time'
 import { countKnowledgeDraftBlanks, KNOWLEDGE_GAP_HANDOFF_REASONS, type KnowledgeSuggestionDoc, type KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { isRawSuggestionTopic, topicFromDraftTitle } from '~~/shared/knowledge-suggestion-topic'
 import { isPersonalOrderGroup } from '~~/shared/knowledge-suggestion-personal-order'
@@ -826,6 +828,8 @@ interface ScanStateEntry {
   lastError?: string
   /** 掃描中的租約到期時間（ISO）：被閘道掐斷後由下一輪接手，不重複掃 */
   leaseUntil?: string
+  /** 這個月 AI 讀對話到上限、先停（`C-414`）：哪個月停的。候選名單看這格整個月跳過；過了月自然不算數 */
+  budgetPausedMonth?: string
 }
 
 /** 整體「下次到期」時間（ISO）：沒到期就 1 讀早退，不做昂貴的候選探索 */
@@ -876,6 +880,15 @@ export async function requestGapScan(db: Firestore, workspaceId: string): Promis
   return true
 }
 
+/**
+ * 記下「這個月 AI 讀對話到上限、先停」（`C-414`）：候選名單看這格整個月跳過，不再每輪查用量、佔名額。
+ * 租約一起還掉（撞到時可能正拿著）。⛔ 不寫 lastScanAt（下個月一到就該掃）、不寫 lastError（不是失敗）。
+ */
+async function markGapScanBudgetPause(stateRef: FirebaseFirestore.DocumentReference, workspaceId: string): Promise<void> {
+  await stateRef.set({ [workspaceId]: { budgetPausedMonth: taipeiYyyyMm(), leaseUntil: FieldValue.delete() } }, { merge: true })
+    .catch(e => console.warn('[kb-suggest] budget pause bookkeeping failed:', workspaceId, e))
+}
+
 export async function scanKnowledgeGaps(db: Firestore) {
   const stateRef = db.collection('cronState').doc(SCAN_STATE_DOC)
   const state = ((await stateRef.get()).data() ?? {}) as Record<string, ScanStateEntry | string>
@@ -923,13 +936,30 @@ export async function scanKnowledgeGaps(db: Firestore) {
       const stale = nowMs - lastMs > AUTO_SCAN_INTERVAL_DAYS * 24 * 3600_000
       // 租約還沒過期＝另一個 Lambda 正在掃（或剛被掐斷還在保護期），跳過
       const leased = !!entry.leaseUntil && (Date.parse(entry.leaseUntil) || 0) > nowMs
-      return { ws, lastMs, requested, due: !leased && (requested || (stale && withEvents.has(ws))) }
+      // 這個月 AI 讀對話到上限、先停（`C-414`）：整個月都會擋，不排進來（排進來每輪都佔一個名額、把別家擠掉）
+      const paused = budgetPauseActive(entry.budgetPausedMonth)
+      return { ws, lastMs, requested, due: !leased && !paused && (requested || (stale && withEvents.has(ws))) }
     })
     .filter(c => c.due)
     // 手動要求的優先，其餘照「最久沒掃」
     .sort((a, b) => Number(b.requested) - Number(a.requested) || a.lastMs - b.lastMs)
 
-  const picked = candidates.slice(0, SCAN_BUDGET_PER_RUN)
+  /**
+   * 照順序挑，挑之前查一次「背景」那本帳（`C-414`）：到上限的記成這個月先停、換下一家。
+   * ⛔ 不能直接切前 N 家：到上限的那家永遠排最前面（最久沒掃），每輪佔掉名額、撞 429、記成失敗，別家輪不到。
+   */
+  const picked: typeof candidates = []
+  let considered = 0
+  for (const c of candidates) {
+    if (picked.length >= SCAN_BUDGET_PER_RUN) break
+    considered++
+    const budget = await getMaintenanceBudgetStatus(c.ws, db, 'background').catch(() => null)
+    if (budget?.blocked) {
+      await markGapScanBudgetPause(stateRef, c.ws)
+      continue
+    }
+    picked.push(c)
+  }
   if (!picked.length) {
     // 沒事做 → 把下次探索推遠一點（有人手動要求時 requestGapScan 會把它拉回現在）
     await stateRef.set({ [NEXT_DUE_KEY]: new Date(nowMs + 6 * 3600_000).toISOString() }, { merge: true })
@@ -944,7 +974,8 @@ export async function scanKnowledgeGaps(db: Firestore) {
       { merge: true },
     )
     try {
-      const tally = await scanWorkspaceKnowledgeGaps(db, c.ws)
+      // 圈在「背景」那本（`C-414`）：以前只記進那本、沒被圈——它自己用超了也照跑，反而把貼標建議、找新標籤擋下來
+      const tally = await runWithLlmBudget(c.ws, () => scanWorkspaceKnowledgeGaps(db, c.ws), 'background')
       results[c.ws] = tally
       await stateRef.set({
         [c.ws]: {
@@ -953,10 +984,17 @@ export async function scanKnowledgeGaps(db: Firestore) {
           leaseUntil: FieldValue.delete(),
           lastErrorAt: FieldValue.delete(),
           lastError: FieldValue.delete(),
+          budgetPausedMonth: FieldValue.delete(),
         },
       }, { merge: true })
     }
     catch (e) {
+      // 掃到一半撞到上限（挑之前查過、這一輪別的背景工作先用完）：一樣是這個月先停，⛔ 不記成「上次分析沒跑成」
+      if (isAiBudgetError(e)) {
+        results[c.ws] = { error: 'ai-budget-paused' }
+        await markGapScanBudgetPause(stateRef, c.ws)
+        continue
+      }
       const error = String((e as Error)?.message ?? e).slice(0, 300)
       results[c.ws] = { error }
       console.error(`[kb-suggest] scan ${c.ws} failed:`, e)
@@ -967,8 +1005,8 @@ export async function scanKnowledgeGaps(db: Firestore) {
       }, { merge: true })
     }
   }
-  // 還有排隊中的候選就讓下一輪立刻接著跑，否則推遠
-  const moreQueued = candidates.length > picked.length
+  // 還有排隊中（還沒輪到查）的候選就讓下一輪立刻接著跑，否則推遠
+  const moreQueued = candidates.length > considered
   await stateRef.set(
     { [NEXT_DUE_KEY]: new Date(Date.now() + (moreQueued ? 0 : 6 * 3600_000)).toISOString() },
     { merge: true },

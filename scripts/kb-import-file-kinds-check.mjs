@@ -4248,6 +4248,7 @@ try {
     // ⑥ 資料頁：自動更新被這個月的上限擋下（`failureKind: ai_budget` → `pausedByBudget`）——講原話、⛔ 不教分享試算表／換網址。
     //    資料清單照實向伺服器拿（唯讀），只在瀏覽器裡把一份改成試算表、標成「上限暫停」
     let pausedName = ''
+    let pausedId = ''
     const pg6 = await openImportDialog(async (req) => {
       const url = req.url()
       if (url.includes('/api/ai/sources/list') && req.method() === 'GET') {
@@ -4258,6 +4259,7 @@ try {
         if (target) {
           Object.assign(target, { type: 'gsheet', status: 'ready', failureReason: `${BUDGET.title}。${BUDGET.body}`, pausedByBudget: true })
           pausedName = target.name
+          pausedId = target.id
         }
         return json(real)
       }
@@ -4269,8 +4271,11 @@ try {
     }, { path: '/knowledge/sources', waitSel: '.split-list, .src-list, aside' })
     await waitListed(() => pausedName)
     if (!pausedName) throw new Error('資料清單是空的，沒有可以驗「上限暫停」的資料')
-    await waitFor(pg6, n => [...document.querySelectorAll('.split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === n), pausedName)
-    await pg6.evaluate((n) => { [...document.querySelectorAll('.split-list *')].find(e => e.children.length === 0 && e.textContent?.trim() === n)?.click() }, pausedName)
+    // 用 ?sourceId= 直接打開這一份（頁面本來就認這個，匯入完成就是這樣帶過去的）。
+    // ⛔ 不在清單上點名字（`C-414` 整輪跑時抓到）：清單「哪些分組展開」記在瀏覽器裡，前面幾段在假的分組清單上建過分組、
+    //    存下來的展開名單沒有這份所在的真分組——整輪跑時那一列根本沒畫出來，單跑這一段才點得到
+    const rowDrawn = await pg6.evaluate(n => [...document.querySelectorAll('.split-list *')].some(el => el.children.length === 0 && el.textContent?.trim() === n), pausedName)
+    await pg6.goto(`${BASE}/admin/${WORKSPACE_ID}/knowledge/sources?sourceId=${encodeURIComponent(pausedId)}`, { waitUntil: 'networkidle2', timeout: 180_000 })
     // 先等右邊真的換成這一份（整輪一起跑時 dev server 比較慢，只等提示會等到空的），再等那一塊出來
     await waitFor(pg6, n => document.querySelector('.src-header-main input')?.value === n, pausedName, 30_000)
     await waitFor(pg6, () => !!document.querySelector('.src-fix'), null, 30_000)
@@ -4278,13 +4283,106 @@ try {
     if (fix.includes('自動更新先停下來了') && fix.includes(BUDGET.title) && !fix.includes('分享') && !fix.includes('系統訊息') && !fix.includes('抓不到內容')) pass(`資料頁：上限擋下講原話、不叫人去分享試算表（「${fix.trim().slice(0, 60)}…」）`)
     else {
       const header = await pg6.$eval('.src-header-main input', el => el.value).catch(() => '（沒有標題）')
-      fail('資料頁把上限擋下講成資料壞了', `fix=${fix || '（沒出現）'} 右邊打開的是=${header} 要的是=${pausedName}`)
+      fail('資料頁把上限擋下講成資料壞了', `fix=${fix || '（沒出現）'} 右邊打開的是=${header} 要的是=${pausedName}（${pausedId}） 清單上有畫出這一列=${rowDrawn}`)
     }
     if (process.env.SHOT_DIR) await (await pg6.$('.src-fix'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-source-paused.png') })
     await pg6.close()
 
     if (kbPosts.length) fail('門口擋著還送出了知識庫的寫入', kbPosts.join('、'))
     else pass('門口擋著的五種情況＋資料頁：知識庫一支寫入都沒送')
+  }
+
+  // ── 第五十一段（`C-414`，`C-413` 的 code review）：門口擋不能被繞過、擋著時導覽要收掉、背景那本先停要講出來 ──
+  //    ① 開帳精靈帶網址進來（?import=1&url=…）而知識量滿了：框裡已經有字，「這是網址」那一塊連同「看清單挑選」
+  //       以前會從門口那張卡底下冒出來（點下去每一頁先花一次 AI 整理、加入那一下才被擋）；問號也不放
+  //    ② 「知識庫：建立與匯入」導覽一路點進視窗、讀到滿了：收掉導覽，⛔ 不讓聚光燈打在空的位置上
+  //    ③ 這個月 AI 讀對話到上限：資料頁「客人問了、AI 答不出來」講先不分析、幾號恢復，不給「重新掃描」
+  //    ④ 標籤頁「AI 發現新標籤」細條講同一句，不給「立即掃描一次」、不講下次掃描日
+  //    ③④ 先向真的伺服器拿（唯讀），確認新的那一格真的回來了，再在瀏覽器裡改成「先停」
+  if (CHECK_FROM <= 51) {
+    const FULL = { quota: { used: 50, limit: 50, planName: '免費' }, budget: null }
+    const PAUSED_TEXT = /^這個月 AI 讀對話到上限了，\d{1,2} 月 1 日恢復。貼標建議、找新標籤、整理答不出來的問題先停；回答客人不受影響。$/
+    const writes51 = []
+    const fake51 = extra => async (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/ai/knowledge/quota') return json(FULL)
+      const r = extra ? await extra(req, url) : undefined
+      if (r) return r
+      // 探網站其他頁（POST 帶 url）也記：門口擋著就不該去探
+      if (url.pathname.startsWith('/api/ai/') && req.method() !== 'GET') {
+        writes51.push(`${req.method()} ${url.pathname}`)
+        return json({})
+      }
+      return undefined
+    }
+
+    // ①
+    const pg = await openImportDialog(fake51(), { path: `/knowledge/sources?import=1&url=${encodeURIComponent('https://shop.example.tw/')}`, waitSel: '.kb-step-label' })
+    await waitFor(pg, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    await sleep(2500) // 貼了網址 1 秒後才去探網站還有幾頁：等它過去再看
+    const door = await pg.evaluate(() => ({
+      block: document.querySelector('.kb-add-block__title')?.innerText.trim() ?? null,
+      detected: !!document.querySelector('.kb-detected'),
+      peek: !!document.querySelector('.kb-site-peek'),
+      help: !!document.querySelector('.el-dialog .page-help'),
+    }))
+    if (door.block === 'AI 知識量滿了（50／50 條）' && !door.detected && !door.peek && !door.help) pass('開帳精靈帶網址進來、知識量滿了：只有門口那張卡，「這是網址」「看清單挑選」、問號都不出現')
+    else fail('門口擋著還看得到繞過去的入口', JSON.stringify(door))
+    if (process.env.SHOT_DIR) await (await pg.$('.el-dialog')).screenshot({ path: join(process.env.SHOT_DIR, 'kb-door-prefill.png') })
+    await pg.close()
+
+    // ②
+    const pg2 = await openImportDialog(fake51(), { path: '/knowledge/sources?tour=knowledge', waitSel: '[data-tour="kb-import"]' })
+    const tourVisible = () => [...document.querySelectorAll('.el-tour__content')].some(e => e.offsetParent !== null)
+    const tourUp = await waitFor(pg2, tourVisible, null, 30_000)
+    await pg2.evaluate(() => [...document.querySelectorAll('.el-tour__footer .el-button')].find(b => b.offsetParent !== null && b.innerText.includes('下一步'))?.click())
+    const opened = await waitFor(pg2, () => !!document.querySelector('.kb-add-block'), null, 15_000)
+    const closed = await waitFor(pg2, () => ![...document.querySelectorAll('.el-tour__content')].some(e => e.offsetParent !== null), null, 8000)
+    const missingNote = await pg2.evaluate(() => [...document.querySelectorAll('.ta-tour-missing')].some(e => e.offsetParent !== null))
+    if (tourUp && opened && closed && !missingNote) pass('「知識庫：建立與匯入」點進視窗、讀到滿了：導覽收掉，留門口那張卡講下一步')
+    else fail('門口擋著導覽還在跑', JSON.stringify({ tourUp, opened, closed, missingNote }))
+    await pg2.close()
+
+    // ③
+    let realScan = null
+    const pg3 = await openImportDialog(fake51(async (req, url) => {
+      if (url.pathname !== '/api/ai/knowledge/suggestions' || req.method() !== 'GET') return undefined
+      const real = await (await fetch(req.url(), { headers: req.headers() })).json()
+      realScan = real.scan
+      return json({ items: [], scan: { ...real.scan, requested: false, lastError: '', budgetPaused: true } })
+    }), { path: '/knowledge/sources', waitSel: '[data-tour="kb-sources"]' })
+    await waitFor(pg3, () => !!document.querySelector('.kb-suggest-hint'), null, 30_000)
+    const sug = await pg3.evaluate(() => ({
+      head: document.querySelector('.kb-suggest-head')?.innerText.replace(/\s+/g, '') ?? '',
+      hint: document.querySelector('.kb-suggest-hint')?.innerText.trim() ?? '',
+      rescan: [...document.querySelectorAll('.kb-suggest-head button')].some(b => b.innerText.includes('重新掃描')),
+    }))
+    if (realScan && realScan.budgetPaused === false && sug.head.endsWith('：這個月先不分析') && PAUSED_TEXT.test(sug.hint) && !sug.rescan) pass(`「客人問了、AI 答不出來」：講這個月先不分析、幾號恢復，沒有「重新掃描」（伺服器回 budgetPaused: ${realScan.budgetPaused}）`)
+    else fail('背景那本先停沒講出來', JSON.stringify({ realScan, sug }))
+    if (process.env.SHOT_DIR) await (await pg3.$('.kb-suggest'))?.screenshot({ path: join(process.env.SHOT_DIR, 'kb-suggest-paused.png') })
+    await pg3.close()
+
+    // ④
+    let realDiscovery = null
+    const pg4 = await openImportDialog(fake51(async (req, url) => {
+      if (url.pathname !== '/api/tag/discovery' || req.method() !== 'GET') return undefined
+      const real = await (await fetch(req.url(), { headers: req.headers() })).json()
+      realDiscovery = real
+      // 開關開著、沒有提案（細條才出來）、上次掃描兩天前；之前留下的「連續失敗」也帶著——現在的原因是先停，要蓋過它
+      return json({ ...real, enabled: true, pending: [], stalled: true, rescanRequestedMs: 0, lastScanMs: Date.now() - 2 * 86400_000, budgetPaused: true })
+    }), { path: '/tags', waitSel: '.tags-discovery-strip' })
+    const strip = await pg4.evaluate(() => ({
+      txt: document.querySelector('.tags-discovery-strip__txt')?.innerText.replace(/^AI 發現新標籤：/, '').trim() ?? '',
+      when: !!document.querySelector('.tags-discovery-strip__when'),
+      rescan: [...document.querySelectorAll('.tags-discovery-strip button')].some(b => b.innerText.includes('立即掃描一次')),
+    }))
+    if (realDiscovery && 'budgetPaused' in realDiscovery && PAUSED_TEXT.test(strip.txt) && !strip.when && !strip.rescan) pass(`標籤頁細條：講這個月先停、幾號恢復，沒有下次掃描日、沒有「立即掃描一次」（伺服器回 budgetPaused: ${realDiscovery.budgetPaused}）`)
+    else fail('標籤頁沒講背景那本先停', JSON.stringify({ realDiscovery: realDiscovery && { budgetPaused: realDiscovery.budgetPaused }, strip }))
+    if (process.env.SHOT_DIR) await (await pg4.$('.tags-discovery-strip'))?.screenshot({ path: join(process.env.SHOT_DIR, 'tags-discovery-paused.png') })
+    await pg4.close()
+
+    if (writes51.length) fail('門口擋著還送出了知識庫的請求', writes51.join('、'))
+    else pass('第五十一段：知識庫一支寫入、一次探網站都沒送')
   }
 }
 catch (e) {

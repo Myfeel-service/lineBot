@@ -77,6 +77,18 @@ describe('isRetryableError', () => {
     expect(isRetryableError(new Error('比對結果不完整'))).toBe(true)
   })
 
+  it('⛔ 每月 AI 用量上限也是 429，但要等到下個月（`C-414`）：不接「再按一次」', () => {
+    const budget = fetchError(429, {
+      statusMessage: '這個月加入資料到上限了，11 月 1 日恢復。這段期間網頁、試算表改了，AI 也要等到那天才跟上；已經放進去的照常回答客人。',
+      data: { reason: 'ai_budget', kind: 'knowledge' },
+    })
+    expect(isRetryableError(budget)).toBe(false)
+    // 輪詢工作只拿得到一句話
+    expect(isRetryableError(new Error('這個月加入資料到上限了，11 月 1 日恢復。'))).toBe(false)
+    // Gemini 自己一時過載的 429 照樣值得重試
+    expect(isRetryableError(fetchError(429, { statusMessage: '太頻繁了，請稍後再試' }))).toBe(true)
+  })
+
   it('狀態碼從哪一格都讀得到', () => {
     expect(apiErrorStatus({ response: { status: 504 } })).toBe(504)
     expect(apiErrorStatus({ data: { statusCode: 403 } })).toBe(403)

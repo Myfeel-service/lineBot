@@ -13,7 +13,9 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import {
   KNOWLEDGE_SOURCES_COLLECTION,
+  buildSourceBudgetPause,
   buildSourceClearFailure,
+  buildSourceFailure,
   clearSourceFailure,
   countSourceChunks,
   markSourceOutdated,
@@ -25,6 +27,8 @@ import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 import { tryAutoApplyMinorChange, tryAutoApplyPageChange } from './ai-knowledge-autoapply'
 import { runWithLlmBudget } from './gemini'
 import { isAiBudgetError } from './ai-usage-calls'
+import { getMaintenanceBudgetStatus } from './ai-usage'
+import { budgetPauseActive } from '~~/shared/ai-budget'
 import { extractUrlText } from './ai-source-extractors'
 import { gsheetSyncAuditNote, syncGoogleSheetSource } from './gsheet-sync'
 import { writeAuditLog } from './audit-log'
@@ -130,6 +134,24 @@ async function writeSystemSourceAudit(
   }, db).catch(e => console.warn(`[detect-source-updates] ${sourceId} 操作紀錄沒寫成（不影響同步）:`, e))
 }
 
+/**
+ * 這一份的自動更新會不會花到「店家加資料」那本的 AI（`C-414`）：試算表同步（補問法、建索引）、
+ * 網址「有變動就通知」而且允許自動套用的。只記錄、每次都先問我的網址排程裡不花 AI，上限到了照常檢查。
+ */
+function sourceAutoUpdateUsesAi(data: KnowledgeSourceDoc): boolean {
+  if (data.type === 'gsheet') return true
+  return data.onChangeBehavior !== 'log_only' && data.urlAutoApply !== false
+}
+
+/** 標成「這個月加入資料到上限、自動更新先停」（說明見 buildSourceBudgetPause）；戳 lastCheckedAt 當退避基準 */
+async function pauseSourceForBudget(db: Firestore, sourceId: string, data: KnowledgeSourceDoc): Promise<SourceCheckResult> {
+  await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
+    ...buildSourceBudgetPause(data.status),
+    lastCheckedAt: FieldValue.serverTimestamp(),
+  }).catch(e => console.warn(`[detect-source-updates] ${sourceId} mark budget pause failed:`, e))
+  return { sourceId, outcome: 'unchanged', message: 'ai-budget-paused（這個月加入資料到上限）' }
+}
+
 async function checkOneSource(
   db: Firestore,
   sourceId: string,
@@ -137,11 +159,22 @@ async function checkOneSource(
   run: DetectRunState = { autoApplyRemaining: 0 },
 ): Promise<SourceCheckResult> {
   try {
+    /**
+     * 這個月加入資料到上限（`C-413`／`C-414`）：會花 AI 的自動更新整份先停，在這裡一次查、一次寫。
+     * ⛔ 不能等 AI 那一步丟錯再處理：裡面好幾層會把 429 吞掉——網址自動套用退成「有變動，要你看一下」、
+     *    試算表補問法整批略過、建索引變成學失敗的卡、同步照樣算成功——資料頁永遠講不出「先停了」。
+     * 查用量有 60 秒快取，同一家幾十份資料只讀一次。
+     */
+    if (sourceAutoUpdateUsesAi(data)) {
+      const budget = await getMaintenanceBudgetStatus(data.workspaceId, db, 'knowledge').catch(() => null)
+      if (budget?.blocked) return await pauseSourceForBudget(db, sourceId, data)
+    }
+
     // Google Sheet：自動同步（一列一卡，直接套用新增/更新/刪除，不走人工 resync）。
     // autoApply === false 的來源視為「商家自管」，這支不動它。
     if (data.type === 'gsheet') {
       if (data.gsheetAutoApply === false) return { sourceId, outcome: 'unchanged' }
-      // 額度境域（C-45）：補問法 LLM 超額時整段丟 429，走下面 catch 記失敗，不再燒錢
+      // 額度境域（C-45）：上面已經先查過；這裡圈起來是防「查完之後同一輪別的來源才用完」
       const r = await runWithLlmBudget(data.workspaceId, () => syncGoogleSheetSource(db, data.workspaceId, sourceId, data), 'knowledge')
       // ⛔大量刪除被擋下：不能走「成功」路徑清失敗標記——要讓店家看得到。
       // 寫 failureReason + outdatedAt（體檢紅字 + 有變動提示），等人工到來源頁按
@@ -150,8 +183,9 @@ async function checkOneSource(
         const pending = r.pendingDeletes ?? 0
         await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
           // 原因要講對、講該按什麼（`C-308`⑤）：以前寫「請到知識庫來源頁確認後手動同步」，
-          // 畫面又只看 status 一律教人「把表分享給服務帳號」——他去 Google 改分享，什麼都不會變
-          failureReason: `表格一次少了 ${pending} 列（現有 ${r.kept} 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即更新」。`,
+          // 畫面又只看 status 一律教人「把表分享給服務帳號」——他去 Google 改分享，什麼都不會變。
+          // 走 buildSourceFailure（`C-414`）：上個月「上限先停」的記號要一起收掉，不然畫面講的是等下個月、列數也不見了
+          ...buildSourceFailure(`表格一次少了 ${pending} 列（現有 ${r.kept} 條）。為了避免誤刪，自動同步先停下來了；確定是你刪的，請到這份資料按「立即更新」。`),
           // ⛔一定要一起寫 status:'failed'：體檢的「資料同步失敗」與小幫手 knowledgeSyncFailed
           // 都只看 status，只寫 failureReason 的話畫面全綠——正好違背這道守門的目的
           //（讓店家看得到「自動同步暫停了，有 N 條等你確認」）。
@@ -532,18 +566,16 @@ async function checkOneSource(
     //   - lastCheckedAt：退避基準（lastFetchedAt 保留「最後成功同步」語意不動）
     //   - 連續失敗 ≥3 次 → status='failed'，列表狀態直接可見
     const msg = String(err?.statusMessage || err?.message || 'unknown error').slice(0, 200)
-    console.warn(`[detect-source-updates] ${sourceId} check failed: ${msg}`)
-    // 每月上限擋下來（`C-413`）不是這份資料壞了：照原話講（已經寫明幾號恢復、這段期間 AI 跟不上），
+    // 每月上限擋下來不是這份資料壞了（`C-413`）：開頭查過了還撞到＝同一輪別的來源先用完，一樣標成先停。
     // ⛔ 不累計失敗次數——累到 3 次會標成「同步失敗」，體檢變紅、每日摘要天天叫他去修一個修不了的東西
-    const budget = isAiBudgetError(err)
+    if (isAiBudgetError(err)) return await pauseSourceForBudget(db, sourceId, data)
+    console.warn(`[detect-source-updates] ${sourceId} check failed: ${msg}`)
     const failCount = Number(data.checkFailCount ?? 0) + 1
     await db.collection(KNOWLEDGE_SOURCES_COLLECTION).doc(sourceId).update({
-      failureReason: budget ? msg : `自動檢查失敗：${msg}`,
-      // 資料頁靠它分得出「上限擋下」跟「資料壞了」（別教人去分享試算表）；換成別種失敗就收掉
-      failureKind: budget ? 'ai_budget' : FieldValue.delete(),
-      ...(budget ? {} : { checkFailCount: failCount }),
+      ...buildSourceFailure(`自動檢查失敗：${msg}`),
+      checkFailCount: failCount,
       lastCheckedAt: FieldValue.serverTimestamp(),
-      ...(!budget && failCount >= 3 ? { status: 'failed' } : {}),
+      ...(failCount >= 3 ? { status: 'failed' } : {}),
     }).catch(() => {})
     // 不再即時推播(2026-08-06 拍板):status='failed' 由每日摘要每天提醒一次直到修復,
     // 比「跨過第 3 次那一則」更不會漏(gsheet 403 壞半個月沒人知道的教訓——那則沒看到就沒了)。
@@ -603,6 +635,8 @@ export async function detectSourceUpdates(db: Firestore) {
     // 關掉自動同步的表＝商家自管：checkOneSource 只會直接 return，
     // 不排除的話它們永遠「到期」、每輪白佔 SCAN_LIMIT 名額（早退不戳時間戳）。
     if (data.type === 'gsheet' && data.gsheetAutoApply === false) continue
+    // 這個月已經標成「加入資料到上限、先停」（`C-414`）：整個月都會擋（用量只增不減），不用每輪再查再寫、也不佔名額
+    if (data.failureKind === 'ai_budget' && budgetPauseActive(data.budgetPausedMonth)) continue
     // 退避：失敗的檢查不更新 lastFetchedAt，若只看它會每次排程都重打掛掉的網站。
     // 以「最後一次嘗試」（成功或失敗）起算間隔；連續失敗的來源間隔升冪（見 sourceDueIntervalMs）。
     const lastMs = Math.max(tsToMs(data.lastFetchedAt), tsToMs(data.lastCheckedAt))

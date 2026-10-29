@@ -22,6 +22,8 @@ const { clearSourceFailure, markSourceOutdated, saveAppliedPage } = vi.hoisted((
 vi.mock('./ai-knowledge-sources', () => ({
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
   buildSourceClearFailure: () => ({}),
+  buildSourceFailure: (reason: string) => ({ failureReason: reason, failureKind: { __op: 'del' } }),
+  buildSourceBudgetPause: (status?: string) => ({ failureKind: 'ai_budget', budgetPausedMonth: '__month__', ...(status === 'failed' ? { status: 'ready' } : {}) }),
   clearSourceFailure,
   countSourceChunks: vi.fn(async () => 20),
   markSourceOutdated,
@@ -48,8 +50,11 @@ vi.mock('./ai-handoff-notify', () => ({ notifyHandoffToStaff: vi.fn(), notifyOve
 vi.mock('./conversation-session', () => ({ closeConversationSession: vi.fn(), handBackSessionToBot: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 vi.mock('./knowledge-source-files', () => ({ deleteSourceFiles: vi.fn(async () => {}) }))
+const { getMaintenanceBudgetStatus } = vi.hoisted(() => ({ getMaintenanceBudgetStatus: vi.fn() }))
+vi.mock('./ai-usage', () => ({ getMaintenanceBudgetStatus }))
 
 import { detectSourceUpdates } from './cron-maintenance'
+import { taipeiYyyyMm } from '~~/shared/time'
 
 /** 假 Firestore：撈候選來源那一支查詢回 SOURCES；來源的 update 收進 UPDATES */
 let SOURCES: Array<{ id: string, data: Record<string, any> }> = []
@@ -89,6 +94,7 @@ beforeEach(() => {
   UPDATES = []
   // 預設：沒有上一版原文（舊資料）→ 照舊路（`C-368`）
   tryAutoApplyPageChange.mockResolvedValue({ kind: 'legacy', usedAi: false })
+  getMaintenanceBudgetStatus.mockResolvedValue({ used: 0, cap: 1, blocked: false, kind: 'knowledge' })
 })
 
 describe('試算表自動同步的操作紀錄（`C-308`⑥）', () => {
@@ -154,6 +160,100 @@ describe('表格一次少太多列被擋下（`C-308`⑤）', () => {
     syncGoogleSheetSource.mockResolvedValue({ outcome: 'blocked_mass_deletion', added: 0, updated: 0, deleted: 0, kept: 40, pendingDeletes: 15 })
     await detectSourceUpdates(makeDb())
     expect(writeAuditLog).not.toHaveBeenCalled()
+  })
+
+  it('⛔ 上個月「上限先停」的記號要一起收掉（`C-414`）：不然畫面講的是等下個月、列數也不見了', async () => {
+    SOURCES = [sheet({ failureKind: 'ai_budget', budgetPausedMonth: '200001' })]
+    syncGoogleSheetSource.mockResolvedValue({ outcome: 'blocked_mass_deletion', added: 0, updated: 0, deleted: 0, kept: 40, pendingDeletes: 15 })
+    await detectSourceUpdates(makeDb())
+    const p = UPDATES.find(u => u.id === 'sheet1')!.payload
+    expect(p.failureKind).toEqual({ __op: 'del' })
+    expect(p.failureReason).toContain('表格一次少了 15 列')
+  })
+})
+
+/**
+ * `C-414`：這個月加入資料到上限，自動更新要在開頭就停、標成「先停」。
+ * ⛔ 以前等 AI 那一步丟 429：裡面好幾層把它吞掉（自動套用退成「有變動」、試算表同步照樣算成功），標記從來寫不到。
+ */
+describe('這個月加入資料到上限：自動更新先停（`C-414`）', () => {
+  const blocked = () => getMaintenanceBudgetStatus.mockResolvedValue({ used: 9, cap: 1, blocked: true, kind: 'knowledge' })
+  const urlSource = (extra: Record<string, any> = {}) => ({
+    id: 'url1',
+    data: { workspaceId: 'ws1', type: 'url', url: 'https://shop.example.tw/faq', name: '官網 FAQ', refreshIntervalMinutes: 1440, contentHash: 'old', status: 'ready', ...extra },
+  })
+
+  it('試算表：⛔ 不同步、不清失敗標記（不算成功）；標成先停、問的是「店家加資料」那本', async () => {
+    blocked()
+    SOURCES = [sheet()]
+    await detectSourceUpdates(makeDb())
+    expect(getMaintenanceBudgetStatus).toHaveBeenCalledWith('ws1', expect.anything(), 'knowledge')
+    expect(syncGoogleSheetSource).not.toHaveBeenCalled()
+    expect(clearSourceFailure).not.toHaveBeenCalled()
+    const p = UPDATES.find(u => u.id === 'sheet1')!.payload
+    expect(p).toMatchObject({ failureKind: 'ai_budget', budgetPausedMonth: '__month__', lastCheckedAt: { __op: 'ts' } })
+    expect(p.checkFailCount).toBeUndefined()
+  })
+
+  it('網址（有變動就自動套用）：⛔ 不抓、不跑自動套用（不會被講成「有變動，要你看一下」）', async () => {
+    blocked()
+    SOURCES = [urlSource()]
+    await detectSourceUpdates(makeDb())
+    expect(extractUrlText).not.toHaveBeenCalled()
+    expect(tryAutoApplyPageChange).not.toHaveBeenCalled()
+    expect(markSourceOutdated).not.toHaveBeenCalled()
+    expect(UPDATES.find(u => u.id === 'url1')!.payload).toMatchObject({ failureKind: 'ai_budget' })
+  })
+
+  it('之前已經「同步失敗」的：先停時退回正常（體檢、每日摘要不再天天叫他修一個修不了的東西）', async () => {
+    blocked()
+    SOURCES = [sheet({ status: 'failed', checkFailCount: 3 })]
+    await detectSourceUpdates(makeDb())
+    expect(UPDATES.find(u => u.id === 'sheet1')!.payload).toMatchObject({ status: 'ready' })
+  })
+
+  it('排程裡不花 AI 的網址（只記錄、每次都先問我）照常檢查，不標先停', async () => {
+    blocked()
+    extractUrlText.mockResolvedValue({ text: '網頁', rawLength: 2 })
+    SOURCES = [urlSource({ onChangeBehavior: 'log_only' }), { ...urlSource({ urlAutoApply: false }), id: 'url2' }]
+    await detectSourceUpdates(makeDb())
+    expect(extractUrlText).toHaveBeenCalledTimes(2)
+    expect(UPDATES.some(u => u.payload.failureKind === 'ai_budget')).toBe(false)
+  })
+
+  it('這個月已經標過先停的：整個跳過（不查用量、不寫、不佔名額）；上個月標的照常檢查', async () => {
+    blocked()
+    SOURCES = [sheet({ failureKind: 'ai_budget', budgetPausedMonth: taipeiYyyyMm() })]
+    await detectSourceUpdates(makeDb())
+    expect(getMaintenanceBudgetStatus).not.toHaveBeenCalled()
+    expect(UPDATES).toEqual([])
+
+    getMaintenanceBudgetStatus.mockResolvedValue({ used: 0, cap: 1, blocked: false, kind: 'knowledge' })
+    syncGoogleSheetSource.mockResolvedValue({ outcome: 'unchanged', added: 0, updated: 0, deleted: 0, kept: 5 })
+    SOURCES = [sheet({ failureKind: 'ai_budget', budgetPausedMonth: '200001' })]
+    await detectSourceUpdates(makeDb())
+    expect(syncGoogleSheetSource).toHaveBeenCalled()
+    expect(clearSourceFailure).toHaveBeenCalledWith(expect.anything(), 'sheet1', 'ready')
+  })
+
+  it('開頭查過了、跑到一半才撞到上限（同一輪別的來源先用完）：一樣標先停，⛔ 不累計失敗次數', async () => {
+    SOURCES = [sheet({ checkFailCount: 1 })]
+    syncGoogleSheetSource.mockRejectedValue(Object.assign(new Error('x'), { statusCode: 429, data: { reason: 'ai_budget' } }))
+    await detectSourceUpdates(makeDb())
+    const p = UPDATES.find(u => u.id === 'sheet1')!.payload
+    expect(p).toMatchObject({ failureKind: 'ai_budget' })
+    expect(p.checkFailCount).toBeUndefined()
+    expect(p.failureReason).toBeUndefined()
+  })
+
+  it('別種失敗照舊：記「自動檢查失敗」、累計次數，並收掉「先停」的記號', async () => {
+    SOURCES = [sheet({ failureKind: 'ai_budget', budgetPausedMonth: '200001', checkFailCount: 2 })]
+    syncGoogleSheetSource.mockRejectedValue(new Error('403 forbidden'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await detectSourceUpdates(makeDb())
+    warn.mockRestore()
+    const p = UPDATES.find(u => u.id === 'sheet1')!.payload
+    expect(p).toMatchObject({ failureReason: '自動檢查失敗：403 forbidden', failureKind: { __op: 'del' }, checkFailCount: 3, status: 'failed' })
   })
 })
 

@@ -27,8 +27,10 @@ import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser } from './tagging'
-import { recordAiUsage, type UsageDelta } from './ai-usage'
-import { aiUsageOfError, asBackgroundUsage, callsOf, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { getMaintenanceBudgetStatus, recordAiUsage, type UsageDelta } from './ai-usage'
+import { aiUsageOfError, asBackgroundUsage, callsOf, isAiBudgetError, mergeUsage, usageFromCalls } from './ai-usage-calls'
+import { budgetPauseActive } from '~~/shared/ai-budget'
+import { taipeiYyyyMm } from '~~/shared/time'
 import { recordTagSuggestionEvents } from './tag-suggestion-log'
 import { INACTIVE_TAG_CODE } from './inactive-tag'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
@@ -165,7 +167,7 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
 
       const stateRef = db.collection('cronState').doc(`tag-suggest-${workspaceId}`)
       const stateSnap = await stateRef.get()
-      const state = stateSnap.data() as { cursorMs?: number } | undefined
+      const state = stateSnap.data() as { cursorMs?: number, budgetPausedMonth?: string } | undefined
       /**
        * `C-68` 的治本：這支迴圈的 catch 會把錯誤吞掉（單一工作區壞掉不該拖垮其他人），
        * 但吞掉之後畫面上什麼都不會說——缺索引害它每輪都炸、兩天沒人發現。
@@ -177,6 +179,18 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
       // 開關剛打開：游標定在「現在」，之後結束的對話才進建議。不追歷史（見檔頭）。
       if (!state?.cursorMs) {
         await stateRef.set({ cursorMs: Date.now(), updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+        continue
+      }
+
+      /**
+       * 這個月 AI 讀對話到上限（`C-413`／`C-414`）：游標不動、對話也不讀，下個月從停下的地方接著建議。
+       * ⛔ 不能讓每一場各自撞 429：那樣每場的逐字稿照讀、算成「失敗」、游標照樣往前——那段期間的對話永遠拿不到建議。
+       * 月份記在狀態上：同一個月擋下就整個月都擋，之後每輪看這一格就走、不再查用量。
+       */
+      if (budgetPauseActive(state.budgetPausedMonth)) continue
+      const budget = await getMaintenanceBudgetStatus(workspaceId, db, 'background').catch(() => null)
+      if (budget?.blocked) {
+        await stateRef.set({ budgetPausedMonth: taipeiYyyyMm(), updatedAt: FieldValue.serverTimestamp() }, { merge: true })
         continue
       }
 
@@ -225,9 +239,12 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
        * 同 `feedback_filters_must_report_what_they_dropped`：三種「沒有」下一步不同，要分型別。
        */
       const skips = { noWindow: 0, tooFewLines: 0, noCandidates: 0, failed: 0 }
+      /** 這一輪中途撞到上限（開頭查過了、同一輪別的背景工作先用完）：游標停在撞到的那一場前面 */
+      let budgetHit = false
 
       for (const sessDoc of sessSnap.docs) {
         const sess = sessDoc.data()
+        const cursorBefore = batchMaxMs
         batchMaxMs = Math.max(batchMaxMs, tsToMs(sess.lastActivityAt))
         if (!catalog.length) continue // 沒有可建議的標籤，游標照走（別讓佇列卡死）
 
@@ -253,6 +270,12 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
           if (processed.skip === 'no_candidates') skips.noCandidates += 1
         }
         catch (e) {
+          // ⛔ 上限擋下不是這一場壞了：不算失敗、游標退回這一場前面（對話照時間排，後面的也一起留到下個月）
+          if (isAiBudgetError(e)) {
+            batchMaxMs = cursorBefore
+            budgetHit = true
+            break
+          }
           skips.failed += 1
           console.warn('[tag-suggest] session failed:', sessDoc.id, e)
         }
@@ -260,6 +283,7 @@ export async function scanTagSuggestions(db: Firestore): Promise<{
 
       await stateRef.set({
         cursorMs: batchMaxMs,
+        ...(budgetHit ? { budgetPausedMonth: taipeiYyyyMm() } : {}),
         /** 最後一輪的成績單（畫面與日後查證都靠它，見上面 skips 的註解） */
         lastRound: {
           atMs: Date.now(),

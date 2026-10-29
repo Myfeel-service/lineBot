@@ -50,6 +50,8 @@ describe('POST /api/richmenu/generate-background 記帳', () => {
       testInputTokens: 80,
       testOutputTokens: 1290,
       testInvocations: 1,
+      // 圈在後台自用那本：每月上限只數這一格（`C-414`）
+      assistTokens: 80 + 1290,
       modelTokens: { test: { flashImage: { input: 80, output: 1290 } } },
     })
     const cost = bucketAiCosts(delta as never).test.costUsd

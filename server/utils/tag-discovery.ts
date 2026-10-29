@@ -16,8 +16,10 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
-import { recordAiUsage } from './ai-usage'
-import { aiUsageOfError, asBackgroundUsage, callsOf, usageFromCalls } from './ai-usage-calls'
+import { getMaintenanceBudgetStatus, recordAiUsage } from './ai-usage'
+import { aiUsageOfError, asBackgroundUsage, callsOf, isAiBudgetError, usageFromCalls } from './ai-usage-calls'
+import { budgetPauseActive } from '~~/shared/ai-budget'
+import { taipeiYyyyMm } from '~~/shared/time'
 import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import { nextScannerHealth, readScannerHealth } from '~~/shared/scanner-health'
 import { recordScannerFailure } from './scanner-health'
@@ -169,6 +171,15 @@ function tsToMs(raw: unknown): number {
 }
 
 /**
+ * 記下「這個月 AI 讀對話到上限、先停」（`C-414`）。手動要求一起消掉：不消的話下個月一開就被當成有人剛按過。
+ * ⛔ 不推進 lastScanMs：下個月一到要馬上掃，不是再等 6.5 天。
+ */
+async function markDiscoveryBudgetPause(docRef: FirebaseFirestore.DocumentReference): Promise<void> {
+  await docRef.set({ budgetPausedMonth: taipeiYyyyMm(), rescanRequestedMs: FieldValue.delete() }, { merge: true })
+    .catch(e => console.warn('[tag-discovery] budget pause bookkeeping failed:', docRef.id, e))
+}
+
+/**
  * 排程入口（掛 cron/run-tasks）。
  */
 export async function scanTagDiscovery(db: Firestore): Promise<{
@@ -197,6 +208,19 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
 
       // 間隔未到、而且沒有人按「立即掃描」→ 走人（每輪只花上面那 1 次讀取）
       if (!rescanPending && Date.now() - lastScanMs < DISCOVERY_INTERVAL_MS) continue
+
+      /**
+       * 這個月 AI 讀對話到上限（`C-413`／`C-414`）：安靜地停到下個月，在讀任何對話之前就走。
+       * ⛔ 不能等 AI 那一步丟 429——那會掉進下面的 catch 被當成掃描失敗：lastScanMs 沒推進、閘門一直開著，
+       *    每 10 分鐘重讀一整批對話（幾千次讀取、連續幾週），45 分鐘後還跳「背景掃描連續失敗中」。
+       * 月份記在文件上：同一個月擋下就整個月都擋，之後每輪看這一格就走，不用再查用量。標籤頁那條細條自己會查、講原因。
+       */
+      if (budgetPauseActive(doc?.budgetPausedMonth)) continue
+      const budget = await getMaintenanceBudgetStatus(workspaceId, db, 'background').catch(() => null)
+      if (budget?.blocked) {
+        await markDiscoveryBudgetPause(docRef)
+        continue
+      }
 
       /**
        * 先前提的、還沒做過重複檢查的舊提案，趁這輪補判（`C-239`）。
@@ -252,6 +276,11 @@ export async function scanTagDiscovery(db: Firestore): Promise<{
       }, { merge: true })
     }
     catch (e) {
+      // 開頭查過了還撞到上限＝同一輪別的背景工作先用完（`C-414`）：一樣是先停，⛔ 不記成掃描失敗
+      if (isAiBudgetError(e)) {
+        await markDiscoveryBudgetPause(db.collection(TAG_DISCOVERY_COLLECTION).doc(workspaceId))
+        continue
+      }
       /**
        * ⛔ `C-68` 的教訓：這裡吞掉錯誤是對的（一個工作區壞掉不該拖垮其他人），
        * 但**吞掉之後要留下痕跡**——否則掃描每輪都炸、`lastScanMs` 永遠是 0，

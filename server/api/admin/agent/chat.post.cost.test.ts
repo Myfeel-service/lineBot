@@ -43,6 +43,8 @@ describe('POST /api/admin/agent/chat 記帳', () => {
       testInputTokens: 3500,
       testOutputTokens: 600,
       testInvocations: 1,
+      // 圈在後台自用那本：每月上限只數這一格（`C-414`）
+      assistTokens: 3500 + 600,
       modelTokens: { test: { flash: { input: 3000, output: 500 }, flashLite: { input: 500, output: 100 } } },
     })
   })

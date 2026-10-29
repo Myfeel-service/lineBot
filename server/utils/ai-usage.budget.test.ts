@@ -92,13 +92,20 @@ describe('`C-413` 三本帳各自只數自己、只擋自己', () => {
     testInputTokens: 400_000,
     testOutputTokens: 100_000,
     testEmbeddingTokens: 0,
+    assistTokens: 300_000, // 上面那 500k 裡有 300k 是小幫手、擬文案（其餘是測試對話、AI 產生腳本）
     inputTokens: 99_000_000, // 回答客人：哪一本都不算
   }
 
-  it('店家加資料＝整理桶扣掉背景那份；背景＝backgroundTokens；後台自用＝test 桶', () => {
+  it('店家加資料＝整理桶扣掉背景那份；背景＝backgroundTokens；後台自用＝assistTokens', () => {
     expect(aiBudgetUsed(usage, 'knowledge')).toBe(3_000_000)
     expect(aiBudgetUsed(usage, 'background')).toBe(2_000_000)
-    expect(aiBudgetUsed(usage, 'assist')).toBe(500_000)
+    expect(aiBudgetUsed(usage, 'assist')).toBe(300_000)
+  })
+
+  it('⛔ `C-414` 後台自用那本不數整個 test 桶：測試對話、AI 產生腳本沒被這本擋，數進來就是拿它們擋小幫手', async () => {
+    const db = makeDb({ testInputTokens: AI_BUDGET_CAPS.assist * 2 })
+    expect(aiBudgetUsed({ testInputTokens: AI_BUDGET_CAPS.assist * 2 }, 'assist')).toBe(0)
+    await expect(assertMaintenanceBudget('ws1', db, 'assist')).resolves.toBeUndefined()
   })
 
   it('上線前的舊資料沒有 backgroundTokens：整桶都算店家那本（寧可多算）', () => {
@@ -126,7 +133,7 @@ describe('`C-413` 三本帳各自只數自己、只擋自己', () => {
   })
 
   it('後台自用那本到上限只擋後台自用', async () => {
-    const db = makeDb({ testInputTokens: AI_BUDGET_CAPS.assist })
+    const db = makeDb({ testInputTokens: AI_BUDGET_CAPS.assist, assistTokens: AI_BUDGET_CAPS.assist })
     await expect(assertMaintenanceBudget('ws1', db, 'assist')).rejects.toMatchObject({ statusCode: 429 })
     await expect(assertMaintenanceBudget('ws1', db)).resolves.toBeUndefined()
   })
@@ -155,7 +162,9 @@ describe('`C-413` 擋下來時講白話', () => {
   it('三本帳的話各講各的；背景與後台自用都講「回答客人不受影響」', () => {
     const d = new Date('2026-10-29T12:00:00+08:00')
     expect(aiBudgetMessage('knowledge', d).title).toBe('這個月加入資料到上限了，11 月 1 日恢復')
-    expect(aiBudgetMessage('background', d).body).toBe('回答客人不受影響。')
+    // 背景那本講出停了哪三件（`C-414`）：三件在不同頁，只講「讀對話」他對不上是哪個功能
+    expect(aiBudgetMessage('background', d).title).toBe('這個月 AI 讀對話到上限了，11 月 1 日恢復')
+    expect(aiBudgetMessage('background', d).body).toBe('貼標建議、找新標籤、整理答不出來的問題先停；回答客人不受影響。')
     expect(aiBudgetMessage('assist', d).title).toContain('小幫手')
     expect(aiBudgetMessage('assist', d).body).toBe('回答客人不受影響。')
   })

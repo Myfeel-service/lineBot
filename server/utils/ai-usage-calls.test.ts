@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   aiUsageOfError,
+  asAssistUsage,
   asBackgroundUsage,
   callsOf,
   isAiBudgetError,
@@ -172,6 +173,18 @@ describe('`C-413` 背景工作的用量（asBackgroundUsage）', () => {
   it('跟 mergeUsage 一起用：一輪好幾次加起來，背景那份也跟著加', () => {
     const merged = mergeUsage(usageFromCalls('build', [lite(10, 1)]), usageFromCalls('build', [lite(20, 2)]))
     expect(asBackgroundUsage(merged).backgroundTokens).toBe(33)
+  })
+})
+
+describe('`C-414` 後台自用那本的用量（asAssistUsage）', () => {
+  it('後台自用桶照記（算錢、次數不變），另外把同一筆標成 assistTokens', () => {
+    const d = asAssistUsage({ ...usageFromCalls('test', [flash(300, 40)]), testInvocations: 1 })
+    expect(d).toMatchObject({ testInputTokens: 300, testOutputTokens: 40, testInvocations: 1, assistTokens: 340 })
+  })
+
+  it('包別桶的不會多出數字（整理桶、回答客人不在後台自用桶）', () => {
+    expect(asAssistUsage(usageFromCalls('build', [flash(10, 5)])).assistTokens).toBeUndefined()
+    expect(asAssistUsage({})).toEqual({})
   })
 })
 

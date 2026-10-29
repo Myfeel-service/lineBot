@@ -1,7 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { generateImage, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
+import { asAssistUsage, runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
   //    一張 US$0.039 記成 US$0.003＝少 12 倍。模型只回字、沒給圖那次也付了錢，用計量器一起記。
   const img = await runMeteredAi(
     () => runWithLlmBudget(workspaceId, () => generateImage(prompt, { aspectRatio }), 'assist'),
-    calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }, getDb()),
+    calls => recordAiUsage(workspaceId, asAssistUsage({ ...usageFromCalls('test', calls), testInvocations: 1 }), getDb()),
   )
 
   return { imageBase64: img.data, contentType: img.mimeType }

@@ -18,7 +18,7 @@
 
 import { generateText, runWithLlmBudget } from '~~/server/utils/gemini'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
+import { asAssistUsage, runMeteredAi, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { splitProducts } from '~~/shared/store-profile-drafts'
 import { storeProfileForPrompt, type StoreProfileDoc } from '~~/shared/types/store-profile'
 import type { TaiwanFestival } from '~~/shared/taiwan-festivals'
@@ -148,7 +148,7 @@ export async function tailorFestivalAngle(
           maxOutputTokens: 200,
           thinkingBudget: 0,
         }), 'assist'),
-      calls => recordAiUsage(workspaceId, { ...usageFromCalls('test', calls), testInvocations: 1 }),
+      calls => recordAiUsage(workspaceId, asAssistUsage({ ...usageFromCalls('test', calls), testInvocations: 1 })),
     )
     const text = normalizeTailoredAngle(res.text ?? '', festival.name)
     const bad = rejectTailoredAngle(text, profile)

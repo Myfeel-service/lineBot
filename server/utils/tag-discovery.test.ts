@@ -7,12 +7,19 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.mock('./gemini', () => ({ generateJson: vi.fn(), runWithLlmBudget: vi.fn() }))
 vi.mock('./ai-settings', () => ({ getAiSettings: vi.fn() }))
 // ⛔ 要回 promise：呼叫端是 `recordAiUsage(...).catch(...)`，回 undefined 會讓整輪掃描報錯
-vi.mock('./ai-usage', () => ({ recordAiUsage: vi.fn(async () => {}) }))
+vi.mock('./ai-usage', () => ({
+  recordAiUsage: vi.fn(async () => {}),
+  // 預設沒到上限（`C-414` 那組自己改）
+  getMaintenanceBudgetStatus: vi.fn(async () => ({ used: 0, cap: 1, blocked: false, kind: 'background' })),
+}))
 vi.mock('./scanner-health', () => ({ recordScannerFailure: vi.fn() }))
 vi.mock('./user-display-names', () => ({ fetchUserDisplayNames: vi.fn(async () => ({})) }))
 
 import { generateJson, runWithLlmBudget } from './gemini'
 import { getAiSettings } from './ai-settings'
+import { getMaintenanceBudgetStatus } from './ai-usage'
+import { recordScannerFailure } from './scanner-health'
+import { taipeiYyyyMm } from '~~/shared/time'
 import { buildDiscoveryPrompt, scanTagDiscovery } from './tag-discovery'
 import { MAX_PENDING_DISCOVERIES, MIN_DISTINCT_USERS, discoveryScanOutcomeText } from '~~/shared/tag-discovery'
 
@@ -418,5 +425,53 @@ describe('還沒做過重複檢查的舊提案，掃描時補判（C-239）', ()
     expect(written.pending).toHaveLength(MAX_PENDING_DISCOVERIES)
     expect(written.pending[0]).toMatchObject({ similarChecked: true, similarTo: [{ tagId: 't-mic', confirmed: true }] })
     expect(written.lastScan).toBeUndefined() // 滿了就沒有真的掃
+  })
+})
+
+/**
+ * `C-414`：這個月 AI 讀對話到上限（背景那本），找新標籤要安靜地停到下個月。
+ * ⛔ 以前等 AI 那一步丟 429：被當成掃描失敗、lastScanMs 不推進——每 10 分鐘重讀一整批對話，45 分鐘後還跳「連續失敗中」。
+ */
+describe('背景那本到上限：安靜地停到下個月（`C-414`）', () => {
+  const DUE = { workspaceId: 'ws1', pending: [], dismissedNames: [], lastScanMs: 0, rescanRequestedMs: 5 }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getAiSettings).mockResolvedValue({ autoTagSuggest: { enabled: true } } as any)
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValue({ used: 0, cap: 1, blocked: false, kind: 'background' })
+    vi.mocked(runWithLlmBudget).mockImplementation(async (_wid: any, fn: any) => ({ data: await fn(), inputTokens: 1, outputTokens: 1 }) as any)
+    vi.mocked(generateJson).mockResolvedValue({ topics: [] } as any)
+  })
+
+  it('到期了但到上限：⛔ 不讀對話、不記失敗、不推進 lastScanMs；記下這個月先停、消掉手動要求', async () => {
+    vi.mocked(getMaintenanceBudgetStatus).mockResolvedValue({ used: 9, cap: 1, blocked: true, kind: 'background' })
+    const { db, writes } = fakeDb({ sessions: manySessions(6), discoveryDoc: DUE })
+    const reads = vi.spyOn(db, 'collection')
+    await scanTagDiscovery(db)
+    expect(getMaintenanceBudgetStatus).toHaveBeenCalledWith('ws1', db, 'background')
+    expect(reads.mock.calls.map(c => c[0])).not.toContain('conversationSessions')
+    expect(recordScannerFailure).not.toHaveBeenCalled()
+    expect(writes).toEqual([{ budgetPausedMonth: taipeiYyyyMm(), rescanRequestedMs: '__del__' }])
+  })
+
+  it('這個月已經記過先停：連用量都不查、什麼都不寫', async () => {
+    const { db, writes } = fakeDb({ sessions: manySessions(6), discoveryDoc: { ...DUE, budgetPausedMonth: taipeiYyyyMm() } })
+    await scanTagDiscovery(db)
+    expect(getMaintenanceBudgetStatus).not.toHaveBeenCalled()
+    expect(writes).toEqual([])
+  })
+
+  it('上個月記的先停不算數：照常掃', async () => {
+    const { db, writes } = fakeDb({ sessions: manySessions(6), discoveryDoc: { ...DUE, budgetPausedMonth: '200001' } })
+    await scanTagDiscovery(db)
+    expect(writes[0]!.lastScan).toMatchObject({ kind: 'no_topics' })
+  })
+
+  it('掃到一半才撞到上限（同一輪別的背景工作先用完）：一樣是先停，⛔ 不記成掃描失敗', async () => {
+    vi.mocked(runWithLlmBudget).mockRejectedValue(Object.assign(new Error('x'), { statusCode: 429, data: { reason: 'ai_budget' } }))
+    const { db, writes } = fakeDb({ sessions: manySessions(6), discoveryDoc: DUE })
+    await scanTagDiscovery(db)
+    expect(recordScannerFailure).not.toHaveBeenCalled()
+    expect(writes).toContainEqual({ budgetPausedMonth: taipeiYyyyMm(), rescanRequestedMs: '__del__' })
   })
 })

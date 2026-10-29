@@ -319,6 +319,12 @@ describe('標籤頁那行小字：狀態怎麼判（C-68 的沉默死亡不可�
     expect(s.tone).toBe('idle')
     expect(s.text).toContain('沒有發現足夠明確的新主題')
   })
+
+  it('⛔ 這個月 AI 讀對話到上限（`C-414`）→ 講原因跟幾號恢復，不講成「沒發現主題」；排在舊的失敗前面', () => {
+    const s = discoveryState({ ...base, budgetPaused: true, stalled: true })
+    expect(s.tone).toBe('warning')
+    expect(s.text).toBe('這個月 AI 讀對話到上限了，9 月 1 日恢復。貼標建議、找新標籤、整理答不出來的問題先停；回答客人不受影響。')
+  })
 })
 
 /**
@@ -337,6 +343,11 @@ describe('細條上的時間：上次掃了沒、下次什麼時候', () => {
     expect(t).toContain('今天 14:40')
     expect(t).toContain('9/2') // 上次 ＋ 6.5 天
     expect(t).toContain('天後')
+  })
+
+  it('⛔ 這個月到上限先停（`C-414`）：「下次自動掃描」講不出誠實的日子，整行不出現', () => {
+    expect(discoveryTiming({ ...base, budgetPaused: true })).toBeNull()
+    expect(discoveryTiming({ ...base, budgetPaused: true, rescanRequestedMs: NOW })).toBeNull()
   })
 
   it('昨天掃的講「昨天」、更早的講日期（不要一律印完整時間戳）', () => {

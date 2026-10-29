@@ -56,6 +56,8 @@ function testBucket(inputTokens: number, outputTokens: number) {
     testInputTokens: inputTokens,
     testOutputTokens: outputTokens,
     testInvocations: 1,
+    // 這幾件都圈在後台自用那本：每月上限只數這一格（`C-414`）
+    assistTokens: inputTokens + outputTokens,
     modelTokens: { test: { flash: { input: inputTokens, output: outputTokens } } },
   }
 }

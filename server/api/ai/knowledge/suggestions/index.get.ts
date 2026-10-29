@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION, getGapScanState } from '~~/server/utils/ai-knowledge-suggest'
+import { getMaintenanceBudgetStatus } from '~~/server/utils/ai-usage'
 import type { KnowledgeSuggestionDoc, KnowledgeSuggestionDraft } from '~~/shared/types/ai-knowledge'
 import { isRawSuggestionTopic } from '~~/shared/knowledge-suggestion-topic'
 
@@ -43,14 +44,17 @@ export default defineEventHandler(async (event) => {
   const db = getDb()
 
   // 等值查詢（workspaceId + status）走自動索引；排序量小放記憶體做，免建複合索引
-  const [snap, scan] = await Promise.all([
+  const [snap, scanState, budget] = await Promise.all([
     db.collection(KNOWLEDGE_SUGGESTIONS_COLLECTION)
       .where('workspaceId', '==', workspaceId)
       .where('status', '==', 'pending')
       .limit(50)
       .get(),
     getGapScanState(db, workspaceId),
+    // 這個月 AI 讀對話到上限、整理答不出來的問題先停（`C-414`）：即時查，不等掃描到期那一輪才寫的記號
+    getMaintenanceBudgetStatus(workspaceId, db, 'background').catch(() => null),
   ])
+  const scan = { ...scanState, budgetPaused: budget?.blocked === true }
 
   const items: KnowledgeSuggestionRow[] = snap.docs
     .map((d) => {

@@ -194,8 +194,9 @@
             <span v-if="discoveryTimingText" class="tags-discovery-strip__when">{{ discoveryTimingText }}</span>
           </span>
           <!-- ⛔ 開關關著時不給這顆按鈕：按了也不會掃，那是假的操作 -->
+          <!-- 這個月到上限先停（`C-414`）也不給：排程會把要求直接消掉，按了等於沒按 -->
           <el-button
-            v-if="canEditTags && discoveryEnabled"
+            v-if="canEditTags && discoveryEnabled && !discoveryBudgetPaused"
             size="small"
             :loading="rescanning"
             @click="requestRescan"
@@ -1106,6 +1107,8 @@ const undoingDismiss = ref('')
 const discoveryRescanRequestedMs = ref(0)
 /** 掃描器連續失敗中（後端用掃描器自己記的失敗判定，不是拿游標猜） */
 const discoveryStalled = ref(false)
+/** 這個月 AI 讀對話到上限、先停（`C-414`，後端即時查的） */
+const discoveryBudgetPaused = ref(false)
 /** 這次進頁面之後有沒有自己處理掉建議——⛔ 沒有這個的話，按掉最後一條之後畫面會
  *  說「這次掃描沒有發現主題」，但它明明有發現，是你剛處理完（等於系統在說謊） */
 const discoveryHandledThisVisit = ref(false)
@@ -1126,12 +1129,14 @@ const discoveryTimingText = computed(() => discoveryTiming({
   enabled: discoveryEnabled.value,
   lastScanMs: discoveryLastScanMs.value,
   rescanRequestedMs: discoveryRescanRequestedMs.value,
+  budgetPaused: discoveryBudgetPaused.value,
 }))
 
 const discoveryIdle = computed(() => discoveryState({
   enabled: discoveryEnabled.value,
   lastScanMs: discoveryLastScanMs.value,
   stalled: discoveryStalled.value,
+  budgetPaused: discoveryBudgetPaused.value,
   handledThisVisit: discoveryHandledThisVisit.value,
   lastScan: discoveryLastScan.value,
 }))
@@ -1251,6 +1256,7 @@ async function loadDiscovery() {
       lastScanMs: number
       rescanRequestedMs?: number
       stalled: boolean
+      budgetPaused?: boolean
       lastScan?: DiscoveryScanOutcome | null
       history?: TagDiscoveryDecision[]
     }>('/api/tag/discovery')
@@ -1259,6 +1265,7 @@ async function loadDiscovery() {
     discoveryLastScanMs.value = Number(res.lastScanMs ?? 0)
     discoveryRescanRequestedMs.value = Number(res.rescanRequestedMs ?? 0)
     discoveryStalled.value = res.stalled === true
+    discoveryBudgetPaused.value = res.budgetPaused === true
     discoveryLastScan.value = res.lastScan ?? null
     discoveryHistory.value = res.history ?? []
     discoveryLoaded.value = true

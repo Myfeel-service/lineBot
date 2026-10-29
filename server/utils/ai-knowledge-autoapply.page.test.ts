@@ -206,4 +206,15 @@ describe('tryAutoApplyPageChange（C-368）', () => {
     const r = await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', OPTS)
     expect(r).toMatchObject({ kind: 'applied', fingerprintSafe: false, reason: { kind: 'quota', count: 1 } })
   })
+
+  it('⛔ 整理到一半撞到每月上限（`C-414`）：丟回排程標成「這個月先停」，不變成「有變動，要你看一下」', async () => {
+    const budget = Object.assign(new Error('x'), { statusCode: 429, data: { reason: 'ai_budget' } })
+    vi.mocked(chunkTextWithLlm).mockRejectedValue(budget)
+    await expect(tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', OPTS)).rejects.toBe(budget)
+    // 別種錯照舊退回要人看
+    vi.mocked(chunkTextWithLlm).mockRejectedValue(new Error('JSON 壞了'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(await tryAutoApplyPageChange({} as any, 'home', SOURCE, NOW, 'h-new', OPTS)).toMatchObject({ kind: 'manual', reason: { kind: 'other' } })
+    warn.mockRestore()
+  })
 })

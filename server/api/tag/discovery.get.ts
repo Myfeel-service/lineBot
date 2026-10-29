@@ -1,6 +1,7 @@
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { getAiSettings } from '~~/server/utils/ai-settings'
+import { getMaintenanceBudgetStatus } from '~~/server/utils/ai-usage'
 import { TAG_DISCOVERY_COLLECTION } from '~~/server/utils/tag-discovery'
 import { mergeSimilarTags, type TagDiscoveryDoc } from '~~/shared/tag-discovery'
 import { genericFragments } from '~~/shared/tag-similarity'
@@ -9,7 +10,7 @@ import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
 /**
  * GET /api/tag/discovery — 「AI 發現的新標籤」收件匣（標籤頁頂部那張卡）
  *
- * Response: { enabled, pending, lastScanMs }
+ * Response: { enabled, budgetPaused, pending, lastScanMs, … }
  * enabled＝autoTagSuggest 總開關：關著的話卡片要講「去 AI 設定打開」而不是永遠空白。
  * 單文件直讀，零掃描零新索引。
  */
@@ -23,6 +24,12 @@ export default defineEventHandler(async (event) => {
   ])
   const doc = (snap.data() ?? null) as TagDiscoveryDoc | null
   const pending = Array.isArray(doc?.pending) ? doc!.pending : []
+  const enabled = settings.autoTagSuggest?.enabled === true
+  /**
+   * 這個月 AI 讀對話到上限、先停（`C-414`）：即時查，不讀文件上的記號——那格只在掃描到期那一輪才寫，
+   * 月中撞到上限的話，貼標建議早就停了、這裡卻還要等好幾天才講得出來。功能關著不查（關著本來就不跑）。
+   */
+  const budget = enabled ? await getMaintenanceBudgetStatus(workspaceId, db, 'background').catch(() => null) : null
 
   /**
    * 相似提醒（`C-178`）要拿**現在**的標籤清單比一次。
@@ -43,7 +50,9 @@ export default defineEventHandler(async (event) => {
   const generic = genericFragments(liveTags.map(t => t.name))
 
   return {
-    enabled: settings.autoTagSuggest?.enabled === true,
+    enabled,
+    /** 這個月 AI 讀對話到上限、先停（見上）：細條要講原因跟幾號恢復，「立即掃描一次」也不給（按了不會掃） */
+    budgetPaused: budget?.blocked === true,
     /**
      * 掃描器是不是連續失敗中。⛔ 一定要回這個：畫面只拿 `lastScanMs` 的話，
      * 「每輪都炸」看起來會跟「還沒跑第一次」一模一樣（`C-68` 的沉默死亡）。

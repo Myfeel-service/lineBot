@@ -1,7 +1,7 @@
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { runAdminAgentChat, type AdminAgentTurn } from '~~/server/utils/ai-admin-agent'
 import { recordAiUsage } from '~~/server/utils/ai-usage'
-import { callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
+import { asAssistUsage, callsOf, usageFromCalls } from '~~/server/utils/ai-usage-calls'
 import { runWithLlmBudget } from '~~/server/utils/gemini'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { verifyAdminOpToken } from '~~/server/utils/admin-op-token'
@@ -62,7 +62,8 @@ export default defineEventHandler(async (event) => {
   // 拿那個數字去推單位經濟就會被誤導(2026-08-10 稽核發現)。
   // 次數也一起記:成本進了哪一桶,對應的次數就要進同一桶,否則「每次多少錢」又會算錯。
   // token 照每一輪實際用的模型算（`D-130`②），格式壞掉重來前那次也算（`C-338`②）。
-  recordAiUsage(workspaceId, {
+  // 標成後台自用那本（`C-414`）：每月上限只數圈在那本裡的這幾件（確認後的操作沒被圈，不標）
+  recordAiUsage(workspaceId, asAssistUsage({
     ...usageFromCalls('test', callsOf(res)),
     testInvocations: 1,
     // 提議了幾次(還沒做)。跟 confirm 端點記的「真的執行幾次」成對,
@@ -70,7 +71,7 @@ export default defineEventHandler(async (event) => {
     // ⛔ **修改同一個提議不算新提議**:使用者說「改成早上九點」時模型會重提一次,
     //    照算的話調兩次再確認就變成「提議 3 次、確定 1 次」,那個數字會被正常使用灌爆。
     ...(res.pendingOp && res.pendingOp.opId !== lastProposal?.opId ? { agentProposed: 1 } : {}),
-  }).catch(e => console.error('[admin-agent] recordAiUsage error:', e))
+  })).catch(e => console.error('[admin-agent] recordAiUsage error:', e))
 
   // 審計:誰、問了什麼、查了哪些工具、答了什麼(fire-and-forget,失敗不影響回答)
   db.collection('adminAgentLogs').add({
