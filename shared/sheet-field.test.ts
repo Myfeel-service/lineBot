@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildSheetLabelRegistry,
   replaceSheetFieldTokens,
   sheetCardField,
   sheetFieldLabel,
   sheetFieldRefFromLabel,
+  sheetFieldShortLabel,
   sheetFieldToken,
   sheetFieldTokensIn,
 } from './sheet-field'
@@ -66,10 +68,38 @@ describe('存的格式 ↔ 膠囊', () => {
     expect(sheetFieldTokensIn(`前${sheetFieldToken(odd)}後`)).toEqual([{ token: sheetFieldToken(odd), ref: odd }])
   })
 
-  it('膠囊上寫「列・欄」，換回來一樣；列名稱裡有「・」照樣切對（取最後一個）', () => {
-    expect(sheetFieldLabel(ref)).toBe('Giaretti 珈樂堤《小滑手》全自動義式咖啡機 GL-5680・出貨時間')
+  it('`C-428` 全名是「欄・列」（先看到是哪一項），換回來一樣；商品名裡有「・」照樣切對（取第一個）', () => {
+    expect(sheetFieldLabel(ref)).toBe('出貨時間・Giaretti 珈樂堤《小滑手》全自動義式咖啡機 GL-5680')
     expect(sheetFieldRefFromLabel(sheetFieldLabel({ row: 'A・B 款', field: '出貨時間' }))).toEqual({ row: 'A・B 款', field: '出貨時間' })
     expect(sheetFieldRefFromLabel('沒有分隔')).toBeNull()
+  })
+
+  it('`C-428` 短名：商品名超過 12 個字截短；對照查得回原本那一格', () => {
+    expect(sheetFieldShortLabel(ref)).toBe('出貨時間・Giaretti 珈樂堤…')
+    expect(sheetFieldShortLabel({ row: '電淨艙', field: '出貨時間' })).toBe('出貨時間・電淨艙')
+    const reg = buildSheetLabelRegistry([ref])
+    expect(reg.labelFor(sheetFieldToken(ref))).toBe('出貨時間・Giaretti 珈樂堤…')
+    expect(reg.tokenFor('出貨時間・Giaretti 珈樂堤…')).toBe(sheetFieldToken(ref))
+  })
+
+  it('⛔ 兩格縮出來一樣：那兩格都用全名，不猜是哪一個', () => {
+    const one = { row: 'MATELASER《筋牌特務》 W1 REGEN 單入組', field: '出貨時間' }
+    const two = { row: 'MATELASER《筋牌特務》 W1 REGEN 雙入組', field: '出貨時間' }
+    const reg = buildSheetLabelRegistry([one, two])
+    expect(reg.labelFor(sheetFieldToken(one))).toBe(sheetFieldLabel(one))
+    expect(reg.labelFor(sheetFieldToken(two))).toBe(sheetFieldLabel(two))
+    expect(reg.tokenFor(sheetFieldShortLabel(one))).toBeUndefined()
+  })
+
+  it('⭐ 有對照時輸入框畫短名、來回換一次回到原樣；沒對照時畫全名一樣換得回來', () => {
+    const reg = buildSheetLabelRegistry([ref])
+    const stored = `出貨：${sheetFieldToken(ref)}。`
+    const short = toDisplayText(stored, 'send', reg)
+    expect(short).toContain(`${VAR_TOKEN_EDGE}出貨時間・Giaretti 珈樂堤…${VAR_TOKEN_EDGE}`)
+    expect(toStoredText(short, 'send', [], reg)).toBe(stored)
+    expect(variableTokenRanges(short, 'send', reg)[0]!.key).toBe(sheetFieldToken(ref))
+    // 對照還沒讀到（null）：畫全名，照樣換得回來
+    expect(toStoredText(toDisplayText(stored, 'send', null), 'send', [], null)).toBe(stored)
   })
 
   it('⭐ 輸入框來回換一次回到原樣（跟 LINE 名稱同一套），LINE 名稱不受影響', () => {

@@ -13,6 +13,8 @@
       </button>
       <template #dropdown>
         <el-dropdown-menu>
+          <!-- `C-428`：有試算表可挑的時候分兩組，不然「試算表」會掛在「客人資料」底下（名不符實，`D-166`） -->
+          <li v-if="sheetPicker" class="flow-var-inset__group" role="presentation">客人資料</li>
           <el-dropdown-item
             v-for="opt in options"
             :key="opt.value"
@@ -24,24 +26,28 @@
             </span>
           </el-dropdown-item>
           <!-- `C-423`：只有模組頁有（那邊送出端才會換這種標記） -->
-          <el-dropdown-item v-if="sheetPicker" divided :command="SHEET_COMMAND" data-tour="var-sheet-field">
-            <span class="flow-var-inset__item">
-              <span class="flow-var-inset__item-label">試算表的一格</span>
-              <span class="flow-var-inset__item-hint">例：Giaretti 的出貨時間。改試算表，這裡跟 AI 一起變</span>
-            </span>
-          </el-dropdown-item>
+          <template v-if="sheetPicker">
+            <li class="flow-var-inset__group flow-var-inset__group--divided" role="presentation">試算表</li>
+            <el-dropdown-item :command="SHEET_COMMAND" data-tour="var-sheet-field">
+              <span class="flow-var-inset__item">
+                <span class="flow-var-inset__item-label">商品資料</span>
+                <span class="flow-var-inset__item-hint">例：Giaretti 的出貨時間。改試算表，這裡跟 AI 一起變</span>
+              </span>
+            </el-dropdown-item>
+          </template>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
 
     <!--
-      `C-423`：挑「哪一份試算表 → 哪一列 → 哪一欄」，下面直接秀現在寫的內容（挑對了沒一眼看得出來）。
-      插進去的是一顆膠囊「列・欄」；送出時換成那張知識卡上當下寫的。
+      `C-423`：挑「哪一份試算表 → 哪個商品 → 哪一項」，下面直接秀現在寫的內容（挑對了沒一眼看得出來）。
+      插進去的是一顆藍色膠囊「出貨時間・商品名」；送出時換成那張知識卡上當下寫的。
+      `C-428`：用店家的話（商品／哪一項），⛔ 不用試算表的「列／欄」。
     -->
     <el-dialog
       v-if="sheetPicker && sheetOpen"
       v-model="sheetOpen"
-      title="帶出試算表上的一格"
+      title="帶出試算表的資料"
       width="min(520px, 92vw)"
       append-to-body
       class="flow-sheet-dialog"
@@ -56,7 +62,7 @@
       </p>
       <div v-else class="admin-field-stack">
         <div class="admin-field-group">
-          <AdminFieldLabel text="哪一份試算表" tight />
+          <AdminFieldLabel text="試算表" tight />
           <el-select v-model="sheetSourceId" class="control-full" @change="onSheetSourceChange">
             <el-option v-for="s in sheetSources" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
@@ -66,13 +72,13 @@
         </p>
         <template v-else-if="pickedSource">
           <div class="admin-field-group">
-            <AdminFieldLabel text="哪一列（第一欄的名稱）" tight />
+            <AdminFieldLabel text="商品" tight />
             <el-select v-model="sheetRow" filterable class="control-full" placeholder="打字找商品">
               <el-option v-for="r in pickedSource.rows" :key="r.title" :label="r.title" :value="r.title" />
             </el-select>
           </div>
           <div class="admin-field-group">
-            <AdminFieldLabel text="哪一欄" tight />
+            <AdminFieldLabel text="哪一項" tight />
             <el-select v-model="sheetField" class="control-full">
               <el-option v-for="h in pickedSource.headers" :key="h" :label="h" :value="h" />
             </el-select>
@@ -80,9 +86,15 @@
           <div v-if="sheetRow && sheetField" class="admin-field-group">
             <AdminFieldLabel text="現在寫的是" tight />
             <p v-if="pickedValue" class="flow-sheet-dialog__value">{{ pickedValue }}</p>
-            <p v-else class="flow-sheet-dialog__empty">這一列的「{{ sheetField }}」是空的——插進去的話客人會看到空白，先到試算表填好。</p>
+            <p v-else class="flow-sheet-dialog__empty">這個商品的「{{ sheetField }}」是空的——插進去的話客人會看到空白，先到試算表填好。</p>
           </div>
         </template>
+        <!--
+          `C-428`：店家要的通常是「把手打的那段換成跟試算表同步」，不是再插一段（`D-166`：舊的「10 月底」還留在框裡）。
+          選取那段再按插入就會直接換掉——有選取的時候直接講會換掉幾個字，沒有的時候教他怎麼做。
+        -->
+        <p v-if="replacingChars > 0" class="flow-sheet-dialog__hint">會換掉你在輸入框選取的那段字（{{ replacingChars }} 字）。</p>
+        <p v-else class="flow-sheet-dialog__hint">要換掉原本手打的字：先在輸入框選取那一段，再按「＋ 插入」，插入時會直接換掉。</p>
       </div>
       <template #footer>
         <el-button @click="sheetOpen = false">取消</el-button>
@@ -96,8 +108,8 @@
 import { computed, inject, nextTick, ref } from 'vue'
 import type { CaretRange } from '~/utils/insert-token-at-caret'
 import { insertTokenAtCaret } from '~/utils/insert-token-at-caret'
-import { FLOW_SHEET_PICKER_KEY } from '~/utils/flow-sheet-picker'
-import { sheetFieldLabel } from '~~/shared/sheet-field'
+import { FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY } from '~/utils/flow-sheet-picker'
+import { sheetFieldLabel, sheetFieldToken } from '~~/shared/sheet-field'
 import { VAR_TOKEN_EDGE } from '~~/shared/variable-tokens'
 
 /**
@@ -129,8 +141,12 @@ const emit = defineEmits<{
  * `D-128`（2026-10-17 老闆「看起來很像程式碼」）：按鈕以前寫「{{...}}」——工程符號，店家看不出按了會怎樣。
  * 改講會做什麼；單行的小輸入框（卡片標題）位置窄，用短的。
  */
-const glyph = computed(() => (props.size === 'sm' ? '＋ 客人資料' : '＋ 插入客人資料'))
-const ariaLabel = '插入客人資料'
+const glyph = computed(() => {
+  // `C-428`：模組頁還能插試算表的資料，「插入客人資料」就名不符實了（`D-166`）
+  if (sheetPicker) return '＋ 插入'
+  return props.size === 'sm' ? '＋ 客人資料' : '＋ 插入客人資料'
+})
+const ariaLabel = computed(() => (sheetPicker ? '插入客人資料或試算表的資料' : '插入客人資料'))
 const hint = computed(() => (sheetPicker
   ? '插入客人的資料（例：LINE 名稱），或試算表上的一格（例：出貨時間）'
   : '插入客人的資料（例：LINE 名稱），送出時換成每位客人自己的'))
@@ -212,8 +228,10 @@ const sheetOpen = ref(false)
 const sheetSourceId = ref('')
 const sheetRow = ref('')
 const sheetField = ref('')
-/** 打開小視窗那一刻的游標（選完回來插在原位） */
+/** 打開小視窗那一刻的游標（選完回來插在原位；有選取一段字＝插入時換掉那一段） */
 let sheetCaret: CaretRange | null = null
+const replacingChars = ref(0)
+const sheetLabelsRef = inject(SHEET_LABELS_KEY, null)
 const sheetSources = computed(() => sheetPicker?.sources.value ?? [])
 const pickedSource = computed(() => sheetSources.value.find(s => s.id === sheetSourceId.value) ?? null)
 const pickedValue = computed(() => pickedSource.value?.rows.find(r => r.title === sheetRow.value)?.values[sheetField.value] ?? '')
@@ -225,6 +243,7 @@ function onSheetSourceChange() {
 
 async function openSheetPicker(range: CaretRange | null) {
   sheetCaret = range
+  replacingChars.value = range ? Math.abs(range.end - range.start) : 0
   sheetOpen.value = true
   // 每次打開都重讀一次（剛改完試算表、按了同步，要看得到新的）
   await sheetPicker?.reload(true)
@@ -237,7 +256,10 @@ async function openSheetPicker(range: CaretRange | null) {
 
 function insertSheetField() {
   if (!sheetRow.value || !sheetField.value) return
-  const token = `${VAR_TOKEN_EDGE}${sheetFieldLabel({ row: sheetRow.value, field: sheetField.value })}${VAR_TOKEN_EDGE}`
+  const picked = { row: sheetRow.value, field: sheetField.value }
+  // 跟輸入框畫的同一個名字（短名查對照，查不到用全名）——輸入框才換得回存的格式
+  const label = sheetLabelsRef?.value?.labelFor(sheetFieldToken(picked)) ?? sheetFieldLabel(picked)
+  const token = `${VAR_TOKEN_EDGE}${label}${VAR_TOKEN_EDGE}`
   sheetOpen.value = false
   caretRange = sheetCaret
   void onCommand(token)

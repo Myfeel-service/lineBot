@@ -9,6 +9,7 @@ import { parseAdminListPagination } from '~~/server/utils/admin-pagination'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { readFlowUsage } from '~~/server/utils/flow-usage'
 import { loadSheetRows } from '~~/server/utils/sheet-field-hydrate'
+import { listSheetStaleRecords } from '~~/server/utils/sheet-stale-modules'
 
 function stripFlowTriggers(flow: Record<string, unknown>) {
   const { triggers, trigger, ...rest } = flow
@@ -75,6 +76,7 @@ export default defineEventHandler(async (event) => {
    * 模組頁另外要的兩份東西，**借這支路由回**（`?part=`），不另開：
    *   `?part=usage`         近 30 天每個模組幾位客人收到（`C-425`）
    *   `?part=sheet-fields`  每一份 Google 試算表的每一列、每一欄（`C-423`；`&fresh=1` 不用快取）
+   *   `?part=sheet-stale`   試算表改了、還寫著舊字的模組記錄（`C-429`）
    * ⛔ 為什麼不開新路由：Nitro 產生的路由型別聯集已經貼著 TypeScript 的深度上限（2026-10-29 實測：
    *    多一支就讓不相干的 warmup.get.ts、payuni-reconcile.ts、layouts/default.vue 報 TS2589，連一支都放不下）。
    */
@@ -83,6 +85,8 @@ export default defineEventHandler(async (event) => {
     const { sources } = await loadSheetRows(workspaceId, { fresh: String(query.fresh ?? '') === '1' })
     return { sources }
   }
+  // `C-429`：試算表改了、還寫著舊字的模組（記錄；頁面用手上的模組再確認一次，不在這裡讀模組）
+  if (query.part === 'sheet-stale') return { records: await listSheetStaleRecords(getDb(), workspaceId) }
 
   const pickerOnly = String(query.fields ?? '') === 'picker'
 

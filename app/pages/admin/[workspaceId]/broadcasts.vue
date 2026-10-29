@@ -329,7 +329,8 @@
               而頁首那排的旁邊就是「驗證並發送」，兩顆長得太近會按錯，而按錯的那一顆收不回來。
             -->
             <div v-if="!isReadOnly && can('broadcast.write')" class="bc-testsend" data-tour="bc-testsend">
-              <el-button size="small" @click="openTestSend">試發一則給自己看</el-button>
+              <!-- `C-428`：跟機器人模組頁同名（`D-166`：同一個功能兩個名字；名單裡也有同事，「給自己看」不完全對） -->
+              <el-button size="small" @click="openTestSend">試發</el-button>
               <span class="text-xs text-muted">
                 真的會送到那支手機。<b>不會</b>算進成效報表、<b>不會</b>貼記號、<b>不會</b>改變這則推播的狀態。
               </span>
@@ -554,7 +555,7 @@
     推播，36 人次有 29 次是發給不在後台的看稿同事，4 則一次發 3–5 人。
   -->
   <!-- 收件人名單、送完的結果都在共用的框裡（模組「傳給我自己看」也用它，`C-426`）；這裡只管「先存草稿、再送存好的那份」 -->
-  <AdminTestSendDialog v-model="testSendVisible" title="試發一則給自己看" :send="sendBroadcastTest">
+  <AdminTestSendDialog v-model="testSendVisible" title="試發到手機看" :send="sendBroadcastTest">
     <template #hint>
       <p class="tags-hint">
         送出的內容跟正式發送<b>完全一樣</b>（選了機器人模組的話，送的就是模組裡那幾則）。

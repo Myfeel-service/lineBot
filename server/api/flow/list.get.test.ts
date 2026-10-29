@@ -26,6 +26,7 @@ vi.mock('~~/server/utils/workspace-system-modules', async () => {
 
 vi.mock('~~/server/utils/flow-usage', () => ({ readFlowUsage: vi.fn(async () => ({ from: 'a', to: 'b', trackedSince: null, modules: {} })) }))
 vi.mock('~~/server/utils/sheet-field-hydrate', () => ({ loadSheetRows: vi.fn(async () => ({ rows: new Map(), sources: [{ id: 's1' }] })) }))
+vi.mock('~~/server/utils/sheet-stale-modules', () => ({ listSheetStaleRecords: vi.fn(async () => [{ row: 'G', moduleIds: ['m1'] }]) }))
 
 let currentQuery: Record<string, unknown> = {}
 vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -257,5 +258,16 @@ describe('借這支路由回模組頁另外要的兩份（不另開：路由型�
     currentQuery = {}
     expect(vi.mocked(loadSheetRows)).toHaveBeenCalledWith(WS, { fresh: true })
     expect(res).toEqual({ sources: [{ id: 's1' }] })
+  })
+
+  it('`C-429` ?part=sheet-stale：回「試算表改了、還寫著舊字」的記錄，不撈模組', async () => {
+    const { listSheetStaleRecords } = await import('~~/server/utils/sheet-stale-modules')
+    vi.mocked(listDocs).mockClear()
+    currentQuery = { part: 'sheet-stale' }
+    const res: any = await (handler as any)({} as never)
+    currentQuery = {}
+    expect(vi.mocked(listSheetStaleRecords)).toHaveBeenCalledWith(expect.anything(), WS)
+    expect(res).toEqual({ records: [{ row: 'G', moduleIds: ['m1'] }] })
+    expect(vi.mocked(listDocs)).not.toHaveBeenCalled()
   })
 })

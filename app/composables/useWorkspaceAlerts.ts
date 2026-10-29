@@ -437,6 +437,17 @@ const ALERTS: AlertDefinition[] = [
     guideId: 'broken-module',
   },
   {
+    // 黃燈：客人收得到回覆，只是點選單跟直接問 AI 講不一樣（`C-429`）
+    id: 'sheetStaleModules',
+    icon: Reading,
+    impact: '試算表上的資料改了（例如出貨時間），但有機器人模組還寫著改之前的字。客人點選單跟直接問 AI，會聽到不一樣的答案。',
+    cta: '前往修改',
+    // 換成同步＝改模組＝`marketing.write`（跟按鈕壞掉那顆同一項）
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-stale"]', note: '清單最上面列著是哪幾個模組；點進去，上方會並排舊的跟試算表現在寫的，按「換成跟試算表同步」就好。' },
+  },
+  {
     // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。
     // （2026-08-08 的真實災情：問訂單編號沒給「我沒有訂單編號」的退路，沒編號的客人出不去，
     //   後台完全看不出來，只有自己去測才會發現。）

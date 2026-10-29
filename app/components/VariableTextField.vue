@@ -15,7 +15,7 @@
     />
     <!-- 膠囊那一層：疊在輸入框上面、滑鼠穿過去（點的還是輸入框），字是透明的，只畫膠囊的底色 -->
     <div v-show="layerVisible" ref="layerEl" class="var-field__layer" aria-hidden="true">
-      <div ref="layerInnerEl" class="var-field__layer-inner"><template v-for="(seg, i) in segments" :key="i"><span v-if="seg.token" class="var-field__pill">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>{{ '​' }}</div>
+      <div ref="layerInnerEl" class="var-field__layer-inner"><template v-for="(seg, i) in segments" :key="i"><span v-if="seg.token" :class="['var-field__pill', { 'var-field__pill--sheet': seg.sheet }]">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>{{ '​' }}</div>
     </div>
   </div>
 </template>
@@ -33,13 +33,14 @@
  *  · 左右鍵一次跳過整顆；點進膠囊中間，游標移到膠囊後面；選一段字邊緣卡在膠囊裡就擴到整顆
  * 規則（哪些字算膠囊、怎麼換）在 `shared/variable-tokens`（有測試）。
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   toDisplayText,
   toStoredText,
   variableTokenRanges,
   type VariableKeyMode,
 } from '~~/shared/variable-tokens'
+import { SHEET_LABELS_KEY } from '~/utils/flow-sheet-picker'
 
 defineOptions({ inheritAttrs: false })
 
@@ -55,8 +56,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const onUpdate = (v: string) => emit('update:modelValue', v)
-const format = (v: string) => toDisplayText(v, props.mode)
-const parse = (v: string) => toStoredText(v, props.mode, props.knownKeys)
+/** `C-428`：試算表的一格畫短名（模組頁 provide；別的頁沒有＝照舊） */
+const sheetLabelsRef = inject(SHEET_LABELS_KEY, null)
+const sheetLabels = () => sheetLabelsRef?.value ?? null
+const format = (v: string) => toDisplayText(v, props.mode, sheetLabels())
+const parse = (v: string) => toStoredText(v, props.mode, props.knownKeys, sheetLabels())
 
 const rootEl = ref<HTMLElement | null>(null)
 const layerEl = ref<HTMLElement | null>(null)
@@ -64,13 +68,14 @@ const layerInnerEl = ref<HTMLElement | null>(null)
 const composing = ref(false)
 
 const display = computed(() => format(String(props.modelValue ?? '')))
-const ranges = computed(() => variableTokenRanges(display.value, props.mode))
+const ranges = computed(() => variableTokenRanges(display.value, props.mode, sheetLabels()))
 const segments = computed(() => {
-  const out: Array<{ text: string; token: boolean }> = []
+  const out: Array<{ text: string; token: boolean; sheet?: boolean }> = []
   let at = 0
   for (const r of ranges.value) {
     if (r.start > at) out.push({ text: display.value.slice(at, r.start), token: false })
-    out.push({ text: display.value.slice(r.start, r.end), token: true })
+    // `C-428`：試算表的一格畫藍色，跟客人資料（綠色）分得出來
+    out.push({ text: display.value.slice(r.start, r.end), token: true, sheet: r.key.startsWith('{{sheet:') })
     at = r.end
   }
   if (at < display.value.length) out.push({ text: display.value.slice(at), token: false })
@@ -126,7 +131,7 @@ function scheduleSync() {
 /** 游標／選取範圍卡在膠囊中間 → 移到膠囊邊上（點進中間＝跳到後面；選取的兩端擴到整顆） */
 function snapSelection(prefer: 'start' | 'end' = 'end') {
   if (!field || composing.value) return
-  const rs = variableTokenRanges(field.value, props.mode)
+  const rs = variableTokenRanges(field.value, props.mode, sheetLabels())
   if (!rs.length) return
   const s = field.selectionStart ?? 0
   const e = field.selectionEnd ?? 0
@@ -156,7 +161,7 @@ function deleteRange(start: number, end: number) {
 function onKeydown(ev: Event) {
   const e = ev as KeyboardEvent
   if (!field || e.isComposing || composing.value || e.altKey || e.ctrlKey || e.metaKey) return
-  const rs = variableTokenRanges(field.value, props.mode)
+  const rs = variableTokenRanges(field.value, props.mode, sheetLabels())
   if (!rs.length) return
   const s = field.selectionStart ?? 0
   const end = field.selectionEnd ?? 0
@@ -234,4 +239,21 @@ onBeforeUnmount(() => {
 
 // 內容一變（插入、刪除、別處改了資料）就重新對齊：膠囊多一顆，自動長高的輸入框高度也會跟著變
 watch(display, () => nextTick(scheduleSync))
+
+/**
+ * `C-428`：試算表短名的對照晚到（模組頁是「用到試算表才去讀」，一定比輸入框晚）。
+ * 膠囊那層會跟著換短名，底下輸入框的字卻不會——Element 只在 v-model 變的時候才重套 formatter——
+ * 結果膠囊畫短名、底下還是全名，膠囊後面多出一串字。這裡補套一次；游標照「離結尾幾個字」放回去。
+ */
+watch(() => sheetLabelsRef?.value, () => {
+  if (!field || field.value === display.value) return
+  const focused = document.activeElement === field
+  const fromEnd = field.value.length - (field.selectionEnd ?? field.value.length)
+  field.value = display.value
+  if (focused) {
+    const at = Math.max(0, field.value.length - fromEnd)
+    field.setSelectionRange(at, at)
+  }
+  nextTick(scheduleSync)
+})
 </script>

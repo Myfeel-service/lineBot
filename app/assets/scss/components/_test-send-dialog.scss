@@ -10,6 +10,13 @@
   margin-top: 0.25rem;
 }
 
+/* `C-428`：Element 的 `el-checkbox-group` 自己設了 `font-size:0; line-height:0`，組名、「還沒有。…」那句繼承到行高 0，
+   字疊在一起（推播頁原本就這樣，`D-166` 截圖才看到）。夾父層才蓋得過 Element（它比這份晚載入） */
+.bc-dialog-testsend .bc-testsend-list {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .bc-testsend-group {
   display: flex;
   flex-direction: column;

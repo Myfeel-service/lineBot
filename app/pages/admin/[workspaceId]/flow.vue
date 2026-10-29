@@ -31,18 +31,36 @@
           `C-418`：有客人走不到的模組才出現。橘點就是走不到（這排的「客人走不到」兼當圖例）；
           只看走不到的時候每一列都是，就不再畫點。
         -->
-        <!-- `C-425`：每一列右邊的數字是什麼（只講一次，不在每一列重複） -->
-        <p v-if="flowUsagePeriod" class="flow-list-usage-note" :title="FLOW_USAGE_TITLE">右邊數字＝{{ flowUsagePeriod }}幾位客人收到</p>
-        <div v-if="unreachableIds.size" class="flow-list-filter" data-tour="flow-list-filter">
+        <!--
+          `C-428`：「近 30 天幾位客人收到」不再掛在每一列右邊——那會把「客服 - 出貨進度查詢 - 商品名」的後半段擠掉、
+          還一整排「0 人」（`D-166` 實機截圖）。改成跟「客人走不到」同一排的篩選，點了只列出走得到、卻沒人收到的。
+          還沒有紀錄（剛上線）就不出現那一格（空白不等於 0 位）。
+        -->
+        <!-- `C-429`：試算表改了、還寫著舊字的模組，點名列在最上面（點了就打開那一個） -->
+        <div v-if="staleFlows.length" class="flow-stale-list" data-tour="flow-sheet-stale">
+          <p class="flow-stale-list__title">試算表改了<span>這 {{ staleFlows.length }} 個模組還寫著舊的</span></p>
+          <button
+            v-for="f in staleFlows"
+            :key="f.id"
+            type="button"
+            class="flow-stale-list__item"
+            :class="{ 'is-active': selectedId === f.id }"
+            :title="f.name"
+            @click="selectFlow(f)"
+          >{{ f.name }}</button>
+        </div>
+        <div v-if="unreachableIds.size || unusedIds.size" class="flow-list-filter" data-tour="flow-list-filter">
           <el-radio-group v-model="listFilter" size="small">
             <el-radio-button value="all">全部 {{ regularFlowTotal }}</el-radio-button>
-            <el-radio-button value="unreachable"><span class="flow-unreachable-dot" aria-hidden="true" />客人走不到 {{ unreachableIds.size }}</el-radio-button>
+            <el-radio-button v-if="unreachableIds.size" value="unreachable"><span class="flow-unreachable-dot" aria-hidden="true" />客人走不到 {{ unreachableIds.size }}</el-radio-button>
+            <el-radio-button v-if="unusedIds.size" value="unused" data-tour="flow-list-unused">沒人收到 {{ unusedIds.size }}</el-radio-button>
           </el-radio-group>
           <p v-if="showUnreachableOnly" class="flow-list-filter__hint">沒有任何自動回應、選單、按鈕會叫出這些模組</p>
+          <p v-else-if="showUnusedOnly" class="flow-list-filter__hint" :title="FLOW_USAGE_TITLE">客人走得到，但{{ flowUsagePeriod }}沒有客人收到</p>
         </div>
 
         <!-- 系統模組永遠在最上方（不可分組）；它們是事件叫出來的，永遠不算走不到 -->
-        <template v-if="!showUnreachableOnly">
+        <template v-if="!showFilteredOnly">
           <AdminSplitListItem
             v-for="flow in systemFlows"
             :key="flow.id"
@@ -51,8 +69,6 @@
             :active="selectedId === flow.id"
             :meta-text="moduleTypeLabel(flow.moduleType)"
             chip-tone="neutral"
-            time-in-title-row
-            :chip-text="flowUsageChip(flow.id)"
             @select="selectFlow(flow)"
           />
         </template>
@@ -75,7 +91,7 @@
           @drop="onFlowListDrop($event, regularFlowIndex(flow.id))"
         >
           <span
-            v-if="can('marketing.write') && !showUnreachableOnly"
+            v-if="can('marketing.write') && !showFilteredOnly"
             class="drag-handle flow-sidebar-drag-handle"
             draggable="true"
             aria-label="拖曳搬移 / 排序"
@@ -88,8 +104,6 @@
             :title="flow.name"
             :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
             :active="selectedId === flow.id"
-            time-in-title-row
-            :chip-text="flowUsageChip(flow.id)"
             @select="selectFlow(flow)"
           />
         </div>
@@ -108,7 +122,7 @@
 
         <!-- 每個資料夾 -->
         <template v-for="folder in flowFolders" :key="folder.id">
-          <template v-if="!showUnreachableOnly || unreachableCountByFolder[folder.id]">
+          <template v-if="!showFilteredOnly || filteredCountByFolder[folder.id]">
           <div
             class="src-folder-header"
             :class="{
@@ -122,7 +136,7 @@
             @drop.prevent="onFlowFolderDrop(folder.id)"
           >
             <span
-              v-if="can('marketing.write') && !showUnreachableOnly"
+              v-if="can('marketing.write') && !showFilteredOnly"
               class="drag-handle flow-sidebar-drag-handle src-folder-drag-handle"
               draggable="true"
               aria-label="拖曳排序資料夾"
@@ -131,16 +145,16 @@
               @dragend.stop="onFolderHeaderDragEnd"
             >⠿</span>
             <span class="src-folder-label">
-              <span class="src-folder-arrow">{{ isFlowFolderExpanded(folder.id) || showUnreachableOnly ? '▾' : '▸' }}</span>
+              <span class="src-folder-arrow">{{ isFlowFolderExpanded(folder.id) || showFilteredOnly ? '▾' : '▸' }}</span>
               <el-icon><Folder /></el-icon> {{ folder.name }}
-              <span class="src-folder-count">（{{ showUnreachableOnly ? unreachableCountByFolder[folder.id] : (flowCountByFolder[folder.id] ?? 0) }}）</span>
+              <span class="src-folder-count">（{{ showFilteredOnly ? filteredCountByFolder[folder.id] : (flowCountByFolder[folder.id] ?? 0) }}）</span>
             </span>
             <!--
               ⛔ 只放「● 數字」：側欄窄，寫成「28 個走不到」會把左邊資料夾名字的「（61）」擠掉（實機截圖看到的）。
               橘點的意思上面篩選那排寫著；完整的話放在滑過去的提示。
             -->
             <span
-              v-if="!showUnreachableOnly && unreachableCountByFolder[folder.id]"
+              v-if="!showFilteredOnly && unreachableCountByFolder[folder.id]"
               class="src-folder-unreachable"
               :title="`${unreachableCountByFolder[folder.id]} 個客人走不到`"
               :aria-label="`${unreachableCountByFolder[folder.id]} 個客人走不到`"
@@ -153,7 +167,7 @@
               </span>
             </AdminOperateGate>
           </div>
-          <template v-if="isFlowFolderExpanded(folder.id) || showUnreachableOnly">
+          <template v-if="isFlowFolderExpanded(folder.id) || showFilteredOnly">
             <div
               v-for="flow in visibleFlowsByFolder[folder.id] ?? []"
               :key="flow.id"
@@ -171,7 +185,7 @@
               @drop.prevent="onFolderRowDrop(folder.id, flow.id)"
             >
               <span
-                v-if="can('marketing.write') && !showUnreachableOnly"
+                v-if="can('marketing.write') && !showFilteredOnly"
                 class="drag-handle flow-sidebar-drag-handle"
                 draggable="true"
                 aria-label="拖曳搬移"
@@ -183,13 +197,11 @@
                 :title="flow.name"
                 :title-icon="!showUnreachableOnly && unreachableIds.has(flow.id) ? '●' : ''"
                 :active="selectedId === flow.id"
-                time-in-title-row
-                :chip-text="flowUsageChip(flow.id)"
                 @select="selectFlow(flow)"
               />
             </div>
             <div
-              v-if="!showUnreachableOnly && !(flowsByFolder[folder.id] ?? []).length"
+              v-if="!showFilteredOnly && !(flowsByFolder[folder.id] ?? []).length"
               class="src-folder-empty"
             >
               （資料夾為空；可從外面拖一筆過來）
@@ -291,9 +303,9 @@
       <div class="flex gap-1 admin-header-actions">
         <el-button @click="cancelEdit">取消</el-button>
         <AdminOperateGate capability="marketing.write">
-          <!-- `C-426`：先傳到手機看，沒問題再存（存了就對客人生效） -->
+          <!-- `C-426`：先傳到手機看，沒問題再存（存了就對客人生效）。`C-428`：跟推播頁同名「試發」 -->
           <el-button :disabled="!form.messages.length" data-tour="flow-test-send" @click="openTestSend">
-            傳給我自己看
+            試發
           </el-button>
         </AdminOperateGate>
         <AdminOperateGate capability="marketing.write">
@@ -363,6 +375,31 @@
         <!-- 卡片區 | 即時預覽（兩欄，都在工具列下方） -->
         <div class="fem-body-row">
         <div class="fem-rail" data-tour="flow-rail">
+          <!--
+            `C-429`：試算表改了、這個模組還寫著改之前的字。舊的跟試算表現在寫的**兩個框、兩種底色**並排（標籤在值上面），
+            一顆「換成跟試算表同步」把那段舊字換成帶出試算表那一格的膠囊——換完還沒存，按「儲存變更」才生效。
+            用畫面上正在編的那一份比：換掉當下就消失，不用等存檔。
+          -->
+          <div v-if="selectedStale" class="flow-stale-banner" data-tour="flow-stale-banner">
+            <p class="flow-stale-banner__title">試算表改了，這個模組還寫著改之前的字</p>
+            <p class="flow-stale-banner__why">
+              「{{ selectedStale.record.sourceName || '試算表' }}」上 {{ selectedStale.record.row }} 的「{{ selectedStale.record.field }}」{{ selectedStale.changedOn }}改了。客人點這個模組跟直接問 AI，現在會聽到不一樣的答案。
+            </p>
+            <div class="flow-stale-banner__pair">
+              <div class="flow-stale-banner__box flow-stale-banner__box--old">
+                <span class="flow-stale-banner__label">這個模組寫的（舊）</span>
+                <p>{{ selectedStale.quoted }}</p>
+              </div>
+              <div class="flow-stale-banner__box flow-stale-banner__box--new">
+                <span class="flow-stale-banner__label">試算表現在寫的</span>
+                <p>{{ selectedStale.record.newValue || '（現在是空的）' }}</p>
+              </div>
+            </div>
+            <AdminOperateGate capability="marketing.write">
+              <el-button type="primary" size="small" data-tour="flow-stale-sync" @click="syncStaleToSheet">換成跟試算表同步</el-button>
+            </AdminOperateGate>
+            <p class="flow-stale-banner__note">換完是一顆藍色膠囊，以後改試算表就會跟著變；按「儲存變更」才會生效。</p>
+          </div>
           <div v-if="!form.messages.length" class="fem-empty">
             <span>尚無訊息</span>
             <p class="text-xs text-muted">點擊上方按鈕新增</p>
@@ -843,13 +880,14 @@
                   `C-424`：以前寫「把回覆存成你設定的屬性（若有填寫）」，但存屬性那格是關著的（`showUserInputAttribute`），
                   店家會以為電話被存起來了。照實講：答案只留在對話；24 小時內客人下一句不管講什麼都當答案。
                 -->
-                <div class="ui-warning-text">
+                <!-- `C-428`：縮成兩句、灰底（這是說明不是警告，`D-166`） -->
+                <div :class="showUserInputAttribute ? 'ui-warning-text' : 'ui-note-text'">
                   <template v-if="showUserInputAttribute">
                     客人看到這則提問後回的下一句話，會在 24 小時內存成你設定的屬性（若有填寫），並接著送出你選的下一個模組。超過 24 小時就不會了。
                   </template>
                   <template v-else>
-                    客人看到這則提問後，24 小時內傳的<strong>下一句話</strong>（不管講什麼）都會當成回答，接著送出你選的下一個模組。回答只留在對話紀錄裡，<strong>不會另外存起來</strong>。
-                    要收電話、訂單編號這類資料，請用「自動回應」的「問一題」：會檢查格式、也會存進客人資料。
+                    客人 24 小時內的下一句話會當成回答，接著送出你選的模組；回答只留在對話紀錄。<br>
+                    要收電話、訂單編號，請用「自動回應」的「問一題」。
                   </template>
                 </div>
               </div>
@@ -1282,13 +1320,12 @@
   </el-dialog>
 
   <!--
-    `C-426`：傳給我自己看。卡片長相、圖片比例、網址點不點得開只有手機看得準。
+    `C-426`：試發（`C-428` 起跟推播頁同名）。卡片長相、圖片比例、網址點不點得開只有手機看得準。
     ⛔ 送的是畫面上這一份、**不幫你存**——模組一存就對客人生效，「先存再試」等於先上線再看（跟推播試發相反）。
   -->
   <AdminTestSendDialog
     v-model="testSendVisible"
-    title="傳給我自己看"
-    submit-label="傳送"
+    title="試發到手機看"
     done-tail="去手機上看一眼，沒問題再回來按「儲存」。"
     :send="sendFlowTest"
   >
@@ -1337,8 +1374,8 @@ import {
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
 import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
 import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
-import { replaceSheetFieldTokens, sheetFieldLabel, sheetRowKey } from '~~/shared/sheet-field'
-import { FLOW_SHEET_PICKER_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
+import { buildSheetLabelRegistry, replaceSheetFieldTokens, sheetFieldLabel, sheetRowKey, type SheetFieldRef, type SheetLabelRegistry } from '~~/shared/sheet-field'
+import { FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1352,6 +1389,7 @@ import {
 import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
 import { DISPLAY_NAME_VARIABLE_OPTION, displayTokenFor, toDisplayText, toStoredText } from '~~/shared/variable-tokens'
 import { previewVariableNote, renderPreviewVariablesDeep } from '~~/shared/preview-variables'
+import { quotedValueIn, replaceQuotedInMessages } from '~~/shared/sheet-stale'
 
 definePageMeta({ middleware: 'auth', layout: 'default' })
 
@@ -1468,8 +1506,27 @@ const unreachableIds = computed(() => {
   }
   return ids
 })
-const listFilter = ref<'all' | 'unreachable'>('all')
+const listFilter = ref<'all' | 'unreachable' | 'unused'>('all')
 const showUnreachableOnly = computed(() => listFilter.value === 'unreachable' && unreachableIds.value.size > 0)
+/**
+ * `C-428`：走得到、但近 30 天（或從開始記那天起）沒有客人收到的自建模組。
+ * 走不到的不算在這裡（那邊已經有一格，兩格講同一批會混）；索引還在讀或查不到時 unreachableIds 是空的，就只看有沒有人收到。
+ * ⛔ 還沒有任何紀錄（剛上線）＝空集合，那一格不出現——空白不等於 0 位。
+ */
+const unusedIds = computed(() => {
+  const ids = new Set<string>()
+  if (!flowUsagePeriod.value) return ids
+  for (const f of allFlows.value) {
+    if (f.isSystem || unreachableIds.value.has(f.id)) continue
+    if (!flowUsage.value?.modules[f.id]?.users) ids.add(f.id)
+  }
+  return ids
+})
+const showUnusedOnly = computed(() => listFilter.value === 'unused' && unusedIds.value.size > 0)
+/** 篩選中的那一批（全部＝null）：系統模組不列、資料夾全打開、不給拖 */
+const filteredIds = computed<Set<string> | null>(() =>
+  showUnreachableOnly.value ? unreachableIds.value : showUnusedOnly.value ? unusedIds.value : null)
+const showFilteredOnly = computed(() => filteredIds.value !== null)
 const regularFlowTotal = computed(() => allFlows.value.filter(f => !f.isSystem).length)
 const UNREACHABLE_ROW_TITLE = '客人走不到：沒有任何自動回應、選單、按鈕會叫出這個模組'
 
@@ -1499,17 +1556,50 @@ function flowUsageUsers(id: string): number | null {
   if (!flowUsagePeriod.value) return null
   return flowUsage.value?.modules[id]?.users ?? 0
 }
-function flowUsageChip(id: string): string {
-  const n = flowUsageUsers(id)
-  return n === null ? '' : `${n} 人`
-}
 const selectedFlowUsageText = computed(() => {
   if (!selectedId.value) return ''
   const n = flowUsageUsers(selectedId.value)
   if (n === null) return ''
   return n ? `${flowUsagePeriod.value} ${n} 位客人收到` : `${flowUsagePeriod.value}沒有客人收到`
 })
-const FLOW_USAGE_TITLE = '客人按按鈕或選單、打關鍵字、加好友時送出的才算；推播、傳給自己看不算'
+const FLOW_USAGE_TITLE = '客人按按鈕或選單、打關鍵字、加好友時送出的才算；推播、試發不算'
+
+// ── 試算表改了、還寫著舊字的模組（`C-429`）──────────────────
+/**
+ * 試算表同步時記下「哪一格從什麼改成什麼、哪幾個模組還抄著舊的」；這裡拿手上的模組再確認一次
+ * （只認一字不差、空白不算，規則在 `shared/sheet-stale.ts`）。店家改掉之後自己消失。
+ */
+interface SheetStaleRecord { sourceName: string; row: string; field: string; oldValues: string[]; newValue: string; moduleIds: string[]; changedAt: string | null }
+const sheetStaleRecords = ref<SheetStaleRecord[]>([])
+async function loadSheetStale() {
+  try { sheetStaleRecords.value = (await apiFetch<{ records: SheetStaleRecord[] }>('/api/flow/list?part=sheet-stale')).records ?? [] }
+  catch { sheetStaleRecords.value = [] }
+}
+function staleRecordFor(flowId: string, messages: unknown): SheetStaleRecord | null {
+  return sheetStaleRecords.value.find(r => r.moduleIds.includes(flowId) && quotedValueIn(messages, r.oldValues)) ?? null
+}
+/** 清單最上面點名的那幾個（用存好的那份比） */
+const staleFlows = computed(() => sheetStaleRecords.value.length
+  ? allFlows.value.filter(f => !f.isSystem && staleRecordFor(f.id, (f as any).messages))
+  : [])
+/** 正在編的這一個（用畫面上的比：換掉當下提示就消失） */
+const selectedStale = computed(() => {
+  if (!selectedId.value || isCreating.value || !sheetStaleRecords.value.length) return null
+  const record = staleRecordFor(selectedId.value, form.value.messages)
+  if (!record) return null
+  const quoted = quotedValueIn(form.value.messages, record.oldValues) ?? ''
+  const d = record.changedAt ? new Date(record.changedAt) : null
+  return { record, quoted, changedOn: d ? `${d.getMonth() + 1}/${d.getDate()} ` : '' }
+})
+function syncStaleToSheet() {
+  if (!assertCan('marketing.write')) return
+  const s = selectedStale.value
+  if (!s) return
+  const r = replaceQuotedInMessages(form.value.messages, s.record.oldValues, { row: s.record.row, field: s.record.field })
+  if (!r.count) return showToast('找不到那段字，可能已經改過了', 'warning')
+  form.value.messages = r.messages
+  showToast(`已換成跟試算表同步（${r.count} 處），按「儲存變更」才會生效`, 'success')
+}
 
 // Drag and Drop State
 const dragIndex = ref<number | null>(null)
@@ -1623,8 +1713,8 @@ const regularFlows = computed(() => flows.value.filter((f) => !f.isSystem))
 
 // ── 資料夾分組 ─────────────────────────────────────
 // 只看客人走不到的時候不分頁（篩出來的本來就不多，分頁會讓排在後面的那幾個看不到）
-const uncategorizedFlows = computed(() => showUnreachableOnly.value
-  ? allFlows.value.filter(f => !f.isSystem && !(f as any).folderId && unreachableIds.value.has(f.id))
+const uncategorizedFlows = computed(() => filteredIds.value
+  ? allFlows.value.filter(f => !f.isSystem && !(f as any).folderId && filteredIds.value!.has(f.id))
   : regularFlows.value.filter(f => !(f as any).folderId))
 /**
  * ⛔ 資料夾要拿**完整**清單分組（`allFlows`），不是側欄分頁後的 `regularFlows`（`C-419`）。
@@ -1656,12 +1746,21 @@ const unreachableCountByFolder = computed<Record<string, number>>(() => {
   }
   return m
 })
-/** 畫面上每個資料夾要列哪些：只看走不到的時候只列那幾個 */
+/** 篩選中每個資料夾有幾個（只看走不到／沒人收到時，資料夾標題後面的數字） */
+const filteredCountByFolder = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {}
+  const ids = filteredIds.value
+  if (!ids) return m
+  for (const folder of flowFolders.value) m[folder.id] = (flowsByFolder.value[folder.id] ?? []).filter(f => ids.has(f.id)).length
+  return m
+})
+/** 畫面上每個資料夾要列哪些：篩選中只列那幾個 */
 const visibleFlowsByFolder = computed(() => {
-  if (!showUnreachableOnly.value) return flowsByFolder.value
+  const ids = filteredIds.value
+  if (!ids) return flowsByFolder.value
   const map: Record<string, typeof regularFlows.value> = {}
   for (const [fid, list] of Object.entries(flowsByFolder.value)) {
-    map[fid] = list.filter(f => unreachableIds.value.has(f.id))
+    map[fid] = list.filter(f => ids.has(f.id))
   }
   return map
 })
@@ -1745,6 +1844,19 @@ async function loadSheetSources(fresh = false) {
   }
 }
 provide(FLOW_SHEET_PICKER_KEY, { sources: sheetSources, loading: sheetSourcesLoading, error: sheetSourcesError, reload: loadSheetSources })
+/**
+ * `C-428`：膠囊短名「出貨時間・Giaretti 珈樂堤…」的對照（全名太長、佔兩行還被插入按鈕壓到）。
+ * 照挑得到的每一格建；試算表還沒讀到＝null，膠囊先畫全名（全名自己換得回去）。
+ */
+const sheetLabelRegistry = computed<SheetLabelRegistry | null>(() => {
+  if (!sheetSources.value) return null
+  const refs: SheetFieldRef[] = []
+  for (const s of sheetSources.value) {
+    for (const r of s.rows) for (const field of s.headers ?? []) refs.push({ row: r.title, field })
+  }
+  return buildSheetLabelRegistry(refs)
+})
+provide(SHEET_LABELS_KEY, sheetLabelRegistry)
 const formUsesSheetField = computed(() => JSON.stringify(form.value.messages ?? []).includes('{{sheet:'))
 // 打開的模組用到了才去讀（大部分模組沒有，不多花讀取）
 watch(formUsesSheetField, (uses) => {
@@ -1784,7 +1896,8 @@ function withSheetValues<T>(messages: T): T {
  * ⚠️ 游標位置是**輸入框裡顯示的字**（膠囊）上的位置，所以先換成顯示用的字、插完再換回存的格式（`D-128`）。
  */
 function insertVariableToken(target: Record<string, any>, key: string, token: string, range?: CaretRange | null) {
-  target[key] = toStoredText(insertTokenAtCaret(toDisplayText(target[key] ?? ''), token, range).text, 'send', variableKeys.value)
+  const labels = sheetLabelRegistry.value
+  target[key] = toStoredText(insertTokenAtCaret(toDisplayText(target[key] ?? '', 'send', labels), token, range).text, 'send', variableKeys.value, labels)
 }
 
 // 訊息類型可用性開關（共用於教學 agent，讓不可用功能的教學自動隱藏）
@@ -1896,6 +2009,8 @@ onMounted(async () => {
   openFlowFromQuery()
   // `C-425`：不擋清單，晚一點到也沒關係（到之前不顯示數字）
   void loadFlowUsage()
+  // `C-429`：大多數帳號是空的（一次查詢）
+  void loadSheetStale()
 })
 
 /**

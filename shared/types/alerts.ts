@@ -112,6 +112,11 @@ export type WorkspaceAlertId =
   | 'renewalNotBound'
   /** 選單／圖卡上有按鈕指向已刪除或已停用的模組，客人按了什麼都不會收到 */
   | 'brokenModuleButton'
+  /**
+   * 試算表上某一格改了（例如出貨時間），但有機器人模組還一字不差寫著改之前的字（`C-429`，`D-165`）：
+   * 客人點選單跟直接問 AI 會聽到不一樣的答案。模組頁一鍵換成「帶出試算表那一格」。
+   */
+  | 'sheetStaleModules'
   /** 活動推播已送出，但「這場已回應」沒蓋上章 → 客服會看到一堆假的待處理 */
   | 'claimPushUnmarked'
   /** 有推播發送失敗（近 3 天內），名單上的客人沒收到 */
@@ -203,6 +208,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   knowledgeIndexStuck: '有知識一直沒學完',
   renewalNotBound: '下期不會自動扣款（卡沒綁成）',
   brokenModuleButton: '有按鈕按下去沒反應',
+  sheetStaleModules: '試算表改了，有模組還寫著舊的',
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',
   broadcastFailed: '有推播沒有送出去',
   broadcastOverdue: '有排程推播過時間還沒送',
@@ -270,6 +276,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   // 後果跟「名單上沒有人」一樣（客人找真人沒人知道）→ 同級
   handoffNobodyChecked: 'warning',
   brokenModuleButton: 'critical',
+  // 黃燈：客人收得到回覆，只是選單跟 AI 講不一樣（不是什麼都收不到）
+  sheetStaleModules: 'warning',
   scriptDeadEnd: 'critical',
   scriptUnreachable: 'warning',
   firstReplyBacklog: 'warning',

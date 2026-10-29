@@ -11,6 +11,7 @@ import { getQuotaAnswered } from './ai-usage'
 import { SCRIPTS_COLLECTION, loadActiveScripts } from './ai-scripts'
 import { scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { findBrokenModuleRefs } from './broken-module-refs'
+import { findStaleSheetModules } from './sheet-stale-modules'
 import { checkScriptHealth } from './script-health'
 import { TAG_DISCOVERY_COLLECTION } from './tag-discovery'
 import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
@@ -894,6 +895,20 @@ export async function collectWorkspaceAlerts(
             count: broken.length,
             detail: `${where}「${first.sourceLabel}」的按鈕指向的${why}`,
             scopes,
+          }
+        }),
+        probe('sheetStaleModules', async () => {
+          /**
+           * 試算表改了、模組還寫著改之前的原字（`C-429`）。同步時記下來，這裡只讀那幾份記錄＋那幾個模組再確認一次
+           * （店家改掉之後自己消失）。沒有任何記錄＝一次查詢、零個模組讀取。
+           */
+          const stale = await findStaleSheetModules(db, wid)
+          if (!stale.length) return { active: false }
+          const first = stale[0]!
+          return {
+            active: true,
+            count: stale.length,
+            detail: `「${first.flowName}」還寫著 ${first.row} 改之前的「${first.field}」`,
           }
         }),
         // ⛔ 探針放哪一組要跟前端註冊表（useWorkspaceAlerts）的 requires 對齊：

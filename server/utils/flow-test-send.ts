@@ -59,7 +59,7 @@ export async function flowTestSend(event: H3Event) {
       recipientCount: names.length,
       messagesCount: messageCount,
     },
-    note: `把模組「${moduleName || '（還沒取名）'}」傳給 ${names.join('、')} 看`,
+    note: `試發模組「${moduleName || '（還沒取名）'}」給 ${names.join('、')}`,
   })
 
   return { ok: true, messageCount, sent }

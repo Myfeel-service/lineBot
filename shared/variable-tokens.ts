@@ -18,7 +18,7 @@
  *    當成變數的話送出去會變空白。
  */
 
-import { replaceSheetFieldTokens, sheetFieldLabel, sheetFieldRefFromLabel, sheetFieldToken } from './sheet-field'
+import { replaceSheetFieldTokens, sheetFieldLabel, sheetFieldRefFromLabel, sheetFieldToken, type SheetLabelRegistry } from './sheet-field'
 
 /** 膠囊左右的邊界（U+202F 窄的不換行空白） */
 export const VAR_TOKEN_EDGE = ' '
@@ -30,13 +30,16 @@ export const VAR_TOKEN_EDGE = ' '
 const CAPSULE_RE_SOURCE = `${VAR_TOKEN_EDGE}([^${VAR_TOKEN_EDGE}\\n]{1,240})${VAR_TOKEN_EDGE}`
 
 /**
- * 膠囊上的字 → 存的格式（不認得＝null）：先認客人資料變數，再認「列・欄」（只在模組這種 send 模式）。
+ * 膠囊上的字 → 存的格式（不認得＝null）：先認客人資料變數，再認試算表的一格（只在模組這種 send 模式）——
+ * 先查頁面給的對照（短名，`C-428`），查不到再當全名「欄・列」拆。
  * 跟 `variableTokenRanges` 同一條規則：畫成膠囊的，存的時候就一定換得回來。
  */
-function storedForLabel(label: string, mode: VariableKeyMode, known?: readonly string[]): string | null {
+function storedForLabel(label: string, mode: VariableKeyMode, known?: readonly string[], sheetLabels?: SheetLabelRegistry | null): string | null {
   const key = keyForLabel(label, mode, known)
   if (key) return `{{${key}}}`
   if (mode !== 'send') return null
+  const registered = sheetLabels?.tokenFor(label)
+  if (registered) return registered
   const ref = sheetFieldRefFromLabel(label)
   return ref ? sheetFieldToken(ref) : null
 }
@@ -117,12 +120,12 @@ function keyForLabel(label: string, mode: VariableKeyMode, known?: readonly stri
 }
 
 /** 存的格式 → 顯示用的字（`{{displayName}}` → 膠囊）。不是字串的照原樣回（表單初始值可能是 undefined） */
-export function toDisplayText(stored: string, mode: VariableKeyMode = 'send'): string {
+export function toDisplayText(stored: string, mode: VariableKeyMode = 'send', sheetLabels?: SheetLabelRegistry | null): string {
   if (typeof stored !== 'string' || !stored.includes('{{')) return stored
   const out = stored.replace(new RegExp(`\\{\\{\\s*(${keyPattern(mode)})\\s*\\}\\}`, 'g'), (_m, key: string) => displayTokenFor(key, mode))
   // `C-423`：試算表的一格 → 膠囊「列・欄」（只有模組這種 send 模式有）
   return mode === 'send'
-    ? replaceSheetFieldTokens(out, ref => `${VAR_TOKEN_EDGE}${sheetFieldLabel(ref)}${VAR_TOKEN_EDGE}`)
+    ? replaceSheetFieldTokens(out, (ref, token) => `${VAR_TOKEN_EDGE}${sheetLabels?.labelFor(token) ?? sheetFieldLabel(ref)}${VAR_TOKEN_EDGE}`)
     : out
 }
 
@@ -158,12 +161,12 @@ export function toBracketText(stored: string, mode: VariableKeyMode = 'send'): s
  * 顯示用的字 → 存的格式。
  * extraKeys：這一頁「打括號也算」的欄位（例如這個模組收集得到的 phone）；LINE 名稱永遠算。
  */
-export function toStoredText(display: string, mode: VariableKeyMode = 'send', extraKeys: readonly string[] = []): string {
+export function toStoredText(display: string, mode: VariableKeyMode = 'send', extraKeys: readonly string[] = [], sheetLabels?: SheetLabelRegistry | null): string {
   if (typeof display !== 'string') return display
   let out = display
   // ① 膠囊（插入按鈕插的、或從別的框貼過來的）
   if (out.includes(VAR_TOKEN_EDGE)) {
-    out = out.replace(new RegExp(CAPSULE_RE_SOURCE, 'g'), (m, label: string) => storedForLabel(label, mode, extraKeys) ?? m)
+    out = out.replace(new RegExp(CAPSULE_RE_SOURCE, 'g'), (m, label: string) => storedForLabel(label, mode, extraKeys, sheetLabels) ?? m)
     // 刪掉一半的膠囊（選一段字剪掉）留下的邊界字元：拿掉，剩下的字當一般文字
     out = out.replace(/ /g, '')
   }
@@ -187,11 +190,11 @@ export interface VariableTokenRange {
 }
 
 /** 顯示用的字裡每一顆膠囊的位置（游標跳過膠囊、退格整顆刪掉用） */
-export function variableTokenRanges(display: string, mode: VariableKeyMode = 'send'): VariableTokenRange[] {
+export function variableTokenRanges(display: string, mode: VariableKeyMode = 'send', sheetLabels?: SheetLabelRegistry | null): VariableTokenRange[] {
   const out: VariableTokenRange[] = []
   if (typeof display !== 'string' || !display.includes(VAR_TOKEN_EDGE)) return out
   for (const m of display.matchAll(new RegExp(CAPSULE_RE_SOURCE, 'g'))) {
-    const stored = storedForLabel(m[1]!, mode)
+    const stored = storedForLabel(m[1]!, mode, undefined, sheetLabels)
     if (!stored) continue
     // 客人資料變數給變數名；`C-423` 試算表的一格給整個存的格式（`{{sheet:…}}`）
     const key = stored.startsWith('{{sheet:') ? stored : stored.slice(2, -2)

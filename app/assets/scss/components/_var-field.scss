@@ -33,3 +33,9 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+
+/* `C-428`：試算表的一格用藍色，跟客人資料（綠色）一眼分得出來 */
+.var-field__pill--sheet {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-info) 40%, transparent);
+}

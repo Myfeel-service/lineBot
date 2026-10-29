@@ -488,6 +488,22 @@
   color: var(--text-muted);
 }
 
+/* `C-428`：模組頁插入選單分兩組（客人資料／試算表）的組名，不能點 */
+.flow-var-inset__group {
+  list-style: none;
+  padding: 0.45rem 1rem 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+
+  &--divided {
+    margin-top: 0.3rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--border);
+  }
+}
+
 .carousel-block-bar {
   display: flex;
   align-items: center;
@@ -575,10 +591,11 @@
   gap: 0.35rem;
   padding: 0.25rem 0.25rem 0.5rem;
 
-  /* 兩格平分整條寬（el-radio-group 預設縮成內容寬，要撐開得夾父層） */
+  /* 撐滿整條寬（el-radio-group 預設縮成內容寬，要撐開得夾父層）。
+     `C-428` 多了「沒人收到」變三格：照字的長短分寬度（平分的話「● 客人走不到 28」會擠不下） */
   .el-radio-group { display: flex; width: 100%; }
-  .el-radio-button { flex: 1; }
-  .el-radio-button__inner { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
+  .el-radio-button { flex: 1 1 auto; }
+  .el-radio-button__inner { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; padding-inline: 0.5rem; white-space: nowrap; }
 }
 .flow-list-filter__hint {
   margin: 0;
@@ -598,16 +615,109 @@
   .split-list-item__title-icon { color: var(--color-warning); }
 }
 
-/* ─── 近 30 天幾位客人收到（`C-425`）：清單最上面一句圖例、標題下灰字接一段 ─── */
-.flow-list-usage-note {
-  margin: 0;
-  padding: 0.25rem 0.25rem 0.4rem;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
+/* ─── 近 30 天幾位客人收到（`C-425`）：標題下灰字接一段（清單改成篩選「沒人收到」，`C-428`） ─── */
 .flow-usage-count {
   white-space: nowrap;
 }
+
+/* ─── 試算表改了、還寫著舊字的模組（`C-429`）─────────────────
+   清單最上面點名；點進去，卡片欄最上面並排「舊的／試算表現在寫的」。
+   琥珀色＝要你看一下（⛔ 不用紅：不是壞了，客人收得到，只是兩邊講不一樣） */
+.flow-stale-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0.25rem 0.25rem 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+.flow-stale-list__title {
+  margin: 0 0 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  // 側欄窄，一句話會剩一個字掉到第二行；刻意斷在「試算表改了」後面
+  span {
+    display: block;
+    font-weight: 400;
+    color: var(--text-secondary);
+  }
+}
+.flow-stale-list__item {
+  display: block;
+  width: 100%;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+
+  &:hover, &.is-active { background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
+}
+
+.flow-stale-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+.flow-stale-banner__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.flow-stale-banner__why,
+.flow-stale-banner__note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.flow-stale-banner__pair {
+  align-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+.flow-stale-banner__box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+
+  p {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: var(--text-primary);
+  }
+
+  &--old { background: var(--bg-elevated); border: 1px solid var(--border); }
+  &--new { background: color-mix(in srgb, var(--color-line) 10%, var(--bg-surface)); border: 1px solid color-mix(in srgb, var(--color-line) 35%, transparent); }
+}
+.flow-stale-banner__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.flow-stale-banner__box--new .flow-stale-banner__label { color: var(--color-line); }
 
 /* ─── 帶出試算表上的一格（`C-423`）：挑完直接秀現在寫的內容 ─── */
 .flow-sheet-dialog__value {
@@ -628,6 +738,15 @@
   font-size: 0.82rem;
   line-height: 1.7;
   color: var(--text-muted);
+}
+.flow-sheet-dialog__hint {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
 }
 .flow-sheet-dialog__error {
   margin: 0;
@@ -1042,6 +1161,18 @@
     line-height: 1.5;
     background: rgba(254, 121, 87, 0.08);
     border: 1px solid rgba(254, 121, 87, 0.18);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.6rem;
+  }
+
+  /* `C-428`：用戶輸入卡的說明不是警告（`D-166`：紅底看起來像出錯），灰底 */
+  .ui-note-text {
+    margin-top: 0;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.6;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 0.5rem 0.6rem;
   }

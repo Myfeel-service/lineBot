@@ -50,19 +50,69 @@ export function replaceSheetFieldTokens(text: string, replacer: (ref: SheetField
   return text.replace(TOKEN_RE, (token, row: string, field: string) => replacer({ row: decode(row), field: decode(field) }, token))
 }
 
-/** 膠囊上的字。換行、膠囊邊界字元（U+202F）不能出現在膠囊裡，換成一般空白 */
+const cleanLabelPart = (s: string) => s.replace(/[\n\r ]+/g, ' ').trim()
+
+/**
+ * 膠囊上的全名「欄・列」（`C-428`：欄名在前——「出貨時間・Giaretti…」一眼先看到是哪一項）。
+ * 換行、膠囊邊界字元（U+202F）不能出現在膠囊裡，換成一般空白。
+ */
 export function sheetFieldLabel(ref: SheetFieldRef): string {
-  const clean = (s: string) => s.replace(/[\n\r ]+/g, ' ').trim()
-  return `${clean(ref.row)}${SHEET_FIELD_SEP}${clean(ref.field)}`
+  return `${cleanLabelPart(ref.field)}${SHEET_FIELD_SEP}${cleanLabelPart(ref.row)}`
 }
 
-/** 膠囊上的字 → 標記（不是「列・欄」的樣子＝null） */
+/** 膠囊上的全名 → 標記（取**第一個**「・」切：欄名幾乎不會有，商品名偶爾有）。不是「欄・列」的樣子＝null */
 export function sheetFieldRefFromLabel(label: string): SheetFieldRef | null {
-  const i = label.lastIndexOf(SHEET_FIELD_SEP)
+  const i = label.indexOf(SHEET_FIELD_SEP)
   if (i <= 0 || i === label.length - 1) return null
-  const row = label.slice(0, i).trim()
-  const field = label.slice(i + 1).trim()
+  const field = label.slice(0, i).trim()
+  const row = label.slice(i + 1).trim()
   return row && field ? { row, field } : null
+}
+
+/** 商品名超過這幾個字就截短（膠囊太長會佔兩行、被輸入框的按鈕壓到——`D-166` 實機截圖） */
+export const SHEET_LABEL_ROW_MAX = 12
+
+/**
+ * 膠囊上的字跟存的格式互換的對照（`C-428`）。
+ * 短名「出貨時間・Giaretti 珈樂堤《小…」換不回完整商品名，所以要一份對照：頁面把挑得到的每一格都登記進來。
+ * ⛔ 兩格縮出來一樣（例：「W1 REGEN 單入組／雙入組」前段相同）＝那幾格都用全名，不猜。
+ * 不在對照裡的照舊用全名（全名自己就換得回去）。
+ */
+export interface SheetLabelRegistry {
+  labelFor: (token: string) => string | undefined
+  tokenFor: (label: string) => string | undefined
+}
+
+export function sheetFieldShortLabel(ref: SheetFieldRef, rowMax = SHEET_LABEL_ROW_MAX): string {
+  const row = cleanLabelPart(ref.row)
+  const chars = [...row]
+  return `${cleanLabelPart(ref.field)}${SHEET_FIELD_SEP}${chars.length > rowMax ? `${chars.slice(0, rowMax).join('')}…` : row}`
+}
+
+export function buildSheetLabelRegistry(refs: readonly SheetFieldRef[]): SheetLabelRegistry {
+  const byToken = new Map<string, string>()
+  const shortOwners = new Map<string, Set<string>>()
+  for (const ref of refs) {
+    const token = sheetFieldToken(ref)
+    const short = sheetFieldShortLabel(ref)
+    if (!shortOwners.has(short)) shortOwners.set(short, new Set())
+    shortOwners.get(short)!.add(token)
+    byToken.set(token, short)
+  }
+  const tokenByLabel = new Map<string, string>()
+  for (const [token, short] of byToken) {
+    if (shortOwners.get(short)!.size > 1) {
+      // 撞名：這幾格都用全名（全名本來就換得回去，不必登記）
+      const ref = sheetFieldTokensIn(token)[0]!.ref
+      byToken.set(token, sheetFieldLabel(ref))
+      continue
+    }
+    tokenByLabel.set(short, token)
+  }
+  return {
+    labelFor: token => byToken.get(token),
+    tokenFor: label => tokenByLabel.get(label),
+  }
 }
 
 /** 列名稱比對用：大小寫、全半形空白不算（跟同步配對卡片的 normTitle 同一個意思） */

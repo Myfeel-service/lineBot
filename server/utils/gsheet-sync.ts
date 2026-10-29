@@ -29,6 +29,8 @@ import {
 } from './ai-knowledge-sources'
 import { normTitle, parseGoogleSheetUrl, readGoogleSheetAsCards, type ParsedSheetRef, type SheetCard } from './google-sheets'
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
+import { diffSheetCardFields, type SheetFieldChange } from '~~/shared/sheet-stale'
+import { recordStaleSheetModules } from './sheet-stale-modules'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 export interface GsheetSyncResult {
@@ -183,7 +185,8 @@ export async function syncGoogleSheetSource(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-  data: Pick<KnowledgeSourceDoc, 'url' | 'gsheetId' | 'gsheetGid' | 'contentHash' | 'gsheetTabRule' | 'quotaSkippedCount' | 'gsheetExcludedTitles' | 'blockedPendingDeletes'> & { generateOverview?: boolean },
+  data: Pick<KnowledgeSourceDoc, 'url' | 'gsheetId' | 'gsheetGid' | 'contentHash' | 'gsheetTabRule' | 'quotaSkippedCount' | 'gsheetExcludedTitles' | 'blockedPendingDeletes'>
+    & Partial<Pick<KnowledgeSourceDoc, 'name' | 'gsheetFieldHeaders'>> & { generateOverview?: boolean },
   opts: { allowMassDeletion?: boolean } = {},
 ): Promise<GsheetSyncResult> {
   const ref: ParsedSheetRef | null = data.gsheetId
@@ -241,6 +244,7 @@ export async function syncGoogleSheetSource(
   const seen = new Set<string>()
   const toCreate: SheetCard[] = []
   const toUpdate: Array<{ oldId: string; card: SheetCard }> = []
+  const fieldChanges: SheetFieldChange[] = []
   let added = 0
   let updated = 0
   let kept = 0
@@ -268,6 +272,8 @@ export async function syncGoogleSheetSource(
     }
     else if (old.content !== card.content || old.title !== card.title) {
       toUpdate.push({ oldId: old.id, card })
+      // `C-429`：哪幾格變了（改之前照上一次記的欄名切）
+      fieldChanges.push(...diffSheetCardFields(card.title, old.content, card.content, data.gsheetFieldHeaders, sheet.fieldHeaders))
     }
     else {
       kept++
@@ -450,6 +456,12 @@ export async function syncGoogleSheetSource(
       await discardRunWrites(db, workspaceId, sourceId, createdIds, afterOverview)
       return { ...SOURCE_DELETED_RESULT }
     }
+  }
+
+  // `C-429`：改了的那幾格，找出還寫著改之前原字的機器人模組（首頁提醒＋模組頁一鍵換成同步）。
+  // 只有真的有列內容變了才讀模組；記不下來不擋同步（裡面自己吞錯）
+  if (fieldChanges.length) {
+    await recordStaleSheetModules(db, workspaceId, sourceId, String(data.name ?? ''), fieldChanges)
   }
 
   return {
