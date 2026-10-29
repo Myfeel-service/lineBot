@@ -21,8 +21,6 @@ export type DueScheduledBroadcastResult = {
 export type RunDueScheduledBroadcastsResponse = {
   triggered: number
   results: DueScheduledBroadcastResult[]
-  /** 仍為 scheduled 但 scheduleAt 尚未到期（除錯用） */
-  pendingFuture?: number
   /** 本輪被看門狗收殮成 failed 的卡死推播數 */
   reaped?: number
   /** `D-154`②③：本輪往前推的 narrowcast 推播（等名單→送出→收結果） */
@@ -151,45 +149,37 @@ export async function runDueScheduledBroadcasts(
     throw new Error('runDueScheduledBroadcasts: 帶了 opts 就要有 workspaceId（全站只給不帶參數的排程器）')
   }
 
-  // `D-154`②③：先把 narrowcast 的推播往前推一步（名單好了就送、送完就收結果）
-  const narrowcast = await advanceNarrowcastBroadcasts(db, workspaceId).catch((e) => {
-    console.error('[broadcast-scheduler] narrowcast 往前推失敗', e)
-    return undefined
-  })
-
-  // 看門狗先跑：到期佇列空的時候（最常見）也要能收殮
-  const reaped = await reapStuckProcessingBroadcasts(db, workspaceId).catch((e) => {
-    console.error('[broadcast-scheduler] 看門狗查詢失敗', e)
-    return 0
-  })
-
-  const snap = await db.collection('broadcasts')
-    .where('status', '==', 'scheduled')
-    .where('scheduleAt', '<=', now)
-    .orderBy('scheduleAt', 'asc')
-    .limit(20)
-    .get()
+  /**
+   * 三件事同時查（`D-164`①）：每分鐘跑一次，主機在東京、資料庫在美國，一次查詢約 0.25 秒，
+   * 以前排隊查（外加兩個只為除錯的查詢）一輪要 1.2 秒，主機按秒收錢。
+   * 三件事碰的是不同的推播，不會搶同一則：narrowcast 只動自己那種 processing、看門狗跳過 narrowcast、
+   * 到期佇列只看 scheduled。真的送出（下面的迴圈）還是等三件都做完才開始，跟以前同一個順序。
+   * ⛔ 到期佇列查壞了也要等另外兩件做完才丟錯：主機回應完就被凍住，留在背景的收殮寫入會停在半路。
+   */
+  const [narrowcast, reaped, due] = await Promise.all([
+    // `D-154`②③：把 narrowcast 的推播往前推一步（名單好了就送、送完就收結果）
+    advanceNarrowcastBroadcasts(db, workspaceId).catch((e) => {
+      console.error('[broadcast-scheduler] narrowcast 往前推失敗', e)
+      return undefined
+    }),
+    // 看門狗：到期佇列空的時候（最常見）也要能收殮
+    reapStuckProcessingBroadcasts(db, workspaceId).catch((e) => {
+      console.error('[broadcast-scheduler] 看門狗查詢失敗', e)
+      return 0
+    }),
+    db.collection('broadcasts')
+      .where('status', '==', 'scheduled')
+      .where('scheduleAt', '<=', now)
+      .orderBy('scheduleAt', 'asc')
+      .limit(20)
+      .get()
+      .then(snap => ({ snap }), (error: unknown) => ({ error })),
+  ])
+  if ('error' in due) throw due.error
+  const { snap } = due
 
   if (snap.empty) {
-    let pendingFuture: number | undefined
-    try {
-      const pendingSnap = await db.collection('broadcasts')
-        .where('status', '==', 'scheduled')
-        .limit(1)
-        .get()
-      if (!pendingSnap.empty) {
-        const futureSnap = await db.collection('broadcasts')
-          .where('status', '==', 'scheduled')
-          .where('scheduleAt', '>', now)
-          .limit(1)
-          .get()
-        if (!futureSnap.empty) pendingFuture = 1
-      }
-    }
-    catch {
-      /* 略過除錯查詢 */
-    }
-    return { triggered: 0, results: [], pendingFuture, reaped, narrowcast }
+    return { triggered: 0, results: [], reaped, narrowcast }
   }
 
   console.log(`[broadcast-scheduler] 找到 ${snap.docs.length} 個到期排程推播`)

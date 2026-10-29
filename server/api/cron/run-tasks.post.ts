@@ -93,7 +93,8 @@ export default defineEventHandler(async (event) => {
     // AI 發現新標籤（老闆 08-25 拍板）：每工作區約每週真跑一次（間隔閘在 tagDiscovery 文件上），
     // 其餘輪次每工作區只花 1 次讀取；一次掃描只打一次 LLM，見 tag-discovery.ts
     { name: 'crm:tag-discovery', run: () => scanTagDiscovery(db) },
-    // 對話統計日結（`E-29`）：每輪重算最近 3 天＋輪播一天更舊的＋補缺的日子。
+    // 對話統計日結（`E-29`）：重算最近 3 天＋輪播一天更舊的＋補缺的日子。
+    // 每小時只做整點後那一輪（`D-164`②），其餘輪次直接略過、一筆都不讀。
     // ⛔ 今天不建（今天還沒過完，讀取端一律現場算）。這支停掉不會壞畫面——
     //    統計端點找不到日結就自動現場算，只是慢回原本的樣子。
     { name: 'stats:rollup-daily', run: () => rollupConversationStats(db) },

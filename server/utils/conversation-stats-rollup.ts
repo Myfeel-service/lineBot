@@ -410,10 +410,47 @@ const MAX_BACKFILL_PER_RUN = 5
  * 一輪最多做多久。
  *
  * ⛔ 這支掛在 `/api/cron/run-tasks`，那條路是**一個 HTTP 請求**、有閘道逾時
- * （`C-48` 就是被某一項拖太久害心跳沒寫到）。日結是「晚幾分鐘完全沒差」的工作，
- * 所以寧可做一半、下一輪（10 分鐘後）接著做，不要把整輪拖下水。
+ * （`C-48` 就是被某一項拖太久害心跳沒寫到）。日結是「晚一點完全沒差」的工作，
+ * 所以寧可做一半、下一輪（一小時後）接著做，不要把整輪拖下水。
  */
 const MAX_RUN_MS = 8_000
+/**
+ * 多久整理一輪（`D-164`②，2026-10-29 老闆照建議）。以前跟著 `/api/cron/run-tasks` 每 10 分鐘一輪，
+ * 是背景讀資料庫最多的一項（半夜每 10 分鐘跳 1～2 千次讀取）。
+ * 改成每小時：今天的數字讀取端本來就現場算、不受影響；昨天以前的最慢一兩個小時更新——
+ * 讀的人（統計頁、早上的 LINE 摘要、昨日摘要卡都走 `loadDayStats`）找不到日結會當場算，數字不會錯，只是慢一點。
+ */
+export const ROLLUP_INTERVAL_MS = 60 * 60_000
+/** `/api/cron/run-tasks` 多久打一次：每小時只做落在整點後這段時間的那一輪 */
+const RUN_TASKS_PERIOD_MS = 10 * 60_000
+
+/** 這一輪要不要整理：整點後第一輪才做，其餘直接略過（連帳號清單都不讀） */
+export function isRollupDue(now: Date): boolean {
+  return now.getTime() % ROLLUP_INTERVAL_MS < RUN_TASKS_PERIOD_MS
+}
+
+/**
+ * 這一輪輪到哪幾個帳號、重算哪一個舊日子。
+ *
+ * 帳號：⛔ 不要固定取前幾個——固定切的話帳號一旦超過上限，後面那幾個**永遠**不會被建日結，
+ * 而且完全沒有徵兆（那些帳號的統計頁只是一直走現場算）。用時間當偏移，每輪往後挪，所有帳號輪得到。
+ *
+ * 舊日子：一「圈」＝把所有帳號輪過一次要幾輪，同一圈的帳號重算同一天，下一圈換下一天，
+ * 第 4～90 天每個帳號都輪得到（最近 3 天每輪都算）。
+ * ⛔ 以前帳號跟舊日子用同一個時鐘轉：10 個帳號時，每個帳號只輪得到 90 天裡的 36 天，
+ *    其餘 54 天後來才結案的對話永遠不會修回來（2026-10-29 改每小時時一起修）。
+ */
+export function planRollupRun(allIds: string[], now: Date): { workspaceIds: string[], rotatingDaysAgo: number } {
+  const slot = Math.floor(now.getTime() / ROLLUP_INTERVAL_MS)
+  const n = allIds.length
+  const workspaceIds = n <= MAX_WORKSPACES_PER_RUN
+    ? [...allIds]
+    : Array.from({ length: MAX_WORKSPACES_PER_RUN }, (_, i) => allIds[(slot * MAX_WORKSPACES_PER_RUN + i) % n]!)
+  const runsPerLap = Math.max(1, Math.ceil(n / MAX_WORKSPACES_PER_RUN))
+  const rotatingSpan = ROTATING_LOOKBACK_DAYS - REFRESH_TRAILING_DAYS
+  const rotatingDaysAgo = REFRESH_TRAILING_DAYS + 1 + (Math.floor(slot / runsPerLap) % rotatingSpan)
+  return { workspaceIds, rotatingDaysAgo }
+}
 
 export async function rollupWorkspaceDays(
   db: Firestore,
@@ -443,37 +480,26 @@ export async function rollupWorkspaceDays(
 }
 
 /**
- * 排程進來時做的事（掛在 `/api/cron/run-tasks`，10 分鐘一輪）：
+ * 排程進來時做的事（掛在 `/api/cron/run-tasks`，每小時只做整點後那一輪，見 `isRollupDue`）：
  *   1. 最近 3 天重算（含昨天：24 小時自動結束會改到昨天的數字）
  *   2. 輪播一天更舊的重算（自我修復：三週後才手動結案的那種）
- *   3. 缺的日子補建（新裝上線時把過去 90 天補起來，一輪補 7 天，慢慢補完）
+ *   3. 缺的日子補建（新裝上線時把過去 90 天補起來，一輪補 5 天，慢慢補完）
  *
  * ⚠️ 今天不建日結——今天還沒過完，讀取端一律現場算它。
  */
 export async function rollupConversationStats(
   db: Firestore,
   now = new Date(),
-): Promise<{ workspaces: number, days: number, stoppedEarly: boolean }> {
+): Promise<{ workspaces: number, days: number, stoppedEarly: boolean, skipped?: true }> {
+  if (!isRollupDue(now)) return { workspaces: 0, days: 0, stoppedEarly: false, skipped: true }
   const deadline = now.getTime() + MAX_RUN_MS
   const wsSnap = await db.collection('workspaces').select('name').get()
   const allIds = wsSnap.docs.map(d => d.id).sort()
-  /**
-   * 輪播工作區，⛔不要固定取前幾個：固定切的話帳號一旦超過上限，後面那幾個**永遠**
-   * 不會被建日結——而且完全沒有徵兆（那些帳號的統計頁只是一直走現場算）。
-   * 用時間當偏移，每 10 分鐘往後挪一格，所有帳號輪得到。
-   */
-  const slot = Math.floor(now.getTime() / (10 * 60_000))
-  const offset = allIds.length ? (slot * MAX_WORKSPACES_PER_RUN) % allIds.length : 0
-  const workspaceIds = allIds.length <= MAX_WORKSPACES_PER_RUN
-    ? allIds
-    : Array.from({ length: MAX_WORKSPACES_PER_RUN }, (_, i) => allIds[(offset + i) % allIds.length]!)
+  const { workspaceIds, rotatingDaysAgo } = planRollupRun(allIds, now)
 
   const todayMs = taipeiDayStart(taipeiDateKey(now))!.getTime()
   const dayKeyAgo = (n: number) => taipeiDateKey(new Date(todayMs - n * 24 * 3600_000))
-
-  // 輪播的那一天：用「距離台北紀元的天數」當種子，每輪往前挪一天（不需要存狀態）
-  const rotation = slot % ROTATING_LOOKBACK_DAYS
-  const rotatingDay = dayKeyAgo(Math.max(REFRESH_TRAILING_DAYS + 1, rotation))
+  const rotatingDay = dayKeyAgo(rotatingDaysAgo)
 
   let total = 0
   let stoppedEarly = false
@@ -484,7 +510,7 @@ export async function rollupConversationStats(
     for (let i = 1; i <= REFRESH_TRAILING_DAYS; i++) keys.add(dayKeyAgo(i))
     keys.add(rotatingDay)
 
-    // 缺的日子（過去 90 天內）：一輪最多補 7 天
+    // 缺的日子（過去 90 天內）：一輪最多補 MAX_BACKFILL_PER_RUN 天
     const wanted = Array.from({ length: ROTATING_LOOKBACK_DAYS }, (_, i) => dayKeyAgo(i + 1))
     const existing = await db.getAll(
       ...wanted.map(k => db.collection(STATS_DAILY_COLLECTION).doc(dailyDocId(wid, k))),

@@ -4,8 +4,12 @@ import {
   contiguousDayRuns,
   emptyDayStats,
   foldSessionIntoDay,
+  isRollupDue,
   liveBuildDays,
   mergeDays,
+  planRollupRun,
+  rollupConversationStats,
+  ROLLUP_INTERVAL_MS,
   taipeiDayKeysBetween,
 } from './conversation-stats-rollup'
 
@@ -203,5 +207,49 @@ describe('不連續的日子分段查（`E-38`：日結排程把中間 80 幾天
     expect(days.get('2026-07-20')!.newFriends).toBe(1)
     expect(days.get('2026-10-16')!.newFriends).toBe(1)
     expect(days.get('2026-10-14')!.newFriends).toBe(0)
+  })
+})
+
+describe('每小時整理一輪（`D-164`②：以前每 10 分鐘一輪，是背景讀資料庫最多的一項）', () => {
+  const at = (iso: string) => new Date(iso)
+
+  it('整點後那一輪才做，其餘略過', () => {
+    expect(isRollupDue(at('2026-10-29T02:00:03Z'))).toBe(true)
+    expect(isRollupDue(at('2026-10-29T02:09:59Z'))).toBe(true)
+    expect(isRollupDue(at('2026-10-29T02:10:00Z'))).toBe(false)
+    expect(isRollupDue(at('2026-10-29T02:50:01Z'))).toBe(false)
+  })
+
+  it('略過的那幾輪連帳號清單都不讀', async () => {
+    const db = { collection: () => { throw new Error('不應該讀資料庫') } }
+    const res = await rollupConversationStats(db as any, at('2026-10-29T02:20:00Z'))
+    expect(res).toEqual({ workspaces: 0, days: 0, stoppedEarly: false, skipped: true })
+  })
+
+  it.each([1, 4, 7, 10, 13])('%i 個帳號：每一圈都輪到所有帳號，每個帳號第 4～90 天都輪得到', (n) => {
+    const ids = Array.from({ length: n }, (_, i) => `w${String(i).padStart(2, '0')}`)
+    const runsPerLap = Math.max(1, Math.ceil(n / 4))
+    const seen = new Map(ids.map(id => [id, new Set<number>()]))
+    const start = Math.floor(Date.UTC(2026, 9, 29) / ROLLUP_INTERVAL_MS)
+    // 從一圈的開頭起算，跑兩輪完整的 87 天，確定不只是剛好碰到
+    const firstLap = Math.ceil(start / runsPerLap) * runsPerLap
+    for (let lap = 0; lap < 87 * 2; lap++) {
+      const inLap = new Set<string>()
+      for (let r = 0; r < runsPerLap; r++) {
+        const now = new Date((firstLap + lap * runsPerLap + r) * ROLLUP_INTERVAL_MS + 60_000)
+        const plan = planRollupRun(ids, now)
+        expect(plan.workspaceIds.length).toBe(Math.min(n, 4))
+        for (const id of plan.workspaceIds) {
+          inLap.add(id)
+          seen.get(id)!.add(plan.rotatingDaysAgo)
+        }
+      }
+      expect(inLap.size).toBe(n)
+    }
+    for (const days of seen.values()) {
+      expect(days.size).toBe(87)
+      expect(Math.min(...days)).toBe(4)
+      expect(Math.max(...days)).toBe(90)
+    }
   })
 })

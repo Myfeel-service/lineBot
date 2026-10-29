@@ -1,5 +1,7 @@
 import { requireSuperAdmin } from '~~/server/utils/workspace-auth'
 import { fetchAwsCost, fetchAwsServiceUsage, AwsCostUnavailableError, type AwsUsageItem } from '~~/server/utils/aws-cost'
+import { getDb } from '~~/server/utils/firebase'
+import { readHostCostsCache, writeHostCostsCache } from '~~/server/utils/host-costs-cache'
 import { USD_TO_TWD } from '~~/shared/usd-twd'
 
 /**
@@ -17,12 +19,14 @@ import { USD_TO_TWD } from '~~/shared/usd-twd'
  * （沒接上 vs 這個月沒花錢，畫面上必須分得出來）。逐項用量另有自己的
  * `amplifyUsageReason`：主查詢成功但拆項失敗時要說得出來，不可以靜靜少一塊。
  *
- * ⚠️ Cost Explorer 每次查詢要 US$0.01 → 快取 12 小時（帳單資料一天才更新一次）。
+ * ⚠️ Cost Explorer 每次查詢要 US$0.01 → 所有主機共用一份、一天查一次（帳單資料一天才更新一次）。
  */
 
 // 帳單一天更新一次，快取久一點；主要是為了不要每次重整都付 US$0.01。
 // 2026-09-02 從 6 小時拉長到 12：拆項查詢讓每次冷載從 1 次變 2 次，拉長快取正好抵掉。
-const CACHE_TTL_MS = 12 * 60 * 60_000
+// 2026-10-29 再拉到 24 小時，並多存一份在資料庫給所有主機共用（`D-164`③）：只放記憶體的話，
+// 好幾台主機各記各的、又會被回收，10 月照樣查了 57 次。記憶體那份留著，省掉同一台重複讀資料庫。
+const CACHE_TTL_MS = 24 * 60 * 60_000
 
 /** 需要再往下拆用量的服務——只有 Amplify 值得多付一次查詢費（它佔帳單九成五） */
 const ITEMIZED_SERVICE = 'AWS Amplify'
@@ -66,6 +70,13 @@ export default defineEventHandler(async (event) => {
   const cacheKey = itemize ? period : `${period}:summary`
   const cached = cache.get(cacheKey)
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data
+  // 這台沒有 → 看別台存在資料庫的那份（完整版優先，它本來就含總額）
+  const db = getDb()
+  const shared = await readHostCostsCache(db, cacheKey === period ? [period] : [period, cacheKey], CACHE_TTL_MS)
+  if (shared) {
+    cache.set(shared.key, { at: shared.at, data: shared.data })
+    return shared.data
+  }
 
   const base = { period, usdToTwd: USD_TO_TWD }
   const { start, end, isCurrentMonth, valid } = monthRange(period)
@@ -103,7 +114,10 @@ export default defineEventHandler(async (event) => {
       amplifyUsage: usage.items,
       amplifyUsageReason: usage.reason,
     }
-    cache.set(cacheKey, { at: Date.now(), data })
+    const at = Date.now()
+    cache.set(cacheKey, { at, data })
+    // ⛔ 要等它寫完再回：主機回應完就被凍住，沒寫完的那份等於沒存
+    await writeHostCostsCache(db, cacheKey, data, at)
     return data
   }
   catch (e) {

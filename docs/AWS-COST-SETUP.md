@@ -15,7 +15,7 @@
 1. **只讀帳單，碰不到任何東西。** 整個設定只會給出一個權限 `ce:GetCostAndUsage`，
    它只能查「花了多少錢」，看不到也改不了任何伺服器、資料庫、檔案。
 2. **查詢要錢，但很少。** AWS 對 Cost Explorer API 每次查詢收 **US$0.01**。
-   系統已經快取 6 小時（帳單資料本來就一天才更新一次），一個月大約 NT$1–2。
+   系統一天最多查一次、所有主機共用同一份（帳單資料本來就一天才更新一次），一個月大約 NT$1–2。
 3. **需要根帳號（root）登入一次。** 第 1 步只有根帳號能做，之後就用一般管理員帳號即可。
 
 ---
@@ -146,7 +146,7 @@ COST_EXPLORER_SECRET_ACCESS_KEY=...
    - 顯示金額與服務分項 → **成功**
    - 還是顯示「讀不到」→ 對照下面的錯誤訊息表
 
-> 頁面有 **6 小時快取**。剛設定好如果還是舊畫面，等一下或隔天再看；
+> 頁面有 **24 小時快取**（所有主機共用一份）。剛設定好如果還是舊畫面，隔天再看；
 > 這是為了避免每次重整都付 US$0.01。
 
 ---
@@ -184,6 +184,6 @@ COST_EXPLORER_SECRET_ACCESS_KEY=...
 | 檔案 | 做什麼 |
 | --- | --- |
 | `server/utils/aws-cost.ts` | 呼叫 Cost Explorer、把錯誤翻成看得懂的原因 |
-| `server/api/admin/super/host-costs.get.ts` | 端點本身，含 6 小時快取與三態（ok／unavailable） |
+| `server/api/admin/super/host-costs.get.ts` | 端點本身，含 24 小時共用快取（`server/utils/host-costs-cache.ts`）與三態（ok／unavailable） |
 | `app/pages/admin/super/costs.vue` | 成本總覽頁的「主機花費」區塊 |
 | `nuxt.config.ts` | `awsCostAccessKeyId` / `awsCostSecretAccessKey` 兩個 runtimeConfig |

@@ -137,7 +137,7 @@ export type AwsUsageItem = {
  * 答不出老闆真正在問的「這是客人多還是我們一直推程式」。
  *
  * ⚠️ 這會讓每次冷載多付 US$0.01（成本總覽這頁自己的查詢費）；為了抵掉它，
- *    呼叫端把快取從 6 小時拉長到 12 小時——帳單一天才更新一次，資訊一點都沒少。
+ *    呼叫端把快取從 6 小時拉長到 12 小時（2026-10-29 再改成 24 小時、所有主機共用一份）——帳單一天才更新一次，資訊一點都沒少。
  */
 export async function fetchAwsServiceUsage(service: string, start: string, end: string): Promise<AwsUsageItem[]> {
   let res

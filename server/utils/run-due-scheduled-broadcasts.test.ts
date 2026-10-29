@@ -45,9 +45,15 @@ type FakeDoc = { id: string; data: Record<string, any> }
  * scheduleAt '>' 的除錯查詢一律回空。runTransaction 的 tx.get 讀「當下」的 doc.data
  * （測試可在查詢後改 data 模擬競態）。
  */
-function makeDb(processingDocs: FakeDoc[], scheduledDocs: FakeDoc[] = []) {
+function makeDb(
+  processingDocs: FakeDoc[],
+  scheduledDocs: FakeDoc[] = [],
+  opts: { holdProcessing?: Promise<void>; failScheduled?: Error } = {},
+) {
   const txUpdates: Array<{ id: string; patch: Record<string, any> }> = []
   const selectedFields: string[][] = []
+  /** 每次查詢開始時記一筆（查的是哪種狀態），用來量「同時查」與「查了幾次」 */
+  const gets: string[] = []
 
   const snap = (d: FakeDoc) => ({
     id: d.id,
@@ -68,6 +74,9 @@ function makeDb(processingDocs: FakeDoc[], scheduledDocs: FakeDoc[] = []) {
         return makeQuery(state)
       },
       get: async () => {
+        gets.push(state.futureOnly ? 'scheduled-future' : String(state.status ?? ''))
+        if (state.status === 'processing' && opts.holdProcessing) await opts.holdProcessing
+        if (state.status === 'scheduled' && !state.futureOnly && opts.failScheduled) throw opts.failScheduled
         let docs = state.status === 'processing'
           ? processingDocs
           : state.status === 'scheduled' ? scheduledDocs : []
@@ -91,7 +100,7 @@ function makeDb(processingDocs: FakeDoc[], scheduledDocs: FakeDoc[] = []) {
   }
 
   mockGetDb.mockReturnValue(db as any)
-  return { txUpdates, selectedFields }
+  return { txUpdates, selectedFields, gets }
 }
 
 beforeEach(() => {
@@ -357,5 +366,46 @@ describe('排程到點送出留一筆操作紀錄', () => {
     await runDueScheduledBroadcasts()
 
     expect(mockAudit).not.toHaveBeenCalled()
+  })
+})
+
+describe('每分鐘那一輪的查詢（`D-164`①：主機在東京、資料庫在美國，一次查詢約 0.25 秒，排隊查要 1.2 秒）', () => {
+  const tick = () => new Promise(r => setTimeout(r, 0))
+
+  it('到期佇列不等看門狗查完就開始查（三件事查的是不同狀態的推播，同時查）', async () => {
+    let release!: () => void
+    const { gets } = makeDb([], [], { holdProcessing: new Promise<void>((r) => { release = r }) })
+    const run = runDueScheduledBroadcasts()
+    await tick()
+
+    expect(gets).toEqual(expect.arrayContaining(['processing', 'scheduled']))
+    release()
+    await run
+  })
+
+  it('沒有到期的推播 → 只查看門狗＋到期佇列兩次，⛔ 不再為了除錯多查', async () => {
+    const { gets } = makeDb([], [])
+    const res = await runDueScheduledBroadcasts()
+
+    expect([...gets].sort()).toEqual(['processing', 'scheduled'])
+    expect(res).toEqual({ triggered: 0, results: [], reaped: 0, narrowcast: expect.anything() })
+  })
+
+  it('到期佇列查詢壞掉 → 照樣丟錯，但要等看門狗做完才丟（⛔ 主機回應完就會被凍住，不能留它在背景跑）', async () => {
+    let release!: () => void
+    const { txUpdates } = makeDb(
+      [{ id: 'stuck', data: { workspaceId: 'w1', status: 'processing', startedAt: ts(30 * MIN), updatedAt: ts(30 * MIN) } }],
+      [],
+      { holdProcessing: new Promise<void>((r) => { release = r }), failScheduled: new Error('deadline exceeded') },
+    )
+    let settled = false
+    const run = runDueScheduledBroadcasts()
+    run.then(() => { settled = true }, () => { settled = true })
+    await tick()
+
+    expect(settled).toBe(false)
+    release()
+    await expect(run).rejects.toThrow('deadline exceeded')
+    expect(txUpdates.map(u => u.id)).toEqual(['stuck'])
   })
 })
