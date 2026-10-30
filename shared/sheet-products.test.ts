@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyCoverResult,
   confirmSheetProductRename,
   dismissSheetProductRename,
   findProductPageHeader,
   firstHttpUrl,
   isSheetControlHeader,
+  needsCoverFetch,
   parseSheetCheckbox,
+  productImage,
+  productsNeedingCover,
   productUrlKey,
   reconcileSheetProducts,
+  registryNeedsCover,
+  revertProductImage,
+  setOwnProductImage,
   sheetProductAliasMap,
   type SheetProductInput,
   type SheetProductRegistry,
@@ -208,5 +215,94 @@ describe('reconcileSheetProducts', () => {
     const r2 = reconcileSheetProducts(r1, input([['A2', 'a'], ['B', 'b'], ['A', 'z']]), 3000, ids).registry
     expect(Object.values(r2.products)).toHaveLength(3)
     expect(sheetProductAliasMap(r2).has('a')).toBe(false)
+  })
+})
+
+describe('`C-435` 商品圖：封面圖、自己換的、要不要抓', () => {
+  const productOf = (reg: SheetProductRegistry, title: string) => byTitle(reg, title)!
+  const ok = (url: string) => ({ ok: true as const, url })
+  const fail = (reason: 'noCover' | 'pageUnreachable' | 'badImage') => ({ ok: false as const, reason })
+
+  it('有商品頁網址、還沒有封面圖＝要抓；沒有網址、表上找不到的＝不抓', () => {
+    const reg = build([['A', 'a'], ['B', null]])
+    expect(needsCoverFetch(productOf(reg, 'A'))).toBe(true)
+    expect(needsCoverFetch(productOf(reg, 'B'))).toBe(false)
+    const gone = reconcileSheetProducts(reg, input([['B', null]]), 2000, ids).registry
+    expect(needsCoverFetch(productOf(gone, 'A'))).toBe(false)
+  })
+
+  it('抓到了：用這張、不再抓；商品頁網址換了＝舊的先留著用、再抓新的', () => {
+    const reg = build([['A', 'a', true]])
+    const a = productOf(reg, 'A')
+    const got = applyCoverResult(reg, a.id, a.urlKey!, ok('https://s/a.jpg'), 2000)!
+    expect(productImage(got.products[a.id]!)).toEqual({ url: 'https://s/a.jpg', source: 'web' })
+    expect(registryNeedsCover(got)).toBe(false)
+    const moved = reconcileSheetProducts(got, input([['A', 'a2', true]]), 3000, ids).registry
+    expect(needsCoverFetch(moved.products[a.id]!)).toBe(true)
+    expect(productImage(moved.products[a.id]!)?.url).toBe('https://s/a.jpg')
+  })
+
+  it('⛔ 抓的這段時間網址換了：舊網址的結果不寫（下一輪照新網址抓）', () => {
+    const reg = build([['A', 'a']])
+    const a = productOf(reg, 'A')
+    const moved = reconcileSheetProducts(reg, input([['A', 'a2']]), 2000, ids).registry
+    expect(applyCoverResult(moved, a.id, a.urlKey!, ok('https://s/old.jpg'), 3000)).toBeNull()
+  })
+
+  it('找不到封面圖：不重試；連不上：最多 3 次；網址換了重新算', () => {
+    const reg = build([['A', 'a'], ['B', 'b']])
+    const a = productOf(reg, 'A')
+    const b = productOf(reg, 'B')
+    let r = applyCoverResult(reg, a.id, a.urlKey!, fail('noCover'), 2000)!
+    expect(needsCoverFetch(r.products[a.id]!)).toBe(false)
+    for (let i = 1; i <= 3; i++) {
+      expect(needsCoverFetch(r.products[b.id]!)).toBe(true)
+      r = applyCoverResult(r, b.id, b.urlKey!, fail('pageUnreachable'), 2000 + i)!
+      expect(r.products[b.id]!.coverError).toMatchObject({ reason: 'pageUnreachable', attempts: i })
+    }
+    expect(needsCoverFetch(r.products[b.id]!)).toBe(false)
+    expect(registryNeedsCover(r)).toBe(false)
+    const moved = reconcileSheetProducts(r, input([['A', 'a-new'], ['B', 'b']]), 9000, ids).registry
+    expect(needsCoverFetch(moved.products[a.id]!)).toBe(true)
+  })
+
+  it('先抓還沒有任何圖的、在目錄上的先', () => {
+    const reg = build([['A', 'a', false], ['B', 'b', true], ['C', 'c', false]])
+    const c = productOf(reg, 'C')
+    const withC = setOwnProductImage(reg, c.id, 'https://s/own.jpg', 2000)!
+    expect(productsNeedingCover(withC).map(p => p.title)).toEqual(['B', 'A', 'C'])
+  })
+
+  it('自己換的圖優先；照樣抓封面圖留著；改回＝馬上用封面圖', () => {
+    const reg = build([['A', 'a', true]])
+    const a = productOf(reg, 'A')
+    let r = setOwnProductImage(reg, a.id, 'https://s/own.jpg', 2000)!
+    expect(productImage(r.products[a.id]!)).toEqual({ url: 'https://s/own.jpg', source: 'own' })
+    expect(needsCoverFetch(r.products[a.id]!)).toBe(true)
+    r = applyCoverResult(r, a.id, a.urlKey!, ok('https://s/cover.jpg'), 3000)!
+    expect(productImage(r.products[a.id]!)?.source).toBe('own')
+    r = revertProductImage(r, a.id)!
+    expect(productImage(r.products[a.id]!)).toEqual({ url: 'https://s/cover.jpg', source: 'web' })
+    expect(revertProductImage(r, a.id)).toBeNull()
+  })
+
+  it('同步不會把圖弄掉（比對只動名字、網址、勾選、順序）', () => {
+    const reg = build([['A', 'a', true]])
+    const a = productOf(reg, 'A')
+    const r = applyCoverResult(reg, a.id, a.urlKey!, ok('https://s/a.jpg'), 2000)!
+    const again = reconcileSheetProducts(r, input([['A 改名', 'a', false]]), 3000, ids).registry
+    expect(productImage(again.products[a.id]!)?.url).toBe('https://s/a.jpg')
+  })
+
+  it('確認改名：店家換過的圖跟著舊的走；封面圖用新那一列的', () => {
+    const reg = build([['K10S', 'k10s', true]])
+    const old = productOf(reg, 'K10S')
+    let r = setOwnProductImage(reg, old.id, 'https://s/own.jpg', 1500)!
+    r = reconcileSheetProducts(r, input([['K10S Pro', 'k10s-pro', true]]), 2000, ids).registry
+    const nw = productOf(r, 'K10S Pro')
+    r = applyCoverResult(r, nw.id, nw.urlKey!, ok('https://s/pro-cover.jpg'), 2500)!
+    const merged = confirmSheetProductRename(r, old.id, nw.id, 3000)!
+    expect(merged.products[old.id]!.ownImage?.url).toBe('https://s/own.jpg')
+    expect(merged.products[old.id]!.cover?.url).toBe('https://s/pro-cover.jpg')
   })
 })

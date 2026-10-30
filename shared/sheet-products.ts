@@ -116,6 +116,36 @@ export interface SheetProduct {
   missingSince: number | null
   /** 認不出來的改名：這一輪新增的那幾個商品 id，等店家確認「是改名嗎？」 */
   renameCandidates?: string[]
+  /**
+   * 從商品頁抓的封面圖（`C-435`）。一律是我們 Storage 上的 JPG（LINE 只收 JPG／PNG，官網常是 GIF／WebP）。
+   * 店家換了自己的圖也照樣留著——「改回商品頁封面圖」才能馬上換回來。
+   */
+  cover?: { url: string, fromUrlKey: string, at: number }
+  /** 店家在商品目錄「換圖」傳的（`C-435`）；有這張就用這張，不再跟著官網換 */
+  ownImage?: { url: string, at: number }
+  /** 上一次抓封面圖失敗（`C-435`）；抓到就拿掉 */
+  coverError?: SheetProductImageError
+}
+
+/** 這個商品現在用哪張圖：自己換的優先，再來是商品頁封面圖；都沒有＝null（⛔ 不放進目錄，不出現空白卡） */
+export function productImage(p: SheetProduct): { url: string, source: 'own' | 'web' } | null {
+  if (p.ownImage?.url) return { url: p.ownImage.url, source: 'own' }
+  if (p.cover?.url) return { url: p.cover.url, source: 'web' }
+  return null
+}
+
+/**
+ * noCover＝商品頁上找不到封面圖（不重試，換了網址才再抓）；
+ * pageUnreachable／imageUnreachable＝連不上、太大；badImage＝不是讀得懂的圖——這三種最多試 `COVER_MAX_ATTEMPTS` 次。
+ */
+export type SheetProductImageFailReason = 'noCover' | 'pageUnreachable' | 'imageUnreachable' | 'badImage'
+
+export interface SheetProductImageError {
+  reason: SheetProductImageFailReason
+  /** 失敗的是哪個商品頁；網址換了就重新算 */
+  urlKey: string
+  attempts: number
+  at: number
 }
 
 export type SheetProductChangeKind =
@@ -308,6 +338,11 @@ export function confirmSheetProductRename(reg: SheetProductRegistry, oldId: stri
     firstSeenAt: old.firstSeenAt,
     missingSince: nw.missingSince,
   }
+  // 店家換過的圖跟著舊的走（⛔ 不能因為確認改名就掉）；封面圖用新那一列的商品頁抓到的（網址換了，舊封面圖可能是別的商品頁）
+  if (old.ownImage) merged.ownImage = old.ownImage
+  const cover = nw.cover ?? old.cover
+  if (cover) merged.cover = cover
+  if (nw.coverError) merged.coverError = nw.coverError
   products[oldId] = merged
   const change: SheetProductChange = { at: now, kind: 'renamed', productId: oldId, title: nw.title, prevTitle: old.title }
   return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX) }
@@ -319,6 +354,75 @@ export function dismissSheetProductRename(reg: SheetProductRegistry, oldId: stri
   if (!old?.renameCandidates) return null
   const { renameCandidates: _drop, ...rest } = old
   return { ...reg, products: { ...reg.products, [oldId]: rest } }
+}
+
+/** 抓封面圖最多試幾次（連不上、壞圖）；找不到封面圖不重試 */
+export const COVER_MAX_ATTEMPTS = 3
+
+/**
+ * 這個商品要不要（再）去抓封面圖（`C-435`）：還在表上、有商品頁網址、手上的封面圖不是從這個網址抓的、這個網址還沒放棄。
+ * 店家自己換了圖也照樣抓（留著給「改回商品頁封面圖」用）。
+ * 商品頁網址換了：舊的封面圖先留著用，抓到新的再換（⛔ 不先拿掉，不然目錄會空一格）。
+ */
+export function needsCoverFetch(p: SheetProduct): boolean {
+  if (p.missingSince !== null || !p.urlKey || !p.pageUrl) return false
+  if (p.cover?.fromUrlKey === p.urlKey) return false
+  const e = p.coverError
+  if (e && e.urlKey === p.urlKey && (e.reason === 'noCover' || e.attempts >= COVER_MAX_ATTEMPTS)) return false
+  return true
+}
+
+/** 要抓封面圖的商品：還沒有任何圖的先（目錄上的再更先），再照表上的順序 */
+export function productsNeedingCover(reg: SheetProductRegistry): SheetProduct[] {
+  const rank = (p: SheetProduct) => (productImage(p) ? 2 : 0) + (p.inCatalog ? 0 : 1)
+  return Object.values(reg.products)
+    .filter(needsCoverFetch)
+    .sort((a, b) => rank(a) - rank(b) || a.order - b.order)
+}
+
+/** 這份商品清單還有沒有要抓的封面圖（寫成 doc 上的 `needsCover`，排程只查這種 doc） */
+export function registryNeedsCover(reg: SheetProductRegistry): boolean {
+  return Object.values(reg.products).some(needsCoverFetch)
+}
+
+/**
+ * 抓封面圖的結果寫回去（`C-435`）。⛔ 抓的這段時間店家可能改了商品頁網址：結果是舊網址的就不寫（回 null），下一輪照新網址重抓。
+ * 成功：換上這張封面圖、拿掉失敗紀錄。失敗：同一個網址累計次數；手上的舊封面圖照留。
+ */
+export function applyCoverResult(
+  reg: SheetProductRegistry,
+  productId: string,
+  fetchedUrlKey: string,
+  result: { ok: true, url: string } | { ok: false, reason: SheetProductImageFailReason },
+  now: number,
+): SheetProductRegistry | null {
+  const p = reg.products[productId]
+  if (!p || p.urlKey !== fetchedUrlKey) return null
+  const next: SheetProduct = { ...p, aliases: [...p.aliases] }
+  if (result.ok) {
+    next.cover = { url: result.url, fromUrlKey: fetchedUrlKey, at: now }
+    delete next.coverError
+  }
+  else {
+    const prev = p.coverError && p.coverError.urlKey === fetchedUrlKey ? p.coverError.attempts : 0
+    next.coverError = { reason: result.reason, urlKey: fetchedUrlKey, attempts: prev + 1, at: now }
+  }
+  return { ...reg, products: { ...reg.products, [productId]: next } }
+}
+
+/** 店家在商品目錄「換圖」：之後就用這張，不再跟著官網換 */
+export function setOwnProductImage(reg: SheetProductRegistry, productId: string, url: string, now: number): SheetProductRegistry | null {
+  const p = reg.products[productId]
+  if (!p) return null
+  return { ...reg, products: { ...reg.products, [productId]: { ...p, aliases: [...p.aliases], ownImage: { url, at: now } } } }
+}
+
+/** 店家按「改回商品頁封面圖」：拿掉自己換的那張，馬上改用封面圖（還沒抓到封面圖的，抓到之前沒有圖） */
+export function revertProductImage(reg: SheetProductRegistry, productId: string): SheetProductRegistry | null {
+  const p = reg.products[productId]
+  if (!p?.ownImage) return null
+  const { ownImage: _drop, ...rest } = p
+  return { ...reg, products: { ...reg.products, [productId]: rest } }
 }
 
 /**

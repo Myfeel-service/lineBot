@@ -26,6 +26,7 @@ import { rollupConversationStats } from '~~/server/utils/conversation-stats-roll
 import { cleanupExpiredNotifyLinks } from '~~/server/utils/notify-links'
 import { snapshotBroadcastLineStats } from '~~/server/utils/broadcast-line-stats'
 import { notifyLineQuotaLevels } from '~~/server/utils/line-quota-notify'
+import { fillSheetProductCovers } from '~~/server/utils/sheet-products'
 import { getDb } from '~~/server/utils/firebase'
 
 /**
@@ -76,6 +77,9 @@ export default defineEventHandler(async (event) => {
     // 建整理工作被硬砍、只留下暫存檔沒留工作紀錄的（`C-303`⑩）：照紀錄找檔的那支清不到它們
     { name: 'ai:cleanup-orphan-job-files', run: () => cleanupOrphanJobFiles(db) },
     { name: 'ai:detect-source-updates', run: () => detectSourceUpdates(db) },
+    // 商品頁的封面圖（`C-435`）：試算表上的商品還沒有圖的，抓商品頁的封面圖轉成 JPG。
+    // 一輪最多 3 個、20 秒內；只查還有商品要抓的那幾份商品清單，平常＝一個空查詢
+    { name: 'products:fill-covers', run: () => fillSheetProductCovers(db) },
     { name: 'ai:expire-knowledge-cards', run: () => expireKnowledgeCards(db) },
     // 回收桶到期清運：軟刪除的知識卡（含連坐的 manual 來源）過了 30 天保留期真刪
     { name: 'ai:purge-recycled-knowledge', run: () => purgeRecycledKnowledge(db) },

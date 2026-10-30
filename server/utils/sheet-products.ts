@@ -2,12 +2,18 @@ import { randomBytes } from 'node:crypto'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { sheetCardField } from '~~/shared/sheet-field'
 import {
+  applyCoverResult,
   findProductPageHeader,
   firstHttpUrl,
   isSheetCatalogHeader,
   parseSheetCheckbox,
+  productsNeedingCover,
   reconcileSheetProducts,
+  registryNeedsCover,
+  revertProductImage,
+  setOwnProductImage,
   type SheetProductChange,
+  type SheetProductImageFailReason,
   type SheetProductInput,
   type SheetProductRegistry,
 } from '~~/shared/sheet-products'
@@ -62,6 +68,7 @@ export async function loadSheetProductRegistry(db: Firestore, workspaceId: strin
 
 /**
  * 同步完之後跟上一份比、有變才寫（`C-434`）。表上什麼都沒變的一小時：讀一次、不寫。
+ * 用 transaction：抓封面圖的排程（`fillSheetProductCovers`）同時在寫同一份，不鎖住會互相蓋掉。
  * ⛔ 失敗不擋同步（知識卡已經更新好了，商品清單下一輪再補）——吞錯但留 log。
  * 回傳這一輪的變動（給呼叫端記紀錄、測試用）；失敗＝null。
  */
@@ -73,17 +80,110 @@ export async function syncSheetProducts(
 ): Promise<SheetProductChange[] | null> {
   try {
     const ref = db.collection(SHEET_PRODUCTS_COLLECTION).doc(sourceId)
-    const snap = await ref.get()
-    if (snap.exists && snap.get('workspaceId') !== workspaceId) return null
-    const prev = snap.exists ? toRegistry(snap.data()) : null
     const input = sheetProductInputFromCards(sheet.cards, sheet.fieldHeaders ?? [], sheet.controlHeaders ?? [])
-    const { registry, changed, newChanges } = reconcileSheetProducts(prev, input, Date.now(), newSheetProductId)
-    if (!changed) return []
-    await ref.set({ workspaceId, sourceId, ...registry, updatedAt: FieldValue.serverTimestamp() })
-    return newChanges
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      if (snap.exists && snap.get('workspaceId') !== workspaceId) return null
+      const prev = snap.exists ? toRegistry(snap.data()) : null
+      const { registry, changed, newChanges } = reconcileSheetProducts(prev, input, Date.now(), newSheetProductId)
+      if (!changed) return []
+      tx.set(ref, { workspaceId, sourceId, ...registry, needsCover: registryNeedsCover(registry), updatedAt: FieldValue.serverTimestamp() })
+      return newChanges
+    })
   }
   catch (e) {
     console.warn('[sheet-products] 商品清單沒更新到（下一輪同步再補）：', workspaceId, sourceId, e)
     return null
   }
+}
+
+/**
+ * 改一份商品清單（transaction）。fn 回 null＝不用改。不是這個帳號的、不存在的＝null。
+ * `needsCover` 每次跟著重算：排程只查 `needsCover==true` 的 doc，平常一筆都不讀。
+ */
+async function updateSheetProductRegistry(
+  db: Firestore,
+  workspaceId: string,
+  sourceId: string,
+  fn: (reg: SheetProductRegistry) => SheetProductRegistry | null,
+): Promise<SheetProductRegistry | null> {
+  const ref = db.collection(SHEET_PRODUCTS_COLLECTION).doc(sourceId)
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists || snap.get('workspaceId') !== workspaceId) return null
+    const reg = toRegistry(snap.data())
+    if (!reg) return null
+    const next = fn(reg)
+    if (!next) return null
+    tx.update(ref, { products: next.products, changes: next.changes, needsCover: registryNeedsCover(next), updatedAt: FieldValue.serverTimestamp() })
+    return next
+  })
+}
+
+/** 店家在商品目錄「換圖」（`C-435`；畫面與 API 在 `C-436`）。url＝後台上傳完的公開網址 */
+export function setSheetProductOwnImage(db: Firestore, workspaceId: string, sourceId: string, productId: string, url: string) {
+  return updateSheetProductRegistry(db, workspaceId, sourceId, reg => setOwnProductImage(reg, productId, url, Date.now()))
+}
+
+/** 店家按「改回商品頁封面圖」（`C-435`；畫面與 API 在 `C-436`） */
+export function revertSheetProductImage(db: Firestore, workspaceId: string, sourceId: string, productId: string) {
+  return updateSheetProductRegistry(db, workspaceId, sourceId, reg => revertProductImage(reg, productId))
+}
+
+/**
+ * 排程：替還沒有封面圖的商品抓商品頁的封面圖（`C-435`）。
+ * 不放在試算表同步裡：「立即更新」是店家在等的請求，不能讓它等下載圖片；排程每 10 分鐘一輪，
+ * 一輪最多 3 個商品、20 秒內（每個最多約 14 秒：商品頁 6 秒＋圖 8 秒），MYFEEL 15 個商品約 50 分鐘補完。
+ * 只查 `needsCover==true` 的商品清單——沒事要做的時候是一個空查詢。
+ * 抓不到的照原因記下來（找不到封面圖不重試；連不上、壞圖最多 3 次），⛔ 不默默放棄：提醒（`C-438`）讀這裡。
+ * ⚠️ 存進 Storage 失敗（我們這邊的問題）不記失敗次數，下一輪照樣重試。
+ */
+export async function fillSheetProductCovers(
+  db: Firestore,
+  opts: { maxProducts?: number, budgetMs?: number } = {},
+): Promise<{ tried: number, fetched: number, failed: number }> {
+  const maxProducts = opts.maxProducts ?? 3
+  const budgetMs = opts.budgetMs ?? 20_000
+  const started = Date.now()
+  const out = { tried: 0, fetched: 0, failed: 0 }
+  const snap = await db.collection(SHEET_PRODUCTS_COLLECTION).where('needsCover', '==', true).limit(10).get()
+  if (snap.empty) return out
+  // 用到才載入：這支檔案也被「送出前換試算表那一格」（每則訊息都走）引用，⛔ 不要讓送訊息的路多載圖片套件
+  const { fetchProductCover, storeProductCover } = await import('./product-cover-image')
+  for (const doc of snap.docs) {
+    const workspaceId = String(doc.get('workspaceId') ?? '')
+    const reg = toRegistry(doc.data())
+    if (!workspaceId || !reg) continue
+    const todo = productsNeedingCover(reg)
+    if (!todo.length) {
+      // 旗子沒放下（例如那個商品在這段時間被移出表）：放下，下一輪不再讀它
+      await doc.ref.update({ needsCover: false }).catch(() => {})
+      continue
+    }
+    for (const p of todo) {
+      if (out.tried >= maxProducts || Date.now() - started > budgetMs) return out
+      out.tried++
+      const urlKey = p.urlKey!
+      const r = await fetchProductCover(p.pageUrl!)
+      let result: { ok: true, url: string } | { ok: false, reason: SheetProductImageFailReason }
+      if (r.ok) {
+        try {
+          result = { ok: true, url: await storeProductCover(workspaceId, doc.id, p.id, r.jpeg) }
+        }
+        catch (e) {
+          console.warn('[sheet-products] 封面圖存不進 Storage（下一輪再試）：', workspaceId, doc.id, p.id, e)
+          out.failed++
+          continue
+        }
+      }
+      else {
+        console.warn('[sheet-products] 抓不到封面圖：', workspaceId, p.title, r.reason, r.detail)
+        result = { ok: false, reason: r.reason }
+      }
+      await updateSheetProductRegistry(db, workspaceId, doc.id, latest => applyCoverResult(latest, p.id, urlKey, result, Date.now()))
+      if (result.ok) out.fetched++
+      else out.failed++
+    }
+  }
+  return out
 }

@@ -89,8 +89,50 @@ export async function fetchPublicText(
   rawUrl: string,
   opts: { timeoutMs?: number; maxBytes?: number; headers?: Record<string, string> } = {},
 ): Promise<SafeFetchResult> {
-  const timeoutMs = opts.timeoutMs ?? 15_000
-  const maxBytes = opts.maxBytes ?? FETCH_MAX_BYTES
+  const { res, url } = await openPublicUrl(rawUrl, { timeoutMs: opts.timeoutMs ?? 15_000, headers: opts.headers })
+  const { bytes, truncatedBySize } = await readCapped(res, opts.maxBytes ?? FETCH_MAX_BYTES)
+  return {
+    status: res.status,
+    ok: res.ok,
+    contentType: String(res.headers.get('content-type') ?? ''),
+    text: bytes.toString('utf8'),
+    finalUrl: res.url || url,
+    truncatedBySize,
+  }
+}
+
+export interface SafeFetchBytesResult {
+  status: number
+  ok: boolean
+  contentType: string
+  bytes: Buffer
+  finalUrl: string
+  /** 超過大小上限：⛔ 截斷的圖片是壞檔，呼叫端要當失敗 */
+  truncatedBySize: boolean
+}
+
+/**
+ * 抓公開網址的原始位元組（`C-435`：商品頁的封面圖）。跟 fetchPublicText 同一套保護：逐跳擋內網、手動跟轉址、讀取設上限。
+ */
+export async function fetchPublicBytes(
+  rawUrl: string,
+  opts: { timeoutMs?: number; maxBytes?: number; headers?: Record<string, string> } = {},
+): Promise<SafeFetchBytesResult> {
+  const { res, url } = await openPublicUrl(rawUrl, { timeoutMs: opts.timeoutMs ?? 15_000, headers: opts.headers })
+  const { bytes, truncatedBySize } = await readCapped(res, opts.maxBytes ?? FETCH_MAX_BYTES)
+  return {
+    status: res.status,
+    ok: res.ok,
+    contentType: String(res.headers.get('content-type') ?? ''),
+    bytes,
+    finalUrl: res.url || url,
+    truncatedBySize,
+  }
+}
+
+/** 逐跳驗證主機、手動跟轉址（≤5 跳）；回最後一跳的回應（body 還沒讀） */
+async function openPublicUrl(rawUrl: string, opts: { timeoutMs: number; headers?: Record<string, string> }): Promise<{ res: Response, url: string }> {
+  const timeoutMs = opts.timeoutMs
   let url = String(rawUrl || '').trim()
 
   let res: Response | null = null
@@ -132,36 +174,30 @@ export async function fetchPublicText(
   if (!res) {
     throw createError({ statusCode: 502, statusMessage: '網址轉址次數過多，請確認連結' })
   }
+  return { res, url }
+}
 
-  // streaming 讀取＋位元組上限：超過就截斷（抽取層本來就會再截到 MAX_RAW_TEXT_LEN，
-  // 這裡的上限是防 OOM 的保險，不是內容策略）
+/**
+ * streaming 讀取＋位元組上限：超過就截斷（抽取層本來就會再截到 MAX_RAW_TEXT_LEN，
+ * 這裡的上限是防 OOM 的保險，不是內容策略）
+ */
+async function readCapped(res: Response, maxBytes: number): Promise<{ bytes: Buffer, truncatedBySize: boolean }> {
+  if (!res.body) return { bytes: Buffer.alloc(0), truncatedBySize: false }
   let truncatedBySize = false
-  let text = ''
-  if (res.body) {
-    const reader = res.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > maxBytes) {
-        truncatedBySize = true
-        chunks.push(Buffer.from(value.subarray(0, value.byteLength - (total - maxBytes))))
-        await reader.cancel().catch(() => {})
-        break
-      }
-      chunks.push(Buffer.from(value))
+  const reader = res.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      truncatedBySize = true
+      chunks.push(Buffer.from(value.subarray(0, value.byteLength - (total - maxBytes))))
+      await reader.cancel().catch(() => {})
+      break
     }
-    text = Buffer.concat(chunks).toString('utf8')
+    chunks.push(Buffer.from(value))
   }
-
-  return {
-    status: res.status,
-    ok: res.ok,
-    contentType: String(res.headers.get('content-type') ?? ''),
-    text,
-    finalUrl: res.url || url,
-    truncatedBySize,
-  }
+  return { bytes: Buffer.concat(chunks), truncatedBySize }
 }
