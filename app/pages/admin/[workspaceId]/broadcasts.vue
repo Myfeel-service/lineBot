@@ -605,11 +605,12 @@
         <div v-if="dialogQuotaWarning" class="admin-alert admin-alert--warn" data-testid="bc-validate-quota-warn">
           {{ dialogQuotaWarning }}
         </div>
-        <div v-if="validateResult.previewUserIds?.length" class="bc-preview-ids">
-          <AdminFieldLabel text="名單預覽（前幾筆）" tight />
-          <ul class="bc-preview-list">
-            <li v-for="uid in validateResult.previewUserIds" :key="uid" class="td-code">{{ uid }}</li>
-          </ul>
+        <!-- 名單預覽列 LINE 名稱（老闆 2026-10-30：「用 uid 等於沒放」）。人數上面那格有了，這裡不再寫「等 N 位」 -->
+        <div v-if="validateResult.previewNames?.length" class="bc-preview-ids">
+          <AdminFieldLabel text="名單預覽（前幾位）" tight />
+          <p class="bc-preview-names" data-testid="bc-preview-names">
+            {{ validateResult.previewNames.join('、') }}{{ Number(validateResult.estimatedCount || 0) > validateResult.previewNames.length ? '⋯' : '' }}
+          </p>
         </div>
       </div>
     </div>

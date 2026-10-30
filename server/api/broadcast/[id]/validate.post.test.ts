@@ -258,3 +258,53 @@ describe('發送前確認：LINE 剩幾則、預估人數不算封鎖的人', ()
     expect(vi.mocked(resolveAudienceUserIds).mock.calls.at(-1)?.[0]).toMatchObject({ isBlocked: false })
   })
 })
+
+/**
+ * 名單預覽列 LINE 名稱（2026-10-30 老闆看到確認視窗列 `f2d418e2-…_U09f2…`：「用 uid 等於沒放」）。
+ */
+describe('發送前確認：名單預覽給人看的是 LINE 名稱、不是編號', () => {
+  function makeDbWithNames(broadcast: Record<string, any>, names: Record<string, string | undefined>) {
+    const asked: string[] = []
+    const db = {
+      collection: vi.fn(() => ({
+        doc: vi.fn((id?: string) => ({ id, get: vi.fn(async () => ({ exists: true, data: () => broadcast })) })),
+      })),
+      getAll: vi.fn(async (...args: any[]) => {
+        const refs = args.filter((a) => typeof a?.id === 'string')
+        asked.push(...refs.map((r: { id: string }) => r.id))
+        return refs.map((r: { id: string }) => ({ id: r.id, data: () => (r.id in names ? { displayName: names[r.id] } : undefined) }))
+      }),
+    }
+    mockGetDb.mockReturnValue(db as any)
+    return { asked }
+  }
+
+  it('依標籤 → 列前 5 位的 LINE 名稱；沒名字的寫「沒有 LINE 名稱」，⛔ 不退回顯示編號', async () => {
+    const ids = ['ws1_Ua', 'ws1_Ub', 'ws1_Uc', 'ws1_Ud', 'ws1_Ue', 'ws1_Uf']
+    vi.mocked(resolveAudienceUserIds).mockResolvedValueOnce(ids)
+    const { asked } = makeDbWithNames(
+      { ...broadcastDoc([{ type: 'text', text: '今天公休' }]), audienceSource: { type: 'tags', tagIds: ['t1'] } },
+      { ws1_Ua: '王小明', ws1_Ub: '  ', ws1_Uc: 'Jordan', ws1_Ud: '阿美', ws1_Ue: '小芳' },
+    )
+    const res = await (handler as any)({})
+    expect(res.previewNames).toEqual(['王小明', '（沒有 LINE 名稱）', 'Jordan', '阿美', '小芳'])
+    expect(res.previewNames.join('')).not.toMatch(/ws1_|U[a-f]/)
+    // 只多讀這 5 位
+    expect(asked).toEqual(ids.slice(0, 5))
+  })
+
+  it('匯入名單存的是 U… → 先換成 users 文件編號再讀名字', async () => {
+    const { asked } = makeDbWithNames(broadcastDoc([{ type: 'text', text: '今天公休' }]), { ws1_U1: '王小明', ws1_U2: 'Jordan' })
+    const res = await (handler as any)({})
+    expect(asked).toEqual(['ws1_U1', 'ws1_U2'])
+    expect(res.previewNames).toEqual(['王小明', 'Jordan'])
+  })
+
+  it('讀名字失敗 → 不列預覽，⛔ 不擋確認（人數照樣有）', async () => {
+    makeDb(broadcastDoc([{ type: 'text', text: '今天公休' }])) // 這個假資料庫沒有 getAll＝讀失敗
+    const res = await (handler as any)({})
+    expect(res.previewNames).toEqual([])
+    expect(res.valid).toBe(true)
+    expect(res.estimatedCount).toBe(2)
+  })
+})

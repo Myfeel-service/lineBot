@@ -8,7 +8,27 @@ import { FOLLOW_UP_PERSONALIZED_ERROR, followUpSourceProblem } from '~~/shared/b
 import { findSendVariables } from '~~/shared/preview-variables'
 import { countTaggedUriButtons } from '~~/shared/flow-uri-tagging'
 import { parseFirestoreDate } from '~~/shared/firestore-date'
+import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast'
+
+/**
+ * 確認視窗「名單預覽」給人看的 LINE 名稱。
+ * ⛔ 以前直接列 `previewUserIds`（`{帳號}_U…` 那串編號），2026-10-30 老闆：「用 uid 等於沒放」——看不出是誰。
+ * 只多讀這 5 位、只拿名字一格。匯入名單存的是 `U…`，跟其他來源的 users 編號一樣先換成 users 文件編號。
+ * 沒有名字的寫「（沒有 LINE 名稱）」，⛔ 不退回顯示編號；讀失敗就不列預覽（人數那格照樣有），不擋確認。
+ */
+async function previewNamesOf(db: FirebaseFirestore.Firestore, ids: string[], workspaceId: string): Promise<string[]> {
+  if (!ids.length) return []
+  try {
+    const refs = ids.map((id) => db.collection('users').doc(lineUserFirestoreDocId(id, workspaceId)))
+    const snaps = await db.getAll(...refs, { fieldMask: ['displayName'] })
+    return snaps.map((s) => String(s.data()?.displayName ?? '').trim() || '（沒有 LINE 名稱）')
+  }
+  catch (err) {
+    console.error('[broadcast/validate] 名單預覽讀名字失敗（不列預覽）', err)
+    return []
+  }
+}
 
 /**
  * POST /api/broadcast/:id/validate
@@ -20,6 +40,7 @@ import type { BroadcastDoc, AudienceFilter } from '~~/shared/types/tag-broadcast
  *   errors: string[]
  *   estimatedCount: number     // 預估發送人數
  *   previewUserIds: string[]   // 前 5 筆預覽
+ *   previewNames: string[]     // 同那 5 位的 LINE 名稱（確認視窗「名單預覽」顯示這個）
  *   lineQuota: LineMessageQuota | null  // LINE 這個月還剩幾則（`C-380`）；讀不到是 null
  * }
  */
@@ -168,11 +189,13 @@ export default defineEventHandler(async (event) => {
     errors.push('受眾人數為 0，無法發送')
   }
 
+  const previewUserIds = resolvedUserIds.slice(0, 5)
   return {
     valid: errors.length === 0,
     errors,
     estimatedCount: followUpEstimate ?? resolvedUserIds.length,
-    previewUserIds: resolvedUserIds.slice(0, 5),
+    previewUserIds,
+    previewNames: await previewNamesOf(db, previewUserIds, workspaceId),
     lineQuota: await lineQuotaP,
   }
 })

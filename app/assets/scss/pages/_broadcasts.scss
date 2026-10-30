@@ -290,18 +290,13 @@
   gap: 0.4rem;
 }
 
-.bc-preview-list {
-  list-style: none;
+// 名單預覽：LINE 名稱一行（以前是一列一個內部編號，等寬字）
+.bc-preview-names {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.bc-preview-list li {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
+  line-height: 1.6;
   color: var(--text-secondary);
+  word-break: break-word;
 }
 
 .bc-snapshot-info {
