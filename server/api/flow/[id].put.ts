@@ -2,13 +2,14 @@ import {
   assertValidFlowMessages,
   assertValidFlowName,
 } from '~~/server/utils/flow-validator'
-import { getDoc } from '~~/server/utils/firebase'
+import { getDb, getDoc } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { invalidateBrokenModuleRefsCache } from '~~/server/utils/broken-module-refs'
 import { assertPlanAllows } from '~~/server/utils/billing'
 import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
+import { configureSheetCatalogs } from '~~/server/utils/sheet-catalog'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
@@ -44,6 +45,9 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  // `C-436`：照試算表排的商品目錄——記下這份試算表有目錄在用、替勾進目錄的商品建標籤（失敗不擋存檔）
+  if (Array.isArray(updates.messages)) await configureSheetCatalogs(getDb(), workspaceId, updates.messages as any[])
 
   // 稽核（`C-254`）：`isActive` 就是店家口中的「流程開關」——關掉的話客人按按鈕會沒反應。
   // ⛔ 只比摘要層（訊息內容不整包存，會被截斷）；沒有變就不寫。

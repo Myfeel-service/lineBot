@@ -47,21 +47,26 @@ function normalizeActionTagging(input: any): ActionTagging {
   }
 }
 
-export function encodeTriggerModule(moduleId: string, tagIds: string[] = []): string {
+/**
+ * 點了帶上「哪一份試算表的哪個商品」（`C-436`）：`<來源 id>:<商品短代號>`。
+ * 商品目錄（照試算表排）的每張卡都帶著它，商品資訊範本（`C-437`）靠它填「這個商品的某一欄」。⛔ 不放網址（postback 上限 300 字）。
+ */
+const TRIGGER_MODULE_PRODUCT_KEY = 'p'
+
+export function encodeTriggerModule(moduleId: string, tagIds: string[] = [], product = ''): string {
   const cleanModuleId = String(moduleId || '').trim()
   if (!cleanModuleId) return TRIGGER_MODULE_PREFIX
 
   const cleanTagIds = cleanTagIdList(tagIds)
+  const cleanProduct = String(product || '').trim()
 
-  if (cleanTagIds.length === 0) {
-    return `${TRIGGER_MODULE_PREFIX}${cleanModuleId}`
-  }
-
-  const encodedTags = encodeURIComponent(cleanTagIds.join(','))
-  return `${TRIGGER_MODULE_PREFIX}${cleanModuleId}&${TRIGGER_MODULE_TAGS_KEY}=${encodedTags}`
+  let out = `${TRIGGER_MODULE_PREFIX}${cleanModuleId}`
+  if (cleanTagIds.length > 0) out += `&${TRIGGER_MODULE_TAGS_KEY}=${encodeURIComponent(cleanTagIds.join(','))}`
+  if (cleanProduct) out += `&${TRIGGER_MODULE_PRODUCT_KEY}=${encodeURIComponent(cleanProduct)}`
+  return out
 }
 
-export function parseTriggerModuleData(data: string): { moduleId: string; tagIds: string[] } {
+export function parseTriggerModuleData(data: string): { moduleId: string; tagIds: string[]; product?: string } {
   if (typeof data !== 'string') return { moduleId: '', tagIds: [] }
   if (!data.startsWith(TRIGGER_MODULE_PREFIX)) return { moduleId: '', tagIds: [] }
 
@@ -92,7 +97,9 @@ export function parseTriggerModuleData(data: string): { moduleId: string; tagIds
     })
     .filter(Boolean)
 
-  return { moduleId, tagIds }
+  // URLSearchParams.get 已經解過一次碼
+  const product = (params.get(TRIGGER_MODULE_PRODUCT_KEY) || '').trim()
+  return product ? { moduleId, tagIds, product } : { moduleId, tagIds }
 }
 
 export function decodeTriggerModule(data: string): string {

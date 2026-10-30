@@ -209,6 +209,13 @@ describe('findBrokenModuleRefs(空按鈕靜態檢查)', () => {
   })
 })
 
+describe('`C-436` 改接時帶著的商品要原樣保留', () => {
+  it('目錄卡片的 postback 帶著商品：改接之後還帶著（不然範本不知道是哪個商品）', () => {
+    const r = replaceModuleRefs('triggerModule=dead&tags=t1&p=src%3Aabc', 'dead', 'alive')
+    expect(r).toEqual({ value: 'triggerModule=alive&tags=t1&p=src%3Aabc', changed: true })
+  })
+})
+
 describe('replaceModuleRefs(壞按鈕整批改指向，C-87)', () => {
   it('已編碼的 postback 字串：換 id、tags 原樣保留', () => {
     const areas = [{ action: { type: 'postback', data: 'triggerModule=dead&tags=t1,t2' } }]

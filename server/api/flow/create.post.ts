@@ -13,6 +13,8 @@ import { assertPlanAllows } from '~~/server/utils/billing'
 import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
+import { configureSheetCatalogs } from '~~/server/utils/sheet-catalog'
+import { handleSheetProductImage } from '~~/server/utils/sheet-catalog-editor'
 import { flowTestSend } from '~~/server/utils/flow-test-send'
 
 export default defineEventHandler(async (event) => {
@@ -22,6 +24,11 @@ export default defineEventHandler(async (event) => {
    * ⛔ 放在方案閘門前面：「先看一眼」不綁方案（同推播試發 `C-248`）。權限在 flowTestSend 裡自己驗。
    */
   if (getQuery(event).part === 'test-send') return flowTestSend(event)
+  /*
+   * `C-436` 商品目錄「換圖」「改回商品頁封面圖」也借這支（`?part=sheet-product-image`）；權限在 handleSheetProductImage 裡驗。
+   * 放在方案閘門前面：換的是試算表商品的圖，不是在建流程。
+   */
+  if (getQuery(event).part === 'sheet-product-image') return handleSheetProductImage(event)
 
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
@@ -76,6 +83,9 @@ export default defineEventHandler(async (event) => {
 
   // 讓「按鈕按下去沒反應」的異常檢查立刻反映這次變更（否則最多要等 5 分鐘快取過期）
   invalidateBrokenModuleRefsCache(workspaceId)
+
+  // `C-436`：照試算表排的商品目錄——記下這份試算表有目錄在用、替勾進目錄的商品建標籤（失敗不擋存檔）
+  await configureSheetCatalogs(getDb(), workspaceId, messages)
 
   // 稽核（`C-254`）：模組是客人真的會收到的內容，建了什麼要查得到
   await writeAuditLog({

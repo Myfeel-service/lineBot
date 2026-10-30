@@ -112,6 +112,16 @@ describe('送出去的樣子', () => {
     expect(out.contents.contents[0].footer.paddingAll).toBeUndefined()
   })
 
+  it('`C-436` 目錄卡片帶著商品：點整張圖送出的 postback 帶上商品（範本靠它填格子），標籤照貼', async () => {
+    const out = await render(message([card({
+      title: '',
+      text: '',
+      actions: [],
+      action: { type: 'module', moduleId: 'tpl-1', product: 'src1:a1b2c3d4e5', tagging: { enabled: true, addTagIds: ['tag-a'] } },
+    })]))
+    expect(out.contents.contents[0].hero.action).toMatchObject({ type: 'postback', data: 'triggerModule=tpl-1&tags=tag-a&p=src1%3Aa1b2c3d4e5' })
+  })
+
   it('內文 1000 字一字不缺（以前切在 300）', async () => {
     const text = '飛'.repeat(CARD_BODY_MAX)
     const out = await render(message([card({ text })]))

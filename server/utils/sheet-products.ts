@@ -56,6 +56,7 @@ function toRegistry(data: Record<string, unknown> | undefined): SheetProductRegi
     changes: Array.isArray(data.changes) ? (data.changes as SheetProductChange[]) : [],
     catalogColumn: data.catalogColumn === true,
     pageHeader: typeof data.pageHeader === 'string' ? data.pageHeader : null,
+    ...(typeof data.catalogTagPrefix === 'string' ? { catalogTagPrefix: data.catalogTagPrefix } : {}),
   }
 }
 
@@ -101,7 +102,7 @@ export async function syncSheetProducts(
  * 改一份商品清單（transaction）。fn 回 null＝不用改。不是這個帳號的、不存在的＝null。
  * `needsCover` 每次跟著重算：排程只查 `needsCover==true` 的 doc，平常一筆都不讀。
  */
-async function updateSheetProductRegistry(
+export async function updateSheetProductRegistry(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
@@ -115,7 +116,14 @@ async function updateSheetProductRegistry(
     if (!reg) return null
     const next = fn(reg)
     if (!next) return null
-    tx.update(ref, { products: next.products, changes: next.changes, needsCover: registryNeedsCover(next), updatedAt: FieldValue.serverTimestamp() })
+    tx.update(ref, {
+      products: next.products,
+      changes: next.changes,
+      needsCover: registryNeedsCover(next),
+      // 商品目錄的設定（`C-436`）：有改才寫
+      ...(next.catalogTagPrefix !== undefined && next.catalogTagPrefix !== reg.catalogTagPrefix ? { catalogTagPrefix: next.catalogTagPrefix } : {}),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
     return next
   })
 }

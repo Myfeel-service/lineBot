@@ -32,6 +32,7 @@ import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 import { diffSheetCardFields, type SheetFieldChange } from '~~/shared/sheet-stale'
 import { recordStaleSheetModules } from './sheet-stale-modules'
 import { syncSheetProducts } from './sheet-products'
+import { ensureSheetProductTags } from './sheet-catalog'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 export interface GsheetSyncResult {
@@ -478,7 +479,12 @@ export async function syncGoogleSheetSource(
   }
 
   // `C-434`：哪一列是哪個商品、誰改了名、誰勾進目錄（商品目錄、範本、模組裡「試算表的一格」都靠它）。失敗不擋同步
-  await syncSheetProducts(db, workspaceId, sourceId, sheet)
+  const productChanges = await syncSheetProducts(db, workspaceId, sourceId, sheet)
+  // `C-436`：新勾進目錄的商品要有標籤（客人點了才貼得上、推播才挑得到人）；只有這份表有目錄在用才建，失敗不擋同步
+  if (productChanges?.length) {
+    await ensureSheetProductTags(db, workspaceId, sourceId)
+      .catch(e => console.warn('[gsheet-sync] 商品標籤沒建好（下次同步或存模組再補）：', sourceId, e))
+  }
 
   return {
     outcome: 'synced',

@@ -45,6 +45,7 @@ import { createUriTagToken } from './line-action-tag-token'
 import { addTagsToUser } from './tagging'
 import { recordModuleSent } from './flow-usage'
 import { hydrateSheetFields } from './sheet-field-hydrate'
+import { hydrateSheetCatalogs } from './sheet-catalog'
 import {
   ensureConversationSession,
   enterModule,
@@ -1058,7 +1059,8 @@ async function loadRichMessageSnapshot(id: string, workspaceId: string): Promise
  */
 async function hydrateRichMessageRefs(messages: any[], workspaceId: string): Promise<any[]> {
   if (!Array.isArray(messages) || messages.length === 0) return []
-  const hydrated = [...messages]
+  // `C-436`：照試算表排的商品目錄，送出前照商品清單產生卡片（一張都沒有的那則不送，見 sheet-catalog.ts）
+  const hydrated = await hydrateSheetCatalogs([...messages], workspaceId)
   const ids = Array.from(new Set(hydrated
     .filter((msg: any) => msg?.type === 'richMessageRef' && msg?.richMessageId)
     .map((msg: any) => String(msg.richMessageId))))
@@ -1786,6 +1788,8 @@ function buildLineMessages(
                 col.action?.tagging?.enabled && Array.isArray(col.action?.tagging?.addTagIds)
                   ? col.action.tagging.addTagIds
                   : [],
+                // `C-436`：照試算表排的目錄卡片帶著「哪個商品」，範本（`C-437`）靠它填格子
+                typeof col.action?.product === 'string' ? col.action.product : '',
               ),
             }
           } else if (enableImage && actionType === 'message') {

@@ -5,6 +5,7 @@
  * 內文 300→1000、按鈕可選綠色按鈕／文字連結（新加的預設綠色，舊的沒存樣式＝文字連結照舊）、
  * 所有卡片換新字級（字級在送出端 `handler.ts`，舊卡片不用改資料）。示意頁＝畫布 `5r6YnPeiydQKoS71ZPbe3j`。
  */
+import { readSheetCatalogSource, sheetCatalogError } from './sheet-catalog'
 
 export const CARD_TITLE_MAX = 80
 /** 一張卡的內文上限。純文字是 5000，但卡片上有大圖，寫太長反而沒人讀；1000 是別家同類卡（約 240 字）的四倍 */
@@ -92,6 +93,8 @@ function taggingMissingTags(tagging: any): boolean {
  * 開貼標的按鈕放不放得進 LINE 的 300 字不在這裡（`action-schema.ts` 的 flowTaggedPostbackError，所有訊息共用）。
  */
 export function cardMessageError(msg: any): string {
+  // `C-436`：照試算表排的目錄，卡片是送出時才照商品清單產生的——存檔只看選了哪份試算表、點卡片送哪個模組
+  if (readSheetCatalogSource(msg)) return sheetCatalogError(msg)
   const columns = msg?.columns
   if (!Array.isArray(columns) || columns.length < 1) return '卡片訊息：至少要有 1 張卡'
   if (columns.length > 10) return '卡片訊息：最多 10 張卡'

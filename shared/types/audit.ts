@@ -115,6 +115,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'flow.reorder': '調整了機器人模組的順序',
   // `C-426`：送的是畫面上那一份（可能還沒存檔），什麼都沒改
   'flow.testSend': '試發了機器人模組',
+  'sheetProduct.image': '換了商品目錄上的商品圖',
   'flowFolder.create': '新增了模組資料夾',
   'flowFolder.put': '改了模組資料夾',
   'flowFolder.delete': '刪掉了模組資料夾',

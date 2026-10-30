@@ -90,9 +90,10 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
 export function replaceModuleRefs(value: unknown, from: string, to: string): { value: unknown; changed: boolean } {
   if (typeof value === 'string') {
     if (value.startsWith(TRIGGER_MODULE_PREFIX)) {
-      const { moduleId, tagIds } = parseTriggerModuleData(value)
+      const { moduleId, tagIds, product } = parseTriggerModuleData(value)
+      // `C-436`：帶著的商品也要原樣保留，不然改接之後點了不知道是哪個商品
       if (moduleId === from)
-        return { value: encodeTriggerModule(to, tagIds), changed: true }
+        return { value: encodeTriggerModule(to, tagIds, product), changed: true }
     }
     return { value, changed: false }
   }

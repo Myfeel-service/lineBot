@@ -125,6 +125,8 @@ export interface SheetProduct {
   ownImage?: { url: string, at: number }
   /** 上一次抓封面圖失敗（`C-435`）；抓到就拿掉 */
   coverError?: SheetProductImageError
+  /** 客人點目錄卡片時貼的標籤（`C-436`）：第一次進目錄時自動建；⛔ 改名不改標籤名（推播靠它挑人） */
+  tagId?: string
 }
 
 /** 這個商品現在用哪張圖：自己換的優先，再來是商品頁封面圖；都沒有＝null（⛔ 不放進目錄，不出現空白卡） */
@@ -173,6 +175,11 @@ export interface SheetProductRegistry {
   changes: SheetProductChange[]
   catalogColumn: boolean
   pageHeader: string | null
+  /**
+   * 有商品目錄照這份試算表排（`C-436`）：自動建標籤時名稱的開頭（例：MYFEEL 的「客服 - 」，空字串＝就叫商品名）。
+   * 沒有這格＝還沒有目錄用這份表，⛔ 不替它建標籤。存模組時寫進來
+   */
+  catalogTagPrefix?: string
 }
 
 export const SHEET_PRODUCT_CHANGES_MAX = 30
@@ -298,6 +305,8 @@ export function reconcileSheetProducts(
     changes: [...newChanges, ...(prev?.changes ?? [])].slice(0, SHEET_PRODUCT_CHANGES_MAX),
     catalogColumn: input.catalogColumn,
     pageHeader: input.pageHeader,
+    // 存模組時寫的設定，⛔ 同步整份覆寫時要帶著走（不然每小時同步一次就把它洗掉）
+    ...(prev?.catalogTagPrefix !== undefined ? { catalogTagPrefix: prev.catalogTagPrefix } : {}),
   }
   const changed = bootstrap
     || newChanges.length > 0
@@ -343,6 +352,9 @@ export function confirmSheetProductRename(reg: SheetProductRegistry, oldId: stri
   const cover = nw.cover ?? old.cover
   if (cover) merged.cover = cover
   if (nw.coverError) merged.coverError = nw.coverError
+  // 標籤跟著舊的走（推播靠它挑「點過這個商品的人」）；舊的還沒有才用新的
+  const tagId = old.tagId ?? nw.tagId
+  if (tagId) merged.tagId = tagId
   products[oldId] = merged
   const change: SheetProductChange = { at: now, kind: 'renamed', productId: oldId, title: nw.title, prevTitle: old.title }
   return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX) }
