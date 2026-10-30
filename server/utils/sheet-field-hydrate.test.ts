@@ -23,7 +23,7 @@ vi.mock('./sheet-products', () => ({
 }))
 
 const { hydrateSheetFields, attachSheetSnapshots, loadSheetRows } = await import('./sheet-field-hydrate')
-const { sheetFieldToken } = await import('~~/shared/sheet-field')
+const { sheetFieldToken, sheetRowKey } = await import('~~/shared/sheet-field')
 
 const HEADERS = ['出貨時間', '商品頁面']
 const GIARETTI = 'Giaretti 珈樂堤《小滑手》全自動義式咖啡機 GL-5680'
@@ -151,6 +151,38 @@ describe('編輯頁要的清單', () => {
     expect(sources[0]).toMatchObject({ id: 'src1', name: '客服（商品資訊）', headers: HEADERS })
     expect(sources[0]!.rows[0]!.values['商品頁面']).toBe('https://www.myfeel-tw.com/projects/GL-5680')
     expect(sources[1]).toMatchObject({ id: 'src2', headers: null })
+  })
+
+  it('`C-447`：每份表的卡、商品清單一起讀（不排隊）；收的順序照舊是先建的表在前', async () => {
+    SOURCES.push({ id: 'src2', type: 'gsheet', name: '客服（第二份）', gsheetFieldHeaders: HEADERS, createdAt: 2 })
+    CARDS.src2 = [{ title: GIARETTI, content: '出貨時間：第二份寫的' }]
+    const { listChunksBySource } = await import('./ai-knowledge-sources')
+    const { loadSheetProductRegistry } = await import('./sheet-products')
+    const original = vi.mocked(listChunksBySource).getMockImplementation()!
+    vi.mocked(loadSheetProductRegistry).mockClear()
+    const started: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    vi.mocked(listChunksBySource).mockImplementation(async (...args: Parameters<typeof listChunksBySource>) => {
+      started.push(args[2])
+      await gate
+      return original(...args)
+    })
+    try {
+      const p = loadSheetRows(nextWs())
+      await new Promise(r => setTimeout(r, 0))
+      // 第一份還沒讀完，第二份已經開始讀了；商品清單也是兩份都開始了
+      expect(started.sort()).toEqual(['src1', 'src2'])
+      expect(vi.mocked(loadSheetProductRegistry)).toHaveBeenCalledTimes(2)
+      release()
+      const { rows } = await p
+      // 同名的照舊取先建的那份
+      expect(rows.get(sheetRowKey(GIARETTI))?.sourceId).toBe('src1')
+    }
+    finally {
+      release()
+      vi.mocked(listChunksBySource).mockImplementation(original)
+    }
   })
 
   it('刪掉的表不列', async () => {

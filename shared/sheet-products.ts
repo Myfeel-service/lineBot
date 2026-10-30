@@ -106,6 +106,11 @@ export interface SheetProductInput {
   catalogColumn: boolean
   /** 認成商品頁的那一欄；null＝表上沒有，全部用商品名認 */
   pageHeader: string | null
+  /**
+   * 這一輪讀到上限（`GSHEET_MAX_ROWS` 150 列）被截斷了（`C-445`）：沒讀到的列⛔ 不能當成「少了」——
+   * 店家在上面插一列，最下面那一列就被擠出讀取範圍，其實什麼都沒刪
+   */
+  truncated?: boolean
 }
 
 export interface SheetProduct {
@@ -319,7 +324,9 @@ export function reconcileSheetProducts(
   }
 
   // 3) 表上不見的：記時間、不刪。這一輪也有新增的列＝可能是名字和網址一起改了，問店家
+  //    ⛔ 讀到上限被截斷的那一輪不記（`C-445`）：沒讀到≠不見了，照上一輪的樣子留著
   for (const p of Object.values(next)) {
+    if (input.truncated) break
     if (claimed.has(p.id) || addedIds.includes(p.id)) continue
     if (p.missingSince !== null) continue
     p.missingSince = now

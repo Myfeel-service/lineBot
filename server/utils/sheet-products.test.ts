@@ -124,6 +124,17 @@ describe('syncSheetProducts', () => {
     expect(writes).toHaveLength(2)
   })
 
+  it('`C-445`：同步讀到 150 列上限（stats.truncatedByCap）那一輪，沒讀到的商品⛔ 不記「少了」', async () => {
+    const { db, writes } = fakeDb()
+    await syncSheetProducts(db, 'ws1', 'src1', sheet([card('Giaretti', 'GL-5680', 'TRUE'), card('BOYA', 'boya', 'TRUE')]))
+    const changes = await syncSheetProducts(db, 'ws1', 'src1', { ...sheet([card('Giaretti', 'GL-5680', 'TRUE')]), stats: { truncatedByCap: true } })
+    expect(changes).toEqual([])
+    expect(writes).toHaveLength(1)
+    // 對照組：沒截斷就是真的少了
+    const real = await syncSheetProducts(db, 'ws1', 'src1', sheet([card('Giaretti', 'GL-5680', 'TRUE')]))
+    expect(real?.map(c => c.kind)).toEqual(['removed'])
+  })
+
   it('③ ⛔ doc 是別的帳號的：不寫', async () => {
     const { db, writes } = fakeDb({ workspaceId: 'other', products: {}, changes: [] })
     expect(await syncSheetProducts(db, 'ws1', 'src1', sheet())).toBeNull()

@@ -78,11 +78,15 @@ export async function syncSheetProducts(
   db: Firestore,
   workspaceId: string,
   sourceId: string,
-  sheet: { cards: readonly SheetCard[], fieldHeaders: readonly string[], controlHeaders: readonly string[] },
+  sheet: { cards: readonly SheetCard[], fieldHeaders: readonly string[], controlHeaders: readonly string[], stats?: { truncatedByCap?: boolean } },
 ): Promise<SheetProductChange[] | null> {
   try {
     const ref = db.collection(SHEET_PRODUCTS_COLLECTION).doc(sourceId)
-    const input = sheetProductInputFromCards(sheet.cards, sheet.fieldHeaders ?? [], sheet.controlHeaders ?? [])
+    const input = {
+      ...sheetProductInputFromCards(sheet.cards, sheet.fieldHeaders ?? [], sheet.controlHeaders ?? []),
+      // `C-445`：讀到 150 列上限的那一輪，沒讀到的不當成「少了」
+      truncated: sheet.stats?.truncatedByCap === true,
+    }
     return await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref)
       if (snap.exists && snap.get('workspaceId') !== workspaceId) return null

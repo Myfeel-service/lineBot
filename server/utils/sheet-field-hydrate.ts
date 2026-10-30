@@ -51,11 +51,19 @@ export async function loadSheetRows(workspaceId: string, opts: { fresh?: boolean
   const rows = new Map<string, SheetRow>()
   const sources: SheetSourceSummary[] = []
   const renamed: Array<{ sourceId: string, oldKey: string, nowKey: string }> = []
-  for (const d of docs) {
+  // `C-447`：每份表的卡、商品清單一起讀（以前一份一份排隊，快取沒中時客人點按鈕要多等好幾趟東京↔美國的來回）。
+  // 讀完再照「先建的表在前」的順序收，同名取先建那份的規矩不變
+  const loaded = await Promise.all(docs.map(d => Promise.all([
+    listChunksBySource(db, workspaceId, d.id),
+    // 讀不到商品清單就照舊（只是改了名的那幾格會用存檔當時的內容）
+    loadSheetProductRegistry(db, workspaceId, d.id).catch(() => null),
+  ])))
+  for (const [i, d] of docs.entries()) {
+    const [chunks, reg] = loaded[i]!
     const rawHeaders = d.get('gsheetFieldHeaders')
     const headers = Array.isArray(rawHeaders) ? rawHeaders.map(String) : null
     const name = String(d.get('name') ?? d.get('title') ?? '試算表')
-    const cards = (await listChunksBySource(db, workspaceId, d.id)).filter(c => !c.isOverview)
+    const cards = chunks.filter(c => !c.isOverview)
     const summary: SheetSourceSummary = { id: d.id, name, headers, rows: [] }
     for (const c of cards) {
       const values: Record<string, string> = {}
@@ -69,9 +77,7 @@ export async function loadSheetRows(workspaceId: string, opts: { fresh?: boolean
       if (headers && !rows.has(key)) rows.set(key, { sourceId: d.id, sourceName: name, title: c.title, content: c.content, headers })
     }
     sources.push(summary)
-    // `C-432`：在試算表改了名的商品（商品頁網址沒變，`C-434` 認得出來），模組裡用舊名寫的那一格接到現在這一列。
-    // 讀不到商品清單就照舊（只是改了名的那幾格會用存檔當時的內容）
-    const reg = await loadSheetProductRegistry(db, workspaceId, d.id).catch(() => null)
+    // `C-432`：在試算表改了名的商品（商品頁網址沒變，`C-434` 認得出來），模組裡用舊名寫的那一格接到現在這一列
     if (reg) for (const [oldKey, nowKey] of sheetProductAliasMap(reg)) renamed.push({ sourceId: d.id, oldKey, nowKey })
   }
   // 全部的表都收完才接：⛔ 舊名字剛好是另一份表上現在的名字，那一列優先，不接過去

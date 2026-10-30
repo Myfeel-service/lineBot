@@ -239,6 +239,18 @@ describe('reconcileSheetProducts', () => {
     expect(r.newChanges.map(c => c.kind)).toEqual(['renamed'])
   })
 
+  it('`C-445`：⛔ 讀到 150 列上限被截斷的那一輪，沒讀到的不記「少了」、不問「是改名嗎？」；新讀到的照常加', () => {
+    const reg = build([['A', 'A', true], ['B', 'B', true], ['C', 'C', true]])
+    // 上面插了一列 N，C 被擠出讀取範圍
+    const r = reconcileSheetProducts(reg, input([['N', 'N'], ['A', 'A', true], ['B', 'B', true]], { truncated: true }), 2000, ids)
+    expect(byTitle(r.registry, 'C')).toMatchObject({ missingSince: null, inCatalog: true })
+    expect(byTitle(r.registry, 'C')!.renameCandidates).toBeUndefined()
+    expect(r.newChanges.map(c => c.kind)).toEqual(['added'])
+    // 對照組：沒截斷＝C 真的不見了
+    const real = reconcileSheetProducts(reg, input([['N', 'N'], ['A', 'A', true], ['B', 'B', true]]), 2000, ids)
+    expect(byTitle(real.registry, 'C')!.missingSince).toBe(2000)
+  })
+
   it('表內同名的列只認第一列（跟同步配卡片同一個規矩）', () => {
     const reg = build([['A', 'a', true], [' a ', 'x', false]])
     expect(Object.values(reg.products)).toHaveLength(1)
