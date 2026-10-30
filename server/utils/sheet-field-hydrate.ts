@@ -3,7 +3,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION, listChunksBySource } from './ai-knowledge
 import { loadSheetProductRegistry } from './sheet-products'
 import { cachedSheetProductRegistry } from './sheet-catalog'
 import { replaceSheetFieldTokens, sheetCardField, sheetRowKey, sheetFieldTokensIn, type SheetFieldRef } from '~~/shared/sheet-field'
-import { productImage, sheetProductAliasMap } from '~~/shared/sheet-products'
+import { productImage, resolveSheetProduct, sheetProductAliasMap } from '~~/shared/sheet-products'
 import { parseSheetProductRef } from '~~/shared/sheet-catalog'
 import { fillSheetCurrentProduct, usesCurrentProductDeep, type SheetCurrentProduct } from '~~/shared/sheet-current-product'
 
@@ -109,7 +109,8 @@ export async function loadSheetCurrentProduct(workspaceId: string, productRef: s
   const ref = parseSheetProductRef(productRef)
   if (!ref) return null
   const reg = await cachedSheetProductRegistry(workspaceId, ref.sourceId)
-  const p = reg?.products[ref.productId]
+  // 「是改名」併掉的商品，已經發出去的目錄卡照樣接到留下來那一個（`C-438` code review）
+  const p = reg ? resolveSheetProduct(reg, ref.productId) : null
   if (!p) return null
   let values: Record<string, string> = {}
   try {

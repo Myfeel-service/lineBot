@@ -106,6 +106,28 @@ describe('③ 網址按鈕', () => {
     expect(fillSheetCurrentProduct([template()], p)[0].buttons).toHaveLength(1)
   })
 
+  it('`C-438` code review：⛔ 按鈕上的字、按了代送的字用了這個商品的格子、填出來是空的＝那顆按鈕拿掉（留空字串 LINE 整則退回）', () => {
+    const msg = {
+      type: 'text',
+      text: '看看下面',
+      buttons: [
+        { type: 'module', label: `看${NAME}`, moduleId: 'm1' },
+        { type: 'message', label: '問型號', text: at('型號') },
+        { type: 'message', label: '找真人', text: '找真人' },
+      ],
+      quickReplies: [{ label: EXTRA, action: { type: 'message', text: '好' } }, { label: '其他問題', action: { type: 'message', text: '其他' } }],
+    }
+    // 沒有商品：商品名那顆、型號那顆、額外資訊那個快速回覆都拿掉；其他照舊
+    const [none] = fillSheetCurrentProduct([msg], null)
+    expect(none.buttons.map((b: any) => b.label)).toEqual(['找真人'])
+    expect(none.quickReplies.map((q: any) => q.label)).toEqual(['其他問題'])
+    // 有商品、有寫：照填
+    const [filled] = fillSheetCurrentProduct([msg], { ...GIARETTI, values: { ...GIARETTI.values, 型號: 'GL-5680', 額外資訊: '贈品' } })
+    expect(filled.buttons.map((b: any) => b.label)).toEqual([`看${GIARETTI.title}`, '問型號', '找真人'])
+    expect(filled.buttons[1].text).toBe('GL-5680')
+    expect(filled.quickReplies.map((q: any) => q.label)).toEqual(['贈品', '其他問題'])
+  })
+
   it('對照組：自己打的網址、送模組的按鈕照舊', () => {
     const msg = { type: 'text', text: SHIP, buttons: [{ type: 'uri', label: '官網', uri: 'https://myfeel-tw.com' }, { type: 'module', label: '找真人', moduleId: 'm1' }] }
     expect(fillSheetCurrentProduct([{ ...msg, text: `出貨：${SHIP}\n其他問題按下面` }], { ...GIARETTI, values: {} })[0].buttons).toEqual(msg.buttons)

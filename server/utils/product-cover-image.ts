@@ -104,9 +104,37 @@ function ensureWebpDecoder(): Promise<void> {
   return webpReady
 }
 
+/**
+ * PNG／WebP 檔頭寫的寬高（不解碼）；讀不出來＝null。
+ * `C-438` code review：⛔ 這兩種以前是整張解成 RGBA 之後才比大小——一張 10000×10000 的高壓縮 PNG 先吃掉 400 MB 才丟「圖太大」，
+ * 排程主機上同一輪的扣款、轉真人提醒會一起被記憶體不足拖垮。GIF、JPEG 本來就先看大小。
+ */
+export function imageHeaderSize(b: Uint8Array, kind: 'png' | 'webp'): { width: number, height: number } | null {
+  const u16 = (i: number) => b[i]! | (b[i + 1]! << 8)
+  const u24 = (i: number) => b[i]! | (b[i + 1]! << 8) | (b[i + 2]! << 16)
+  if (kind === 'png') {
+    if (b.length < 24) return null
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength)
+    return { width: view.getUint32(16), height: view.getUint32(20) }
+  }
+  if (b.length < 30) return null
+  const chunk = String.fromCharCode(...b.subarray(12, 16))
+  if (chunk === 'VP8 ') return { width: u16(26) & 0x3FFF, height: u16(28) & 0x3FFF }
+  if (chunk === 'VP8L') {
+    const bits = (b[21]! | (b[22]! << 8) | (b[23]! << 16) | (b[24]! << 24)) >>> 0
+    return { width: (bits & 0x3FFF) + 1, height: ((bits >>> 14) & 0x3FFF) + 1 }
+  }
+  if (chunk === 'VP8X') return { width: u24(24) + 1, height: u24(27) + 1 }
+  return null
+}
+
 /** 任何一種圖 → RGBA（GIF 取第一格）。看不懂、太小、太大都丟錯 */
 export async function decodeToRgba(bytes: Uint8Array): Promise<Rgba> {
   const kind = sniffImageKind(bytes)
+  if (kind === 'png' || kind === 'webp') {
+    const size = imageHeaderSize(bytes, kind)
+    if (size && size.width * size.height > MAX_PIXELS) throw new Error('圖太大')
+  }
   let img: Rgba
   if (kind === 'gif') {
     const r = new omggif.GifReader(bytes)

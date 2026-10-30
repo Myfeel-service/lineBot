@@ -56,9 +56,14 @@ export function firstHttpUrl(text: unknown): string | null {
   return m[0].replace(/[.,;:!?)\]}]+$/, '') || null
 }
 
+/** 追蹤用的查詢參數（同一個商品頁，連結從哪裡來不一樣而已），比對時不算 */
+const TRACKING_PARAM = /^(utm_\w+|fbclid|gclid|yclid|msclkid|igshid|mc_\w+|ref|ref_src|_gl)$/i
+
 /**
- * 網址比對用的 key：主機（去掉 www.）＋路徑（解碼、去掉結尾斜線），小寫；查詢字串、#後面不算。
+ * 網址比對用的 key：主機（去掉 www.）＋路徑（解碼、去掉結尾斜線）＋查詢字串（照名字排、拿掉追蹤參數），小寫；#後面不算。
  * `AINotePods%2010S` 跟 `AINotePods 10S` 算同一個。解析不了＝null（退回用商品名認）。
+ * `C-438` code review：⛔ 查詢字串不能整段丟——momo `GoodsDetail.jsp?i_code=…`、`product.php?id=…` 這種網店，
+ *   商品只差在 `?` 後面，丟掉＝全部商品同一個 key（認錯商品、換了商品頁也不重抓封面圖）。MYFEEL 沒有查詢字串，key 不變。
  */
 export function productUrlKey(url: unknown): string | null {
   const raw = String(url ?? '').trim()
@@ -71,7 +76,11 @@ export function productUrlKey(url: unknown): string | null {
   try { path = decodeURIComponent(path) }
   catch { /* 解不開就用原樣 */ }
   path = path.replace(/\/+$/, '')
-  return `${u.hostname.toLowerCase().replace(/^www\./, '')}${path}`.toLowerCase()
+  const params = [...u.searchParams.entries()]
+    .filter(([k]) => !TRACKING_PARAM.test(k))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const query = params.length ? `?${params.map(([k, v]) => `${k}=${v}`).join('&')}` : ''
+  return `${u.hostname.toLowerCase().replace(/^www\./, '')}${path}${query}`.toLowerCase()
 }
 
 /** 哪一欄是商品頁：欄名有「商品頁」「商品網址」「商品連結」的第一欄（「常見問答頁」不算）。沒有＝null */
@@ -182,6 +191,18 @@ export interface SheetProductRegistry {
    * 沒有這格＝還沒有目錄用這份表，⛔ 不替它建標籤。存模組時寫進來
    */
   catalogTagPrefix?: string
+  /**
+   * 店家按「是，改名成…」併掉的商品：被併掉的 id → 留下來的 id（`C-438` code review）。
+   * 已經發出去的目錄卡帶的是被併掉的 id，客人點了照這裡找到留下來那一個（`resolveSheetProduct`），⛔ 不落空。
+   */
+  mergedInto?: Record<string, string>
+}
+
+const MERGED_INTO_MAX = 50
+
+/** 照 id 找商品；被「是改名」併掉的接到留下來那一個。找不到＝null */
+export function resolveSheetProduct(reg: SheetProductRegistry, productId: string): SheetProduct | null {
+  return reg.products[productId] ?? reg.products[reg.mergedInto?.[productId] ?? ''] ?? null
 }
 
 export const SHEET_PRODUCT_CHANGES_MAX = 30
@@ -229,11 +250,21 @@ export function reconcileSheetProducts(
 
   const claimed = new Set<string>()
   const matchOf = new Map<number, string>()
-  // 1) 網址
+  // 0) 名字和網址都一樣：最確定，先認
   for (const r of rows) {
     if (!r.urlKey) continue
-    const hit = Object.values(next).find(p => !claimed.has(p.id) && p.urlKey === r.urlKey)
+    const hit = Object.values(next).find(p => !claimed.has(p.id) && p.urlKey === r.urlKey && p.nameKey === r.nameKey)
     if (hit) { claimed.add(hit.id); matchOf.set(r.order, hit.id) }
+  }
+  // 1) 網址（改名靠這裡接上）。⛔ 只認「還沒被認走的商品裡只有一個」用這個網址的（`C-438` code review）：
+  //    好幾個商品填同一個商品頁、又一起改名時，清單的順序是 Firestore 讀回來的鍵順序、不是列順序，
+  //    照第一個認會讓兩個商品的圖、標籤對調——認不出來就交給「是改名嗎？」問店家
+  for (const r of rows) {
+    if (!r.urlKey || matchOf.has(r.order)) continue
+    const same = Object.values(next).filter(p => !claimed.has(p.id) && p.urlKey === r.urlKey)
+    if (same.length !== 1) continue
+    claimed.add(same[0]!.id)
+    matchOf.set(r.order, same[0]!.id)
   }
   // 2) 名字（含改名前的舊名）
   for (const r of rows) {
@@ -309,6 +340,7 @@ export function reconcileSheetProducts(
     pageHeader: input.pageHeader,
     // 存模組時寫的設定，⛔ 同步整份覆寫時要帶著走（不然每小時同步一次就把它洗掉）
     ...(prev?.catalogTagPrefix !== undefined ? { catalogTagPrefix: prev.catalogTagPrefix } : {}),
+    ...(prev?.mergedInto ? { mergedInto: prev.mergedInto } : {}),
   }
   const changed = bootstrap
     || newChanges.length > 0
@@ -359,7 +391,12 @@ export function confirmSheetProductRename(reg: SheetProductRegistry, oldId: stri
   if (tagId) merged.tagId = tagId
   products[oldId] = merged
   const change: SheetProductChange = { at: now, kind: 'renamed', productId: oldId, title: nw.title, prevTitle: old.title }
-  return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX) }
+  // 已經發出去、帶著新那一筆 id 的目錄卡，點了接到留下來這一個（之前併進新那一筆的也一起改指過來）
+  const mergedInto = Object.fromEntries([
+    ...Object.entries(reg.mergedInto ?? {}).map(([from, to]) => [from, to === newId ? oldId : to] as const),
+    [newId, oldId] as const,
+  ].slice(-MERGED_INTO_MAX))
+  return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX), mergedInto }
 }
 
 /** 店家按「不賣了，拿掉這張」：不再問是不是改名，那個商品維持「表上找不到」 */
@@ -381,7 +418,14 @@ export function retireSheetProduct(reg: SheetProductRegistry, productId: string,
   const products: Record<string, SheetProduct> = {}
   for (const [id, other] of Object.entries(reg.products)) {
     if (id === productId) continue
-    products[id] = other
+    if (!other.renameCandidates?.includes(productId)) {
+      products[id] = other
+      continue
+    }
+    // ⛔ 拿掉的這個也是別人「是改名嗎？」的候選：一起拿掉，不然那顆提醒一直亮、畫面上卻沒有按鈕可按（`C-438` code review）
+    const { renameCandidates, ...rest } = other
+    const left = renameCandidates.filter(c => c !== productId)
+    products[id] = left.length ? { ...rest, renameCandidates: left } : rest
   }
   const change: SheetProductChange = { at: now, kind: 'retired', productId, title: p.title }
   return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX) }

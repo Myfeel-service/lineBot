@@ -57,6 +57,7 @@ function toRegistry(data: Record<string, unknown> | undefined): SheetProductRegi
     catalogColumn: data.catalogColumn === true,
     pageHeader: typeof data.pageHeader === 'string' ? data.pageHeader : null,
     ...(typeof data.catalogTagPrefix === 'string' ? { catalogTagPrefix: data.catalogTagPrefix } : {}),
+    ...(data.mergedInto && typeof data.mergedInto === 'object' ? { mergedInto: data.mergedInto as Record<string, string> } : {}),
   }
 }
 
@@ -87,6 +88,9 @@ export async function syncSheetProducts(
       if (snap.exists && snap.get('workspaceId') !== workspaceId) return null
       const prev = snap.exists ? toRegistry(snap.data()) : null
       const { registry, changed, newChanges } = reconcileSheetProducts(prev, input, Date.now(), newSheetProductId)
+      // `C-438` code review：同步之前就存了商品目錄（只記了標籤開頭，見 rememberSheetCatalogTagPrefix）——第一份商品清單要帶著它
+      const pending = snap.exists ? snap.get('pendingCatalogTagPrefix') : undefined
+      if (!prev && typeof pending === 'string') registry.catalogTagPrefix = pending
       if (!changed) return []
       tx.set(ref, { workspaceId, sourceId, ...registry, needsCover: registryNeedsCover(registry), updatedAt: FieldValue.serverTimestamp() })
       return newChanges
@@ -96,6 +100,30 @@ export async function syncSheetProducts(
     console.warn('[sheet-products] 商品清單沒更新到（下一輪同步再補）：', workspaceId, sourceId, e)
     return null
   }
+}
+
+/**
+ * 存商品目錄模組時記下「這份試算表有目錄在用」＋標籤名稱開頭（`C-436`；`C-438` code review 補「還沒同步過」那半）。
+ * 沒給開頭＝沿用之前記的，都沒有＝空字串（標籤就叫商品名）。
+ * ⛔ 商品清單還沒建（剛接試算表、還沒同步）時，以前直接略過＝開頭沒記到，之後第一次同步也不會建標籤、點目錄不貼標籤。
+ *    現在先放一份只有開頭的紀錄（`pendingCatalogTagPrefix`，沒有 products＝讀的人一律當「還沒整理出商品清單」），第一次同步帶進去。
+ */
+export async function rememberSheetCatalogTagPrefix(db: Firestore, workspaceId: string, sourceId: string, tagPrefix: string | undefined): Promise<void> {
+  const ref = db.collection(SHEET_PRODUCTS_COLLECTION).doc(sourceId)
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref)
+    if (snap.exists && snap.get('workspaceId') !== workspaceId) return
+    const reg = snap.exists ? toRegistry(snap.data()) : null
+    if (reg) {
+      const prefix = tagPrefix ?? reg.catalogTagPrefix ?? ''
+      if (prefix !== reg.catalogTagPrefix) tx.update(ref, { catalogTagPrefix: prefix, updatedAt: FieldValue.serverTimestamp() })
+      return
+    }
+    const pending = snap.exists ? snap.get('pendingCatalogTagPrefix') : undefined
+    const prefix = tagPrefix ?? (typeof pending === 'string' ? pending : '')
+    if (snap.exists && pending === prefix) return
+    tx.set(ref, { workspaceId, sourceId, pendingCatalogTagPrefix: prefix, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+  })
 }
 
 /**
@@ -122,6 +150,8 @@ export async function updateSheetProductRegistry(
       needsCover: registryNeedsCover(next),
       // 商品目錄的設定（`C-436`）：有改才寫
       ...(next.catalogTagPrefix !== undefined && next.catalogTagPrefix !== reg.catalogTagPrefix ? { catalogTagPrefix: next.catalogTagPrefix } : {}),
+      // 「是改名」併掉的 id 對照（`C-438` code review）：有改才寫
+      ...(next.mergedInto && next.mergedInto !== reg.mergedInto ? { mergedInto: next.mergedInto } : {}),
       updatedAt: FieldValue.serverTimestamp(),
     })
     return next

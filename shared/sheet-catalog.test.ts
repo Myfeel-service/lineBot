@@ -175,6 +175,22 @@ describe('`C-438` 商品目錄要店家處理的事（提醒中心跟模組頁�
     expect(sheetCatalogIssues(next).missing).toEqual([])
     expect(sheetProductChangeText(next.changes[0]!)).toBe('「A」不賣了，拿掉')
   })
+
+  it('`C-438` code review：候選本身也不見了＝不再問「是改名嗎？」（提醒跟畫面同一把尺）；拿掉候選時從別人的候選裡一起拿掉', () => {
+    let reg = registry([['X', true, true]])
+    // X 不見、同一輪多了 Y → X 問「是改名嗎？」（候選 Y）
+    reg = reconcileSheetProducts(reg, { rows: [{ title: 'Y', pageUrl: 'https://a.com/Y', inCatalog: true }], catalogColumn: true, pageHeader: '商品頁面' }, 2000, ids).registry
+    expect(sheetCatalogIssues(reg).renameUnsure).toEqual(['X'])
+    // Y 也不見了 → 候選沒有還在表上的 → X 算「少了」，⛔ 不再亮「是改名嗎？」（畫面上也沒有按鈕可按）
+    reg = reconcileSheetProducts(reg, { rows: [], catalogColumn: true, pageHeader: '商品頁面' }, 3000, ids).registry
+    expect(sheetCatalogIssues(reg)).toMatchObject({ renameUnsure: [], missing: ['X', 'Y'] })
+    // 按 Y「不賣了」→ X 的候選裡也拿掉
+    const y = Object.values(reg.products).find(p => p.title === 'Y')!
+    const x = Object.values(reg.products).find(p => p.title === 'X')!
+    const next = retireSheetProduct(reg, y.id, 4000)!
+    expect(next.products[x.id]!.renameCandidates).toBeUndefined()
+    expect(sheetCatalogIssues(next)).toMatchObject({ renameUnsure: [], missing: ['X'] })
+  })
 })
 
 describe('⑤ 標籤名稱', () => {

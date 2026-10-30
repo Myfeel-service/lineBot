@@ -124,6 +124,29 @@ describe('② ③ ④ 存模組時建標籤', () => {
     expect(Object.keys(store.tags!).length).toBe(count)
   })
 
+  it('`C-438` code review：⛔ 店家停用的同名標籤不接，另建一個', async () => {
+    await seed()
+    store.tags = { off: { workspaceId: 'ws1', name: '客服 - Giaretti', status: 'inactive' } }
+    await configureSheetCatalogs(db, 'ws1', [sheetMsg({ tagPrefix: '客服 - ' })])
+    expect(product('Giaretti').tagId).toBeTruthy()
+    expect(product('Giaretti').tagId).not.toBe('off')
+    expect(store.tags![product('Giaretti').tagId]).toMatchObject({ name: '客服 - Giaretti', status: 'active' })
+  })
+
+  it('`C-438` code review：⭐ 試算表還沒同步過就存了目錄——標籤開頭先記著，第一次同步帶進商品清單、照樣建標籤', async () => {
+    await configureSheetCatalogs(db, 'ws1', [sheetMsg({ tagPrefix: '客服 - ' })])
+    // 還沒有商品清單：只記開頭，讀的人一律當「還沒整理出商品清單」
+    expect(store.sheetProductRegistries!.src1).toMatchObject({ workspaceId: 'ws1', pendingCatalogTagPrefix: '客服 - ' })
+    expect(store.sheetProductRegistries!.src1.products).toBeUndefined()
+    expect(store.tags).toBeUndefined()
+    // 第一次同步：商品清單建起來、帶著開頭（記號拿掉）；每次同步都會補標籤（gsheet-sync 呼叫同一支）
+    await seed()
+    expect(store.sheetProductRegistries!.src1.catalogTagPrefix).toBe('客服 - ')
+    expect(store.sheetProductRegistries!.src1.pendingCatalogTagPrefix).toBeUndefined()
+    expect(await ensureSheetProductTags(db, 'ws1', 'src1')).toBe(2)
+    expect(Object.values(store.tags!).map((t: any) => t.name).sort()).toEqual(['客服 - BOYA mini2', '客服 - Giaretti'])
+  })
+
   it('③ 別的帳號的同名標籤不算', async () => {
     await seed()
     store.tags = { other: { workspaceId: 'ws-other', name: 'Giaretti' } }

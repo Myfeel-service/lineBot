@@ -229,6 +229,12 @@ describe('`C-437` 商品資訊範本：填客人在商品目錄點的那個商�
     })
   })
 
+  it('`C-438` code review：「是改名」併掉的那一個 id（已經發出去的目錄卡帶著它）照樣接到留下來那一個', async () => {
+    REGISTRIES.src1.mergedInto = { pnew: 'pg' }
+    const [msg] = await hydrateSheetFields([template()], nextWs(), { product: 'src1:pnew' })
+    expect(msg).toMatchObject({ title: GIARETTI, imageUrl: COVER })
+  })
+
   it('自己換過圖：用自己換的那張', async () => {
     REGISTRIES.src1.products.pg = product({ ownImage: { url: 'https://s/own.jpg', at: 2 } })
     const [msg] = await hydrateSheetFields([template()], nextWs(), { product: 'src1:pg' })

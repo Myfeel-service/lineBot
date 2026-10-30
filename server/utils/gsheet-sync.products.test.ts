@@ -45,6 +45,8 @@ vi.mock('./ai-knowledge-sources', () => ({
 vi.mock('./sheet-stale-modules', () => ({ recordStaleSheetModules: vi.fn(async () => 0) }))
 const { syncSheetProducts } = vi.hoisted(() => ({ syncSheetProducts: vi.fn(async () => []) }))
 vi.mock('./sheet-products', () => ({ syncSheetProducts }))
+const { ensureSheetProductTags } = vi.hoisted(() => ({ ensureSheetProductTags: vi.fn(async () => 0) }))
+vi.mock('./sheet-catalog', () => ({ ensureSheetProductTags }))
 
 import { syncGoogleSheetSource } from './gsheet-sync'
 
@@ -116,6 +118,18 @@ describe('`C-434` 同步 → 商品清單', () => {
     const again = await syncOnce(hash!)
     expect(again.r.outcome).toBe('unchanged')
     expect(syncSheetProducts).toHaveBeenCalledTimes(2)
+  })
+
+  it('`C-438` code review：⭐ 表變了、表沒變，每次同步都補勾進目錄的標籤（第一份商品清單、上一輪沒建成的都靠這裡）；商品清單寫失敗那一輪不補', async () => {
+    readGoogleSheetAsCards.mockResolvedValue(sheetOf(card({ 放進LINE目錄: 'TRUE' }), ['放進LINE目錄']))
+    const { hash } = await syncOnce('')
+    expect(ensureSheetProductTags).toHaveBeenCalledTimes(1)
+    const again = await syncOnce(hash!)
+    expect(again.r.outcome).toBe('unchanged')
+    expect(ensureSheetProductTags).toHaveBeenCalledTimes(2)
+    syncSheetProducts.mockResolvedValueOnce(null as any)
+    await syncOnce(hash!)
+    expect(ensureSheetProductTags).toHaveBeenCalledTimes(2)
   })
 
   it('對照組：大量刪除被擋下＝什麼都不套用，商品清單也不動', async () => {

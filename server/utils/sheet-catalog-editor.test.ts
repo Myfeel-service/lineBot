@@ -29,7 +29,7 @@ const db: any = {
   collection: col,
   runTransaction: async (fn: (tx: any) => Promise<unknown>) => fn({ get: (r: any) => r.get(), set: (r: any, v: any) => { void r.set(v) }, update: (r: any, v: any) => { void r.update(v) } }),
 }
-vi.mock('./firebase', () => ({ getDb: () => db }))
+vi.mock('./firebase', () => ({ getDb: () => db, getStorage: () => ({ bucket: () => ({ name: 'bkt' }) }) }))
 vi.mock('./workspace-auth', () => ({ requireCapability: vi.fn(async () => ({ workspaceId: 'ws1', uid: 'u1' })) }))
 const { writeAuditLog } = vi.hoisted(() => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./audit-log', () => ({ writeAuditLog }))
@@ -102,10 +102,13 @@ describe('① ② 編輯畫面的資料', () => {
 
 describe('④ 換圖／改回', () => {
   it('只收這個帳號自己上傳區的網址', () => {
-    expect(isOwnUploadUrl(OWN, 'ws1')).toBe(true)
-    expect(isOwnUploadUrl('https://storage.googleapis.com/bkt/uploads/ws2/abc.jpg', 'ws1')).toBe(false)
-    expect(isOwnUploadUrl('https://evil.com/uploads/ws1/abc.jpg', 'ws1')).toBe(false)
-    expect(isOwnUploadUrl('', 'ws1')).toBe(false)
+    expect(isOwnUploadUrl(OWN, 'ws1', 'bkt')).toBe(true)
+    expect(isOwnUploadUrl('https://storage.googleapis.com/bkt/uploads/ws2/abc.jpg', 'ws1', 'bkt')).toBe(false)
+    expect(isOwnUploadUrl('https://evil.com/uploads/ws1/abc.jpg', 'ws1', 'bkt')).toBe(false)
+    expect(isOwnUploadUrl('', 'ws1', 'bkt')).toBe(false)
+    // `C-438` code review：⛔ 別人的儲存空間開一樣的路徑不算
+    expect(isOwnUploadUrl('https://storage.googleapis.com/attacker-bucket/uploads/ws1/abc.jpg', 'ws1', 'bkt')).toBe(false)
+    expect(isOwnUploadUrl(OWN, 'ws1', '')).toBe(false)
   })
 
   it('⭐ 換圖 → 用自己的、寫操作紀錄；改回 → 用封面圖', async () => {
@@ -169,6 +172,22 @@ describe('`C-438` 試算表上找不到的商品：是改名／不賣了', () =>
     expect(reg.products[a]).toBeUndefined()
     expect(reg.changes[0]).toMatchObject({ kind: 'retired', title: 'A' })
     expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'sheetProduct.retire', note: 'A' }))
+  })
+
+  it('`C-438` code review：「是改名」之後，已經發出去、帶新那一筆 id 的目錄卡照樣找得到商品', async () => {
+    await seed([['10S', true]])
+    const oldId = prod('10S').id
+    await seed([['10S Pro', true]])
+    const newId = prod('10S Pro').id
+    body.current = { sourceId: 'src1', productId: oldId, action: 'rename', newId }
+    await handleSheetProductDecision({} as any)
+    const reg = store.sheetProductRegistries!.src1
+    expect(reg.mergedInto).toEqual({ [newId]: oldId })
+    const { resolveSheetProduct } = await import('~~/shared/sheet-products')
+    expect(resolveSheetProduct(reg, newId)?.id).toBe(oldId)
+    // 下一輪同步整份重寫時帶著走
+    await seed([['10S Pro', true]])
+    expect(store.sheetProductRegistries!.src1.mergedInto).toEqual({ [newId]: oldId })
   })
 
   it('⛔ 還在表上的不收（要到試算表改）；不是候選的新名字不接；不認得的動作 400', async () => {

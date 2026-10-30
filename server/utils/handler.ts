@@ -5238,6 +5238,12 @@ export async function handlePostbackEvent(
         )
         const liveAgent = await resolveLiveAgentModuleReply(workspaceId, flow, lineMessages)
         const outMessages = liveAgent?.messages ?? lineMessages
+        // `C-438` code review：組出 0 則（照試算表排的目錄一張卡都還沒有、範本的格子全空）＝⛔ 不送空的
+        // （LINE 收到空陣列整次退回、還會丟錯）；關鍵字、用戶輸入那兩條本來就有擋，只有這條漏了
+        if (!outMessages.length) {
+          console.warn('[webhook] 模組組不出任何一則（目錄還沒有可放的商品、或範本的格子全是空的），這次不回：', moduleId)
+          return
+        }
         await replyMessage(event.replyToken, outMessages, workspaceId)
         if (liveAgent) markWaitingAckSent(workspaceId, userId)
         dispatchPostReplyActions(userId, flow.messages, workspaceId).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))

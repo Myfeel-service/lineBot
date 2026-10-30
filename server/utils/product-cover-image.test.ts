@@ -27,7 +27,7 @@ vi.mock('./firebase', () => ({
   }),
 }))
 
-const { extractCoverImageUrl, decodeToRgba, encodeJpeg, fetchProductCover, sniffImageKind, storeProductCover } = await import('./product-cover-image')
+const { extractCoverImageUrl, decodeToRgba, encodeJpeg, fetchProductCover, imageHeaderSize, sniffImageKind, storeProductCover } = await import('./product-cover-image')
 
 /** 120×100、左半紅右半藍、右下角 20×20 全透明的無損 WebP（用 @jsquash/webp 1.5.0 的編碼器產的） */
 const WEBP = Buffer.from('UklGRj4AAABXRUJQVlA4TDIAAAAvd8AYEBcwHgKBJIj9ecYSCCSx7Y8wzPwH7A4UtW3ElGRJluat/1RE/ydAVVZfK7CdAw==', 'base64')
@@ -110,6 +110,25 @@ describe('② 各種格式都轉得出 JPG', () => {
   it('太小（追蹤用的小圖）、看不懂：丟錯', async () => {
     await expect(decodeToRgba(pngBytes(10, 10, () => [0, 0, 0, 255]))).rejects.toThrow('圖太小')
     await expect(decodeToRgba(new Uint8Array(20))).rejects.toThrow('看不懂')
+  })
+
+  it('`C-438` code review：PNG／WebP 先看檔頭的寬高——超大的⛔ 不先解開（排程主機記憶體會被吃光）', async () => {
+    expect(imageHeaderSize(pngBytes(120, 100, () => [0, 0, 0, 255]), 'png')).toEqual({ width: 120, height: 100 })
+    expect(imageHeaderSize(new Uint8Array(WEBP), 'webp')).toEqual({ width: 120, height: 100 })
+    // 檔頭寫 20000×20000：還沒解碼就丟「圖太大」（真的去解，PNG 會先報檔頭校驗錯、WebP 會報解不開——錯誤字會不一樣）
+    const png = pngBytes(120, 100, () => [0, 0, 0, 255])
+    const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
+    view.setUint32(16, 20000)
+    view.setUint32(20, 20000)
+    await expect(decodeToRgba(png)).rejects.toThrow('圖太大')
+    const vp8x = new Uint8Array(30)
+    vp8x.set([...'RIFF'].map(c => c.charCodeAt(0)), 0)
+    vp8x.set([...'WEBPVP8X'].map(c => c.charCodeAt(0)), 8)
+    vp8x.set([10, 0, 0, 0], 16)
+    const big = 20000 - 1
+    vp8x.set([big & 0xFF, (big >> 8) & 0xFF, big >> 16, big & 0xFF, (big >> 8) & 0xFF, big >> 16], 24)
+    expect(imageHeaderSize(vp8x, 'webp')).toEqual({ width: 20000, height: 20000 })
+    await expect(decodeToRgba(vp8x)).rejects.toThrow('圖太大')
   })
 })
 

@@ -124,6 +124,16 @@ async function discardRunWrites(
 const SOURCE_DELETED_RESULT: GsheetSyncResult = { outcome: 'source_deleted', added: 0, updated: 0, deleted: 0, kept: 0 }
 
 /**
+ * `C-436`：勾進目錄的商品要有標籤（客人點了才貼得上、推播才挑得到人）；只有這份表有目錄在用才建，失敗不擋同步。
+ * `C-438` code review：⛔ 不能只在「這一輪有變動」才補——第一份商品清單（沒有變動紀錄）、上一輪寫標籤失敗的，都要靠每次同步補上。
+ * 沒有要補的時候只多讀一筆商品清單。
+ */
+async function topUpSheetProductTags(db: Firestore, workspaceId: string, sourceId: string): Promise<void> {
+  await ensureSheetProductTags(db, workspaceId, sourceId)
+    .catch(e => console.warn('[gsheet-sync] 商品標籤沒建好（下次同步或存模組再補）：', sourceId, e))
+}
+
+/**
  * 大量刪除守門（純函式好測）：表格一次少掉太多列，多半是誤刪 / 篩選後全選刪 /
  * 分頁讀取異常，不是真的要下架——擋下來交人工確認（手動同步可帶 allowMassDeletion 放行）。
  * 門檻對齊自動套用的既有取捨：小來源（<4 卡）不吃比例規則（刪 2/3 張多半是真意圖、
@@ -234,7 +244,8 @@ export async function syncGoogleSheetSource(
       }
       const excludedOnSheet = new Set(sheet.cards.map(c => knowledgeTitleKey(c.title)).filter(k => excludedKeys.has(k))).size
       // `C-434`：表沒變也跑一次（讀一筆、沒變不寫）——上線前就在同步的表，第一份商品清單靠這裡建
-      await syncSheetProducts(db, workspaceId, sourceId, sheet)
+      const unchangedProducts = await syncSheetProducts(db, workspaceId, sourceId, sheet)
+      if (unchangedProducts !== null) await topUpSheetProductTags(db, workspaceId, sourceId)
       return {
         outcome: 'unchanged',
         added: 0,
@@ -480,11 +491,7 @@ export async function syncGoogleSheetSource(
 
   // `C-434`：哪一列是哪個商品、誰改了名、誰勾進目錄（商品目錄、範本、模組裡「試算表的一格」都靠它）。失敗不擋同步
   const productChanges = await syncSheetProducts(db, workspaceId, sourceId, sheet)
-  // `C-436`：新勾進目錄的商品要有標籤（客人點了才貼得上、推播才挑得到人）；只有這份表有目錄在用才建，失敗不擋同步
-  if (productChanges?.length) {
-    await ensureSheetProductTags(db, workspaceId, sourceId)
-      .catch(e => console.warn('[gsheet-sync] 商品標籤沒建好（下次同步或存模組再補）：', sourceId, e))
-  }
+  if (productChanges !== null) await topUpSheetProductTags(db, workspaceId, sourceId)
 
   return {
     outcome: 'synced',

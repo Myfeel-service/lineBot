@@ -288,6 +288,28 @@ describe('scanModuleGraph：引用與模組清單來自同一次掃描（2026-08
   })
 })
 
+describe('`C-438` code review：商品目錄「點卡片送的範本」也算引用', () => {
+  const catalog = [{ type: 'flexImageCarousel', columns: [], sheetSource: { sourceId: 'src1', tapModuleId: 'tpl-1', tagPrefix: '客服 - ' } }]
+
+  it('認得到（刪範本時「誰在用它」、壞按鈕提醒都靠這個）', () => {
+    expect([...collectModuleRefs(catalog)]).toEqual(['tpl-1'])
+  })
+
+  it('改接得掉（壞按鈕代改）；別的設定原樣', () => {
+    const r = replaceModuleRefs(catalog, 'tpl-1', 'tpl-2')
+    expect(r.changed).toBe(true)
+    expect((r.value as any)[0].sheetSource).toEqual({ sourceId: 'src1', tapModuleId: 'tpl-2', tagPrefix: '客服 - ' })
+    expect(replaceModuleRefs(catalog, 'other', 'tpl-2').changed).toBe(false)
+  })
+
+  it('⛔ 範本被刪掉：目錄那一個會被報成壞按鈕', async () => {
+    const flows = [{ id: 'cat', data: () => ({ workspaceId: WS, name: '商品目錄', isActive: true, messages: catalog }) }]
+    const db = { collection: (name: string) => ({ where: () => ({ get: async () => ({ docs: name === 'flows' ? flows : [] }) }) }) } as any
+    const scan = await scanModuleGraph(db, WS, { skipCache: true })
+    expect(scan.refs).toEqual([{ moduleId: 'tpl-1', sourceLabel: '商品目錄', sourceKind: 'flow', reason: 'missing' }])
+  })
+})
+
 describe('`C-438` 同一趟掃描順手收「用到試算表的模組」（商品提醒不另外讀 flows）', () => {
   const tok = (row: string, field: string) => `{{sheet:${encodeURIComponent(row)}|${encodeURIComponent(field)}}}`
 

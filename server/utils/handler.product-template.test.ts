@@ -131,13 +131,13 @@ beforeEach(() => {
   }
 })
 
-async function tap(data: (moduleId: string) => string) {
+async function tap(data: (moduleId: string) => string, messages: any[] = [TEMPLATE]) {
   const ws = `ws-tpl-${++n}`
   const moduleId = `tpl-${n}`
-  vi.mocked(getDb).mockReturnValue(makeDb(ws, { [moduleId]: { workspaceId: ws, name: '商品資訊範本', isActive: true, messages: [TEMPLATE], moduleType: 'bot_flow' } }) as any)
+  vi.mocked(getDb).mockReturnValue(makeDb(ws, { [moduleId]: { workspaceId: ws, name: '商品資訊範本', isActive: true, messages, moduleType: 'bot_flow' } }) as any)
   await handlePostbackEvent(postback(data(moduleId)), { workspaceId: ws })
-  const [, messages] = vi.mocked(replyMessage).mock.calls[0] as unknown as [string, any[]]
-  return messages
+  const [, sent] = (vi.mocked(replyMessage).mock.calls[0] ?? []) as unknown as [string, any[]]
+  return sent
 }
 
 describe('客人點商品目錄的卡片 → 範本填那個商品', () => {
@@ -149,6 +149,15 @@ describe('客人點商品目錄的卡片 → 範本填那個商品', () => {
     expect(texts).toEqual(['KIESLECT 小耳記 10S', '出貨時間：10 月下旬陸續出貨\n有問題直接留言'])
     expect(bubble.footer.contents.map((b: any) => [b.action.label, b.action.uri])).toEqual([['查看商品頁', 'https://www.myfeel-tw.com/projects/10S']])
     expect(JSON.stringify(card)).not.toContain('{{sheet:')
+  })
+
+  it('`C-438` code review：⛔ 組出 0 則（整則都是這個商品的空白格）＝不呼叫 LINE（以前送空陣列，整次被退回還丟錯）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sent = await tap(id => encodeTriggerModule(id, [], 'src1:pk'), [{ type: 'text', text: at('額外資訊') }])
+    expect(sent).toBeUndefined()
+    expect(replyMessage).not.toHaveBeenCalled()
+    expect(warn.mock.calls.some(c => String(c[0]).includes('組不出任何一則'))).toBe(true)
+    warn.mockRestore()
   })
 
   it('對照組：沒帶商品的舊按鈕叫出同一個模組——那幾行不顯示，⛔ 不送原字', async () => {

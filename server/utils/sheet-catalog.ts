@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
-import { loadSheetProductRegistry, updateSheetProductRegistry } from './sheet-products'
+import { loadSheetProductRegistry, rememberSheetCatalogTagPrefix, updateSheetProductRegistry } from './sheet-products'
 import { readSheetCatalogSource, sheetCatalogColumns, sheetProductTagName } from '~~/shared/sheet-catalog'
 import type { SheetProductRegistry } from '~~/shared/sheet-products'
 import type { TagDoc } from '~~/shared/types/tag-broadcast'
@@ -76,10 +76,8 @@ export async function configureSheetCatalogs(db: Firestore, workspaceId: string,
     .filter((s): s is NonNullable<typeof s> => !!s?.sourceId)
   for (const s of sources) {
     try {
-      await updateSheetProductRegistry(db, workspaceId, s.sourceId, (reg) => {
-        const prefix = s.tagPrefix ?? reg.catalogTagPrefix ?? ''
-        return reg.catalogTagPrefix === prefix ? null : { ...reg, catalogTagPrefix: prefix }
-      })
+      // 還沒同步出商品清單也記得住（第一次同步帶進去、照樣建標籤，`C-438` code review）
+      await rememberSheetCatalogTagPrefix(db, workspaceId, s.sourceId, s.tagPrefix)
       await ensureSheetProductTags(db, workspaceId, s.sourceId)
     }
     catch (e) {
@@ -105,9 +103,10 @@ export async function ensureSheetProductTags(db: Firestore, workspaceId: string,
     const same = await db.collection('tags')
       .where('workspaceId', '==', workspaceId)
       .where('name', '==', name)
-      .limit(1)
+      .limit(5)
       .get()
-    let tagId = same.docs[0]?.id
+    // ⛔ 店家停用（軟刪）的同名標籤不接（`C-438` code review）：接上去＝客人點了貼一個推播挑不到、後台看不到的標籤
+    let tagId = same.docs.find(d => (d.data() as { status?: string }).status !== 'inactive')?.id
     if (!tagId) {
       tagId = uuidv4()
       const doc: TagDoc = {

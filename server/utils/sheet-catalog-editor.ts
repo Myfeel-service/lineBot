@@ -1,13 +1,13 @@
 import type { H3Event } from 'h3'
 import type { Firestore } from 'firebase-admin/firestore'
-import { getDb } from './firebase'
+import { getDb, getStorage } from './firebase'
 import { requireCapability } from './workspace-auth'
 import { writeAuditLog } from './audit-log'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage, updateSheetProductRegistry } from './sheet-products'
 import { clearSheetCatalogCache } from './sheet-catalog'
 import { invalidateSheetIssuesCache } from './sheet-issues'
-import { planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
+import { liveRenameCandidates, planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 import { confirmSheetProductRename, productImage, retireSheetProduct } from '~~/shared/sheet-products'
 
 /**
@@ -57,8 +57,8 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
       hasPageUrl: !!p.pageUrl,
       coverError: p.coverError ? { reason: p.coverError.reason, attempts: p.coverError.attempts } : null,
       tag: p.tagId && tagNames.has(p.tagId) ? { id: p.tagId, name: tagNames.get(p.tagId)! } : null,
-      ...(p.missingSince !== null && p.renameCandidates?.length
-        ? { renameCandidates: p.renameCandidates.map(id => reg.products[id]).filter(c => !!c && c.missingSince === null).map(c => ({ id: c!.id, title: c!.title })) }
+      ...(p.missingSince !== null && liveRenameCandidates(reg, p).length
+        ? { renameCandidates: liveRenameCandidates(reg, p).map(c => ({ id: c.id, title: c.title })) }
         : {}),
     }))
     .sort((a, b) => Number(a.placement === 'missing') - Number(b.placement === 'missing') || a.order - b.order)
@@ -85,7 +85,7 @@ export async function handleSheetProductImage(event: H3Event) {
   const revert = body?.revert === true
   const url = String(body?.url ?? '').trim()
   if (!sourceId || !productId) throw createError({ statusCode: 400, statusMessage: '缺少試算表或商品' })
-  if (!revert && !isOwnUploadUrl(url, workspaceId)) {
+  if (!revert && !isOwnUploadUrl(url, workspaceId, getStorage().bucket().name)) {
     throw createError({ statusCode: 400, statusMessage: '圖片要用後台的「上傳圖片」傳上來' })
   }
   const db = getDb()
@@ -137,8 +137,8 @@ export async function handleSheetProductDecision(event: H3Event) {
     if (!p || p.missingSince === null) return null
     title = p.title
     if (action === 'retire') return retireSheetProduct(reg, productId, Date.now())
-    const nw = reg.products[newId]
-    if (!nw || nw.missingSince !== null || !p.renameCandidates?.includes(newId)) return null
+    const nw = liveRenameCandidates(reg, p).find(c => c.id === newId)
+    if (!nw) return null
     newTitle = nw.title
     return confirmSheetProductRename(reg, productId, newId, Date.now())
   })
@@ -159,8 +159,12 @@ export async function handleSheetProductDecision(event: H3Event) {
   return { ok: true }
 }
 
-/** 這個帳號在後台上傳的圖（`/api/upload` 存的 `uploads/{wid}/…` 公開網址） */
-export function isOwnUploadUrl(url: string, workspaceId: string): boolean {
-  const m = String(url ?? '').match(/^https:\/\/storage\.googleapis\.com\/[^/]+\/uploads\/([^/]+)\/[^?#]+$/)
-  return !!m && m[1] === workspaceId
+/**
+ * 這個帳號在後台上傳的圖（`/api/upload` 存的 `uploads/{wid}/…` 公開網址）。
+ * `C-438` code review：⛔ 儲存空間（bucket）也要是我們自己的——以前只看路徑，別人的空間開一個同樣的路徑就過了，
+ *   之後對方隨時換掉那張圖，客人看到的目錄卡、商品卡跟著變。
+ */
+export function isOwnUploadUrl(url: string, workspaceId: string, bucket: string): boolean {
+  const m = String(url ?? '').match(/^https:\/\/storage\.googleapis\.com\/([^/]+)\/uploads\/([^/]+)\/[^?#]+$/)
+  return !!m && !!bucket && m[1] === bucket && m[2] === workspaceId
 }

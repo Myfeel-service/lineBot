@@ -118,12 +118,21 @@ export function sheetCatalogIssues(reg: SheetProductRegistry): SheetCatalogIssue
   const gone = Object.values(reg.products)
     .filter(p => p.missingSince !== null)
     .sort((a, b) => a.order - b.order)
+  const askRename = (p: SheetProduct) => liveRenameCandidates(reg, p).length > 0
   return {
     overflow: plan.overflow.map(p => p.title),
     noImage: plan.noImage.filter(p => !needsCoverFetch(p)).map(p => p.title),
-    missing: gone.filter(p => !p.renameCandidates?.length).map(p => p.title),
-    renameUnsure: gone.filter(p => p.renameCandidates?.length).map(p => p.title),
+    missing: gone.filter(p => !askRename(p)).map(p => p.title),
+    renameUnsure: gone.filter(askRename).map(p => p.title),
   }
+}
+
+/**
+ * 「是改名嗎？」還能按的候選：還在清單上、而且還在表上的那幾個。
+ * 提醒跟商品目錄畫面用同一支（`C-438` code review：以前提醒照算、畫面濾掉，兩邊講不一樣）。
+ */
+export function liveRenameCandidates(reg: SheetProductRegistry, p: SheetProduct): SheetProduct[] {
+  return (p.renameCandidates ?? []).map(id => reg.products[id]).filter((c): c is SheetProduct => !!c && c.missingSince === null)
 }
 
 export function hasSheetCatalogIssues(i: SheetCatalogIssues): boolean {

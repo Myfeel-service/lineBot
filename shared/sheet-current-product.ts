@@ -60,26 +60,32 @@ export function fillCurrentProductText(text: string, product: SheetCurrentProduc
   return dropped ? out.replace(/\n{3,}/g, '\n\n').replace(/^\n+|\n+$/g, '') : out
 }
 
-function fill(value: unknown, key: string, product: SheetCurrentProduct | null): unknown {
+function fill(value: unknown, key: string, product: SheetCurrentProduct | null, depth = 0): unknown {
   if (typeof value === 'string') {
     if (!usesCurrentProduct(value)) return value
     const filled = fillCurrentProductText(value, product)
     return key === 'uri' ? (firstHttpUrl(filled) ?? '') : filled
   }
-  if (Array.isArray(value)) return value.map(v => fill(v, '', product)).filter(v => v !== DROP)
+  if (Array.isArray(value)) return value.map(v => fill(v, '', product, depth + 1)).filter(v => v !== DROP)
   if (value && typeof value === 'object') {
     const src = value as Record<string, unknown>
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(src)) {
-      const w = fill(v, k, product)
+      const w = fill(v, k, product, depth + 1)
       if (w !== DROP) out[k] = w
     }
     // 網址是這個商品的、填出來是空的＝這顆按鈕（或點圖的動作）拿掉
     if (out.type === 'uri' && usesCurrentProduct(src.uri) && !out.uri) return DROP
+    // `C-438` code review：按鈕上的字、按了代客人送出的字用了這個商品的格子、填出來是空的＝也拿掉
+    // （⛔ 留下空字串 LINE 會整則退回）。整則訊息本身（depth 0）的內文空了由外面那一層決定
+    if (depth > 0 && emptyAfterFill(src.label, out.label)) return DROP
+    if (depth > 0 && out.type === 'message' && emptyAfterFill(src.text, out.text)) return DROP
     return out
   }
   return value
 }
+
+const emptyAfterFill = (before: unknown, after: unknown) => usesCurrentProduct(before) && !String(after ?? '').trim()
 
 /** 一組訊息裡用到「這個商品」的都填好（沒用到的原樣回）。`product` 是 null＝不是從商品目錄點進來的 */
 export function fillSheetCurrentProduct(messages: any[], product: SheetCurrentProduct | null): any[] {

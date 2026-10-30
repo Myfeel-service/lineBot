@@ -111,6 +111,13 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
       const id = String(obj.moduleId ?? '').trim()
       if (id) out.add(id)
     }
+    // `C-438` code review：照試算表排的商品目錄，點卡片送的範本存在 `sheetSource.tapModuleId`（卡片送出時才產生）。
+    // ⛔ 不認的話，刪掉／停用範本時「誰在用它」說沒人、壞按鈕提醒也不亮，每張目錄卡點了都沒反應
+    const sheetSource = obj.sheetSource as { tapModuleId?: unknown } | undefined
+    if (sheetSource && typeof sheetSource === 'object') {
+      const id = String(sheetSource.tapModuleId ?? '').trim()
+      if (id) out.add(id)
+    }
     for (const key of Object.keys(obj)) collectModuleRefs(obj[key], out)
   }
   return out
@@ -156,6 +163,12 @@ export function replaceModuleRefs(value: unknown, from: string, to: string): { v
     }
     if (obj.type === 'module' && String(obj.moduleId ?? '').trim() === from) {
       next.moduleId = to
+      changed = true
+    }
+    // 商品目錄點卡片送的範本（跟 collectModuleRefs 同一個認法：找得到的就改得掉）
+    const sheetSource = next.sheetSource as Record<string, unknown> | undefined
+    if (sheetSource && typeof sheetSource === 'object' && String(sheetSource.tapModuleId ?? '').trim() === from) {
+      next.sheetSource = { ...sheetSource, tapModuleId: to }
       changed = true
     }
     return { value: changed ? next : value, changed }

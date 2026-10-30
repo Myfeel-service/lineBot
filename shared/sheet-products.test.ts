@@ -58,12 +58,20 @@ describe('網址與欄名', () => {
     expect(firstHttpUrl('沒有網址')).toBeNull()
   })
 
-  it('網址 key：www、大小寫、結尾斜線、%20 跟空白、查詢字串都不算差別', () => {
+  it('網址 key：www、大小寫、結尾斜線、%20 跟空白、追蹤參數、#後面都不算差別', () => {
     const k = productUrlKey('https://www.myfeel-tw.com/projects/AINotePods%2010S')
     expect(k).toBe('myfeel-tw.com/projects/ainotepods 10s')
-    expect(productUrlKey('https://myfeel-tw.com/projects/AINotePods 10S/?utm=1#faq')).toBe(k)
+    expect(productUrlKey('https://myfeel-tw.com/projects/AINotePods 10S/?utm_source=line&fbclid=abc#faq')).toBe(k)
     expect(productUrlKey('不是網址')).toBeNull()
     expect(productUrlKey('ftp://a.com/x')).toBeNull()
+  })
+
+  it('`C-438` code review：⛔ 商品只差在「?」後面的網店（momo、?id=）各是各的；參數順序不算差別', () => {
+    const a = productUrlKey('https://www.momoshop.com.tw/goods/GoodsDetail.jsp?i_code=111&utm_source=x')
+    const b = productUrlKey('https://www.momoshop.com.tw/goods/GoodsDetail.jsp?i_code=222')
+    expect(a).not.toBe(b)
+    expect(a).toBe('momoshop.com.tw/goods/goodsdetail.jsp?i_code=111')
+    expect(productUrlKey('https://shop.com/p.php?b=2&a=1')).toBe(productUrlKey('https://shop.com/p.php?a=1&b=2'))
   })
 
   it('商品頁那一欄：認「商品頁」，⛔「常見問答頁」不算', () => {
@@ -193,6 +201,42 @@ describe('reconcileSheetProducts', () => {
     const reorderOnly = reconcileSheetProducts(r.registry, input([['A', 'a', false], ['B', 'b', true]]), 3000, ids)
     expect(reorderOnly.newChanges).toEqual([])
     expect(reorderOnly.changed).toBe(true)
+  })
+
+  it('`C-438` code review：⛔ 兩列填同一個商品頁網址——不管清單讀回來的順序、怎麼換列，兩個商品都不對調', () => {
+    const reg = build([['W1 單入組', 'W1'], ['W1 雙入組', 'W1']])
+    const one = byTitle(reg, 'W1 單入組')!.id
+    const two = byTitle(reg, 'W1 雙入組')!.id
+    // Firestore 讀回來的鍵順序跟寫進去的不一樣（雙入組排前面）
+    const flipped: SheetProductRegistry = { ...reg, products: { [two]: reg.products[two]!, [one]: reg.products[one]! } }
+    for (const prev of [reg, flipped]) {
+      for (const rows of [[['W1 單入組', 'W1'], ['W1 雙入組', 'W1']], [['W1 雙入組', 'W1'], ['W1 單入組', 'W1']]] as Array<Array<[string, string]>>) {
+        const r = reconcileSheetProducts(prev, input(rows), 2000, ids)
+        expect(byTitle(r.registry, 'W1 單入組')!.id).toBe(one)
+        expect(byTitle(r.registry, 'W1 雙入組')!.id).toBe(two)
+        expect(r.newChanges.filter(c => c.kind === 'renamed')).toEqual([])
+      }
+    }
+  })
+
+  it('`C-438` code review：⛔ 同一個網址的兩個商品一起改名——認不出誰是誰，⛔ 不猜（兩個都問「是改名嗎？」），也不對調', () => {
+    const reg = build([['W1 單入組', 'W1'], ['W1 雙入組', 'W1']])
+    const one = byTitle(reg, 'W1 單入組')!.id
+    const two = byTitle(reg, 'W1 雙入組')!.id
+    const flipped: SheetProductRegistry = { ...reg, products: { [two]: reg.products[two]!, [one]: reg.products[one]! } }
+    for (const prev of [reg, flipped]) {
+      const r = reconcileSheetProducts(prev, input([['W1 單入組 2026', 'W1'], ['W1 雙入組 2026', 'W1']]), 2000, ids)
+      expect(r.registry.products[one]).toMatchObject({ title: 'W1 單入組', missingSince: 2000 })
+      expect(r.registry.products[two]).toMatchObject({ title: 'W1 雙入組', missingSince: 2000 })
+      expect(r.newChanges.filter(c => c.kind === 'renameUnsure').map(c => c.title).sort()).toEqual(['W1 單入組', 'W1 雙入組'])
+    }
+  })
+
+  it('對照組：同一個網址只剩一個商品還沒認走（另一個名字沒變）＝照樣靠網址接上改名', () => {
+    const reg = build([['W1 單入組', 'W1'], ['W1 雙入組', 'W1']])
+    const r = reconcileSheetProducts(reg, input([['W1 單入組（新包裝）', 'W1'], ['W1 雙入組', 'W1']]), 2000, ids)
+    expect(byTitle(r.registry, 'W1 單入組（新包裝）')!.id).toBe(byTitle(reg, 'W1 單入組')!.id)
+    expect(r.newChanges.map(c => c.kind)).toEqual(['renamed'])
   })
 
   it('表內同名的列只認第一列（跟同步配卡片同一個規矩）', () => {
