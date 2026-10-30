@@ -447,6 +447,53 @@ const ALERTS: AlertDefinition[] = [
     route: wid => `/admin/${wid}/flow`,
     anchor: { selector: '[data-tour="flow-sheet-stale"]', note: '清單最上面列著是哪幾個模組；點進去，上方會並排舊的跟試算表現在寫的，按「換成跟試算表同步」就好。' },
   },
+  // ── `C-438` 試算表商品（規格 §5.6）：五顆都落在模組頁清單最上面那一塊（同一個錨點＝提醒條收成一條） ──
+  {
+    id: 'sheetCatalogOverflow',
+    icon: Tickets,
+    impact: 'LINE 一則商品目錄最多 10 張，照試算表的順序放前 10 個。到試算表取消勾選幾個，或把要放的往前排。',
+    cta: '去看商品目錄',
+    // 處理在試算表、看在商品目錄（模組頁）＝跟改模組同一項
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊會列出沒放上去的是哪幾個；上面有「打開試算表」。' },
+  },
+  {
+    id: 'sheetProductNoImage',
+    icon: Tickets,
+    impact: '沒有圖的商品先不放進目錄（不出現空白卡）。到商品目錄幫它上傳一張，或在試算表補上商品頁網址讓系統去抓封面圖。',
+    cta: '去看商品目錄',
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊「還沒有圖」那一組每個商品旁邊都有「上傳圖片」。' },
+  },
+  {
+    id: 'sheetProductMissing',
+    icon: Tickets,
+    impact: '試算表上那一列不見了，AI 也答不出那個商品。還要讓客人問得到（例如告訴他已停售），把那一列加回來、不要勾「放進LINE目錄」；確定不要了，到商品目錄按「不賣了，拿掉」。',
+    cta: '去看商品目錄',
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊「試算表上找不到了」那一組可以按「不賣了，拿掉」；要留著就到試算表把那一列加回來。' },
+  },
+  {
+    id: 'sheetProductRenameUnsure',
+    icon: Tickets,
+    impact: '試算表上有商品的名字和商品頁網址一起換了，系統不猜是不是同一個。確認之前，目錄、回覆照用上一次讀到的內容。',
+    cta: '去確認',
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊最上面「是改名嗎？」：是就按新的名字，不是就按「不賣了，拿掉」。' },
+  },
+  {
+    id: 'sheetFieldMissing',
+    icon: Reading,
+    impact: '試算表的欄名改了、或那一列被刪了，模組裡帶出那一格的地方換不到：客人收到的停在上次的內容（商品資訊範本則是那一行不顯示）。把試算表的欄名改回來，或到模組重新挑一格。',
+    cta: '去看是哪個模組',
+    requires: 'marketing.write',
+    route: wid => `/admin/${wid}/flow`,
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '清單最上面列著是哪幾個模組、哪一欄找不到；點進去重新插一次試算表的資料，或把試算表的欄名改回來。' },
+  },
   {
     // 紅點：客人已經走進這條流程了，卡在同一題被無限重問——正在影響客人。
     // （2026-08-08 的真實災情：問訂單編號沒給「我沒有訂單編號」的退路，沒編號的客人出不去，

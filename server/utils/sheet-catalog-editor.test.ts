@@ -34,8 +34,10 @@ vi.mock('./workspace-auth', () => ({ requireCapability: vi.fn(async () => ({ wor
 const { writeAuditLog } = vi.hoisted(() => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./audit-log', () => ({ writeAuditLog }))
 vi.mock('./ai-knowledge-sources', () => ({ KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources' }))
+const { invalidateSheetIssuesCache } = vi.hoisted(() => ({ invalidateSheetIssuesCache: vi.fn() }))
+vi.mock('./sheet-issues', () => ({ invalidateSheetIssuesCache }))
 
-const { readSheetCatalogView, handleSheetProductImage, isOwnUploadUrl } = await import('./sheet-catalog-editor')
+const { readSheetCatalogView, handleSheetProductImage, handleSheetProductDecision, isOwnUploadUrl } = await import('./sheet-catalog-editor')
 const { syncSheetProducts } = await import('./sheet-products')
 
 const card = (title: string, checked: boolean) => ({ title, content: `商品頁面：https://a.com/${encodeURIComponent(title)}`, tags: [], controls: { 放進LINE目錄: checked ? 'TRUE' : 'FALSE' } })
@@ -117,6 +119,13 @@ describe('④ 換圖／改回', () => {
     expect(await handleSheetProductImage({} as any)).toEqual({ image: { url: 'https://s/cover.jpg', source: 'web' }, hasCover: true })
   })
 
+  it('`C-438` 換上圖之後：「抓不到圖」那顆提醒下一次就重算（不等 5 分鐘）', async () => {
+    await seed([['A', true]])
+    body.current = { sourceId: 'src1', productId: prod('A').id, url: OWN }
+    await handleSheetProductImage({} as any)
+    expect(invalidateSheetIssuesCache).toHaveBeenCalledWith('ws1')
+  })
+
   it('⛔ 別的網址不收；找不到的商品 404；沒換過還按改回 409', async () => {
     await seed([['A', true]])
     const id = prod('A').id
@@ -126,5 +135,51 @@ describe('④ 換圖／改回', () => {
     await expect(handleSheetProductImage({} as any)).rejects.toMatchObject({ statusCode: 404 })
     body.current = { sourceId: 'src1', productId: id, revert: true }
     await expect(handleSheetProductImage({} as any)).rejects.toMatchObject({ statusCode: 409 })
+  })
+})
+
+describe('`C-438` 試算表上找不到的商品：是改名／不賣了', () => {
+  it('⭐ 名字跟網址一起改了 → 畫面列出候選；按「是，改名成…」→ 舊的接上新名字（圖、標籤跟著舊的），新的那筆收掉', async () => {
+    await seed([['10S', true]])
+    prod('10S').ownImage = { url: OWN, at: 1 }
+    prod('10S').tagId = 'tag-10s'
+    const oldId = prod('10S').id
+    await seed([['10S Pro', true]]) // 名字和網址都換了：系統不猜
+    const newId = prod('10S Pro').id
+    const v = await readSheetCatalogView(db, 'ws1', 'src1')
+    expect(v.products.find(p => p.id === oldId)).toMatchObject({ placement: 'missing', renameCandidates: [{ id: newId, title: '10S Pro' }] })
+
+    body.current = { sourceId: 'src1', productId: oldId, action: 'rename', newId }
+    expect(await handleSheetProductDecision({} as any)).toEqual({ ok: true })
+    const products = store.sheetProductRegistries!.src1.products as Record<string, any>
+    expect(products[newId]).toBeUndefined()
+    expect(products[oldId]).toMatchObject({ title: '10S Pro', missingSince: null, ownImage: { url: OWN }, tagId: 'tag-10s' })
+    expect(products[oldId].renameCandidates).toBeUndefined()
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'sheetProduct.rename', note: '「10S」→「10S Pro」' }))
+    expect(invalidateSheetIssuesCache).toHaveBeenCalledWith('ws1')
+  })
+
+  it('⭐ 不賣了，拿掉 → 從商品清單拿掉、記一筆變動、寫操作紀錄', async () => {
+    await seed([['A', true], ['B', true]])
+    const a = prod('A').id
+    await seed([['B', true]])
+    body.current = { sourceId: 'src1', productId: a, action: 'retire' }
+    await handleSheetProductDecision({} as any)
+    const reg = store.sheetProductRegistries!.src1
+    expect(reg.products[a]).toBeUndefined()
+    expect(reg.changes[0]).toMatchObject({ kind: 'retired', title: 'A' })
+    expect(writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: 'sheetProduct.retire', note: 'A' }))
+  })
+
+  it('⛔ 還在表上的不收（要到試算表改）；不是候選的新名字不接；不認得的動作 400', async () => {
+    await seed([['A', true], ['B', true]])
+    body.current = { sourceId: 'src1', productId: prod('A').id, action: 'retire' }
+    await expect(handleSheetProductDecision({} as any)).rejects.toMatchObject({ statusCode: 409 })
+    await seed([['B', true]])
+    body.current = { sourceId: 'src1', productId: prod('A').id, action: 'rename', newId: prod('B').id }
+    await expect(handleSheetProductDecision({} as any)).rejects.toMatchObject({ statusCode: 409 })
+    body.current = { sourceId: 'src1', productId: prod('A').id, action: 'delete' }
+    await expect(handleSheetProductDecision({} as any)).rejects.toMatchObject({ statusCode: 400 })
+    expect(prod('A')).toBeTruthy()
   })
 })

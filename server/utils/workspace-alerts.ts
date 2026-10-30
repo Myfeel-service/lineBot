@@ -12,6 +12,8 @@ import { SCRIPTS_COLLECTION, loadActiveScripts } from './ai-scripts'
 import { scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { findStaleSheetModules } from './sheet-stale-modules'
+import { findSheetIssues, sheetFieldIssueText, sheetProductNames, type SheetIssues } from './sheet-issues'
+import { SHEET_CATALOG_MAX_CARDS } from '~~/shared/sheet-catalog'
 import { checkScriptHealth } from './script-health'
 import { TAG_DISCOVERY_COLLECTION } from './tag-discovery'
 import { isScannerStalled, readScannerHealth } from '~~/shared/scanner-health'
@@ -465,6 +467,17 @@ export async function collectWorkspaceAlerts(
   // 等真人／接手沒結束（`D-116`）：兩顆共用這一次查詢，用到才讀；讀失敗兩顆都是 unknown
   let humanQueuePromise: Promise<HumanQueue> | null = null
   const getHumanQueue = () => (humanQueuePromise ??= readHumanQueue(db, wid))
+  // 試算表商品五顆（`C-438`）共用這一次（模組掃描跟壞按鈕那顆共用快取，⛔ 不另外讀 flows）
+  let sheetIssuesPromise: Promise<SheetIssues> | null = null
+  const getSheetIssues = () => (sheetIssuesPromise ??= findSheetIssues(db, wid))
+  /** 商品目錄某一種問題：哪幾個商品（跨好幾個目錄時去重），detail 講第一個目錄的名字 */
+  const catalogProbe = async (pick: (c: SheetIssues['catalogs'][number]) => string[], say: (names: string, c: SheetIssues['catalogs'][number]) => string): Promise<ProbeResult> => {
+    const { catalogs } = await getSheetIssues()
+    const hit = catalogs.filter(c => pick(c).length)
+    if (!hit.length) return { active: false }
+    const names = [...new Set(hit.flatMap(pick))]
+    return { active: true, count: names.length, detail: say(sheetProductNames(names), hit[0]!) }
+  }
 
   const operateProbes: Array<Promise<WorkspaceAlertItem>> = canOperate
     ? [
@@ -910,6 +923,28 @@ export async function collectWorkspaceAlerts(
             count: stale.length,
             detail: `「${first.flowName}」還寫著 ${first.row} 改之前的「${first.field}」`,
           }
+        }),
+        // ── `C-438` 試算表商品（規格 §5.6）：只看有商品目錄在用的表；文案照規格那張表 ──
+        probe('sheetCatalogOverflow', () => catalogProbe(
+          c => c.overflow,
+          (names, c) => `勾了 ${c.overflow.length + SHEET_CATALOG_MAX_CARDS} 個，目錄只放得下 ${SHEET_CATALOG_MAX_CARDS} 個：${names}沒放上去`,
+        )),
+        probe('sheetProductNoImage', () => catalogProbe(
+          c => c.noImage,
+          names => `${names}抓不到商品圖，先不放進目錄`,
+        )),
+        probe('sheetProductMissing', () => catalogProbe(
+          c => c.missing,
+          names => `試算表少了${names}，AI 也答不出了`,
+        )),
+        probe('sheetProductRenameUnsure', () => catalogProbe(
+          c => c.renameUnsure,
+          names => `試算表上找不到${names}了，是改名嗎？`,
+        )),
+        probe('sheetFieldMissing', async () => {
+          const { fields } = await getSheetIssues()
+          if (!fields.length) return { active: false }
+          return { active: true, count: new Set(fields.map(f => f.flowId)).size, detail: sheetFieldIssueText(fields[0]!) }
         }),
         // ⛔ 探針放哪一組要跟前端註冊表（useWorkspaceAlerts）的 requires 對齊：
         //    下面兩顆前端標 requires:'operate'，放到 canSettings 那組會讓 agent 角色

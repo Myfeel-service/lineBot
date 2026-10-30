@@ -117,6 +117,19 @@ export type WorkspaceAlertId =
    * 客人點選單跟直接問 AI 會聽到不一樣的答案。模組頁一鍵換成「帶出試算表那一格」。
    */
   | 'sheetStaleModules'
+  /**
+   * 商品目錄照試算表排（`C-438`，`D-166` ⑤）：「放進LINE目錄」勾超過 10 個，第 11 個以後沒放上去。
+   * 下面四顆同一案：只看有商品目錄在用的試算表（FAQ 那種表少一列不是商品不見了）。
+   */
+  | 'sheetCatalogOverflow'
+  /** 勾進目錄的商品抓不到圖（商品頁沒有封面圖、連不上、或沒填商品頁網址），先不放進目錄 */
+  | 'sheetProductNoImage'
+  /** 試算表少了一列：那個商品 AI 也答不出了（不賣了的話加回來、不要勾，或在商品目錄按「不賣了」） */
+  | 'sheetProductMissing'
+  /** 名字和商品頁網址一起改了，系統不猜：等店家在商品目錄確認「是改名嗎？」 */
+  | 'sheetProductRenameUnsure'
+  /** 模組用到的試算表那一欄（或那一列）找不到了（`C-432`）：客人收到的停在上次的內容，範本則是那一行不顯示 */
+  | 'sheetFieldMissing'
   /** 活動推播已送出，但「這場已回應」沒蓋上章 → 客服會看到一堆假的待處理 */
   | 'claimPushUnmarked'
   /** 有推播發送失敗（近 3 天內），名單上的客人沒收到 */
@@ -209,6 +222,11 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   renewalNotBound: '下期不會自動扣款（卡沒綁成）',
   brokenModuleButton: '有按鈕按下去沒反應',
   sheetStaleModules: '試算表改了，有模組還寫著舊的',
+  sheetCatalogOverflow: '商品目錄放不下，有商品沒放上去',
+  sheetProductNoImage: '有商品抓不到圖，先沒放進目錄',
+  sheetProductMissing: '試算表上少了商品',
+  sheetProductRenameUnsure: '試算表上有商品找不到了，是改名嗎？',
+  sheetFieldMissing: '模組用到的試算表欄位找不到了',
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',
   broadcastFailed: '有推播沒有送出去',
   broadcastOverdue: '有排程推播過時間還沒送',
@@ -278,6 +296,12 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   brokenModuleButton: 'critical',
   // 黃燈：客人收得到回覆，只是選單跟 AI 講不一樣（不是什麼都收不到）
   sheetStaleModules: 'warning',
+  // `C-438` 五顆都黃：客人照樣收得到目錄、回覆，只是少了幾張卡、或停在上次的內容（不是什麼都收不到）
+  sheetCatalogOverflow: 'warning',
+  sheetProductNoImage: 'warning',
+  sheetProductMissing: 'warning',
+  sheetProductRenameUnsure: 'warning',
+  sheetFieldMissing: 'warning',
   scriptDeadEnd: 'critical',
   scriptUnreachable: 'warning',
   firstReplyBacklog: 'warning',

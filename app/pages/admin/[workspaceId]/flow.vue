@@ -49,6 +49,25 @@
             @click="selectFlow(f)"
           >{{ f.name }}</button>
         </div>
+        <!--
+          `C-438`：試算表商品要處理的事（提醒中心五顆都帶到這裡）：哪個模組、什麼事，點了就打開那一個——
+          商品目錄的話右邊清單會分組列出是哪幾個商品、就地處理
+        -->
+        <div v-if="sheetIssueRows.length" class="flow-stale-list" data-tour="flow-sheet-issues">
+          <p class="flow-stale-list__title">試算表的商品要處理<span>{{ sheetIssueRows.length }} 個模組</span></p>
+          <button
+            v-for="r in sheetIssueRows"
+            :key="r.id"
+            type="button"
+            class="flow-stale-list__item flow-stale-list__item--why"
+            :class="{ 'is-active': selectedId === r.id }"
+            :title="`${r.name}：${r.why}`"
+            @click="selectFlowById(r.id)"
+          >
+            <span class="flow-stale-list__name">{{ r.name }}</span>
+            <span class="flow-stale-list__why">{{ r.why }}</span>
+          </button>
+        </div>
         <div v-if="unreachableIds.size || unusedIds.size" class="flow-list-filter" data-tour="flow-list-filter">
           <el-radio-group v-model="listFilter" size="small">
             <el-radio-button value="all">全部 {{ regularFlowTotal }}</el-radio-button>
@@ -1169,7 +1188,7 @@
                     :view="catalogViews[msg.sheetSource.sourceId] ?? null"
                     :error="catalogViewErrors[msg.sheetSource.sourceId]"
                     :can-edit="can('marketing.write')"
-                    @changed="loadCatalogView(msg.sheetSource.sourceId)"
+                    @changed="loadCatalogView(msg.sheetSource.sourceId); loadSheetIssues()"
                   />
                 </template>
 
@@ -1697,6 +1716,47 @@ function staleRecordFor(flowId: string, messages: unknown): SheetStaleRecord | n
 const staleFlows = computed(() => sheetStaleRecords.value.length
   ? allFlows.value.filter(f => !f.isSystem && staleRecordFor(f.id, (f as any).messages))
   : [])
+// ── `C-438`：試算表商品要處理的事（跟提醒中心五顆同一支算，見 server/utils/sheet-issues.ts）──
+interface SheetIssuesRes {
+  catalogs: Array<{ flowId: string; flowName: string; sourceId: string; overflow: string[]; noImage: string[]; missing: string[]; renameUnsure: string[] }>
+  fields: Array<{ flowId: string; flowName: string; field: string; row: string | null; kind: 'field' | 'row' }>
+}
+const sheetIssues = ref<SheetIssuesRes | null>(null)
+async function loadSheetIssues() {
+  try { sheetIssues.value = await apiFetch<SheetIssuesRes>('/api/flow/list?part=sheet-issues') }
+  catch { sheetIssues.value = null }
+}
+/** 帳號裡有模組用到試算表（商品目錄、試算表的一格）才讀——大部分帳號沒有，不多花讀取 */
+const accountUsesSheets = computed(() => allFlows.value.some((f) => {
+  const s = JSON.stringify((f as any).messages ?? [])
+  return s.includes('"sheetSource"') || s.includes('{{sheet:')
+}))
+watch(accountUsesSheets, (uses) => {
+  if (uses && !sheetIssues.value) void loadSheetIssues()
+}, { immediate: true })
+/** 清單最上面那一塊：一個模組一列，講是什麼事（同一個模組的幾件事併成一句） */
+const sheetIssueRows = computed(() => {
+  const rows = new Map<string, { id: string; name: string; why: string[] }>()
+  const add = (id: string, name: string, why: string) => {
+    if (!rows.has(id)) rows.set(id, { id, name, why: [] })
+    rows.get(id)!.why.push(why)
+  }
+  for (const c of sheetIssues.value?.catalogs ?? []) {
+    if (c.renameUnsure.length) add(c.flowId, c.flowName, `${c.renameUnsure.length} 個要確認是不是改名`)
+    if (c.overflow.length) add(c.flowId, c.flowName, `${c.overflow.length} 個放不下`)
+    if (c.noImage.length) add(c.flowId, c.flowName, `${c.noImage.length} 個抓不到圖`)
+    if (c.missing.length) add(c.flowId, c.flowName, `試算表少了 ${c.missing.length} 個`)
+  }
+  for (const f of sheetIssues.value?.fields ?? []) {
+    add(f.flowId, f.flowName, f.kind === 'row' ? `「${f.row}」這一列找不到了` : `「${f.field}」這一欄找不到了`)
+  }
+  return [...rows.values()].map(r => ({ id: r.id, name: r.name, why: [...new Set(r.why)].join('・') }))
+})
+function selectFlowById(id: string) {
+  const flow = allFlows.value.find(f => f.id === id)
+  if (flow) selectFlow(flow)
+}
+
 /** 正在編的這一個（用畫面上的比：換掉當下提示就消失） */
 const selectedStale = computed(() => {
   if (!selectedId.value || isCreating.value || !sheetStaleRecords.value.length) return null
@@ -3304,6 +3364,8 @@ async function submitForm() {
     // C-209：這次存檔可能改掉了「這個模組的按鈕指向誰」，帶 fresh 重算引用索引
     // （不重算的話，剛加的按鈕最多要等 60 秒才出現在別的模組的「會在這些時候發出」裡）
     loadConfigRefs(true)
+    // `C-438`：存檔可能剛好修掉（或多出）試算表那幾件事（伺服器存檔時清了模組掃描的快取）
+    if (accountUsesSheets.value) void loadSheetIssues()
   } catch (error: any) {
     showToast(error?.data?.statusMessage || '儲存失敗', 'error')
   } finally {

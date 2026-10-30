@@ -158,6 +158,8 @@ export type SheetProductChangeKind =
   | 'renameUnsure'
   | 'catalogOn'
   | 'catalogOff'
+  /** 店家在商品目錄按「不賣了，拿掉」（`C-438`）：從商品清單拿掉，不再提醒 */
+  | 'retired'
 
 /** 「試算表最近的變動」一筆 */
 export interface SheetProductChange {
@@ -366,6 +368,23 @@ export function dismissSheetProductRename(reg: SheetProductRegistry, oldId: stri
   if (!old?.renameCandidates) return null
   const { renameCandidates: _drop, ...rest } = old
   return { ...reg, products: { ...reg.products, [oldId]: rest } }
+}
+
+/**
+ * 店家按「不賣了，拿掉」（`C-438`）：只收**表上已經找不到**的商品（還在表上的要到試算表取消勾選，⛔ 不在後台拿）。
+ * 從清單拿掉＝不再出現在商品目錄、不再提醒；之後試算表又加回這一列就當新商品（標籤同名會接回原本那個，封面圖重抓）。
+ * 別的商品「是改名嗎？」的候選裡有它也一起拿掉。不是表上找不到的＝null。
+ */
+export function retireSheetProduct(reg: SheetProductRegistry, productId: string, now: number): SheetProductRegistry | null {
+  const p = reg.products[productId]
+  if (!p || p.missingSince === null) return null
+  const products: Record<string, SheetProduct> = {}
+  for (const [id, other] of Object.entries(reg.products)) {
+    if (id === productId) continue
+    products[id] = other
+  }
+  const change: SheetProductChange = { at: now, kind: 'retired', productId, title: p.title }
+  return { ...reg, products, changes: [change, ...reg.changes].slice(0, SHEET_PRODUCT_CHANGES_MAX) }
 }
 
 /** 抓封面圖最多試幾次（連不上、壞圖）；找不到封面圖不重試 */

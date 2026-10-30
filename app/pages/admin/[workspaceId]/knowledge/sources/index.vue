@@ -411,6 +411,14 @@
         <p v-if="selectedSource" class="text-sm text-muted admin-subtext src-header-meta">
           {{ headerMeta }}<span v-if="headerStatus" class="src-header-meta__status" :class="`is-${headerStatus.tone}`">・{{ headerStatus.text }}</span>
         </p>
+        <!--
+          `C-438`（規格 §3）：試算表只在知識庫連一次，但它同時排 LINE 的商品目錄——在這裡講一句、給一條路過去，
+          ⛔ 不在機器人模組那邊再畫一個「連接試算表」
+        -->
+        <p v-if="selectedCatalog" class="text-sm text-muted admin-subtext src-catalog-link">
+          這份試算表也排 LINE 的商品目錄和商品資訊的回覆
+          <NuxtLink :to="`/admin/${workspaceId}/flow?id=${selectedCatalog.flowId}`">看商品目錄 →</NuxtLink>
+        </p>
       </div>
       <div v-if="canEditSources || askMode === 'drawer'" class="flex gap-1 admin-header-actions">
         <!--
@@ -1814,6 +1822,23 @@ async function loadAiEnabled() {
 const loading = ref(false)
 const selectedId = ref<string | null>(null)
 const selectedSource = computed(() => sources.value.find(s => s.id === selectedId.value) ?? null)
+
+/**
+ * `C-438`：這份試算表有沒有商品目錄照它排（標題下面那一行「也排 LINE 的商品目錄 → 看商品目錄」）。
+ * 跟模組頁、提醒中心同一份答案（`?part=sheet-issues`）；第一次點開試算表才問、這一頁只問一次。
+ */
+const sheetCatalogs = ref<Array<{ sourceId: string, flowId: string }> | null>(null)
+let sheetCatalogsAsked = false
+watch(() => selectedSource.value?.type, (type) => {
+  if (type !== 'gsheet' || sheetCatalogsAsked) return
+  sheetCatalogsAsked = true
+  apiFetch<{ catalogs: Array<{ sourceId: string, flowId: string }> }>('/api/flow/list?part=sheet-issues')
+    .then((r) => { sheetCatalogs.value = r.catalogs ?? [] })
+    .catch(() => { sheetCatalogs.value = [] })
+}, { immediate: true })
+const selectedCatalog = computed(() => (selectedSource.value?.type === 'gsheet'
+  ? sheetCatalogs.value?.find(c => c.sourceId === selectedSource.value!.id) ?? null
+  : null))
 
 // orphan chunks（sourceId === null）— 給「整理舊資料」橫幅用
 const orphanCount = ref(0)

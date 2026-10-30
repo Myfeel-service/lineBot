@@ -7,7 +7,7 @@
  *
  * ⛔ 截掉、沒放上去的都講得出是哪幾個（`planSheetCatalog` 的 overflow／noImage，提醒 `C-438` 讀這裡），不默默少一張。
  */
-import { productImage, type SheetProduct, type SheetProductChange, type SheetProductImageFailReason, type SheetProductRegistry } from './sheet-products'
+import { needsCoverFetch, productImage, type SheetProduct, type SheetProductChange, type SheetProductImageFailReason, type SheetProductRegistry } from './sheet-products'
 
 /** 這個商品在目錄上的哪裡（編輯畫面分組用） */
 export type SheetCatalogPlacement = 'card' | 'overflow' | 'noImage' | 'off' | 'missing'
@@ -25,6 +25,8 @@ export interface SheetCatalogViewProduct {
   hasPageUrl: boolean
   coverError: { reason: SheetProductImageFailReason, attempts: number } | null
   tag: { id: string, name: string } | null
+  /** 表上找不到、而且同一輪多了這幾列：「是改名嗎？」的候選（`C-438`）；沒有＝不用問 */
+  renameCandidates?: Array<{ id: string, title: string }>
 }
 
 export interface SheetCatalogView {
@@ -98,6 +100,36 @@ export function planSheetCatalog(reg: SheetProductRegistry, max = SHEET_CATALOG_
   }
 }
 
+/**
+ * 這份試算表的商品目錄有什麼要店家處理（`C-438`，提醒中心跟模組頁同一支）。都是商品名，照試算表順序。
+ *  - overflow：勾了、有圖，第 11 個以後放不上去
+ *  - noImage：勾了、沒圖、⛔ 而且系統不會再自己抓到了（沒填商品頁網址、找不到封面圖、試滿次數）——還在抓的不算，不然每上一個新商品就先亮一次
+ *  - missing：表上找不到了（AI 也答不出它）；要問「是改名嗎？」的不在這裡，歸 renameUnsure
+ */
+export interface SheetCatalogIssues {
+  overflow: string[]
+  noImage: string[]
+  missing: string[]
+  renameUnsure: string[]
+}
+
+export function sheetCatalogIssues(reg: SheetProductRegistry): SheetCatalogIssues {
+  const plan = planSheetCatalog(reg)
+  const gone = Object.values(reg.products)
+    .filter(p => p.missingSince !== null)
+    .sort((a, b) => a.order - b.order)
+  return {
+    overflow: plan.overflow.map(p => p.title),
+    noImage: plan.noImage.filter(p => !needsCoverFetch(p)).map(p => p.title),
+    missing: gone.filter(p => !p.renameCandidates?.length).map(p => p.title),
+    renameUnsure: gone.filter(p => p.renameCandidates?.length).map(p => p.title),
+  }
+}
+
+export function hasSheetCatalogIssues(i: SheetCatalogIssues): boolean {
+  return !!(i.overflow.length || i.noImage.length || i.missing.length || i.renameUnsure.length)
+}
+
 /** 點卡片帶的「哪一份試算表的哪個商品」（postback 的 `p=`） */
 export function sheetProductRef(sourceId: string, productId: string): string {
   return `${sourceId}:${productId}`
@@ -134,6 +166,7 @@ export function sheetProductChangeText(c: SheetProductChange): string {
     case 'renameUnsure': return `試算表上找不到「${c.title}」了，是改名嗎？`
     case 'catalogOn': return `「${c.title}」勾進目錄`
     case 'catalogOff': return `「${c.title}」取消勾選，拿出目錄`
+    case 'retired': return `「${c.title}」不賣了，拿掉`
   }
 }
 

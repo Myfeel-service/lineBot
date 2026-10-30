@@ -1,6 +1,8 @@
 import { capMapSize } from './bounded-cache'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { encodeTriggerModule, TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
+import { readSheetCatalogSource } from '~~/shared/sheet-catalog'
+import { sheetFieldTokensIn, type SheetFieldRef } from '~~/shared/sheet-field'
 
 /**
  * 「空按鈕」靜態檢查：找出圖文選單／圖卡／關鍵字自動回覆／活動上指向
@@ -44,6 +46,43 @@ export interface ModuleGraphScan {
    * 「異常說它壞了，但清單裡查不到它的名字、也挑不到要指過去的那個模組」。
    */
   modules: { id: string; name: string; isActive: boolean }[]
+  /**
+   * `C-438`：用到試算表的模組（照哪份表排的商品目錄、帶出哪幾格「試算表的一格」）。
+   * 同一趟讀 flows 順手收——⛔ 商品提醒別為了這個另外再讀一次 flows。
+   */
+  sheetModules: SheetModuleUse[]
+}
+
+export interface SheetModuleUse {
+  id: string
+  name: string
+  isActive: boolean
+  /** 這個模組裡照試算表排的商品目錄，照哪幾份表 */
+  catalogSourceIds: string[]
+  /** 這個模組帶出的每一格（重複的只留一個） */
+  fieldRefs: SheetFieldRef[]
+}
+
+/** 一個模組的訊息裡用到試算表的地方；都沒有＝null */
+export function collectSheetUse(messages: unknown): Pick<SheetModuleUse, 'catalogSourceIds' | 'fieldRefs'> | null {
+  if (!Array.isArray(messages)) return null
+  const catalogSourceIds = new Set<string>()
+  const refs = new Map<string, SheetFieldRef>()
+  const walk = (v: unknown) => {
+    if (typeof v === 'string') {
+      for (const t of sheetFieldTokensIn(v)) refs.set(t.token, t.ref)
+      return
+    }
+    if (Array.isArray(v)) return v.forEach(walk)
+    if (v && typeof v === 'object') Object.values(v).forEach(walk)
+  }
+  for (const m of messages) {
+    const src = m?.type === 'flexImageCarousel' ? readSheetCatalogSource(m) : null
+    if (src?.sourceId) catalogSourceIds.add(src.sourceId)
+    walk(m)
+  }
+  if (!catalogSourceIds.size && !refs.size) return null
+  return { catalogSourceIds: [...catalogSourceIds], fieldRefs: [...refs.values()] }
 }
 
 /**
@@ -155,13 +194,15 @@ export async function scanModuleGraph(
   ])
 
   const flowById = new Map<string, { name: string; isActive: boolean }>()
+  const sheetModules: SheetModuleUse[] = []
   for (const d of flowsSnap.docs) {
     const data = d.data() as Record<string, unknown>
-    flowById.set(d.id, {
-      name: String(data.name ?? '(未命名模組)'),
-      // 與 getFlowByModuleId 同一把尺：isActive 為真才撈得到內容
-      isActive: data.isActive === true,
-    })
+    const name = String(data.name ?? '(未命名模組)')
+    // 與 getFlowByModuleId 同一把尺：isActive 為真才撈得到內容
+    const isActive = data.isActive === true
+    flowById.set(d.id, { name, isActive })
+    const sheet = collectSheetUse(data.messages)
+    if (sheet) sheetModules.push({ id: d.id, name, isActive, ...sheet })
   }
 
   const broken: BrokenModuleRef[] = []
@@ -221,6 +262,7 @@ export async function scanModuleGraph(
   const data: ModuleGraphScan = {
     refs: broken,
     modules: [...flowById.entries()].map(([id, v]) => ({ id, name: v.name, isActive: v.isActive })),
+    sheetModules,
   }
   cache.set(workspaceId, { data, expires: Date.now() + CACHE_TTL_MS })
   capMapSize(cache, CACHE_MAX_ENTRIES)

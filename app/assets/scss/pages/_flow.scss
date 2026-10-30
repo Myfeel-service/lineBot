@@ -731,6 +731,21 @@
 
   &:hover, &.is-active { background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
 }
+/* `C-438` 試算表商品要處理：模組名一行、什麼事一行（兩行都可以截，滑過去 title 有全文） */
+.flow-stale-list__item--why {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.flow-stale-list__name,
+.flow-stale-list__why {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-stale-list__why {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
 
 .flow-stale-banner {
   display: flex;
@@ -985,8 +1000,10 @@
   flex-direction: column;
 }
 /* 要他處理的兩組上底色（整組是一塊，滑到哪一列都知道在哪組） */
+.sheet-catalog-group.is-rename,
 .sheet-catalog-group.is-overflow,
-.sheet-catalog-group.is-noImage {
+.sheet-catalog-group.is-noImage,
+.sheet-catalog-group.is-missing {
   padding: 0.5rem 0.65rem;
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-surface));
@@ -1039,6 +1056,17 @@
   align-items: flex-end;
   gap: 0.15rem;
   .el-button + .el-button { margin-left: 0; }
+}
+/* `C-438`「是，改名成「新名」」可能很長：可以換行，不撐破右邊清單 */
+.sheet-catalog-decide {
+  max-width: 55%;
+  .el-button {
+    height: auto;
+    min-height: 24px;
+    white-space: normal;
+    text-align: right;
+    line-height: 1.35;
+  }
 }
 .sheet-catalog-folded {
   summary {

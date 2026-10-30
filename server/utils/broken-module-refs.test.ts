@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { collectModuleRefs, findBrokenModuleRefs, invalidateBrokenModuleRefsCache, replaceModuleRefs, scanModuleGraph } from './broken-module-refs'
+import { collectModuleRefs, collectSheetUse, findBrokenModuleRefs, invalidateBrokenModuleRefsCache, replaceModuleRefs, scanModuleGraph } from './broken-module-refs'
 
 const WS = 'ws1'
 
@@ -285,5 +285,37 @@ describe('scanModuleGraph：引用與模組清單來自同一次掃描（2026-08
     expect(scan.refs.map(r => r.moduleId)).toEqual(['gone'])
     // 被指的模組查不到＝真的不存在，不是被 limit 切掉的
     expect(scan.modules.find(m => m.id === 'gone')).toBeUndefined()
+  })
+})
+
+describe('`C-438` 同一趟掃描順手收「用到試算表的模組」（商品提醒不另外讀 flows）', () => {
+  const tok = (row: string, field: string) => `{{sheet:${encodeURIComponent(row)}|${encodeURIComponent(field)}}}`
+
+  it('照試算表排的目錄照哪份表、帶出哪幾格（重複的只留一個）；沒用到的＝null', () => {
+    expect(collectSheetUse([
+      { type: 'flexImageCarousel', columns: [], sheetSource: { sourceId: 'src1', tapModuleId: 'tpl' } },
+      { type: 'text', text: `${tok('@', '出貨時間')}\n${tok('@', '出貨時間')}`, buttons: [{ type: 'uri', uri: tok('Giaretti', '商品頁面') }] },
+    ])).toEqual({
+      catalogSourceIds: ['src1'],
+      fieldRefs: [{ row: '@', field: '出貨時間' }, { row: 'Giaretti', field: '商品頁面' }],
+    })
+    expect(collectSheetUse([{ type: 'text', text: '你好' }])).toBeNull()
+    expect(collectSheetUse(undefined)).toBeNull()
+  })
+
+  it('scan 帶回 sheetModules（含停用的，由用的人決定要不要算）', async () => {
+    const flows = [
+      { id: 'cat', data: () => ({ workspaceId: WS, name: '商品目錄', isActive: true, messages: [{ type: 'flexImageCarousel', sheetSource: { sourceId: 'src1', tapModuleId: 'tpl' } }] }) },
+      { id: 'old', data: () => ({ workspaceId: WS, name: '舊的', isActive: false, messages: [{ type: 'text', text: tok('A', '出貨時間') }] }) },
+      { id: 'plain', data: () => ({ workspaceId: WS, name: '一般', isActive: true, messages: [{ type: 'text', text: 'hi' }] }) },
+    ]
+    const db = {
+      collection: (name: string) => ({ where: () => ({ get: async () => ({ docs: name === 'flows' ? flows : [] }) }) }),
+    } as any
+    const scan = await scanModuleGraph(db, WS, { skipCache: true })
+    expect(scan.sheetModules).toEqual([
+      { id: 'cat', name: '商品目錄', isActive: true, catalogSourceIds: ['src1'], fieldRefs: [] },
+      { id: 'old', name: '舊的', isActive: false, catalogSourceIds: [], fieldRefs: [{ row: 'A', field: '出貨時間' }] },
+    ])
   })
 })

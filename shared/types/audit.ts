@@ -116,6 +116,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   // `C-426`：送的是畫面上那一份（可能還沒存檔），什麼都沒改
   'flow.testSend': '試發了機器人模組',
   'sheetProduct.image': '換了商品目錄上的商品圖',
+  // `C-438`：試算表上找不到的商品，店家確認「是改名」或「不賣了，拿掉」
+  'sheetProduct.rename': '確認了試算表上的商品改名',
+  'sheetProduct.retire': '把試算表上找不到的商品拿掉（不賣了）',
   'flowFolder.create': '新增了模組資料夾',
   'flowFolder.put': '改了模組資料夾',
   'flowFolder.delete': '刪掉了模組資料夾',

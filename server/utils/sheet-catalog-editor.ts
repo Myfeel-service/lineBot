@@ -4,9 +4,11 @@ import { getDb } from './firebase'
 import { requireCapability } from './workspace-auth'
 import { writeAuditLog } from './audit-log'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
-import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage } from './sheet-products'
+import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage, updateSheetProductRegistry } from './sheet-products'
+import { clearSheetCatalogCache } from './sheet-catalog'
+import { invalidateSheetIssuesCache } from './sheet-issues'
 import { planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
-import { productImage } from '~~/shared/sheet-products'
+import { confirmSheetProductRename, productImage, retireSheetProduct } from '~~/shared/sheet-products'
 
 /**
  * 機器人模組「商品目錄（照試算表排）」編輯畫面要的資料與動作（`C-436`）。畫面看到的形狀在 `shared/sheet-catalog.ts`。
@@ -55,6 +57,9 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
       hasPageUrl: !!p.pageUrl,
       coverError: p.coverError ? { reason: p.coverError.reason, attempts: p.coverError.attempts } : null,
       tag: p.tagId && tagNames.has(p.tagId) ? { id: p.tagId, name: tagNames.get(p.tagId)! } : null,
+      ...(p.missingSince !== null && p.renameCandidates?.length
+        ? { renameCandidates: p.renameCandidates.map(id => reg.products[id]).filter(c => !!c && c.missingSince === null).map(c => ({ id: c!.id, title: c!.title })) }
+        : {}),
     }))
     .sort((a, b) => Number(a.placement === 'missing') - Number(b.placement === 'missing') || a.order - b.order)
 
@@ -93,6 +98,8 @@ export async function handleSheetProductImage(event: H3Event) {
     throw createError({ statusCode: revert ? 409 : 404, statusMessage: revert ? '這個商品沒有換過圖' : '找不到這個商品' })
   }
   const product = next.products[productId]!
+  // `C-438`：換上圖＝「抓不到圖」那顆提醒下一次就該消失
+  invalidateSheetIssuesCache(workspaceId)
   await writeAuditLog({
     workspaceId,
     uid,
@@ -103,6 +110,53 @@ export async function handleSheetProductImage(event: H3Event) {
     note: title,
   })
   return { image: productImage(product), hasCover: !!product.cover?.url }
+}
+
+/**
+ * 商品目錄上「試算表上找不到」的商品，店家的兩種決定（`C-438`，規格 §5.2）：
+ *  - `rename`＋`newId`：是改名，接到新的那一列（圖、標籤、在不在目錄都跟著舊的走，`confirmSheetProductRename`）
+ *  - `retire`：不賣了，拿掉（從商品清單拿掉、不再提醒，`retireSheetProduct`）
+ * ⛔ 兩種都只收表上已經找不到的商品；還在表上的要到試算表改（後台不拿掉試算表上的東西）。
+ */
+export async function handleSheetProductDecision(event: H3Event) {
+  const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
+  const body = (await readBody(event)) as Record<string, unknown> | null
+  const sourceId = String(body?.sourceId ?? '').trim()
+  const productId = String(body?.productId ?? '').trim()
+  const action = body?.action
+  const newId = String(body?.newId ?? '').trim()
+  if (!sourceId || !productId) throw createError({ statusCode: 400, statusMessage: '缺少試算表或商品' })
+  if (action !== 'rename' && action !== 'retire') throw createError({ statusCode: 400, statusMessage: '不認得這個動作' })
+  if (action === 'rename' && !newId) throw createError({ statusCode: 400, statusMessage: '缺少改名後的商品' })
+  const db = getDb()
+  let title = ''
+  let newTitle = ''
+  const next = await updateSheetProductRegistry(db, workspaceId, sourceId, (reg) => {
+    const p = reg.products[productId]
+    // ⛔ 按下去的這段時間，下一輪同步可能已經把它接回來了（店家剛好把那一列加回去）：那就什麼都不做
+    if (!p || p.missingSince === null) return null
+    title = p.title
+    if (action === 'retire') return retireSheetProduct(reg, productId, Date.now())
+    const nw = reg.products[newId]
+    if (!nw || nw.missingSince !== null || !p.renameCandidates?.includes(newId)) return null
+    newTitle = nw.title
+    return confirmSheetProductRename(reg, productId, newId, Date.now())
+  })
+  if (!next || !title) {
+    throw createError({ statusCode: 409, statusMessage: '這個商品已經回到試算表上了（或已經處理過），重新整理看看' })
+  }
+  clearSheetCatalogCache()
+  invalidateSheetIssuesCache(workspaceId)
+  await writeAuditLog({
+    workspaceId,
+    uid,
+    actor: 'human',
+    action: action === 'rename' ? 'sheetProduct.rename' : 'sheetProduct.retire',
+    targetId: `${sourceId}:${productId}`,
+    after: action === 'rename' ? { product: newTitle, before: title } : { product: title },
+    note: action === 'rename' ? `「${title}」→「${newTitle}」` : title,
+  })
+  return { ok: true }
 }
 
 /** 這個帳號在後台上傳的圖（`/api/upload` 存的 `uploads/{wid}/…` 公開網址） */

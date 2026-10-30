@@ -45,13 +45,33 @@
             <span v-else class="sheet-catalog-thumb is-empty">沒有圖</span>
             <div class="sheet-catalog-name">
               <span class="sheet-catalog-title">{{ p.title }}</span>
-              <span class="sheet-catalog-meta">
+              <span v-if="g.key === 'rename'" class="sheet-catalog-meta">試算表上找不到了，同時多了{{ (p.renameCandidates ?? []).map(c => `「${c.title}」`).join('、') }}</span>
+              <span v-else-if="g.key === 'missing'" class="sheet-catalog-meta">試算表上找不到了，AI 也答不出它</span>
+              <span v-else class="sheet-catalog-meta">
                 <template v-if="p.image">{{ p.image.source === 'own' ? '自己換的圖' : '商品頁封面圖' }}</template>
                 <template v-else>{{ sheetCoverStatusText(p) }}</template>
                 <template v-if="p.tag">・點了貼「{{ p.tag.name }}」</template>
               </span>
             </div>
-            <div v-if="canEdit" class="sheet-catalog-actions">
+            <!--
+              `C-438`：試算表上找不到的商品，店家自己決定（規格 §5.2）——是改名就接到新的名字（圖、標籤跟著走），
+              不賣了就拿掉（不再提醒）。還要留著讓 AI 回答的，到試算表把那一列加回來，這裡不用按。
+            -->
+            <div v-if="canEdit && (g.key === 'rename' || g.key === 'missing')" class="sheet-catalog-actions sheet-catalog-decide">
+              <el-button
+                v-for="c in (p.renameCandidates ?? []).slice(0, 3)"
+                :key="c.id"
+                size="small"
+                type="primary"
+                plain
+                :loading="busyId === p.id"
+                @click="confirmRename(p, c)"
+              >
+                是，改名成「{{ c.title }}」
+              </el-button>
+              <el-button size="small" :disabled="busyId === p.id" @click="retire(p)">不賣了，拿掉</el-button>
+            </div>
+            <div v-else-if="canEdit" class="sheet-catalog-actions">
               <el-button size="small" :loading="busyId === p.id" @click="pickImage(p)">{{ p.image ? '換圖' : '上傳圖片' }}</el-button>
               <el-button
                 v-if="p.image?.source === 'own'"
@@ -83,6 +103,7 @@
 </template>
 
 <script setup lang="ts">
+import { ElMessageBox } from 'element-plus'
 import { sheetCoverStatusText, sheetProductChangeText, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 
 const props = defineProps<{
@@ -107,6 +128,13 @@ const cards = computed(() => products.value.filter(p => p.placement === 'card'))
 /** 分組照「他要做什麼」排：要處理的在上面，不用管的收起來 */
 const openGroups = computed(() => [
   {
+    // `C-438`：名字和商品頁網址一起換了，系統不猜——最上面問
+    key: 'rename',
+    title: '是改名嗎？',
+    hint: '確認之前，目錄和回覆照用上一次讀到的內容',
+    items: products.value.filter(p => p.placement === 'missing' && p.renameCandidates?.length),
+  },
+  {
     key: 'overflow',
     title: '沒放上去：目錄只放得下 10 張',
     hint: '到試算表取消勾選，或把要放的往前排',
@@ -118,12 +146,18 @@ const openGroups = computed(() => [
     hint: '',
     items: products.value.filter(p => p.placement === 'noImage'),
   },
+  {
+    // `C-438`：以前收在下面——現在有提醒帶人來這裡，收著就找不到
+    key: 'missing',
+    title: '試算表上找不到了',
+    hint: '還要讓客人問得到，把那一列加回試算表（不要勾「放進LINE目錄」）；不要了就按「不賣了，拿掉」',
+    items: products.value.filter(p => p.placement === 'missing' && !p.renameCandidates?.length),
+  },
   { key: 'card', title: '在目錄上', hint: '', items: cards.value },
 ].filter(g => g.items.length))
 
 const foldedGroups = computed(() => [
   { key: 'off', title: '不在目錄上的商品', items: products.value.filter(p => p.placement === 'off') },
-  { key: 'missing', title: '試算表上找不到的商品', items: products.value.filter(p => p.placement === 'missing') },
 ].filter(g => g.items.length))
 
 const changeLines = computed(() => (props.view?.changes ?? []).slice(0, 5).map((c, i) => ({
@@ -174,6 +208,40 @@ async function onFile(e: Event) {
   finally {
     busyId.value = ''
   }
+}
+
+// ── `C-438`：試算表上找不到的商品 ──
+async function decide(p: SheetCatalogViewProduct, body: Record<string, unknown>, done: string) {
+  busyId.value = p.id
+  try {
+    await apiFetch('/api/flow/create?part=sheet-product-decision', { method: 'POST', body: { sourceId: props.sourceId, productId: p.id, ...body } })
+    showToast(done, 'success')
+    emit('changed')
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || '沒改成，請再試一次', 'error')
+  }
+  finally {
+    busyId.value = ''
+  }
+}
+
+function confirmRename(p: SheetCatalogViewProduct, c: { id: string, title: string }) {
+  void decide(p, { action: 'rename', newId: c.id }, `接上了：「${p.title}」改名成「${c.title}」，圖和標籤照舊`)
+}
+
+async function retire(p: SheetCatalogViewProduct) {
+  try {
+    await ElMessageBox.confirm(
+      `「${p.title}」會從商品目錄拿掉、不再提醒。之後試算表又加回這一列，會當成新的商品（封面圖重新抓）。`,
+      '不賣了，拿掉？',
+      { confirmButtonText: '拿掉', cancelButtonText: '取消', type: 'warning' },
+    )
+  }
+  catch {
+    return
+  }
+  await decide(p, { action: 'retire' }, `「${p.title}」拿掉了`)
 }
 
 async function revertImage(p: SheetCatalogViewProduct) {

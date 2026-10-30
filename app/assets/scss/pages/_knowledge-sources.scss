@@ -365,6 +365,17 @@
   }
 }
 
+/* `C-438`：「這份試算表也排 LINE 的商品目錄　看商品目錄 →」——跟上面那一行同一個大小，連結空一格接在後面 */
+.src-catalog-link {
+  margin-top: 2px;
+
+  a {
+    margin-left: 0.5em;
+    color: var(--el-color-primary);
+    white-space: nowrap;
+  }
+}
+
 .src-section-card { margin-bottom: 0; } /* gap 由 .admin-panel-stack 控制 */
 
 .src-settings-actions { margin-top: 8px; }

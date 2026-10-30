@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { encodeTriggerModule, parseTriggerModuleData, LINE_POSTBACK_DATA_MAX } from './action-schema'
 import { cardMessageError } from './card-message'
 import {
+  hasSheetCatalogIssues,
   parseSheetProductRef,
   planSheetCatalog,
+  sheetCatalogIssues,
   readSheetCatalogSource,
   sheetCatalogColumns,
   sheetCatalogError,
@@ -12,7 +14,7 @@ import {
   sheetProductRef,
   sheetProductTagName,
 } from './sheet-catalog'
-import { reconcileSheetProducts, setOwnProductImage, type SheetProductRegistry } from './sheet-products'
+import { applyCoverResult, reconcileSheetProducts, retireSheetProduct, setOwnProductImage, type SheetProductRegistry } from './sheet-products'
 
 /**
  * `C-436`：商品目錄「照試算表排」。
@@ -130,6 +132,48 @@ describe('編輯畫面的白話', () => {
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: null })).toContain('正在抓')
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'noCover', attempts: 1 } })).toContain('找不到封面圖')
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'pageUnreachable', attempts: 3 } })).toContain('連不上商品頁')
+  })
+})
+
+describe('`C-438` 商品目錄要店家處理的事（提醒中心跟模組頁同一支）', () => {
+  it('放不下：第 11 個以後；勾了沒圖但還在抓的不算（不然每上一個新商品就先亮一次）', () => {
+    const rows = Array.from({ length: 11 }, (_, i) => [`商品${i + 1}`, true, true] as [string, boolean, boolean])
+    const reg = registry([...rows, ['新的', true, false]])
+    expect(sheetCatalogIssues(reg)).toEqual({ overflow: ['商品11'], noImage: [], missing: [], renameUnsure: [] })
+  })
+
+  it('抓不到圖＝系統不會再自己抓到了：沒填商品頁網址、找不到封面圖、試滿三次', () => {
+    let reg = registry([['沒網址', true, false], ['找不到', true, false], ['連不上', true, false], ['還在試', true, false]])
+    const byTitle = (t: string) => Object.values(reg.products).find(p => p.title === t)!
+    reg.products[byTitle('沒網址').id] = { ...byTitle('沒網址'), pageUrl: null, urlKey: null }
+    reg = applyCoverResult(reg, byTitle('找不到').id, byTitle('找不到').urlKey!, { ok: false, reason: 'noCover' }, 2000)!
+    for (let i = 0; i < 3; i++) reg = applyCoverResult(reg, byTitle('連不上').id, byTitle('連不上').urlKey!, { ok: false, reason: 'pageUnreachable' }, 2000)!
+    reg = applyCoverResult(reg, byTitle('還在試').id, byTitle('還在試').urlKey!, { ok: false, reason: 'pageUnreachable' }, 2000)!
+    expect(sheetCatalogIssues(reg).noImage).toEqual(['沒網址', '找不到', '連不上'])
+  })
+
+  it('表上找不到：要問「是改名嗎？」的分開列（名字跟網址一起改了）', () => {
+    let reg = registry([['A', true, true], ['B', true, true]])
+    // A 被刪掉、B 改了名字也換了網址（同一輪多了「B2」）
+    reg = reconcileSheetProducts(reg, { rows: [{ title: 'B2', pageUrl: 'https://a.com/B2', inCatalog: true }], catalogColumn: true, pageHeader: '商品頁面' }, 2000, ids).registry
+    const issues = sheetCatalogIssues(reg)
+    expect(issues.renameUnsure.sort()).toEqual(['A', 'B'])
+    expect(issues.missing).toEqual([])
+    expect(hasSheetCatalogIssues(issues)).toBe(true)
+    expect(hasSheetCatalogIssues(sheetCatalogIssues(registry([['C', true, true]])))).toBe(false)
+  })
+
+  it('「不賣了，拿掉」：只收表上找不到的；拿掉之後不再列、記一筆變動，別人的候選裡也拿掉', () => {
+    let reg = registry([['A', true, true], ['B', true, true]])
+    const a = Object.values(reg.products).find(p => p.title === 'A')!
+    const b = Object.values(reg.products).find(p => p.title === 'B')!
+    expect(retireSheetProduct(reg, b.id, 3000)).toBeNull() // 還在表上
+    reg = reconcileSheetProducts(reg, { rows: [{ title: 'B', pageUrl: 'https://a.com/B', inCatalog: true }], catalogColumn: true, pageHeader: '商品頁面' }, 2000, ids).registry
+    expect(sheetCatalogIssues(reg).missing).toEqual(['A'])
+    const next = retireSheetProduct(reg, a.id, 3000)!
+    expect(next.products[a.id]).toBeUndefined()
+    expect(sheetCatalogIssues(next).missing).toEqual([])
+    expect(sheetProductChangeText(next.changes[0]!)).toBe('「A」不賣了，拿掉')
   })
 })
 

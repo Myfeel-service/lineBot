@@ -14,7 +14,7 @@ import { writeAuditLog } from '~~/server/utils/audit-log'
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
 import { configureSheetCatalogs } from '~~/server/utils/sheet-catalog'
-import { handleSheetProductImage } from '~~/server/utils/sheet-catalog-editor'
+import { handleSheetProductDecision, handleSheetProductImage } from '~~/server/utils/sheet-catalog-editor'
 import { flowTestSend } from '~~/server/utils/flow-test-send'
 
 export default defineEventHandler(async (event) => {
@@ -29,6 +29,8 @@ export default defineEventHandler(async (event) => {
    * 放在方案閘門前面：換的是試算表商品的圖，不是在建流程。
    */
   if (getQuery(event).part === 'sheet-product-image') return handleSheetProductImage(event)
+  // `C-438`：試算表上找不到的商品，「是改名」「不賣了，拿掉」（同上，借這支、放閘門前面）
+  if (getQuery(event).part === 'sheet-product-decision') return handleSheetProductDecision(event)
 
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
   // 方案功能閘門（D-69 拍板④）：流程自動化是入門方案起才有的權益，以前只印在方案表上。
