@@ -15,6 +15,11 @@ vi.mock('./ai-knowledge-sources', () => ({
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
   listChunksBySource: vi.fn(async (_db: unknown, _ws: string, sourceId: string) => (CARDS[sourceId] ?? []).map(c => ({ isOverview: false, ...c }))),
 }))
+/** `C-432`／`C-434`：每份表的商品清單（改了名的商品，舊名字在 aliases） */
+const REGISTRIES: Record<string, any> = {}
+vi.mock('./sheet-products', () => ({
+  loadSheetProductRegistry: vi.fn(async (_db: unknown, _ws: string, sourceId: string) => REGISTRIES[sourceId] ?? null),
+}))
 
 const { hydrateSheetFields, attachSheetSnapshots, loadSheetRows } = await import('./sheet-field-hydrate')
 const { sheetFieldToken } = await import('~~/shared/sheet-field')
@@ -45,6 +50,7 @@ const nextWs = () => `ws-${++ws}`
 beforeEach(() => {
   SOURCES.length = 0
   for (const k of Object.keys(CARDS)) delete CARDS[k]
+  for (const k of Object.keys(REGISTRIES)) delete REGISTRIES[k]
   getDb.mockReset()
   getDb.mockImplementation(fakeDb)
   SOURCES.push({ id: 'src1', type: 'gsheet', name: '客服（商品資訊）', gsheetFieldHeaders: HEADERS, createdAt: 1 })
@@ -150,5 +156,42 @@ describe('編輯頁要的清單', () => {
     SOURCES[0]!.isDeleted = true
     const { sources } = await loadSheetRows(nextWs())
     expect(sources).toHaveLength(0)
+  })
+})
+
+describe('`C-432` 試算表上改了名的商品：模組裡用舊名寫的那一格接到現在這一列', () => {
+  const KIE_OLD = 'KIESLECT 小耳記 AI NotePods 10S'
+  const KIE_NEW = 'KIESLECT 小耳記 AI NotePods 10S Pro'
+  const OLD_TOKEN = sheetFieldToken({ row: KIE_OLD, field: '出貨時間' })
+  const registry = (aliases: string[], missingSince: number | null = null) => ({
+    products: { p1: { id: 'p1', title: KIE_NEW, nameKey: KIE_NEW.toLowerCase(), aliases, pageUrl: null, urlKey: null, inCatalog: true, order: 0, firstSeenAt: 0, missingSince } },
+    changes: [],
+    catalogColumn: true,
+    pageHeader: '商品頁面',
+  })
+
+  beforeEach(() => {
+    CARDS.src1 = [{ title: KIE_NEW, content: '出貨時間：依原廠公告：商品將於 10 月下旬 依照訂單順序陸續出貨。' }]
+  })
+
+  it('⭐ 商品清單記得舊名字：換成現在那一列最新的內容（⛔ 不再停在存檔那天）', async () => {
+    REGISTRIES.src1 = registry([KIE_OLD.toLowerCase()])
+    const [msg] = await hydrateSheetFields([{ type: 'text', text: OLD_TOKEN, sheetSnapshots: { [OLD_TOKEN]: '存檔那天的' } }], nextWs())
+    expect(msg.text).toBe('依原廠公告：商品將於 10 月下旬 依照訂單順序陸續出貨。')
+  })
+
+  it('對照組：沒有商品清單（還沒同步過）＝跟以前一樣，用存檔當時的內容', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const [msg] = await hydrateSheetFields([{ type: 'text', text: OLD_TOKEN, sheetSnapshots: { [OLD_TOKEN]: '存檔那天的' } }], nextWs())
+    expect(msg.text).toBe('存檔那天的')
+    warn.mockRestore()
+  })
+
+  it('⛔ 舊名字剛好是另一份表上現在的名字：那一列優先，不接過去', async () => {
+    REGISTRIES.src1 = registry([KIE_OLD.toLowerCase()])
+    SOURCES.push({ id: 'src2', type: 'gsheet', name: '別份表', gsheetFieldHeaders: HEADERS, createdAt: 2 })
+    CARDS.src2 = [{ title: KIE_OLD, content: '出貨時間：別份表寫的' }]
+    const [msg] = await hydrateSheetFields([{ type: 'text', text: OLD_TOKEN }], nextWs())
+    expect(msg.text).toBe('別份表寫的')
   })
 })

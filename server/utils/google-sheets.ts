@@ -12,6 +12,7 @@
  */
 import { JWT } from 'google-auth-library'
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
+import { isSheetControlHeader } from '~~/shared/sheet-products'
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly'
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets'
@@ -27,6 +28,12 @@ export interface SheetCard {
   title: string
   content: string
   tags: string[]
+  /**
+   * 開關欄（`C-434`：目前只有「放進LINE目錄」）這一列填的值，欄名 → 原字。
+   * ⛔ 不進 `content`（AI 讀到只是雜訊），也不寫進知識卡；同步拿去排商品目錄（`shared/sheet-products.ts`）。
+   * 表上沒有開關欄就沒有這格。
+   */
+  controls?: Record<string, string>
 }
 
 export interface ReadSheetResult {
@@ -40,6 +47,8 @@ export interface ReadSheetResult {
   stats: SheetImportStats
   /** 各分頁卡片內文裡的欄名（照出現順序、不重複）；機器人模組切「某一格」用（`C-423`） */
   fieldHeaders: string[]
+  /** 表上有的開關欄（`C-434`，例：「放進LINE目錄」）；不在 fieldHeaders 裡、也不進卡片內文 */
+  controlHeaders: string[]
   /**
    * 沒讀的分頁（使用說明頁等）；預覽要講「跳過了哪幾頁」。
    * Numbers 的「輸出摘要」不在這裡（放 stats.exportSummarySheets）：這裡的頁預覽會講成「看起來是使用說明」，
@@ -398,6 +407,7 @@ export async function readGoogleSheetAsCards(
   const titles: string[] = []
   const emptySheets: string[] = []
   const fieldHeaders: string[] = []
+  const controlHeaders: string[] = []
   let mergeCount = 0
 
   for (const t of targets) {
@@ -420,7 +430,7 @@ export async function readGoogleSheetAsCards(
       continue
     }
     // values 從 A1 起算（前面的空白列也會回空陣列），第 i 個就是試算表的第 i+1 列
-    const { cards: sheetCards, stats, fieldHeaders: sheetFieldHeaders } = rowsToCards(rows, { legacy, firstRow: 1 })
+    const { cards: sheetCards, stats, fieldHeaders: sheetFieldHeaders, controlHeaders: sheetControlHeaders } = rowsToCards(rows, { legacy, firstRow: 1 })
     if (!sheetCards.length) {
       // 跟 Excel 同一套（`C-296` 審查）：整頁空白不講，有字卻一條都整理不出來的才講
       if (hasAnyText(rows)) emptySheets.push(t.title)
@@ -431,6 +441,7 @@ export async function readGoogleSheetAsCards(
     mergeCount += countVerticalMerges(t.merges)
     collector.addSheet(sheetCards, stats, t.title)
     for (const h of sheetFieldHeaders) if (!fieldHeaders.includes(h)) fieldHeaders.push(h)
+    for (const h of sheetControlHeaders) if (!controlHeaders.includes(h)) controlHeaders.push(h)
   }
 
   if (!collector.stats.rowCount) {
@@ -447,6 +458,7 @@ export async function readGoogleSheetAsCards(
     mergeCount,
     stats: collector.stats,
     fieldHeaders,
+    controlHeaders,
     skippedSheets: legacy ? skippedSheetNames(allTitles, readTitles) : splitSkippedSheets(allTitles, readTitles, collector.stats),
     emptySheets,
   }
@@ -497,6 +509,7 @@ export function createCardCollector(opts: { legacy: boolean }) {
         const hasAnswer = !blank.has(key)
         const existing = byKey.get(key)
         if (existing) {
+          if (!existing.controls && c.controls) existing.controls = c.controls
           if (hasAnswer) {
             existing.content = answered.has(key) ? appendNewLines(existing.content, c.content) : c.content
             answered.add(key)
@@ -730,13 +743,13 @@ function appendNewLines(existing: string, add: string): string {
 export function rowsToCards(
   rawRows: string[][],
   opts: { legacy?: boolean, firstRow?: number } = {},
-): { cards: SheetCard[]; stats: SheetImportStats; fieldHeaders: string[] } {
+): { cards: SheetCard[]; stats: SheetImportStats; fieldHeaders: string[]; controlHeaders: string[] } {
   const legacy = opts.legacy === true
   const firstRow = opts.firstRow ?? 1
   const indexed = (rawRows ?? [])
     .map((cells, index) => ({ cells: Array.isArray(cells) ? cells : [], index }))
     .filter(r => r.cells.some(c => String(c ?? '').trim()))
-  if (indexed.length < 2) return { cards: [], stats: emptySheetStats(), fieldHeaders: [] }
+  if (indexed.length < 2) return { cards: [], stats: emptySheetStats(), fieldHeaders: [], controlHeaders: [] }
 
   const { headerAt, titles: titleRows } = legacy ? { headerAt: 0, titles: [] as string[] } : locateHeaderRow(indexed)
   const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
@@ -810,6 +823,8 @@ export function rowsToCards(
         mergedRows++
         dupKeys.add(key)
       }
+      // 開關欄照第一列有填的那一列（延續列多半沒填）
+      if (!existing.controls && card.controls) existing.controls = card.controls
       const add = card.content.trim()
       if (hasAnswer && add) {
         if (legacy) {
@@ -850,8 +865,12 @@ export function rowsToCards(
   const twoColumnTable = mode.legacy ? headers.length <= 2 : mode.tableWidth <= 2
   const fieldHeaders = twoColumnTable
     ? [String(headers[1] ?? '').trim() || '內容']
-    : headers.slice(1).map(h => String(h ?? '').trim()).filter(Boolean)
-  return { cards, stats, fieldHeaders }
+    : headers.slice(1).map(h => String(h ?? '').trim()).filter(h => h && !isSheetControlHeader(h))
+  // 開關欄（`C-434`）：只有多欄表才有；不進 fieldHeaders（卡片內文裡沒有這一欄可以切）
+  const controlHeaders = twoColumnTable
+    ? []
+    : headers.slice(1).map(h => String(h ?? '').trim()).filter(h => h && isSheetControlHeader(h))
+  return { cards, stats, fieldHeaders, controlHeaders }
 }
 
 const SERIAL_CELL = /^\d{1,4}\.?$/
@@ -911,6 +930,7 @@ function rowToCardParsed(headers: string[], row: string[], mode: RowReadMode): {
   if (!title) return null
 
   let content: string
+  let controls: Record<string, string> | undefined
   const twoColumn = mode.legacy ? headers.length <= 2 || row.length <= 2 : mode.tableWidth <= 2
   if (twoColumn) {
     content = String(row[1] ?? '').trim()
@@ -919,8 +939,13 @@ function rowToCardParsed(headers: string[], row: string[], mode: RowReadMode): {
     const pairs: string[] = []
     for (let i = 1; i < row.length; i++) {
       const v = String(row[i] ?? '').trim()
-      if (!v) continue
       const h = String(headers[i] ?? '').trim()
+      // 開關欄（`C-434`：「放進LINE目錄」）另外收、不進內文——AI 讀到「放進LINE目錄：TRUE」只是雜訊
+      if (h && isSheetControlHeader(h)) {
+        if (v) (controls ??= {})[h] = v
+        continue
+      }
+      if (!v) continue
       pairs.push(h ? `${h}：${v}` : v)
     }
     content = pairs.join('\n')
@@ -931,6 +956,7 @@ function rowToCardParsed(headers: string[], row: string[], mode: RowReadMode): {
       title: title.slice(0, 200),
       content: (content || title).slice(0, CARD_CONTENT_MAX),
       tags: [],
+      ...(controls ? { controls } : {}),
     },
     hasAnswer: !!content,
   }

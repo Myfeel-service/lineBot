@@ -1,6 +1,8 @@
 import { getDb } from './firebase'
 import { KNOWLEDGE_SOURCES_COLLECTION, listChunksBySource } from './ai-knowledge-sources'
+import { loadSheetProductRegistry } from './sheet-products'
 import { replaceSheetFieldTokens, sheetCardField, sheetRowKey, sheetFieldTokensIn, type SheetFieldRef } from '~~/shared/sheet-field'
+import { sheetProductAliasMap } from '~~/shared/sheet-products'
 
 /**
  * 機器人模組裡「試算表的一格」（`{{sheet:列|欄}}`）送出前換成那張知識卡上現在寫的（`C-423`）。
@@ -45,6 +47,7 @@ export async function loadSheetRows(workspaceId: string, opts: { fresh?: boolean
     .sort((a, b) => (a.get('createdAt')?.toMillis?.() ?? 0) - (b.get('createdAt')?.toMillis?.() ?? 0))
   const rows = new Map<string, SheetRow>()
   const sources: SheetSourceSummary[] = []
+  const renamed: Array<{ sourceId: string, oldKey: string, nowKey: string }> = []
   for (const d of docs) {
     const rawHeaders = d.get('gsheetFieldHeaders')
     const headers = Array.isArray(rawHeaders) ? rawHeaders.map(String) : null
@@ -63,6 +66,15 @@ export async function loadSheetRows(workspaceId: string, opts: { fresh?: boolean
       if (headers && !rows.has(key)) rows.set(key, { sourceId: d.id, sourceName: name, title: c.title, content: c.content, headers })
     }
     sources.push(summary)
+    // `C-432`：在試算表改了名的商品（商品頁網址沒變，`C-434` 認得出來），模組裡用舊名寫的那一格接到現在這一列。
+    // 讀不到商品清單就照舊（只是改了名的那幾格會用存檔當時的內容）
+    const reg = await loadSheetProductRegistry(db, workspaceId, d.id).catch(() => null)
+    if (reg) for (const [oldKey, nowKey] of sheetProductAliasMap(reg)) renamed.push({ sourceId: d.id, oldKey, nowKey })
+  }
+  // 全部的表都收完才接：⛔ 舊名字剛好是另一份表上現在的名字，那一列優先，不接過去
+  for (const { sourceId, oldKey, nowKey } of renamed) {
+    const now = rows.get(nowKey)
+    if (!rows.has(oldKey) && now?.sourceId === sourceId) rows.set(oldKey, now)
   }
   const entry = { at: Date.now(), rows, sources }
   cache.set(workspaceId, entry)

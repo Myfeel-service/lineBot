@@ -31,6 +31,7 @@ import { normTitle, parseGoogleSheetUrl, readGoogleSheetAsCards, type ParsedShee
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
 import { diffSheetCardFields, type SheetFieldChange } from '~~/shared/sheet-stale'
 import { recordStaleSheetModules } from './sheet-stale-modules'
+import { syncSheetProducts } from './sheet-products'
 import type { KnowledgeSourceDoc } from '~~/shared/types/ai-knowledge'
 
 export interface GsheetSyncResult {
@@ -148,8 +149,18 @@ export const ENRICH_SYNC_MAX = 60
  *    下一輪同步全部重算一次（測試裡釘了一組改前算出來的指紋）。
  */
 function cardsHash(cards: SheetCard[]): string {
-  const norm = cards.map(c => `${c.title}\u0000${c.content}`).sort().join('\u0001')
+  const norm = cards.map(c => `${c.title}\u0000${c.content}${controlsPart(c.controls)}`).sort().join('\u0001')
   return createHash('sha256').update(norm).digest('hex')
+}
+
+/**
+ * 開關欄（`C-434`：「放進LINE目錄」）不在卡片內文裡，但勾了／取消也要算「表格變了」，
+ * 不然只改勾勾的那一小時會被當成沒變、商品目錄不會跟。
+ * ⛔ 只在這一列有開關值的時候才加：沒有開關欄的表（現在所有的表）指紋一個字都不能變（見上面的說明）。
+ */
+function controlsPart(controls: SheetCard['controls']): string {
+  if (!controls) return ''
+  return `\u0002${Object.keys(controls).sort().map(k => `${k}=${controls[k]}`).join('\u0003')}`
 }
 
 /**
@@ -221,6 +232,8 @@ export async function syncGoogleSheetSource(
         throw e
       }
       const excludedOnSheet = new Set(sheet.cards.map(c => knowledgeTitleKey(c.title)).filter(k => excludedKeys.has(k))).size
+      // `C-434`：表沒變也跑一次（讀一筆、沒變不寫）——上線前就在同步的表，第一份商品清單靠這裡建
+      await syncSheetProducts(db, workspaceId, sourceId, sheet)
       return {
         outcome: 'unchanged',
         added: 0,
@@ -463,6 +476,9 @@ export async function syncGoogleSheetSource(
   if (fieldChanges.length) {
     await recordStaleSheetModules(db, workspaceId, sourceId, String(data.name ?? ''), fieldChanges)
   }
+
+  // `C-434`：哪一列是哪個商品、誰改了名、誰勾進目錄（商品目錄、範本、模組裡「試算表的一格」都靠它）。失敗不擋同步
+  await syncSheetProducts(db, workspaceId, sourceId, sheet)
 
   return {
     outcome: 'synced',

@@ -881,3 +881,39 @@ describe('`C-423` 卡片內文的欄名（機器人模組切「某一格」用�
     expect(rowsToCards([['商品', '出貨時間']], { legacy: false }).fieldHeaders).toEqual([])
   })
 })
+
+describe('`C-434` 開關欄「放進LINE目錄」：另外收、⛔ 不進 AI 讀的內文', () => {
+  const rows = [
+    ['商品名', '出貨時間', '商品頁面', '常見問答頁', '放進LINE目錄'],
+    ['Giaretti', '10 月底', 'https://a.example/gl', 'https://a.example/gl/faqs', 'TRUE'],
+    ['Poketomo', '7 月上旬', 'https://a.example/pk', '', 'FALSE'],
+  ]
+  for (const legacy of [true, false]) {
+    it(`${legacy ? '舊讀法' : '新讀法'}：內文沒有那一欄、欄名清單也沒有；值收在 controls`, () => {
+      const r = rowsToCards(rows, { legacy })
+      expect(r.cards[0]!.content).toBe('出貨時間：10 月底\n商品頁面：https://a.example/gl\n常見問答頁：https://a.example/gl/faqs')
+      expect(r.cards[0]!.controls).toEqual({ 放進LINE目錄: 'TRUE' })
+      expect(r.cards[1]!.controls).toEqual({ 放進LINE目錄: 'FALSE' })
+      expect(r.fieldHeaders).toEqual(['出貨時間', '商品頁面', '常見問答頁'])
+      expect(r.controlHeaders).toEqual(['放進LINE目錄'])
+    })
+  }
+
+  it('沒有開關欄的表：跟以前一模一樣（沒有 controls 這格，內文、指紋都不變）', () => {
+    const r = rowsToCards([['商品', '出貨時間'], ['A', '10 月底'], ['B', '11 月']], { legacy: false })
+    expect(r.cards.every(c => !('controls' in c))).toBe(true)
+    expect(r.controlHeaders).toEqual([])
+  })
+
+  it('那一格空白：不收（沒勾），內文照樣沒有那一欄', () => {
+    const r = rowsToCards([['商品名', '出貨時間', '放進LINE目錄'], ['A', '10 月底', '']], { legacy: false })
+    expect(r.cards[0]!.controls).toBeUndefined()
+    expect(r.cards[0]!.content).toBe('出貨時間：10 月底')
+  })
+
+  it('延續列（第一欄空白）沒填開關：用上面那一列的', () => {
+    const r = rowsToCards([['商品名', '規格', '放進LINE目錄'], ['W1', '12L', 'TRUE'], ['', '16L', '']], { legacy: false })
+    expect(r.cards).toHaveLength(1)
+    expect(r.cards[0]!.controls).toEqual({ 放進LINE目錄: 'TRUE' })
+  })
+})
