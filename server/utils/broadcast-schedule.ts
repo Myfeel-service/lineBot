@@ -71,6 +71,17 @@ export function broadcastScheduleErrorMessage(reason: 'empty' | 'invalid' | 'pas
   return '排程時間須至少一分鐘後'
 }
 
+/**
+ * `D-167`②：草稿記住的預計時間（還沒排上）。空的＝不記，格式壞掉就擋。
+ * ⛔ 不要求是未來：只是記著，排上那一步（`assertFutureBroadcastScheduleAt`）才擋過去的時間。
+ */
+export function parsePlannedBroadcastScheduleAt(value: unknown): Date | null {
+  if (value === null || value === undefined || value === '') return null
+  const d = broadcastScheduleAtToDate(value)
+  if (!d) throw createError({ statusCode: 400, statusMessage: broadcastScheduleErrorMessage('invalid') })
+  return d
+}
+
 export function assertFutureBroadcastScheduleAt(value: unknown): Date {
   const parsed = parseBroadcastScheduleAtInput(value)
   if (!parsed.ok) {

@@ -17,6 +17,8 @@ export function newBroadcastDraftDoc(input: {
   festivalId?: string
   /** `D-155`：從好友統計的行銷提案開的（複製一則不帶這個） */
   proposalTagId?: string
+  /** `D-167`②：新建時就選了排程時間＋按「儲存草稿」（還沒排上；複製一則不帶這個） */
+  plannedScheduleAt?: Date | null
 }): BroadcastDoc {
   const now = FieldValue.serverTimestamp()
   return {
@@ -35,6 +37,7 @@ export function newBroadcastDraftDoc(input: {
     ...(input.festivalId ? { festivalId: input.festivalId } : {}),
     ...(input.proposalTagId ? { proposalTagId: input.proposalTagId } : {}),
     scheduleAt: null,
+    ...(input.plannedScheduleAt ? { plannedScheduleAt: input.plannedScheduleAt } : {}),
     startedAt: null,
     completedAt: null,
     totalCount: 0,

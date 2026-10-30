@@ -450,6 +450,13 @@ export interface BroadcastDoc {
    */
   retryCount?: number
   scheduleAt: Timestamp | null
+  /**
+   * `D-167`②：草稿選了「排程發送」＋時間按「儲存草稿」，時間記在這裡——**還沒排上**，到時間不會送。
+   * ⛔ 不可以寫進 `scheduleAt`：那一格有值＝排上了（排程器、送出端都認它），排上要先檢查人數＋送出權限。
+   * 以前存草稿直接把時間清掉，畫面跳回「立即發送」，店家以為壞了或以為排好了（2026-10-29 MYFEEL 三則都沒排上）。
+   * 寫入時是 Date、讀回來是 Timestamp；真的排上（`/schedule`）或改成排程中時清成 null。
+   */
+  plannedScheduleAt?: Timestamp | Date | null
   startedAt: Timestamp | null
   completedAt: Timestamp | null
   /** 統計欄位，發送過程即時更新 */

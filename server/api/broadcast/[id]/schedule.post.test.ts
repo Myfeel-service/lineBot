@@ -86,6 +86,8 @@ describe('確認排程：方案不含這種推播就排不進去', () => {
     vi.mocked(getWorkspacePlan).mockResolvedValue(BILLING_PLANS.growth)
     await expect((scheduleHandler as any)({})).resolves.toMatchObject({ status: 'scheduled' })
     expect(update).toHaveBeenCalledTimes(1)
+    // `D-167`②：草稿記著的時間用完就清掉，排上的時間只看 scheduleAt
+    expect(update.mock.calls[0]).toEqual([expect.objectContaining({ plannedScheduleAt: null })])
   })
 })
 

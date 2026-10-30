@@ -96,29 +96,39 @@ export async function resolveAudienceUserIds(filter: AudienceFilter, workspaceId
   // ── Step 3: 依加入時間 / 封鎖狀態過濾 ─────────────────────────────
   const needUserFetch = filter.joinedAfter || filter.joinedBefore || filter.isBlocked !== null
   if (needUserFetch) {
-    const userIds = [...candidateIds]
-    const CHUNK = 30
+    /**
+     * `C-431`：一次拿一批好友（`getAll`），幾批同時拿；讀的筆數不變（每位好友一筆）。
+     * ⛔ 以前每 30 人查一次、一批等完才查下一批：標籤上 2,229 人＝排隊 75 次、約 47 秒，
+     *    推播頁「驗證並排程」被主機 30 秒切斷，1,500 人以上的依標籤推播排不上（2026-10-29 MYFEEL）。
+     *    ⛔ 不要改回 `await` 在迴圈裡一批一批查。
+     */
+    const refs = [...candidateIds].filter(Boolean).map((id) => db.collection('users').doc(id))
+    const BATCH = 300
+    const PARALLEL = 8
+    const batches: (typeof refs)[] = []
+    for (let i = 0; i < refs.length; i += BATCH) batches.push(refs.slice(i, i + BATCH))
+    const docs: FirebaseFirestore.DocumentSnapshot[] = []
+    for (let i = 0; i < batches.length; i += PARALLEL) {
+      const got = await Promise.all(batches.slice(i, i + PARALLEL).map((b) =>
+        db.getAll(...b, { fieldMask: ['isBlocked', 'createdAt'] })))
+      for (const g of got) docs.push(...g)
+    }
+
     const filtered: string[] = []
-
-    for (let i = 0; i < userIds.length; i += CHUNK) {
-      const chunk = userIds.slice(i, i + CHUNK)
-      const snap = await db.collection('users')
-        .where('__name__', 'in', chunk)
-        .get()
-
-      for (const doc of snap.docs) {
-        const d = doc.data()
-        // isBlocked 過濾（null = 不限制）
-        if (filter.isBlocked === false && d.isBlocked === true) continue
-        if (filter.isBlocked === true && d.isBlocked !== true) continue
-        const createdAt = d.createdAt?.toDate?.()
-        if (filter.joinedAfter || filter.joinedBefore) {
-          if (!createdAt) continue
-          if (filter.joinedAfter && createdAt < new Date(filter.joinedAfter)) continue
-          if (filter.joinedBefore && createdAt > new Date(filter.joinedBefore)) continue
-        }
-        filtered.push(doc.id)
+    for (const doc of docs) {
+      // 標籤上有、好友資料已經沒有的（以前的查法本來就不會回這種）
+      if (!doc.exists) continue
+      const d = doc.data()!
+      // isBlocked 過濾（null = 不限制）
+      if (filter.isBlocked === false && d.isBlocked === true) continue
+      if (filter.isBlocked === true && d.isBlocked !== true) continue
+      const createdAt = d.createdAt?.toDate?.()
+      if (filter.joinedAfter || filter.joinedBefore) {
+        if (!createdAt) continue
+        if (filter.joinedAfter && createdAt < new Date(filter.joinedAfter)) continue
+        if (filter.joinedBefore && createdAt > new Date(filter.joinedBefore)) continue
       }
+      filtered.push(doc.id)
     }
 
     candidateIds = new Set(filtered)

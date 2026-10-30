@@ -832,7 +832,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
     },
   },
   get_broadcast_results: {
-    description: '最近的推播與成效:名稱、狀態(草稿/已排程/發送中/已完成/失敗)、發給幾人、成功幾人、失敗幾人、什麼時候發的。'
+    description: '最近的推播與成效:名稱、狀態(草稿/排程中/發送中/已完成/失敗)、發給幾人、成功幾人、失敗幾人、什麼時候發的。'
       + 'args 可帶 {"limit":5}(最多 10)。問「上次推播發給幾個人 / 有沒有推播失敗 / 排程中的推播」時用。'
       + '⛔ 這裡沒有開封率與點擊率(那要另外查 LINE),不要憑空講。',
     requires: 'ai.read',
@@ -847,7 +847,8 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
 
       const STATUS: Record<string, string> = {
         draft: '草稿（還沒發）',
-        scheduled: '已排程',
+        // `D-167`③：跟推播清單那顆膠囊同一個字
+        scheduled: '排程中',
         processing: '發送中',
         completed: '已完成',
         failed: '發送失敗',

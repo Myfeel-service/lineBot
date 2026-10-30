@@ -3,6 +3,7 @@ import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { writeAuditLog, auditSnapshot } from '~~/server/utils/audit-log'
 import { newBroadcastDraftDoc } from '~~/server/utils/broadcast-draft'
+import { parsePlannedBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
 
 /**
@@ -15,6 +16,7 @@ import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
  *   audienceSource: BroadcastAudienceSource
  *   messages: any[]           // LINE messagingApi.Message[]
  *   scheduleAt 請勿於建立時帶入；排程請在建立後以 PUT 設定
+ *   plannedScheduleAt?: string   // 草稿記住的時間（還沒排上，`D-167`②）
  * }
  *
  * Response: BroadcastDoc & { id: string }
@@ -63,6 +65,8 @@ export default defineEventHandler(async (event) => {
     proposalTagId: typeof body.proposalTagId === 'string' && body.proposalTagId.trim()
       ? body.proposalTagId.trim().slice(0, 64)
       : undefined,
+    // `D-167`②：選了排程時間就按「儲存草稿」——記著，還沒排上（⛔ 不是 scheduleAt）
+    plannedScheduleAt: parsePlannedBroadcastScheduleAt(body.plannedScheduleAt),
   })
 
   const db = getDb()

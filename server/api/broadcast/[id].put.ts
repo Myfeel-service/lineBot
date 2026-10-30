@@ -1,5 +1,5 @@
 import { FieldValue } from 'firebase-admin/firestore'
-import { assertFutureBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
+import { assertFutureBroadcastScheduleAt, parsePlannedBroadcastScheduleAt } from '~~/server/utils/broadcast-schedule'
 import { assertBroadcastPlanAllows } from '~~/server/utils/broadcast-plan-gate'
 import { getDb } from '~~/server/utils/firebase'
 import { requireCapability } from '~~/server/utils/workspace-auth'
@@ -16,6 +16,7 @@ import { broadcastSaveCapability, can } from '~~/shared/permissions'
  *   audienceSource?: BroadcastAudienceSource
  *   messages?: any[]
  *   scheduleAt?: string | null   // null = 改回草稿
+ *   plannedScheduleAt?: string | null   // 草稿記住的時間（還沒排上，`D-167`②）
  * }
  *
  * Response: { id: string, ...updatedFields }
@@ -85,6 +86,17 @@ export default defineEventHandler(async (event) => {
   }
 
   /**
+   * `D-167`②：還沒排上的草稿記住選好的時間（只是記著，到時間不會送）。
+   * 存完是「排程中」的就清掉：那時 `scheduleAt` 才是真的時間，留著兩個時間會對不起來。
+   */
+  if ((updates.status ?? current.status) === 'scheduled') {
+    if (current.plannedScheduleAt) updates.plannedScheduleAt = null
+  }
+  else if (body.plannedScheduleAt !== undefined) {
+    updates.plannedScheduleAt = parsePlannedBroadcastScheduleAt(body.plannedScheduleAt)
+  }
+
+  /**
    * 存完還是「已排程」的話，方案要發得了那份對象（`D-131`）：排程中的推播按「儲存變更」也是一條
    * 「排好、到時間才失敗」的路（例如把對象從全部好友改成依標籤）。草稿不擋——存草稿不會送出任何東西。
    */
@@ -100,6 +112,7 @@ export default defineEventHandler(async (event) => {
     ...auditSnapshot(d, { keep: ['name', 'status'], count: ['messages', 'completionTagIds'] }),
     audienceSource: (d.audienceSource as { type?: string } | null)?.type ?? null,
     scheduleAt: auditTimeText(d.scheduleAt),
+    plannedScheduleAt: auditTimeText(d.plannedScheduleAt),
   })
   const diff = diffChangedFields(summarize(current), summarize({ ...current, ...updates }))
   if (diff.changedKeys.length) {
