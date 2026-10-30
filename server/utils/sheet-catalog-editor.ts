@@ -5,46 +5,14 @@ import { requireCapability } from './workspace-auth'
 import { writeAuditLog } from './audit-log'
 import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage } from './sheet-products'
-import { planSheetCatalog, SHEET_CATALOG_MAX_CARDS } from '~~/shared/sheet-catalog'
-import { productImage, type SheetProductChange, type SheetProductImageFailReason } from '~~/shared/sheet-products'
+import { planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
+import { productImage } from '~~/shared/sheet-products'
 
 /**
- * 機器人模組「商品目錄（照試算表排）」編輯畫面要的資料與動作（`C-436`）。
+ * 機器人模組「商品目錄（照試算表排）」編輯畫面要的資料與動作（`C-436`）。畫面看到的形狀在 `shared/sheet-catalog.ts`。
  * 借既有路由：讀＝`GET /api/flow/list?part=sheet-products&sourceId=`、換圖＝`POST /api/flow/create?part=sheet-product-image`
  * （⛔ 不開新路由：Nitro 路由型別已經貼著 TypeScript 深度上限，見 list.get.ts）。
  */
-
-/** 這個商品在目錄上的哪裡（畫面分組用） */
-export type SheetCatalogPlacement = 'card' | 'overflow' | 'noImage' | 'off' | 'missing'
-
-export interface SheetCatalogViewProduct {
-  id: string
-  title: string
-  order: number
-  placement: SheetCatalogPlacement
-  image: { url: string, source: 'own' | 'web' } | null
-  /** 有自己換的圖時，封面圖也在（「改回商品頁封面圖」用） */
-  hasCover: boolean
-  coverError: { reason: SheetProductImageFailReason, attempts: number } | null
-  tag: { id: string, name: string } | null
-}
-
-export interface SheetCatalogView {
-  /** false＝這份試算表還沒同步出商品清單（上線前的表要等下一次同步、或按「立即更新」） */
-  ready: boolean
-  sourceId: string
-  sourceName: string
-  /** 「打開試算表 ↗」 */
-  sheetUrl: string
-  lastFetchedAt: number | null
-  /** 表上有沒有「放進LINE目錄」這欄（沒有＝要先加，畫面講缺哪一欄） */
-  catalogColumn: boolean
-  pageHeader: string | null
-  max: number
-  products: SheetCatalogViewProduct[]
-  /** 「試算表最近的變動」新的在前 */
-  changes: SheetProductChange[]
-}
 
 const toMs = (v: any): number | null => (typeof v?.toMillis === 'function' ? v.toMillis() : (typeof v === 'number' ? v : null))
 
@@ -84,6 +52,7 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
       placement: p.missingSince !== null ? 'missing' : (placeOf.get(p.id) ?? 'off'),
       image: productImage(p),
       hasCover: !!p.cover?.url,
+      hasPageUrl: !!p.pageUrl,
       coverError: p.coverError ? { reason: p.coverError.reason, attempts: p.coverError.attempts } : null,
       tag: p.tagId && tagNames.has(p.tagId) ? { id: p.tagId, name: tagNames.get(p.tagId)! } : null,
     }))

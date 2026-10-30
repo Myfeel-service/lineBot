@@ -846,6 +846,141 @@
   box-shadow: 0 0 0 2px var(--color-line-glow);
 }
 
+/* ─── `C-436` 商品目錄「照試算表排」（FlowSheetCatalogPanel）：取代一張張的卡片，唯讀清單＋換圖 ── */
+.sheet-catalog-panel {
+  flex-shrink: 0;
+  width: 560px;
+  max-width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-sm);
+}
+.sheet-catalog-count {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.sheet-catalog-body {
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.sheet-catalog-source {
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.sheet-catalog-source-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.sheet-catalog-link {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--color-line-dark);
+  white-space: nowrap;
+  text-decoration: none;
+  &:hover { text-decoration: underline; }
+}
+.sheet-catalog-note { margin: 0; color: var(--text-secondary); }
+.sheet-catalog-warn {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+/* 系統已經處理好的變動：藍底（資訊），不是要他做事的橘色 */
+.sheet-catalog-changes {
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-info) 8%, var(--bg-surface));
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  b { color: var(--color-info); font-size: 0.78rem; }
+}
+.sheet-catalog-group {
+  display: flex;
+  flex-direction: column;
+}
+/* 要他處理的兩組上底色（整組是一塊，滑到哪一列都知道在哪組） */
+.sheet-catalog-group.is-overflow,
+.sheet-catalog-group.is-noImage {
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+.sheet-catalog-group-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+.sheet-catalog-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+  &:first-of-type { border-top: 0; }
+  &.is-dim { opacity: 0.7; }
+}
+.sheet-catalog-thumb {
+  display: block;
+  width: 72px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  &.is-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--border);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
+}
+.sheet-catalog-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sheet-catalog-title { font-weight: 600; }
+.sheet-catalog-meta { font-size: 0.75rem; color: var(--text-secondary); }
+.sheet-catalog-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  .el-button + .el-button { margin-left: 0; }
+}
+.sheet-catalog-folded {
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+}
+.sheet-catalog-file { display: none; }
+
 /* Sub-card top bar (index badge + delete) */
 .carousel-card-top {
   display: flex;

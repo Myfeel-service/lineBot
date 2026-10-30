@@ -944,7 +944,47 @@
                     固定 1:1 正方形顯示，超出部分會置中裁切
                   </p>
                   <template v-if="msg.type === 'flexImageCarousel'">
-                    <div class="admin-field-group" data-tour="flex-enable-image">
+                    <!-- `C-436`：商品目錄可以照試算表排（`D-166` ⑤）——卡片照「放進LINE目錄」的勾，送出時才產生 -->
+                    <div class="admin-field-group" data-tour="flex-card-source">
+                      <AdminFieldLabel text="卡片從哪裡來" tight />
+                      <el-radio-group
+                        :model-value="msg.sheetSource ? 'sheet' : 'manual'"
+                        size="small"
+                        @update:model-value="(v) => setCardSource(msg, String(v))"
+                      >
+                        <el-radio-button value="sheet">照試算表排</el-radio-button>
+                        <el-radio-button value="manual">自己一張張做</el-radio-button>
+                      </el-radio-group>
+                    </div>
+                    <template v-if="msg.sheetSource">
+                      <div class="admin-field-group">
+                        <AdminFieldLabel text="照哪一份試算表" tight />
+                        <el-select
+                          v-model="msg.sheetSource.sourceId"
+                          size="small"
+                          class="control-full"
+                          placeholder="選一份知識庫裡的 Google 試算表"
+                          :loading="sheetSourcesLoading"
+                          @change="() => loadCatalogView(msg.sheetSource.sourceId)"
+                        >
+                          <el-option v-for="s in sheetSources ?? []" :key="s.id" :label="s.name" :value="s.id" />
+                        </el-select>
+                        <p v-if="sheetSources && !sheetSources.length" class="text-xs text-muted">
+                          知識庫還沒有 Google 試算表：先到知識庫接一份。
+                        </p>
+                      </div>
+                      <div class="admin-field-group">
+                        <AdminFieldLabel text="點卡片送哪個模組" tight />
+                        <AdminFlowPicker
+                          v-model="msg.sheetSource.tapModuleId"
+                          :options="modulePickerOptions"
+                          placeholder="選商品資訊範本（可打字搜尋）"
+                          size="small"
+                        />
+                        <p class="text-xs text-muted">點了也會貼上那個商品的標籤（勾進目錄時自動建）</p>
+                      </div>
+                    </template>
+                    <div v-else class="admin-field-group" data-tour="flex-enable-image">
                       <AdminFieldLabel text="開啟圖片" tight />
                       <el-switch v-model="msg.enableImage" active-text="開啟" inactive-text="關閉" />
                     </div>
@@ -959,13 +999,13 @@
                         />
                       </el-select>
                       <p class="text-xs text-muted">
-                        標題、內文、底部按鈕為選填；上傳圖超出比例的部分會置中裁切
+                        {{ msg.sheetSource ? '商品頁的封面圖多半是 16:9；超出比例的部分會置中裁切' : '標題、內文、底部按鈕為選填；上傳圖超出比例的部分會置中裁切' }}
                       </p>
                     </div>
                     <p v-else class="text-xs text-muted">
                       未開啟圖片時，每張卡片標題為必填；可填內文與底部按鈕
                     </p>
-                    <p class="text-xs text-muted">放兩張以上，客人會左右滑</p>
+                    <p v-if="!msg.sheetSource" class="text-xs text-muted">放兩張以上，客人會左右滑</p>
                   </template>
                 </div>
               </FlowMessageCardShell>
@@ -1104,6 +1144,17 @@
                   </div>
                 </template>
 
+                <!-- `C-436`：照試算表排——卡片不在這裡做，只看、換圖 -->
+                <template v-else-if="msg.type === 'flexImageCarousel' && msg.sheetSource">
+                  <FlowSheetCatalogPanel
+                    :source-id="msg.sheetSource.sourceId"
+                    :view="catalogViews[msg.sheetSource.sourceId] ?? null"
+                    :error="catalogViewErrors[msg.sheetSource.sourceId]"
+                    :can-edit="can('marketing.write')"
+                    @changed="loadCatalogView(msg.sheetSource.sourceId)"
+                  />
+                </template>
+
                 <!-- flexImageCarousel sub-cards -->
                 <template v-else-if="msg.type === 'flexImageCarousel'">
                   <div
@@ -1235,7 +1286,7 @@
 
                 <!-- Add sub-card button -->
                 <button
-                  v-if="msg.columns.length < 10"
+                  v-if="msg.columns.length < 10 && !msg.sheetSource"
                   class="carousel-add-card"
                   data-tour="flex-add-column"
                   @click="msg.type === 'carousel' ? addCarouselColumn(msg) : msg.type === 'flexImageCarousel' ? addFlexImageCarouselColumn(msg) : addImageCarouselColumn(msg)"
@@ -1371,6 +1422,7 @@ import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessage
 import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
 import { buildSheetLabelRegistry, replaceSheetFieldTokens, sheetFieldLabel, sheetRowKey, type SheetFieldRef, type SheetLabelRegistry } from '~~/shared/sheet-field'
 import { FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
+import type { SheetCatalogView } from '~~/shared/sheet-catalog'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1847,7 +1899,7 @@ const variableKeys = computed(() => variableTokenOptions.value.map(o => o.value)
  * 以前直接畫 form.messages，預覽上印著「Hi {{displayName}}」（老闆 10-17 截圖：左右都一樣、像程式碼）。
  * ⛔ 一律回新的物件（renderPreviewVariablesDeep 不就地改），範例值不會寫進正在編的模組
  */
-const previewMessages = computed(() => renderPreviewVariablesDeep(withSheetValues(form.value.messages ?? []), { mark: true }))
+const previewMessages = computed(() => renderPreviewVariablesDeep(withSheetValues(withSheetCatalogPreview(form.value.messages ?? [])), { mark: true }))
 
 // ── `C-423`：試算表的一格（插入選單在 `FlowVariableInset`，送出端在 `server/utils/sheet-field-hydrate.ts`）──
 const sheetSources = ref<SheetPickerSource[] | null>(null)
@@ -1885,6 +1937,74 @@ const formUsesSheetField = computed(() => JSON.stringify(form.value.messages ?? 
 watch(formUsesSheetField, (uses) => {
   if (uses && !sheetSources.value && !sheetSourcesLoading.value) void loadSheetSources()
 }, { immediate: true })
+
+// ── `C-436`：商品目錄「照試算表排」（畫面在 FlowSheetCatalogPanel，送出端在 server/utils/sheet-catalog.ts）──
+const catalogViews = ref<Record<string, SheetCatalogView>>({})
+const catalogViewErrors = ref<Record<string, string>>({})
+async function loadCatalogView(sourceId: string) {
+  if (!sourceId) return
+  try {
+    const view = await apiFetch<SheetCatalogView>(`/api/flow/list?part=sheet-products&sourceId=${encodeURIComponent(sourceId)}`)
+    catalogViews.value = { ...catalogViews.value, [sourceId]: view }
+    const { [sourceId]: _done, ...rest } = catalogViewErrors.value
+    catalogViewErrors.value = rest
+  }
+  catch (e: any) {
+    catalogViewErrors.value = { ...catalogViewErrors.value, [sourceId]: e?.data?.statusMessage || '讀不到這份試算表的商品，請關掉再打開一次' }
+  }
+}
+/** 打開的模組裡照試算表排的那幾份（大部分模組沒有，不多花讀取） */
+const catalogSourceIds = computed(() => [...new Set((form.value.messages ?? [])
+  .map((m: any) => (m?.type === 'flexImageCarousel' ? String(m?.sheetSource?.sourceId ?? '') : ''))
+  .filter(Boolean))])
+watch(catalogSourceIds, (ids) => {
+  for (const id of ids) if (!catalogViews.value[id]) void loadCatalogView(id)
+  if (ids.length && !sheetSources.value && !sheetSourcesLoading.value) void loadSheetSources()
+}, { immediate: true })
+
+/**
+ * 「卡片從哪裡來」切換。換成照試算表排：先選第一份試算表、一律開圖（目錄卡片就是整張圖）。
+ * 換回自己一張張做：⛔ 原本做的卡片沒刪（照試算表排時只是不顯示、不送），換回來就在；一張都沒有才補一張空的。
+ * ⛔ 兩邊切來切去不能把設定弄丟：切走時把「照哪份表、點了送哪個模組」收起來，切回來還原
+ *    （畫面驗收實際撞到：切一下再切回來，存檔就被擋「請選擇點卡片要送的模組」）。只收在這一頁，不存進模組。
+ */
+const stashedSheetSources = new WeakMap<object, any>()
+function setCardSource(msg: any, mode: string) {
+  if (mode === 'sheet') {
+    if (msg.sheetSource) return
+    const first = sheetSources.value?.[0]?.id ?? ''
+    msg.sheetSource = stashedSheetSources.get(msg) ?? { sourceId: first, tapModuleId: '' }
+    msg.enableImage = true
+    if (!sheetSources.value && !sheetSourcesLoading.value) void loadSheetSources()
+    return
+  }
+  if (!msg.sheetSource) return
+  stashedSheetSources.set(msg, msg.sheetSource)
+  delete msg.sheetSource
+  if (!Array.isArray(msg.columns) || !msg.columns.length) addFlexImageCarouselColumn(msg)
+}
+// 切成照試算表排時試算表還沒讀到：讀到了替還沒選的補上第一份
+watch(sheetSources, (list) => {
+  const first = list?.[0]?.id
+  if (!first) return
+  for (const m of form.value.messages ?? []) {
+    if (m?.type === 'flexImageCarousel' && m.sheetSource && !m.sheetSource.sourceId) m.sheetSource.sourceId = first
+  }
+})
+
+/** 預覽：照試算表排的卡片訊息，畫現在會上目錄的那幾張（讀到之前先空著）。⛔ 回新的物件，不改正在編的模組 */
+function withSheetCatalogPreview(messages: any[]): any[] {
+  if (!messages.some((m: any) => m?.type === 'flexImageCarousel' && m?.sheetSource)) return messages
+  return messages.map((m: any) => {
+    if (m?.type !== 'flexImageCarousel' || !m?.sheetSource) return m
+    const view = catalogViews.value[String(m.sheetSource.sourceId ?? '')]
+    const columns = (view?.products ?? [])
+      .filter(p => p.placement === 'card' && p.image)
+      .map(p => ({ imageUrl: p.image!.url, title: '', text: '', action: { type: 'none' }, actions: [] }))
+    const { sheetSource: _sheet, ...rest } = m
+    return { ...rest, columns }
+  })
+}
 
 /**
  * 預覽：試算表的一格換成現在寫的。⛔ 不標黃——黃色是「範例」，這是真的會送出去的字。

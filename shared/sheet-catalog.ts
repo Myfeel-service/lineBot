@@ -7,7 +7,42 @@
  *
  * ⛔ 截掉、沒放上去的都講得出是哪幾個（`planSheetCatalog` 的 overflow／noImage，提醒 `C-438` 讀這裡），不默默少一張。
  */
-import { productImage, type SheetProduct, type SheetProductRegistry } from './sheet-products'
+import { productImage, type SheetProduct, type SheetProductChange, type SheetProductImageFailReason, type SheetProductRegistry } from './sheet-products'
+
+/** 這個商品在目錄上的哪裡（編輯畫面分組用） */
+export type SheetCatalogPlacement = 'card' | 'overflow' | 'noImage' | 'off' | 'missing'
+
+/** 機器人模組「商品目錄（照試算表排）」編輯畫面的一個商品（`GET flow/list?part=sheet-products`） */
+export interface SheetCatalogViewProduct {
+  id: string
+  title: string
+  order: number
+  placement: SheetCatalogPlacement
+  image: { url: string, source: 'own' | 'web' } | null
+  /** 有自己換的圖時，封面圖也在（「改回商品頁封面圖」用） */
+  hasCover: boolean
+  /** 試算表上有沒有商品頁網址（沒有＝不會自動抓封面圖） */
+  hasPageUrl: boolean
+  coverError: { reason: SheetProductImageFailReason, attempts: number } | null
+  tag: { id: string, name: string } | null
+}
+
+export interface SheetCatalogView {
+  /** false＝這份試算表還沒同步出商品清單（上線前的表要等下一次同步、或按「立即更新」） */
+  ready: boolean
+  sourceId: string
+  sourceName: string
+  /** 「打開試算表 ↗」 */
+  sheetUrl: string
+  lastFetchedAt: number | null
+  /** 表上有沒有「放進LINE目錄」這欄（沒有＝要先加，畫面講缺哪一欄） */
+  catalogColumn: boolean
+  pageHeader: string | null
+  max: number
+  products: SheetCatalogViewProduct[]
+  /** 「試算表最近的變動」新的在前 */
+  changes: SheetProductChange[]
+}
 
 /** LINE 一則卡片訊息最多 10 張 */
 export const SHEET_CATALOG_MAX_CARDS = 10
@@ -87,6 +122,31 @@ export function sheetCatalogColumns(source: SheetCatalogSource, reg: SheetProduc
     },
     actions: [],
   }))
+}
+
+/** 「試算表最近的變動」一行怎麼講（店家看的話，不講代號） */
+export function sheetProductChangeText(c: SheetProductChange): string {
+  switch (c.kind) {
+    case 'added': return `新增「${c.title}」`
+    case 'removed': return `試算表少了「${c.title}」`
+    case 'returned': return `「${c.title}」又回到試算表上了`
+    case 'renamed': return `「${c.prevTitle ?? ''}」改名成「${c.title}」，已接上，圖和標籤照舊`
+    case 'renameUnsure': return `試算表上找不到「${c.title}」了，是改名嗎？`
+    case 'catalogOn': return `「${c.title}」勾進目錄`
+    case 'catalogOff': return `「${c.title}」取消勾選，拿出目錄`
+  }
+}
+
+/** 還沒有圖的商品，那一行講為什麼（有商品頁網址、沒有失敗紀錄＝排程還在抓） */
+export function sheetCoverStatusText(p: Pick<SheetCatalogViewProduct, 'coverError' | 'hasPageUrl'>): string {
+  if (!p.hasPageUrl) return '試算表上沒有商品頁網址：補上網址會自動抓封面圖，或直接上傳一張'
+  switch (p.coverError?.reason) {
+    case undefined: return '正在抓商品頁的封面圖（約 10 分鐘內）'
+    case 'noCover': return '商品頁上找不到封面圖，請上傳一張'
+    case 'pageUnreachable': return '連不上商品頁，請確認試算表上的商品頁網址，或直接上傳一張'
+    case 'imageUnreachable': return '抓不到商品頁的封面圖，請上傳一張'
+    case 'badImage': return '商品頁的封面圖不是讀得懂的圖，請上傳一張'
+  }
 }
 
 /** 自動建的標籤叫什麼：開頭＋商品名（截到 50 字：標籤管理、推播挑人的畫面放不下更長的） */

@@ -7,6 +7,8 @@ import {
   readSheetCatalogSource,
   sheetCatalogColumns,
   sheetCatalogError,
+  sheetCoverStatusText,
+  sheetProductChangeText,
   sheetProductRef,
   sheetProductTagName,
 } from './sheet-catalog'
@@ -112,6 +114,22 @@ describe('④ 存檔檢查', () => {
   it('對照組：自己一張張做的照舊（0 張不能存）', () => {
     expect(cardMessageError({ type: 'flexImageCarousel', columns: [] })).toBe('卡片訊息：至少要有 1 張卡')
     expect(readSheetCatalogSource({ type: 'flexImageCarousel', columns: [] })).toBeNull()
+  })
+})
+
+describe('編輯畫面的白話', () => {
+  it('最近的變動：每一種都講得出來，改名講舊名→新名', () => {
+    const at = 1
+    expect(sheetProductChangeText({ at, kind: 'added', productId: 'x', title: 'BOYA mini2' })).toBe('新增「BOYA mini2」')
+    expect(sheetProductChangeText({ at, kind: 'renamed', productId: 'x', title: '10S Pro', prevTitle: '10S' })).toBe('「10S」改名成「10S Pro」，已接上，圖和標籤照舊')
+    expect(sheetProductChangeText({ at, kind: 'catalogOff', productId: 'x', title: 'A' })).toBe('「A」取消勾選，拿出目錄')
+    expect(sheetProductChangeText({ at, kind: 'renameUnsure', productId: 'x', title: 'A' })).toContain('是改名嗎')
+  })
+  it('沒圖的原因：沒有商品頁網址、還在抓、找不到封面圖各講各的', () => {
+    expect(sheetCoverStatusText({ hasPageUrl: false, coverError: null })).toContain('試算表上沒有商品頁網址')
+    expect(sheetCoverStatusText({ hasPageUrl: true, coverError: null })).toContain('正在抓')
+    expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'noCover', attempts: 1 } })).toContain('找不到封面圖')
+    expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'pageUnreachable', attempts: 3 } })).toContain('連不上商品頁')
   })
 })
 
