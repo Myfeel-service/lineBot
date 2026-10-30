@@ -665,6 +665,18 @@ const ALERTS: AlertDefinition[] = [
     anchor: { selector: '[data-tour="bc-list"]', note: '逾時的排程就在這份清單裡，點開看它排定的時間；一直沒動請聯絡我們。' },
   },
   {
+    // `C-433`：存草稿只記住時間，沒排上（排程器只認「排程中」）
+    id: 'broadcastNotScheduled',
+    icon: AlarmClock,
+    // 標題已經講「沒排上、不會送」、detail 講哪一則幾點：這裡只講怎麼做（⛔ 同一句講三遍）
+    impact: '要發就打開那一則，按右上「驗證並排程」再按「確認排程」；清單上變成藍色「排程中」才算排上。',
+    cta: '去排程',
+    // 排上要 `broadcast.send`；只能存草稿的同事看不到這顆，要請有權限的人排
+    requires: 'broadcast.send',
+    route: wid => `/admin/${wid}/broadcasts`,
+    anchor: { selector: '[data-tour="bc-list"]', note: '清單上寫「還沒排上」的就是：點開它，按右上「驗證並排程」，再按「確認排程」。' },
+  },
+  {
     // 系統端問題：使用者修不了，但影響要現形（轉真人提醒、自動回收都靠它）
     id: 'maintenanceStalled',
     icon: Tools,

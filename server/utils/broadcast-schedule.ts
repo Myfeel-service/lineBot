@@ -1,5 +1,5 @@
 import type { Timestamp } from 'firebase-admin/firestore'
-import { BROADCAST_SCHEDULE_MIN_LEAD_MS } from '~~/shared/broadcast-schedule-time'
+import { BROADCAST_SCHEDULE_MIN_LEAD_MS, broadcastSendAtText } from '~~/shared/broadcast-schedule-time'
 
 export { BROADCAST_SCHEDULE_MIN_LEAD_MS }
 
@@ -80,6 +80,35 @@ export function parsePlannedBroadcastScheduleAt(value: unknown): Date | null {
   const d = broadcastScheduleAtToDate(value)
   if (!d) throw createError({ statusCode: 400, statusMessage: broadcastScheduleErrorMessage('invalid') })
   return d
+}
+
+/** `C-433`：記的時間已經過了的，還講幾天（同推播失敗那扇窗：講的是「那則沒送出去」，再久就不是消息了） */
+export const BROADCAST_PLANNED_PAST_WINDOW_MS = 3 * 24 * 3600_000
+
+/**
+ * `C-433`：草稿記了發送時間、卻還沒排上（`D-167`② 之後存草稿會記住時間，⛔ 但排程器只認「排程中」）。
+ * 還沒到的全算、最早要送的拿來講（時間到之前講才有用）；已經過了的只算三天內。回 null＝沒有要講的。
+ * 只吃草稿：呼叫端要先挑好 status＝draft（排上那一步會把記的時間清掉，但「立即發送」不一定）。
+ */
+export function unscheduledPlannedDrafts(
+  rows: Array<{ name?: unknown; plannedScheduleAt?: unknown }>,
+  nowMs: number,
+): { count: number; detail: string } | null {
+  const items = rows
+    .map(r => ({ name: String(r.name ?? '').trim() || '(未命名推播)', at: broadcastScheduleAtToDate(r.plannedScheduleAt) }))
+    .filter((x): x is { name: string; at: Date } => !!x.at && x.at.getTime() >= nowMs - BROADCAST_PLANNED_PAST_WINDOW_MS)
+  if (!items.length) return null
+  const upcoming = items.filter(x => x.at.getTime() > nowMs).sort((a, b) => a.at.getTime() - b.at.getTime())
+  const past = items.filter(x => x.at.getTime() <= nowMs).sort((a, b) => b.at.getTime() - a.at.getTime())
+  const first = upcoming[0] ?? past[0]!
+  const when = broadcastSendAtText(first.at)
+  return {
+    count: items.length,
+    // 「還沒排上」標題已經講了，這裡只講哪一則、幾點
+    detail: upcoming.length
+      ? `「${first.name}」記了 ${when} 要送`
+      : `「${first.name}」記的 ${when} 已經過了，沒有送出`,
+  }
 }
 
 export function assertFutureBroadcastScheduleAt(value: unknown): Date {

@@ -671,6 +671,7 @@ import {
   parseDraftHandoff,
 } from '~~/shared/broadcast-draft-handoff'
 import {
+  broadcastSendAtText,
   localDateTimeInputToUtcIso,
   validateFutureScheduleLocalInput,
 } from '~~/shared/broadcast-schedule-time'
@@ -1014,22 +1015,22 @@ const openRateCompareText = computed(() => {
   })
 })
 
-/** 「10/31 下午6:00」：排程中的推播幾點送（台灣時間、不印年跟秒） */
-function sendAtText(d: Date): string {
-  return d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Taipei' })
-}
-
 /** 排程那一格的說明：「已排上：10/31 下午6:00 會自動送出」 */
 const scheduledSendAtText = computed(() => {
   const d = parseFirestoreDate(selectedItem.value?.scheduleAt)
-  return d ? sendAtText(d) : '排定的時間'
+  return d ? broadcastSendAtText(d) : '排定的時間'
 })
 
 function bcMetaText(bc: any): string {
   // `D-167`③：排程中的寫「幾點送出」——以前只寫時間，分不出是「幾點要送」還是「幾點送過」
   if (bc.status === 'scheduled') {
     const d = parseFirestoreDate(bc.scheduleAt)
-    return d ? `${sendAtText(d)} 送出` : ''
+    return d ? `${broadcastSendAtText(d)} 送出` : ''
+  }
+  // `C-433`：記了時間的草稿在清單上就講「還沒排上」——小幫手的提醒帶過來，看這一行找是哪一則
+  if (bc.status === 'draft') {
+    const d = parseFirestoreDate(bc.plannedScheduleAt)
+    if (d) return d.getTime() > Date.now() ? `${broadcastSendAtText(d)} 還沒排上` : `${broadcastSendAtText(d)} 沒排上、沒送出`
   }
   const parts: string[] = []
   if (bc.audienceSnapshot?.estimatedCount) parts.push(`${bc.audienceSnapshot.estimatedCount} 人`)

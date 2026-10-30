@@ -10,6 +10,7 @@ import { aggregateWrongAnswerMarks, isChunkUnfixedSinceMark, pendingMarks, readM
 import { getQuotaAnswered } from './ai-usage'
 import { SCRIPTS_COLLECTION, loadActiveScripts } from './ai-scripts'
 import { scriptTriggerEvent } from '~~/shared/types/ai-script'
+import { unscheduledPlannedDrafts } from './broadcast-schedule'
 import { findBrokenModuleRefs } from './broken-module-refs'
 import { findStaleSheetModules } from './sheet-stale-modules'
 import { findSheetIssues, sheetFieldIssueText, sheetProductNames, type SheetIssues } from './sheet-issues'
@@ -62,6 +63,8 @@ import { lineQuotaAlertDetail, lineQuotaLevel, type LineQuotaLevel } from '~~/sh
  */
 const PROBLEM_SCAN_LIMIT = 20
 const SESSION_SCAN_LIMIT = 200
+/** 「記了時間沒排上」要看完一個帳號的全部草稿（`C-433`）：草稿不是出問題的那幾筆，20 會漏 */
+const DRAFT_SCAN_LIMIT = 100
 /**
  * 「AI 沒學起來」要讀幾條來數「試完 5 次的」（`D-129`）。只有 count 探到有失敗才讀、只讀兩格。
  * 開得比 200 大：一次搬家可以失敗兩三百條（10-16 那次 281 條），試完的那幾條排在後面就會被數成 0
@@ -845,6 +848,21 @@ export async function collectWorkspaceAlerts(
             count: overdue.length,
             detail: `「${String(first.name ?? '(未命名推播)')}」排定 ${late}前要送`,
           }
+        }),
+        probe('broadcastNotScheduled', async () => {
+          // `C-433`：草稿記了時間、沒排上＝到時間不會送。等值查詢＋記憶體比對時間，免新索引（同上兩顆）：
+          // 草稿一個帳號就幾則（2026-10-30 正式站全平台 5 則），讀得起；哪天有帳號囤上百則草稿再改複合索引。
+          const snap = await db.collection('broadcasts')
+            .where('workspaceId', '==', wid)
+            .where('status', '==', 'draft')
+            .select('name', 'plannedScheduleAt')
+            .limit(DRAFT_SCAN_LIMIT)
+            .get()
+          const hit = unscheduledPlannedDrafts(snap.docs.map(d => d.data()), Date.now())
+          if (hit) return { active: true, ...hit }
+          // 沒看完就說「沒有」＝可能漏掉後面那幾則：講「這次查不到」，不講沒事
+          if (snap.size >= DRAFT_SCAN_LIMIT) throw new Error(`草稿超過 ${DRAFT_SCAN_LIMIT} 則，沒看完`)
+          return { active: false }
         }),
         probe('knowledgeSuggestions', async () => {
           // 不是異常，是「可以更好」：建議收件匣有幾筆待處理草稿。

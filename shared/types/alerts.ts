@@ -136,6 +136,12 @@ export type WorkspaceAlertId =
   | 'broadcastFailed'
   /** 排程推播過了排定時間還沒送（排程可能卡住） */
   | 'broadcastOverdue'
+  /**
+   * 推播草稿記了發送時間、卻沒按「驗證並排程」（`C-433`）：到時間不會送。
+   * 跟上一顆不同：那顆是排上了、系統沒送（不用你操作）；這顆是根本沒排上（要人去按）。
+   * 2026-10-29 MYFEEL 三則就是這樣，到 10/31 時間過了、客人沒收到才會發現。
+   */
+  | 'broadcastNotScheduled'
   /** 背景自動維護（轉真人提醒、過期回收、資料更新偵測）心跳停了 */
   | 'maintenanceStalled'
   /**
@@ -230,6 +236,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   claimPushUnmarked: '活動推播後有對話被誤標成待處理',
   broadcastFailed: '有推播沒有送出去',
   broadcastOverdue: '有排程推播過時間還沒送',
+  broadcastNotScheduled: '有推播還沒排上，不會自動送',
   maintenanceStalled: '系統自動維護沒在跑',
   scannerStalled: 'AI 讀對話的背景掃描一直失敗',
   knowledgeSuggestions: '有客人問過、AI 沒答好的主題',
@@ -315,6 +322,8 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   invoiceFailed: 'suggestion',
   broadcastFailed: 'warning',
   broadcastOverdue: 'warning',
+  // 黃：現在沒有客人受影響、還來得及補；紅點留給「正在影響客人」（不然紅點長亮會被無視）
+  broadcastNotScheduled: 'warning',
   maintenanceStalled: 'warning',
   scannerStalled: 'warning',
   knowledgeSuggestions: 'suggestion',
@@ -380,6 +389,9 @@ export const SYSTEM_OWNED_ALERTS: ReadonlySet<WorkspaceAlertId> = new Set<Worksp
 export const DIGEST_WARNING_ALERTS: readonly WorkspaceAlertId[] = [
   'renewalNotBound',
   'broadcastFailed',
+  // `C-433`：四條都過——要人去按、本文沒講、沒有自己的通知、一次等值查詢。
+  // 這顆最需要摘要：記了時間就離開後台的人，只有早上這一則會在時間到之前叫他
+  'broadcastNotScheduled',
   'knowledgeDetectStalled',
   'scriptUnreachable',
 ]

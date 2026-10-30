@@ -89,6 +89,8 @@ describe('collectWorkspaceAlerts 權限分組（要跟前端註冊表的 require
     expect(ids.has('tagDiscoverySuggestions')).toBe(true)
     expect(ids.has('handoffNotifyMissing')).toBe(true)
     expect(ids.has('broadcastFailed')).toBe(true)
+    // `C-433`：前端標 broadcast.send（營運級），每日摘要也只跑營運組——放帳單組＝摘要永遠講不到
+    expect(ids.has('broadcastNotScheduled')).toBe(true)
     // D-43②：貼標建議待審與草稿模式彙總也是 operate 級
     expect(ids.has('tagSuggestionsPending')).toBe(true)
     expect(ids.has('aiDraftsWaiting')).toBe(true)

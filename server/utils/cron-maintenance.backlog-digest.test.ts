@@ -426,6 +426,14 @@ describe('dailyBacklogDigest 黃級異常搭便車', () => {
     expect(text).not.toContain('永遠不會被啟動') // 只點名最重要那件,不把異常面板搬進 LINE
   })
 
+  it('推播記了時間還沒排上（`C-433`）→ 早上這一則點名：記了時間就離開後台的人，只有這裡會在時間到之前叫他', async () => {
+    collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastNotScheduled', state: 'active' }])
+    const { db } = makeDb(['U1'])
+    await dailyBacklogDigest(db)
+
+    expect(sentText()).toContain('最重要的是「有推播還沒排上，不會自動送」')
+  })
+
   it('綁卡沒成那顆不在營運探針組,單獨查、而且排在允許清單第一（錢的事最重要）', async () => {
     countRecentUnboundRenewals.mockResolvedValue(1)
     collectWorkspaceAlerts.mockResolvedValue([{ id: 'broadcastFailed', state: 'active' }])
