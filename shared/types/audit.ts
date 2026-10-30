@@ -383,6 +383,7 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   completionTagIdsCount: '發完要貼的標籤數',
   audienceSource: '發送對象',
   scheduleAt: '預定發送時間',
+  plannedScheduleAt: '草稿記的發送時間（還沒排上）',
   activeUntil: '用到哪一天',
   totalCount: '預計送出人數',
   sentCount: '實際送達人數',
@@ -422,7 +423,8 @@ export const AUDIT_VALUE_LABELS: Record<string, Record<string, string>> = {
   // 推播狀態（`C-254`）：畫面上出現 `cancelled` 跟出現欄位代號是同一個毛病
   status: {
     draft: '草稿',
-    scheduled: '已排程',
+    // `D-167`③：跟推播清單那顆膠囊同一個字
+    scheduled: '排程中',
     processing: '發送中',
     completed: '已送出',
     failed: '發送失敗',

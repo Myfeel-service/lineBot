@@ -50,7 +50,7 @@ describe('這次收斂有沒有讓現有的人少一件事（回報要講清楚�
 describe('推播頁照同一支規則畫（無權限一律隱藏）', () => {
   it('「儲存草稿／儲存變更」那顆照這一則要的能力出現，表單鎖不鎖也看它', () => {
     expect(page).toContain('broadcastSaveCapability(isCreating.value ? null : selectedItem.value?.status)')
-    expect(page).toMatch(/<el-button v-if="can\(saveCapability\)" :loading="saving" @click="saveDraft">/)
+    expect(page).toMatch(/<el-button v-if="can\(saveCapability\)" :loading="saving" @click="saveDraft\(\)">/)
     expect(page).toContain('const isLocked = computed(() => isReadOnly.value || !can(saveCapability.value))')
     expect(page).toContain('if (!assertCan(saveCapability.value)) return false')
   })
@@ -59,7 +59,7 @@ describe('推播頁照同一支規則畫（無權限一律隱藏）', () => {
     expect(page).toMatch(/<div v-if="can\('broadcast\.send'\) \|\| form\.scheduleMode === 'schedule'" class="admin-field-group" data-schedule-field>/)
   })
 
-  it('已排程的提示「可以儲存變更或取消排程」只給有送出權限的人', () => {
-    expect(page).toContain('<template v-if="can(\'broadcast.send\')">可以「儲存變更」或「取消排程」。</template>')
+  it('排程中的說明「要改內容按儲存變更，不發了按取消排程」只給有送出權限的人', () => {
+    expect(page).toContain('<template v-if="can(\'broadcast.send\')">要改內容按「儲存變更」，不發了按「取消排程」。</template>')
   })
 })

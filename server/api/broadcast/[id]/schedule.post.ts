@@ -48,6 +48,8 @@ export default defineEventHandler(async (event) => {
   const updates: Record<string, unknown> = {
     status: 'scheduled',
     scheduleAt,
+    // `D-167`②：草稿記著的那個時間到這裡就用完了，排上的時間只看 `scheduleAt`
+    plannedScheduleAt: null,
     updatedAt: FieldValue.serverTimestamp(),
   }
 

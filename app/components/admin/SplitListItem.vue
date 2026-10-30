@@ -125,7 +125,8 @@ const props = withDefaults(defineProps<{
   title: string
   active?: boolean
   chipText?: string
-  chipTone?: 'success' | 'neutral' | 'warning' | 'error'
+  /** `info`＝藍色：「排程中」這種等著發生、還沒完成的（`D-167`③，不跟「已完成」同綠） */
+  chipTone?: 'success' | 'neutral' | 'warning' | 'error' | 'info'
   metaText?: string
   metaTruncate?: boolean
   /** 左側頭貼 URL；與 showLeadingAvatarFallback 擇一或併用 */

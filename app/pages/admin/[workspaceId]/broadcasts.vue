@@ -126,7 +126,7 @@
           </el-button>
           <el-button @click="cancelEdit">取消</el-button>
           <!-- `C-352`②：已經排好的那一則，「儲存變更」改的是到時間會自動送出去的東西＝要送出權限（同「確認排程」） -->
-          <el-button v-if="can(saveCapability)" :loading="saving" @click="saveDraft">
+          <el-button v-if="can(saveCapability)" :loading="saving" @click="saveDraft()">
             {{ selectedItem?.status === 'scheduled' ? '儲存變更' : '儲存草稿' }}
           </el-button>
           <!-- `G-109`：驗證本身是讀取，這顆按到底是 `send`／`schedule`，所以照 `broadcast.send` 擋 -->
@@ -396,11 +396,19 @@
                 :disabled-date="disabledPastDate"
                 :disabled="isLocked"
               />
+              <!--
+                `D-167`③：排上的講「幾點會送、關掉這頁也會送」——以前寫「開著這個推播列表頁最保險」，
+                那是排程器還沒接上伺服器時的說法（2026-07-23 起每分鐘自己送），留著會讓人以為要一直開著。
+                `D-167`②：還沒排上的直接講「還沒排上」：2026-10-29 MYFEEL 三則選了時間、按了儲存草稿，以為排好了。
+              -->
               <p v-if="selectedItem?.status === 'scheduled'" class="tags-hint">
-                已排程，時間到後系統會自動發送（開著這個推播列表頁最保險；若要完全自動、關頁也能發，需請工程人員設定好伺服器）。<template v-if="can('broadcast.send')">可以「儲存變更」或「取消排程」。</template>
+                <strong>已排上</strong>：{{ scheduledSendAtText }} 會自動送出，關掉這一頁也會送。<template v-if="can('broadcast.send')">要改內容按「儲存變更」，不發了按「取消排程」。</template>
               </p>
               <p v-else-if="can('broadcast.send')" class="tags-hint">
-                按下確認後不會馬上發，要到排程時間才送出；發送對象也是到那個時間點才計算。
+                <strong>還沒排上</strong>：要按右上「驗證並排程」確認，時間到才會自動送出。
+              </p>
+              <p v-else class="tags-hint">
+                <strong>還沒排上</strong>：要請能發推播的同事按「驗證並排程」確認，時間到才會自動送出。
               </p>
             </div>
           </div>
@@ -1059,7 +1067,8 @@ const headerSubmitLabel = computed(() => (isScheduleSubmit.value ? '驗證並排
 function statusLabel(s: string) {
   const map: Record<string, string> = {
     draft: '草稿',
-    scheduled: '已排程',
+    // `D-167`③：老闆要的字。「已排程」跟「已完成」同一種講法＋同一個綠，一眼分不出等著送還是送完了
+    scheduled: '排程中',
     processing: '發送中',
     completed: '已完成',
     failed: '失敗',
@@ -1068,9 +1077,10 @@ function statusLabel(s: string) {
   return map[s] ?? s
 }
 
-// 狀態膠囊色調：失敗要跳出來（error）、發送中提示（warning）、完成/排程正向（success）、其餘中性
-function broadcastTone(s: string): 'success' | 'neutral' | 'warning' | 'error' {
-  if (s === 'completed' || s === 'scheduled') return 'success'
+// 狀態膠囊色調：失敗要跳出來（error）、發送中提示（warning）、完成（success）、排程中藍色（info，`D-167`③：不跟已完成同綠）、其餘中性
+function broadcastTone(s: string): 'success' | 'neutral' | 'warning' | 'error' | 'info' {
+  if (s === 'completed') return 'success'
+  if (s === 'scheduled') return 'info'
   if (s === 'failed') return 'error'
   if (s === 'processing') return 'warning'
   return 'neutral'
@@ -1107,7 +1117,23 @@ const openRateCompareText = computed(() => {
   })
 })
 
+/** 「10/31 下午6:00」：排程中的推播幾點送（台灣時間、不印年跟秒） */
+function sendAtText(d: Date): string {
+  return d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Taipei' })
+}
+
+/** 排程那一格的說明：「已排上：10/31 下午6:00 會自動送出」 */
+const scheduledSendAtText = computed(() => {
+  const d = parseFirestoreDate(selectedItem.value?.scheduleAt)
+  return d ? sendAtText(d) : '排定的時間'
+})
+
 function bcMetaText(bc: any): string {
+  // `D-167`③：排程中的寫「幾點送出」——以前只寫時間，分不出是「幾點要送」還是「幾點送過」
+  if (bc.status === 'scheduled') {
+    const d = parseFirestoreDate(bc.scheduleAt)
+    return d ? `${sendAtText(d)} 送出` : ''
+  }
   const parts: string[] = []
   if (bc.audienceSnapshot?.estimatedCount) parts.push(`${bc.audienceSnapshot.estimatedCount} 人`)
   if (bc.scheduleAt) {
@@ -1386,15 +1412,17 @@ function loadFormFromItem(item: any) {
   detailSendMode.value = typeof item.sendMode === 'string' ? item.sendMode : null
   // ⛔ 每次都覆寫（不是補發就清掉），不然下一則會帶著上一則的補發對象存檔
   followUpSource.value = src.type === 'followUp' ? { ...src } : null
+  // `D-167`②：還沒排上的草稿記著的時間（排上的只看 scheduleAt）
+  const at = item.scheduleAt || (item.status === 'scheduled' ? null : item.plannedScheduleAt)
   form.value = {
     name: item.name ?? '',
     audienceType: src.type ?? 'all',
     tagIds: src.tagIds ?? [],
     importText: (src.importedUserIds ?? []).join('\n'),
     contentAction: parseLineMessagesToUnifiedAction(item.messages ?? []) as UnifiedAction,
-    scheduleMode: item.status === 'scheduled' || item.scheduleAt ? 'schedule' : 'now',
-    scheduleAt: item.scheduleAt
-      ? formatDateForPicker(parseFirestoreDate(item.scheduleAt) ?? new Date())
+    scheduleMode: item.status === 'scheduled' || at ? 'schedule' : 'now',
+    scheduleAt: at
+      ? formatDateForPicker(parseFirestoreDate(at) ?? new Date())
       : '',
     completionTagIds: Array.isArray(item.completionTagIds) ? item.completionTagIds : [],
     // 編輯既有推播時要保留來歷，⛔ 存一次檔就把它洗掉的話，回顧會突然對不起來
@@ -1472,8 +1500,15 @@ function buildSaveBody(): Record<string, unknown> {
     const iso = scheduleAtForApi()
     if (iso) body.scheduleAt = iso
   }
-  else if (!isCreating.value) {
-    body.scheduleAt = null
+  else {
+    if (!isCreating.value) body.scheduleAt = null
+    /*
+     * `D-167`②：還沒排上的，選了「排程發送」＋時間就把時間記著（`plannedScheduleAt`，到時間**不會**送）。
+     * ⛔ 以前這裡把時間整個清掉：存完畫面跳回「立即發送」、按鈕變「驗證並發送」，再按確認就是馬上發。
+     * ⛔ 不可以送 scheduleAt：那一格有值＝排上了，排上要先檢查人數＋送出權限（「驗證並排程」那一條）。
+     */
+    const planned = form.value.scheduleMode === 'schedule' ? scheduleAtForApi() : null
+    if (planned || !isCreating.value) body.plannedScheduleAt = planned
   }
   return body
 }
@@ -1550,7 +1585,10 @@ async function cancelEdit() {
   }
 }
 
-async function saveDraft(): Promise<boolean> {
+/**
+ * @param opts.beforeSubmit 按「驗證並排程／發送」時順手先存的：⛔ 不講「還沒排上——要按驗證並排程」（他正在按）
+ */
+async function saveDraft(opts?: { beforeSubmit?: boolean }): Promise<boolean> {
   if (!assertCan(saveCapability.value)) return false
   const err = validateForm({
     requireScheduleTime: form.value.scheduleMode === 'schedule',
@@ -1562,9 +1600,13 @@ async function saveDraft(): Promise<boolean> {
   saving.value = true
   try {
     const body = buildSaveBody()
+    // `D-167`②：記了時間的草稿存完要講「還沒排上」——2026-10-29 MYFEEL 就是以為存了就排好了
+    const notYetScheduled = opts?.beforeSubmit || !body.plannedScheduleAt
+      ? ''
+      : can('broadcast.send') ? '，還沒排上——要按「驗證並排程」' : '，還沒排上——要請能發推播的同事排程'
     if (isCreating.value) {
       const created = await apiFetch<any>('/api/broadcast/create', { method: 'POST', body })
-      showToast('草稿已建立', 'success')
+      showToast(`草稿已建立${notYetScheduled}`, 'success')
       await loadData()
       selectedId.value = created.id
       isCreating.value = false
@@ -1573,7 +1615,7 @@ async function saveDraft(): Promise<boolean> {
     else {
       await apiFetch(`/api/broadcast/${selectedId.value}`, { method: 'PUT', body })
       const savedScheduled = selectedItem.value?.status === 'scheduled' && body.scheduleAt
-      showToast(savedScheduled ? '排程已更新' : '草稿已儲存', 'success')
+      showToast(savedScheduled ? '排程已更新' : `草稿已儲存${notYetScheduled}`, 'success')
       await loadData()
       if (selectedId.value && !(await loadFormFromId(selectedId.value))) {
         showToast('已儲存但載入內容失敗，請重新點選該推播', 'error')
@@ -1742,7 +1784,7 @@ async function openValidateDialog() {
    * 改過的「發完貼記號」也不會貼。排程那條雖然會帶名字／對象／內容，其他欄位一樣會掉。
    */
   else if (hasUnsavedChanges.value) {
-    if (!(await saveDraft())) return
+    if (!(await saveDraft({ beforeSubmit: true }))) return
   }
 
   if (!selectedId.value) return
@@ -1762,8 +1804,14 @@ async function openValidateDialog() {
       showToast(serverErrors[0], 'error')
     }
   }
-  catch {
-    showToast('驗證失敗', 'error')
+  catch (e) {
+    /*
+     * `C-431`：以前只有「驗證失敗」四個字——2026-10-29 MYFEEL 兩次都是名單太大、算人數超過主機 30 秒，
+     * 看的人不知道是內容有問題、還是再按一次就好。逾時（閘道切斷）跟送出那邊用同一支判斷。
+     */
+    showToast(maybeStillSending(e)
+      ? '計算發送人數超過時間，這次沒算完。請再按一次；一直這樣請聯絡我們。'
+      : '驗證失敗，請再按一次；一直這樣請聯絡我們。', 'error')
     closeValidateDialog()
   }
   finally {
