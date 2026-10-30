@@ -39,3 +39,14 @@
   background: color-mix(in srgb, var(--color-info) 14%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-info) 40%, transparent);
 }
+
+/*
+  `C-449`：試算表上找不到的那一格（欄名改了、那一列刪了）：紅色＋刪除線，模組上方那段說明講的就是這一顆。
+  ⛔ 只能動顏色和線——字寬一變，疊在輸入框上的這一層就跟底下的字錯開
+*/
+.var-field__pill--missing {
+  background: color-mix(in srgb, var(--el-color-danger) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--el-color-danger) 45%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: var(--el-color-danger);
+}

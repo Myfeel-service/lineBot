@@ -1,0 +1,237 @@
+<!doctype html>
+<!--
+  `C-448` 商品新功能教學的示意圖來源（後台「教我怎麼用」彈窗用，見 app/utils/field-help.ts 的 sheetCatalog／productTemplate／productSheetFormat）。
+  每個 .frame 是一張圖：scripts/make-product-help-shots.mjs 用瀏覽器開這一頁、照 id 一張張截成 public/onboarding/<id>.png。
+  改字、改圖：改這一頁 → 重跑那支腳本，不用動程式。
+
+  ⛔ 不用任何一家店的商品照片、品牌、商品名（2026-10-30 老闆「圖片盡量不要用廠商的圖片」）：
+     每個店家都看得到這個彈窗，一律用示範商品（保溫隨行杯、藍牙耳機、桌上型電扇＝色塊＋線條圖），帳號名寫「你的官方帳號」。
+  寬 680＝彈窗內容寬（720 減左右內距）；截圖放大兩倍，字不糊。
+-->
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<title>商品新功能教學圖</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; background: #e5e7eb; font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; color: #111827; display: flex; flex-direction: column; gap: 24px; align-items: flex-start; }
+.frame { width: 680px; background: #f7f8fa; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 14px; overflow: hidden; }
+.frame.result { height: 270px; background: #f3f8f5; }
+.frame.step { height: 250px; }
+.frame.format { height: 262px; background: #ffffff; padding: 12px; }
+
+.mark { outline: 2.5px solid #f59e0b; outline-offset: 2px; border-radius: 4px; }
+.arr { color: #6b7280; font-size: 24px; }
+.col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.cap { font-size: 12px; font-weight: 700; color: #374151; text-align: center; }
+
+/* LINE 手機 */
+.ph { width: 210px; height: 214px; border: 5px solid #1f2937; border-radius: 18px; overflow: hidden; background: #8daccd; font-size: 10.5px; line-height: 1.5; display: flex; flex-direction: column; }
+.ph-bar { background: #f6f7f9; padding: 4px 10px; font-weight: 700; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }
+.ph-body { padding: 8px 6px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.me { align-self: flex-end; background: #a5e37f; padding: 3px 8px; border-radius: 10px; }
+.pcar { display: flex; gap: 5px; }
+.cd { background: #ffffff; border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+.cd .t { padding: 5px 7px 1px; font-weight: 700; }
+.cd .b { padding: 0 7px 5px; white-space: pre-line; }
+.cd .k { margin: 0 6px 4px; height: 20px; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.cd .k.p { background: #06c755; color: #ffffff; }
+.cd .k.s { color: #06a64a; border: 1px solid #d5eadc; }
+.tagnote { font-size: 10px; color: #047a35; font-weight: 700; text-align: center; background: rgba(255,255,255,.85); border-radius: 6px; padding: 1px 4px; }
+
+/* 示範商品圖：色塊＋線條圖 */
+.gp { display: flex; align-items: center; gap: 8px; padding: 0 10px; color: #ffffff; font-weight: 700; font-size: 11px; }
+.gp.cup { background: linear-gradient(135deg, #2f8f83, #5bb5a8); }
+.gp.ear { background: linear-gradient(135deg, #5b5fc7, #8b8fe0); }
+.gp.fan { background: linear-gradient(135deg, #c8862a, #e2ac5c); }
+.pcar .gp { width: 150px; height: 84px; border-radius: 8px; flex-shrink: 0; }
+.cd .gp { height: 62px; }
+
+/* 試算表 */
+.gs { border: 1px solid #d9dee3; border-radius: 8px; overflow: hidden; background: #ffffff; font-size: 11px; color: #202124; }
+.gs-top { padding: 4px 8px; font-weight: 600; border-bottom: 1px solid #e2e3e5; display: flex; gap: 6px; align-items: center; }
+.gs-top i { width: 12px; height: 14px; border-radius: 2px; background: #0f9d58; display: inline-block; }
+.gs-grid { display: grid; }
+.gs-grid > div { padding: 4px 6px; border-right: 1px solid #e2e3e5; border-bottom: 1px solid #e2e3e5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gs-grid .rn, .gs-grid .ch { background: #f8f9fa; color: #5f6368; text-align: center; }
+.gs-grid .hd { font-weight: 700; }
+.gs-grid .url { color: #1a73e8; }
+.gs-grid .cbc { text-align: center; }
+.cb { display: inline-flex; width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid #5f6368; vertical-align: -2px; }
+.cb.on { background: #1a73e8; border-color: #1a73e8; }
+
+/* 後台一角 */
+.mini { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.mini .h { font-weight: 700; font-size: 12px; }
+.mini .r { display: flex; gap: 8px; align-items: center; }
+.mini .l { width: 100px; font-weight: 700; font-size: 11px; color: #374151; flex-shrink: 0; }
+.mut { color: #6b7280; font-size: 11px; }
+.btn { display: inline-flex; align-items: center; height: 26px; padding: 0 11px; border-radius: 4px; border: 1px solid #dcdfe6; background: #ffffff; color: #374151; font-size: 12px; white-space: nowrap; }
+.btn.pri { background: #06c755; border-color: #06c755; color: #ffffff; }
+.lnk { color: #06a64a; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden; }
+.seg span { padding: 3px 10px; font-size: 11.5px; background: #ffffff; white-space: nowrap; }
+.seg .on { background: #06c755; color: #ffffff; }
+.sel { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; height: 26px; padding: 0 8px; border: 1px solid #dcdfe6; border-radius: 4px; color: #374151; background: #ffffff; font-size: 11.5px; white-space: nowrap; flex: 1; }
+.sel::after { content: "⌄"; color: #9ca3af; }
+.ok { color: #047a35; font-weight: 700; font-size: 11.5px; }
+.input { border: 1px solid #dcdfe6; border-radius: 4px; padding: 5px 8px; font-size: 11px; color: #6b7280; background: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box { width: 280px; border: 1px solid #dcdfe6; border-radius: 6px; background: #ffffff; padding: 8px 10px; font-size: 12px; line-height: 2; display: flex; align-items: center; justify-content: space-between; }
+.drop { width: 280px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 6px; box-shadow: 0 6px 16px rgba(0,0,0,.12); font-size: 12px; overflow: hidden; }
+.drop div { padding: 5px 10px; }
+.drop .g { font-size: 10.5px; color: #6b7280; font-weight: 700; padding-bottom: 0; }
+.drop .d { border-top: 1px solid #eef0f2; }
+.pill { display: inline-flex; padding: 0 8px; border-radius: 999px; background: #dbeafe; color: #1e40af; font-size: 11.5px; font-weight: 600; line-height: 1.8; }
+.ex { width: 230px; background: #ffffff; border-radius: 8px; border: 1px solid #e5e7eb; padding: 8px 10px; font-size: 11.5px; line-height: 1.7; }
+
+/* 商品試算表格式 */
+.sb { width: 100%; border: 1px solid #d9dee3; border-radius: 8px; overflow: hidden; background: #ffffff; font-size: 11.5px; color: #202124; }
+.sb .gs-grid { grid-template-columns: 22px 110px minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 0.85fr) 100px; }
+.sb .tag { white-space: normal; font-size: 10.5px; line-height: 1.45; color: #374151; background: #fffbea; }
+.sb .tag b { color: #92400e; display: block; }
+</style>
+</head>
+<body>
+
+<!-- ─────────── 商品目錄照試算表排 ─────────── -->
+
+<div class="frame result" id="product-catalog-result">
+  <div class="col">
+    <div class="ph"><div class="ph-bar">你的官方帳號</div><div class="ph-body">
+      <span class="me">看商品</span>
+      <div class="pcar"><div class="gp cup mark" data-g="cup">保溫隨行杯</div><div class="gp ear" data-g="ear">藍牙耳機</div></div>
+    </div></div>
+    <span class="cap">點選單，收到一排商品圖（左右滑）</span>
+  </div>
+  <span class="arr">→</span>
+  <div class="col">
+    <div class="ph"><div class="ph-bar">你的官方帳號</div><div class="ph-body">
+      <div class="cd"><div class="gp cup" data-g="cup">保溫隨行杯</div><div class="t">保溫隨行杯 500ml</div><div class="b">出貨時間：現貨，下單後 3 個工作天內出貨。</div><div class="k p">查看商品頁</div></div>
+      <span class="tagnote">✓ 自動貼上「保溫隨行杯」標籤</span>
+    </div></div>
+    <span class="cap">點保溫杯，收到保溫杯的資訊</span>
+  </div>
+</div>
+
+<div class="frame step" id="product-catalog-1">
+  <div class="mini" style="width:250px">
+    <span class="h">知識庫 › 加入知識 › Google 試算表</span>
+    <span class="btn">從 Google 雲端硬碟挑一份試算表</span>
+    <span class="mut">還沒有表？幫我開一份新的</span>
+    <span class="mut">要做 LINE 商品目錄？<span class="lnk mark">幫我開一份商品表</span></span>
+  </div>
+  <span class="arr">→</span>
+  <div class="gs" style="width:356px"><div class="gs-top"><i></i>你的店 商品資料</div>
+    <div class="gs-grid" style="grid-template-columns:20px 54px 58px 58px 70px 94px">
+      <div class="ch"></div><div class="ch">A</div><div class="ch">B</div><div class="ch">C</div><div class="ch">D</div><div class="ch">E</div>
+      <div class="rn">1</div><div class="hd">商品名</div><div class="hd">出貨時間</div><div class="hd">商品頁面</div><div class="hd">常見問答頁</div><div class="hd">放進LINE目錄</div>
+      <div class="rn">2</div><div></div><div></div><div></div><div></div><div class="cbc"><span class="cb"></span></div>
+      <div class="rn">3</div><div></div><div></div><div></div><div></div><div class="cbc"><span class="cb"></span></div>
+      <div class="rn">4</div><div></div><div></div><div></div><div></div><div class="cbc"><span class="cb"></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="frame step" id="product-catalog-2">
+  <div class="gs" style="width:600px"><div class="gs-top"><i></i>你的店 商品資料</div>
+    <div class="gs-grid" style="grid-template-columns:22px 128px minmax(0,1.3fr) minmax(0,1fr) 92px">
+      <div class="ch"></div><div class="ch">A</div><div class="ch">B</div><div class="ch">C</div><div class="ch">E</div>
+      <div class="rn">1</div><div class="hd">商品名</div><div class="hd">出貨時間</div><div class="hd">商品頁面</div><div class="hd">放進LINE目錄</div>
+      <div class="rn">2</div><div>保溫隨行杯 500ml</div><div>現貨，下單後 3 個工作天內出貨。</div><div class="url">https://你的網站/cup</div><div class="cbc"><span class="cb on mark"></span></div>
+      <div class="rn">3</div><div>藍牙降噪耳機 X2</div><div>預購中，11 月底依訂單順序出貨。</div><div class="url">https://你的網站/x2</div><div class="cbc"><span class="cb on mark"></span></div>
+      <div class="rn">4</div><div>桌上型電扇</div><div>已停售，有問題請找真人客服。</div><div class="url">https://你的網站/fan</div><div class="cbc"><span class="cb"></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="frame step" id="product-catalog-3">
+  <div class="mini" style="width:440px">
+    <span class="h">知識庫 › 加入知識</span>
+    <div class="input">https://docs.google.com/spreadsheets/d/…</div>
+    <span class="ok">✓ 讀得到這份試算表</span>
+    <div class="r" style="justify-content:flex-end"><span class="btn">取消</span><span class="btn pri mark">整理並加入</span></div>
+  </div>
+</div>
+
+<div class="frame step" id="product-catalog-4">
+  <div class="mini" style="width:400px">
+    <span class="h">機器人模組 › 卡片訊息</span>
+    <div class="r"><span class="l">卡片從哪裡來</span><span class="seg mark"><span class="on">照試算表排</span><span>自己一張張做</span></span></div>
+    <div class="r"><span class="l">照哪一份試算表</span><span class="sel">你的店 商品資料</span></div>
+    <div class="r"><span class="l">點卡片送哪個模組</span><span class="sel mark">商品資訊範本</span></div>
+    <div class="r" style="justify-content:flex-end"><span class="btn pri mark">儲存變更</span></div>
+  </div>
+</div>
+
+<!-- ─────────── 商品資訊範本 ─────────── -->
+
+<div class="frame result" id="product-template-result">
+  <div class="col">
+    <div class="ph"><div class="ph-bar">你的官方帳號</div><div class="ph-body">
+      <div class="cd"><div class="gp cup" data-g="cup">保溫隨行杯</div><div class="t">保溫隨行杯 500ml</div><div class="b">出貨時間：現貨，下單後 3 個工作天內出貨。</div><div class="k p">查看商品頁</div><div class="k s">常見問答</div></div>
+    </div></div>
+    <span class="cap">點保溫杯</span>
+  </div>
+  <div class="col">
+    <div class="ph"><div class="ph-bar">你的官方帳號</div><div class="ph-body">
+      <div class="cd"><div class="gp ear" data-g="ear">藍牙耳機</div><div class="t">藍牙降噪耳機 X2</div><div class="b">出貨時間：預購中，11 月底依訂單順序出貨。
+保固一年，故障可寄回原廠維修。</div><div class="k p">查看商品頁</div></div>
+    </div></div>
+    <span class="cap">點藍牙耳機（沒寫常見問答頁，就沒有那顆）</span>
+  </div>
+</div>
+
+<div class="frame step" id="product-template-1">
+  <div class="col">
+    <div class="box"><span>出貨時間：</span><span class="btn mark">＋ 插入</span></div>
+    <div class="drop"><div class="g">客人資料</div><div>LINE 名稱</div><div class="g d">試算表</div><div class="mark">商品資料</div></div>
+  </div>
+</div>
+
+<div class="frame step" id="product-template-2">
+  <div class="mini" style="width:420px">
+    <span class="h">帶出試算表的資料</span>
+    <div class="r"><span class="l">試算表</span><span class="sel">你的店 商品資料</span></div>
+    <div class="r"><span class="l">商品</span><span class="sel mark">這個商品（客人在商品目錄點的那一個）</span></div>
+    <div class="r"><span class="l">哪一項</span><span class="sel mark">出貨時間</span></div>
+    <div class="r" style="justify-content:flex-end"><span class="btn">取消</span><span class="btn pri">插入</span></div>
+  </div>
+</div>
+
+<div class="frame step" id="product-template-3">
+  <div class="col"><div class="box" style="justify-content:flex-start;gap:4px">出貨時間：<span class="pill mark">出貨時間・這個商品</span></div><span class="cap">回覆裡多一顆藍色膠囊</span></div>
+  <span class="arr">→</span>
+  <div class="col"><div class="ex">出貨時間：現貨，下單後 3 個工作天內出貨。</div><span class="cap">客人點保溫杯，收到的是這樣</span></div>
+</div>
+
+<!-- ─────────── 商品試算表長怎樣 ─────────── -->
+
+<div class="frame format" id="product-sheet-format">
+  <div class="sb"><div class="gs-top"><i></i>商品試算表（一列一個商品）</div>
+    <div class="gs-grid">
+      <div class="ch"></div><div class="ch">A</div><div class="ch">B</div><div class="ch">C</div><div class="ch">D</div><div class="ch">E</div>
+      <div class="rn">1</div><div class="hd">商品名</div><div class="hd">出貨時間</div><div class="hd">商品頁面</div><div class="hd">常見問答頁</div><div class="hd">放進LINE目錄</div>
+      <div class="rn">2</div><div>保溫隨行杯 500ml</div><div>現貨，下單後 3 個工作天內出貨。</div><div class="url">https://你的網站/cup</div><div class="url">https://你的網站/cup/faq</div><div class="cbc"><span class="cb on"></span></div>
+      <div class="rn">3</div><div>藍牙降噪耳機 X2</div><div>預購中，11 月底依訂單順序出貨。</div><div class="url">https://你的網站/x2</div><div></div><div class="cbc"><span class="cb on"></span></div>
+      <div class="rn">4</div><div>桌上型電扇</div><div>已停售，有問題請找真人客服。</div><div class="url">https://你的網站/fan</div><div></div><div class="cbc"><span class="cb"></span></div>
+      <div class="rn"></div>
+      <div class="tag"><b>第一欄：商品名</b>一列一個商品，同一個商品只寫一列</div>
+      <div class="tag"><b>自己取名的欄</b>出貨時間、保固、贈品…想加幾欄都行</div>
+      <div class="tag"><b>系統認得</b>商品頁網址：抓商品圖、做「查看商品頁」</div>
+      <div class="tag"><b>選填</b>有寫才有「常見問答」按鈕</div>
+      <div class="tag"><b>系統認得</b>打勾＝放上 LINE 目錄</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 示範商品的線條圖（不用任何一家的商品照片）
+const ICON = {
+  cup: '<svg width="26" height="34" viewBox="0 0 26 34" aria-hidden="true"><rect x="5" y="4" width="16" height="28" rx="4" fill="none" stroke="#fff" stroke-width="2.4"/><rect x="3" y="1" width="20" height="5" rx="2" fill="#fff"/></svg>',
+  ear: '<svg width="32" height="30" viewBox="0 0 32 30" aria-hidden="true"><path d="M5 18a11 11 0 0 1 22 0" fill="none" stroke="#fff" stroke-width="2.4"/><rect x="2" y="16" width="7" height="12" rx="3" fill="#fff"/><rect x="23" y="16" width="7" height="12" rx="3" fill="#fff"/></svg>',
+  fan: '<svg width="30" height="34" viewBox="0 0 30 34" aria-hidden="true"><circle cx="15" cy="13" r="11" fill="none" stroke="#fff" stroke-width="2.4"/><circle cx="15" cy="13" r="2.5" fill="#fff"/><path d="M15 24v7M8 32h14" stroke="#fff" stroke-width="2.4"/></svg>',
+}
+for (const g of document.querySelectorAll('[data-g]')) g.insertAdjacentHTML('afterbegin', ICON[g.dataset.g] ?? '')
+</script>
+</body>
+</html>

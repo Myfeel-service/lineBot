@@ -31,7 +31,8 @@
             <el-dropdown-item :command="SHEET_COMMAND" data-tour="var-sheet-field">
               <span class="flow-var-inset__item">
                 <span class="flow-var-inset__item-label">商品資料</span>
-                <span class="flow-var-inset__item-hint">例：Giaretti 的出貨時間。改試算表，這裡跟 AI 一起變</span>
+                <!-- `C-448`：⛔ 例子不寫任何一家店的商品名（每個店家都看得到） -->
+                <span class="flow-var-inset__item-hint">例：商品的出貨時間。改試算表，這裡跟 AI 一起變</span>
               </span>
             </el-dropdown-item>
           </template>
@@ -72,7 +73,11 @@
         </p>
         <template v-else-if="pickedSource">
           <div class="admin-field-group">
-            <AdminFieldLabel text="商品" tight />
+            <!-- `C-448`：「這個商品」是新做法，旁邊給教學（設好之後客人會看到什麼＋一步一張圖） -->
+            <div class="afh-row">
+              <AdminFieldLabel text="商品" tight />
+              <AdminFieldHelp id="productTemplate" />
+            </div>
             <!--
               `C-437`：第一個選項「這個商品」＝商品資訊範本的寫法——一份回覆給所有商品，
               客人在商品目錄點了哪個商品就填哪個的。其他是寫死某一個商品（`C-423`）。

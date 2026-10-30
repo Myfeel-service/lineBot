@@ -15,7 +15,7 @@
     />
     <!-- 膠囊那一層：疊在輸入框上面、滑鼠穿過去（點的還是輸入框），字是透明的，只畫膠囊的底色 -->
     <div v-show="layerVisible" ref="layerEl" class="var-field__layer" aria-hidden="true">
-      <div ref="layerInnerEl" class="var-field__layer-inner"><template v-for="(seg, i) in segments" :key="i"><span v-if="seg.token" :class="['var-field__pill', { 'var-field__pill--sheet': seg.sheet }]">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>{{ '​' }}</div>
+      <div ref="layerInnerEl" class="var-field__layer-inner"><template v-for="(seg, i) in segments" :key="i"><span v-if="seg.token" :class="['var-field__pill', { 'var-field__pill--sheet': seg.sheet, 'var-field__pill--missing': seg.missing }]">{{ seg.text }}</span><template v-else>{{ seg.text }}</template></template>{{ '​' }}</div>
     </div>
   </div>
 </template>
@@ -40,7 +40,8 @@ import {
   variableTokenRanges,
   type VariableKeyMode,
 } from '~~/shared/variable-tokens'
-import { SHEET_LABELS_KEY } from '~/utils/flow-sheet-picker'
+import { SHEET_LABELS_KEY, SHEET_MISSING_KEY, sheetRefKey } from '~/utils/flow-sheet-picker'
+import { sheetFieldTokensIn } from '~~/shared/sheet-field'
 
 defineOptions({ inheritAttrs: false })
 
@@ -69,13 +70,22 @@ const composing = ref(false)
 
 const display = computed(() => format(String(props.modelValue ?? '')))
 const ranges = computed(() => variableTokenRanges(display.value, props.mode, sheetLabels()))
+/** `C-449`：試算表上找不到的那幾格（模組頁 provide） */
+const sheetMissingRef = inject(SHEET_MISSING_KEY, null)
+function isMissingSheetToken(key: string): boolean {
+  const missing = sheetMissingRef?.value
+  if (!missing?.size) return false
+  const ref = sheetFieldTokensIn(key)[0]?.ref
+  return !!ref && missing.has(sheetRefKey(ref))
+}
 const segments = computed(() => {
-  const out: Array<{ text: string; token: boolean; sheet?: boolean }> = []
+  const out: Array<{ text: string; token: boolean; sheet?: boolean; missing?: boolean }> = []
   let at = 0
   for (const r of ranges.value) {
     if (r.start > at) out.push({ text: display.value.slice(at, r.start), token: false })
-    // `C-428`：試算表的一格畫藍色，跟客人資料（綠色）分得出來
-    out.push({ text: display.value.slice(r.start, r.end), token: true, sheet: r.key.startsWith('{{sheet:') })
+    // `C-428`：試算表的一格畫藍色，跟客人資料（綠色）分得出來；`C-449` 找不到的畫紅色
+    const sheet = r.key.startsWith('{{sheet:')
+    out.push({ text: display.value.slice(r.start, r.end), token: true, sheet, missing: sheet && isMissingSheetToken(r.key) })
     at = r.end
   }
   if (at < display.value.length) out.push({ text: display.value.slice(at), token: false })

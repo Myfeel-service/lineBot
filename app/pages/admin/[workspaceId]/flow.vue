@@ -414,6 +414,15 @@
             </AdminOperateGate>
             <p class="flow-stale-banner__note">換完是一顆藍色膠囊，以後改試算表就會跟著變；按「儲存變更」才會生效。</p>
           </div>
+          <!--
+            `C-449`：清單最上面「試算表的商品要處理」寫「到貨日這一欄找不到了」，點進來要看得出是哪一顆——
+            那顆膠囊畫成紅色（`SHEET_MISSING_KEY`），這裡講客人那邊會怎樣、怎麼修。膠囊刪掉或換掉當下就消失
+          -->
+          <div v-if="selectedSheetFieldIssues.length" class="flow-stale-banner" data-tour="flow-sheet-field-missing">
+            <p class="flow-stale-banner__title">試算表上找不到這個模組用到的資料</p>
+            <p v-for="f in selectedSheetFieldIssues" :key="sheetRefKey(f.ref)" class="flow-stale-banner__why">{{ sheetFieldIssueLine(f) }}</p>
+            <p class="flow-stale-banner__note">下面畫紅線的那一顆就是。把試算表的欄名改回來；或刪掉那一顆，按「＋ 插入」重新挑一格，再按「儲存變更」。</p>
+          </div>
           <div v-if="!form.messages.length" class="fem-empty">
             <span>尚無訊息</span>
             <p class="text-xs text-muted">點擊上方按鈕新增</p>
@@ -983,7 +992,11 @@
                   <template v-if="msg.type === 'flexImageCarousel'">
                     <!-- `C-436`：商品目錄可以照試算表排（`D-166` ⑤）——卡片照「放進LINE目錄」的勾，送出時才產生 -->
                     <div class="admin-field-group" data-tour="flex-card-source">
-                      <AdminFieldLabel text="卡片從哪裡來" tight />
+                      <!-- `C-448`：新功能旁邊的教學（設好之後客人會看到什麼＋一步一張圖；內容在 field-help.ts） -->
+                      <div class="afh-row">
+                        <AdminFieldLabel text="卡片從哪裡來" tight />
+                        <AdminFieldHelp id="sheetCatalog" />
+                      </div>
                       <el-radio-group
                         :model-value="msg.sheetSource ? 'sheet' : 'manual'"
                         size="small"
@@ -1006,8 +1019,9 @@
                         >
                           <el-option v-for="s in sheetSources ?? []" :key="s.id" :label="s.name" :value="s.id" />
                         </el-select>
+                        <!-- `C-449`：以前只有字、要自己找路；直接打開知識庫的「加入知識 › Google 試算表」 -->
                         <p v-if="sheetSources && !sheetSources.length" class="text-xs text-muted">
-                          知識庫還沒有 Google 試算表：先到知識庫接一份。
+                          知識庫還沒有 Google 試算表：<NuxtLink :to="addSheetLink" class="sheet-catalog-link">到知識庫接一份 →</NuxtLink>
                         </p>
                       </div>
                       <div class="admin-field-group">
@@ -1018,6 +1032,13 @@
                           placeholder="選商品資訊範本（可打字搜尋）"
                           size="small"
                         />
+                        <!--
+                          `C-449`：選到沒有用「這個商品」的模組，每個商品點了都收到一模一樣的內容（例如都講第一個商品）——
+                          存檔擋不了（那也是合法的設定），但要講
+                        -->
+                        <p v-if="tapModuleSendsSame(msg.sheetSource.tapModuleId)" class="text-xs text-warning">
+                          這個模組沒有用到「這個商品」，每個商品點了都會收到一樣的內容。
+                        </p>
                         <p class="text-xs text-muted">點了也會貼上那個商品的標籤（勾進目錄時自動建）</p>
                       </div>
                     </template>
@@ -1363,6 +1384,8 @@
                     </el-option-group>
                   </el-select>
                   <span v-else class="text-muted">{{ sheetSourcesLoading ? '讀試算表中…' : '試算表上還沒有商品' }}</span>
+                  <!-- `C-448`：跟插入「商品資料」視窗裡那顆同一個教學 -->
+                  <AdminFieldHelp id="productTemplate" />
                 </div>
                 <p class="flow-preview-product__hint">客人在商品目錄點了哪個商品，就填那個商品的；試算表上空白的那一格，那一行不顯示。</p>
               </template>
@@ -1489,11 +1512,12 @@ import {
   replaceSheetFieldTokens,
   sheetFieldLabel,
   sheetFieldToken,
+  sheetFieldTokensIn,
   sheetRowKey,
   type SheetFieldRef,
   type SheetLabelRegistry,
 } from '~~/shared/sheet-field'
-import { FLOW_CURRENT_PRODUCT_KEY, FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
+import { FLOW_CURRENT_PRODUCT_KEY, FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, SHEET_MISSING_KEY, sheetRefKey, type SheetPickerSource } from '~/utils/flow-sheet-picker'
 import { parseSheetProductRef, sheetProductRef, type SheetCatalogView } from '~~/shared/sheet-catalog'
 import { fillSheetCurrentProduct, usesCurrentProductDeep, type SheetCurrentProduct } from '~~/shared/sheet-current-product'
 import {
@@ -1741,11 +1765,12 @@ const sheetIssueRows = computed(() => {
     if (!rows.has(id)) rows.set(id, { id, name, why: [] })
     rows.get(id)!.why.push(why)
   }
+  // `C-449`：跟提醒中心、商品目錄右邊的分組同一個名字（數字照提醒中心寫在括號裡）
   for (const c of sheetIssues.value?.catalogs ?? []) {
-    if (c.renameUnsure.length) add(c.flowId, c.flowName, `${c.renameUnsure.length} 個要確認是不是改名`)
-    if (c.overflow.length) add(c.flowId, c.flowName, `${c.overflow.length} 個放不下`)
-    if (c.noImage.length) add(c.flowId, c.flowName, `${c.noImage.length} 個抓不到圖`)
-    if (c.missing.length) add(c.flowId, c.flowName, `試算表少了 ${c.missing.length} 個`)
+    if (c.renameUnsure.length) add(c.flowId, c.flowName, `是改名嗎？（${c.renameUnsure.length}）`)
+    if (c.overflow.length) add(c.flowId, c.flowName, `目錄放不下（${c.overflow.length}）`)
+    if (c.noImage.length) add(c.flowId, c.flowName, `還沒有圖（${c.noImage.length}）`)
+    if (c.missing.length) add(c.flowId, c.flowName, `試算表上找不到了（${c.missing.length}）`)
   }
   for (const f of sheetIssues.value?.fields ?? []) {
     add(f.flowId, f.flowName, f.kind === 'row' ? `「${f.row}」這一列找不到了` : `「${f.field}」這一欄找不到了`)
@@ -1755,6 +1780,26 @@ const sheetIssueRows = computed(() => {
 function selectFlowById(id: string) {
   const flow = allFlows.value.find(f => f.id === id)
   if (flow) selectFlow(flow)
+}
+/**
+ * `C-449`：正在編的這一個，試算表上找不到的那幾格——清單寫「到貨日這一欄找不到了」，點進來要看得出是哪一顆。
+ * 用伺服器算好的（跟清單、提醒同一支），再跟畫面上的比：那顆膠囊刪掉或換掉了就不再講（不用等存檔）。
+ */
+const selectedSheetFieldIssues = computed(() => {
+  if (!selectedId.value || isCreating.value) return []
+  const issues = (sheetIssues.value?.fields ?? []).filter(f => f.flowId === selectedId.value)
+  if (!issues.length) return []
+  const used = new Set(sheetFieldTokensIn(JSON.stringify(form.value.messages ?? [])).map(t => sheetRefKey(t.ref)))
+  return issues
+    .map(f => ({ ...f, ref: { row: f.row ?? SHEET_CURRENT_ROW, field: f.field } }))
+    .filter(f => used.has(sheetRefKey(f.ref)))
+})
+provide(SHEET_MISSING_KEY, computed(() => new Set(selectedSheetFieldIssues.value.map(f => sheetRefKey(f.ref)))))
+/** 上面那段說明一格一句（商品資訊範本那種＝那一行不出現；寫死某個商品的＝停在存檔當時的內容） */
+function sheetFieldIssueLine(f: { row: string | null; field: string; kind: 'field' | 'row' }): string {
+  if (f.row === null) return `「${f.field}」這一欄找不到了（改了欄名或刪掉了）：客人收到時，那一行不會出現。`
+  if (f.kind === 'row') return `「${f.row}」這一列找不到了：客人收到的停在上次存檔時的內容。`
+  return `「${f.row}」的「${f.field}」找不到了（改了欄名或刪掉了）：客人收到的停在上次存檔時的內容。`
 }
 
 /** 正在編的這一個（用畫面上的比：換掉當下提示就消失） */
@@ -2097,6 +2142,14 @@ function setCardSource(msg: any, mode: string) {
   delete msg.sheetSource
   if (!Array.isArray(msg.columns) || !msg.columns.length) addFlexImageCarouselColumn(msg)
 }
+/** `C-449`：點卡片送的模組沒有用到「這個商品」＝每個商品點了都收到同一份（還沒選、或找不到那個模組不算——那兩種存檔／斷掉的按鈕提醒會講） */
+function tapModuleSendsSame(moduleId: unknown): boolean {
+  const id = String(moduleId ?? '')
+  const flow = id ? allFlows.value.find(f => f.id === id) : null
+  return !!flow && !usesCurrentProductDeep((flow as any).messages ?? [])
+}
+/** 知識庫的「加入知識」直接打開在 Google 試算表那一格（`C-449`） */
+const addSheetLink = computed(() => `/admin/${workspaceId.value}/knowledge/sources?import=1&start=sheet`)
 // ── `C-437`：商品資訊範本（「這個商品」的格子；填法在 shared/sheet-current-product.ts，跟送出端同一支）──
 const formUsesCurrentProduct = computed(() => usesCurrentProductDeep(form.value.messages ?? []))
 /** 右邊預覽、試發用哪個商品（`來源id:商品id`）。只留在這一頁，不存進模組 */

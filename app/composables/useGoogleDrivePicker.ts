@@ -1,4 +1,5 @@
 import { classifyDriveShareError, classifyGoogleAuthError, createSheetFailureMessage, googleSheetUrl, type DriveShareFailure } from '~~/shared/google-drive-share'
+import { PRODUCT_SHEET_TEMPLATE } from '~~/shared/product-sheet-template'
 
 /**
  * 「從 Google 雲端硬碟挑一份試算表」（`C-299`）：Google 的挑檔視窗＋挑完自動共用給系統帳號。
@@ -44,6 +45,24 @@ export type PickOutcome =
  */
 const NEW_SHEET_TAB = '常見問題'
 const NEW_SHEET_HEADERS = ['客人會問的問題', '答案']
+
+/** 開一份新表要長怎樣：分頁名、欄名（加粗、凍結）、欄寬；商品表另外有欄名註解和「放進LINE目錄」的勾選框 */
+export interface NewSheetTemplate {
+  tab: string
+  headers: readonly string[]
+  widths: readonly number[]
+  notes?: readonly string[]
+  /** 最後一欄先放好勾選框（第 2 列起幾列） */
+  checkboxRows?: number
+}
+
+const FAQ_SHEET: NewSheetTemplate = { tab: NEW_SHEET_TAB, headers: NEW_SHEET_HEADERS, widths: [280, 520] }
+
+/**
+ * `C-448`「幫我開一份商品表」：照 `PRODUCT_SHEET_TEMPLATE`。⛔ 同樣不放示範商品（理由同上）。
+ * 勾選框只設格式、不填值：沒按過的格子讀出來是空的，整列空白就不會被當成一個商品。
+ */
+export const PRODUCT_SHEET: NewSheetTemplate = PRODUCT_SHEET_TEMPLATE
 
 class GoogleAuthError extends Error {
   constructor(readonly type: string) { super(type) }
@@ -172,10 +191,20 @@ async function failureOf(res: Response): Promise<DriveShareFailure> {
 
 /**
  * 在他自己的雲端硬碟開一份新試算表（`drive.file` 開得了：自己這個 App 建的檔本來就碰得到）。
- * 欄位名稱那列加粗、凍結，兩欄先拉寬——他打開就知道要往哪裡填。
+ * 欄位名稱那列加粗、凍結，欄先拉寬——他打開就知道要往哪裡填。
  */
-async function createSheet(title: string, token: string): Promise<PickedSheet | DriveShareFailure> {
-  const header = (text: string) => ({ userEnteredValue: { stringValue: text }, userEnteredFormat: { textFormat: { bold: true } } })
+async function createSheet(title: string, token: string, tpl: NewSheetTemplate = FAQ_SHEET): Promise<PickedSheet | DriveShareFailure> {
+  const header = (text: string, i: number) => ({
+    userEnteredValue: { stringValue: text },
+    userEnteredFormat: { textFormat: { bold: true } },
+    ...(tpl.notes?.[i] ? { note: tpl.notes[i] } : {}),
+  })
+  // 勾選框那一欄：前面幾格空著，最後一格只設「勾選框」格式
+  const checkboxRow = { values: [...tpl.headers.slice(1).map(() => ({})), { dataValidation: { condition: { type: 'BOOLEAN' } } }] }
+  const rowData = [
+    { values: tpl.headers.map(header) },
+    ...Array.from({ length: tpl.checkboxRows ?? 0 }, () => checkboxRow),
+  ]
   let res: Response
   try {
     res = await fetch('https://sheets.googleapis.com/v4/spreadsheets?fields=spreadsheetId', {
@@ -184,12 +213,12 @@ async function createSheet(title: string, token: string): Promise<PickedSheet | 
       body: JSON.stringify({
         properties: { title, locale: 'zh_TW' },
         sheets: [{
-          properties: { title: NEW_SHEET_TAB, gridProperties: { frozenRowCount: 1 } },
+          properties: { title: tpl.tab, gridProperties: { frozenRowCount: 1 } },
           data: [{
             startRow: 0,
             startColumn: 0,
-            rowData: [{ values: NEW_SHEET_HEADERS.map(header) }],
-            columnMetadata: [{ pixelSize: 280 }, { pixelSize: 520 }],
+            rowData,
+            columnMetadata: tpl.widths.map(pixelSize => ({ pixelSize })),
           }],
         }],
       }),
@@ -238,11 +267,14 @@ export function useGoogleDrivePicker() {
     return share(sheet, shareWith, token)
   }
 
-  /** 「還沒有表？幫我開一份新的」：開一份只有欄位名稱的新表 → 共用給 `shareWith`。呼叫規矩同 pickAndShare */
-  async function createAndShare(shareWith: string, title: string): Promise<PickOutcome> {
+  /**
+   * 「還沒有表？幫我開一份新的」：開一份只有欄位名稱的新表 → 共用給 `shareWith`。呼叫規矩同 pickAndShare。
+   * `tpl`＝要開哪一種（預設常見問題；`C-448` 商品表傳 `PRODUCT_SHEET`）
+   */
+  async function createAndShare(shareWith: string, title: string, tpl?: NewSheetTemplate): Promise<PickOutcome> {
     const token = await authorize()
     if (typeof token !== 'string') return token
-    const made = await createSheet(title, token)
+    const made = await createSheet(title, token, tpl)
     if (!('id' in made)) {
       if (made.kind === 'expired') forget()
       return { kind: 'failed', message: createSheetFailureMessage(made) }

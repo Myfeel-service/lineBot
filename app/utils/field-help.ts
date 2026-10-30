@@ -20,8 +20,20 @@ export interface FieldHelpDef {
   button: string
   /** 彈窗標題 */
   title: string
-  /** 白話說明（v-html，僅限劇本文案） */
-  html: string
+  /** 白話說明（v-html，僅限劇本文案）。有 result／steps 的可以不寫 */
+  html?: string
+  /**
+   * 「設好之後，客人會看到」（`C-448`，2026-10-30 老闆：要講設好之後會有什麼成果）：
+   * 擺在彈窗**最上面**——先看到結果，才知道下面那幾步值不值得做。
+   */
+  result?: { title: string, image: string, alt: string }
+  /**
+   * 怎麼設：一步一張圖（`C-448`）。沿用開通引導的步驟輪播（`AgentStepCarousel`），規矩同那邊：
+   * ⛔ 圖說不自己標號（步序由輪播的計數器講）、至少兩步。守門在 field-help.test.ts。
+   */
+  steps?: { title: string, items: ReadonlyArray<{ src: string, caption: string }> }
+  /** 最下面一句補充（v-html） */
+  tip?: string
   /** 帶路動畫或標註圖（onboarding-shots 的路徑） */
   image?: string
   alt?: string
@@ -52,6 +64,10 @@ export type FieldHelpId =
   | 'memberRole'
   // 2026-08-29 `D-40`：D-33 P2 就列了、一直沒做的那一組。
   | 'knowledgeAutoUpdate'
+  // 2026-10-30 `C-448`：商品新功能（`D-166` ⑤）。圖是畫的示意、全用示範商品，來源 docs/onboarding-shots-src/product-help.html
+  | 'sheetCatalog'
+  | 'productTemplate'
+  | 'productSheetFormat'
 
 export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
   channelAccessToken: {
@@ -237,5 +253,63 @@ export const FIELD_HELP: Record<FieldHelpId, FieldHelpDef> = {
     alt: '循環動畫五格：①右上設定、②側欄回應設定、③聊天是開的、④Webhook 是開的、⑤選手動聊天',
     href: 'https://manager.line.biz/',
     hrefLabel: '打開官方帳號後台',
+  },
+
+  /**
+   * `C-448` 商品目錄「照試算表排」（機器人模組 › 卡片訊息「卡片從哪裡來」旁邊）。示意頁 artifact 8GFfUcCy3P52cGGNEFUFmy 第三版拍板。
+   * 第 1 步從「還沒有試算表」講起（老闆 10-30 問「從 0 開始會長怎樣」）：知識庫那邊有「幫我開一份商品表」。
+   */
+  sheetCatalog: {
+    button: '教我怎麼用',
+    title: '在試算表打勾，商品就出現在 LINE 的商品目錄上',
+    result: {
+      title: '設好之後，客人會看到',
+      image: '/onboarding/product-catalog-result.png',
+      alt: '左：客人點選單，收到一排商品圖（保溫隨行杯、藍牙耳機）；右：點保溫杯，收到保溫杯的資訊，並自動貼上「保溫隨行杯」標籤',
+    },
+    steps: {
+      title: '怎麼設（4 步，做過的跳過）',
+      items: [
+        { src: '/onboarding/product-catalog-1.png', caption: '到知識庫「加入知識」選 <b>Google 試算表</b>，按「<b>幫我開一份商品表</b>」——系統幫你開好一份、欄名都排好。已經有商品試算表的，最右邊加一欄「<b>放進LINE目錄</b>」就好。' },
+        { src: '/onboarding/product-catalog-2.png', caption: '一列填一個商品。要放上 LINE 目錄的，在「放進LINE目錄」打勾——目錄照試算表<b>由上到下</b>排，最多 10 個。' },
+        { src: '/onboarding/product-catalog-3.png', caption: '填好回到「加入知識」，出現 ✓ 之後按「<b>整理並加入</b>」（已經接過的跳過）。' },
+        { src: '/onboarding/product-catalog-4.png', caption: '回到這裡選「<b>照試算表排</b>」，點卡片送「<b>商品資訊範本</b>」（還沒有就按「＋ 新模組」做一份），按「儲存變更」。' },
+      ],
+    },
+    tip: '商品圖自動用商品頁的封面圖，想換就在右邊清單按「換圖」。之後改試算表，一小時內 LINE 上就跟著變。',
+  },
+
+  /** `C-437` 商品資訊範本（插入「商品資料」視窗裡「商品」旁邊、範本右邊「預覽商品」旁邊，同一個視窗） */
+  productTemplate: {
+    button: '教我怎麼用',
+    title: '做一份回覆，所有商品共用',
+    result: {
+      title: '設好之後，客人會看到——點哪個商品，就收到哪個商品的資料',
+      image: '/onboarding/product-template-result.png',
+      alt: '同一份範本：點保溫杯收到保溫杯的出貨時間和兩顆按鈕；點藍牙耳機收到藍牙耳機的出貨時間，沒寫常見問答頁就沒有那顆按鈕',
+    },
+    html: '不用每個商品各做一份：改這一份，所有商品一起變。',
+    steps: {
+      title: '怎麼設（3 步）',
+      items: [
+        { src: '/onboarding/product-template-1.png', caption: '在回覆文字裡按「<b>＋ 插入</b>」，選「<b>商品資料</b>」。' },
+        { src: '/onboarding/product-template-2.png', caption: '商品選「<b>這個商品</b>」，再選要放哪一項（例如出貨時間），按「插入」。' },
+        { src: '/onboarding/product-template-3.png', caption: '回覆裡多一顆藍色膠囊。送出時，換成客人點的那個商品在試算表上寫的。' },
+      ],
+    },
+    tip: '試算表上空白的那一格，那一行就不出現。圖片可以選「這個商品的圖」、按鈕網址可以選「用這個商品的網址」。右邊「預覽商品」換不同商品看，也可以按「試發」傳到自己手機。',
+  },
+
+  /**
+   * `C-448` 商品試算表長怎樣（商品目錄缺「放進LINE目錄」那一欄時、知識庫「幫我開一份商品表」旁邊）。
+   * 欄名跟「幫我開一份商品表」開出來的那份同一組（`shared/product-sheet-template.ts`，測試鎖住系統認得）。
+   */
+  productSheetFormat: {
+    button: '看範本長怎樣',
+    title: '商品試算表長怎樣',
+    html: '一列一個商品、第一列寫欄名、<b>第一欄寫商品名</b>。這三欄系統認得：「<b>商品頁面</b>」（抓商品圖、做「查看商品頁」按鈕）、「<b>常見問答頁</b>」（有寫才有「常見問答」按鈕）、「<b>放進LINE目錄</b>」（打勾＝放上目錄）。其他欄自己取名，想加幾欄都行。',
+    image: '/onboarding/product-sheet-format.png',
+    alt: '商品試算表範例：A 商品名、B 出貨時間、C 商品頁面、D 常見問答頁、E 放進LINE目錄（打勾），三列示範商品：保溫隨行杯、藍牙降噪耳機、桌上型電扇',
+    tip: '<b>不賣了</b>：取消打勾就好，不要刪那一列——客人問 AI 還答得出「已停售」。<br><b>改商品名</b>：直接改；商品頁網址沒變的話，系統認得是同一個商品，圖和標籤照舊。<br><b>打勾</b>：Google 試算表用「插入 › 核取方塊」，或打 V、「是」也認得。',
   },
 }

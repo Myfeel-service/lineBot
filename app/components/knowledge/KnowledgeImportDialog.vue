@@ -183,7 +183,11 @@
               沒分享：三步教學**在這裡再出現一次**（2026-10-12 `D-124` 新手走查）。起步那一格只在框還空的時候看得到，
               先貼了連結的人一走到「讀不到」，三步和截圖全都不見了，只剩一串帳號——最需要教的那一刻反而沒有。
             -->
-            <p v-if="!gsheetProbing && createdSheetEmpty" class="kb-gsheet-share__note">打開它，一列填一題（客人會問的問題、答案），填好回來按「填好了，再測一次」。</p>
+            <p v-if="!gsheetProbing && createdSheetEmpty" class="kb-gsheet-share__note">
+              {{ createdSheetKind === 'product'
+                ? '打開它，一列填一個商品（商品名、出貨時間、商品頁網址…），要放上 LINE 商品目錄的打勾，填好回來按「填好了，再測一次」。'
+                : '打開它，一列填一題（客人會問的問題、答案），填好回來按「填好了，再測一次」。' }}
+            </p>
             <p v-else-if="!gsheetProbing && pickFailureShown" class="kb-gsheet-share__note">{{ pickShareFailure?.message }}</p>
             <!-- 按「再試一次」時 Google 視窗被擋／沒按允許（2026-10-29 `/code-review`）：起步那格這時是收起來的，講在這裡才看得到 -->
             <p v-if="pickedSheetShown && pickAuthMessage" class="kb-gsheet-share__note is-error">{{ pickAuthMessage }}</p>
@@ -378,6 +382,14 @@
           <p class="kb-start__ptxt kb-start__pick-more">
             還沒有表？<button type="button" class="kb-start__fold" :disabled="picking" @click="onCreateSheet">幫我開一份新的</button>
           </p>
+          <!--
+            `C-448`：商品目錄要一份照格式的商品表（一列一個商品、「商品頁面」「放進LINE目錄」）——一鍵開好、欄名排好、勾選框設好。
+            ⛔ 不放示範商品（一接上就學進 AI），怎麼填寫在欄名註解和「看範本長怎樣」
+          -->
+          <p class="kb-start__ptxt kb-start__pick-more">
+            要做 LINE 商品目錄？<button type="button" class="kb-start__fold" :disabled="picking" @click="onCreateProductSheet">幫我開一份商品表</button>
+            <AdminFieldHelp id="productSheetFormat" />
+          </p>
           <!-- 2026-10-28 跟老闆講過「會提醒店家表放公司帳號」：系統帳號讀得到跟誰挑的無關，唯一救不回來的是表本身跟著個人帳號被刪 -->
           <p class="kb-start__ptxt kb-start__ptxt--dim">表放在店裡的公司 Google 帳號比較保險：個人帳號刪掉，表也會跟著不見。</p>
         </div>
@@ -395,6 +407,8 @@
                 <span class="text-xs text-muted">或用你現有的試算表，欄位怎麼排都可以</span>
               </template>
               <template v-else>在 Google 試算表新開一份（欄位怎麼排都可以），或用你現有的</template>
+              <!-- `C-448`：這條路沒有「幫我開一份商品表」，至少給看欄名要怎麼寫 -->
+              <span class="kb-start__product-format">要做 LINE 商品目錄的話，第一列照範本寫 <AdminFieldHelp id="productSheetFormat" /></span>
             </li>
             <li>
               按右上角<strong>「共用」</strong>，貼上這個帳號、權限選<strong>「檢視者」</strong>，按<strong>「傳送」</strong>
@@ -1308,7 +1322,7 @@ import { Document as IconFile, EditPen as IconPen, Grid as IconSheet, Link as Ic
 import { canReplaceSource, detectImportKind, detectSheetAmongUrls, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN, sheetLinkOf } from '~~/shared/knowledge-import-detect'
 import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
 import type { DriveShareFailure } from '~~/shared/google-drive-share'
-import { useGoogleDrivePicker, type PickedSheet, type PickOutcome } from '~/composables/useGoogleDrivePicker'
+import { PRODUCT_SHEET, useGoogleDrivePicker, type PickedSheet, type PickOutcome } from '~/composables/useGoogleDrivePicker'
 import {
   KNOWLEDGE_FILE_ACCEPT,
   KNOWLEDGE_FILE_KIND_LABEL,
@@ -1361,6 +1375,8 @@ const props = defineProps<{
    * 填進去之後由既有的偵測流程接手（貼上框自己認得出網址／試算表／純文字）。
    */
   prefillPaste?: string
+  /** 開窗時先展開哪一格（`C-449`：機器人模組「到知識庫接一份 →」帶過來的是試算表那一格） */
+  openStart?: '' | 'sheet'
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -1885,6 +1901,8 @@ const pickShareFailure = ref<DriveShareFailure | null>(null)
 const pickAuthMessage = ref('')
 /** 「幫我開一份新的」開出來的那一份：探測說沒資料是正常的（見 createdSheetEmpty） */
 const createdSheetId = ref('')
+/** 開的是哪一種（`C-448`）：開好之後那句「打開它，一列填…」照這個講 */
+const createdSheetKind = ref<'faq' | 'product'>('faq')
 const picking = ref(false)
 
 const pickedSheetShown = computed(() => !!pickedSheet.value && pasteInput.value.trim() === pickedSheet.value.url)
@@ -1922,7 +1940,22 @@ async function onCreateSheet() {
   picking.value = true
   try {
     const shop = currentWorkspaceName.value?.trim()
+    createdSheetKind.value = 'faq'
     applyPickOutcome(await drivePicker.createAndShare(shareEmail.value, shop ? `${shop} 常見問題` : '常見問題'), true)
+  }
+  finally {
+    picking.value = false
+  }
+}
+
+/** `C-448`「幫我開一份商品表」：同一條路，開的是商品表（欄名、勾選框照 `PRODUCT_SHEET_TEMPLATE`） */
+async function onCreateProductSheet() {
+  if (picking.value || !needShareEmail()) return
+  picking.value = true
+  try {
+    const shop = currentWorkspaceName.value?.trim()
+    createdSheetKind.value = 'product'
+    applyPickOutcome(await drivePicker.createAndShare(shareEmail.value, shop ? `${shop} 商品資料` : '商品資料', PRODUCT_SHEET), true)
   }
   finally {
     picking.value = false
@@ -3498,6 +3531,10 @@ watch(() => props.modelValue, (open) => {
   // ⛔ 只在乾淨的第一步填：接回預覽／結果頁時蓋掉他正在看的東西比空白還糟。
   if (open && props.prefillPaste && step.value === 'input' && !pasteInput.value && !previewing.value) {
     pasteInput.value = props.prefillPaste
+  }
+  // 同一條規矩：只在乾淨的第一步展開，接回預覽／結果頁時不動
+  if (open && props.openStart && step.value === 'input' && !pasteInput.value && !previewing.value) {
+    startOpen.value = props.openStart
   }
   // 開窗自動聚焦（2026-09-03 UI 打磨）：第一個動作幾乎都是貼上，游標先放進框，
   // 開窗直接 ⌘V 就能貼。⛔只在乾淨的第一步聚焦：接回預覽/結果頁時搶焦點會把人拉錯地方

@@ -945,19 +945,20 @@ export async function collectWorkspaceAlerts(
         // ── `C-438` 試算表商品（規格 §5.6）：只看有商品目錄在用的表；文案照規格那張表 ──
         probe('sheetCatalogOverflow', () => catalogProbe(
           c => c.overflow,
-          (names, c) => `勾了 ${c.overflow.length + SHEET_CATALOG_MAX_CARDS} 個，目錄只放得下 ${SHEET_CATALOG_MAX_CARDS} 個：${names}沒放上去`,
+          // `C-449`：⛔ 不寫「勾了幾個」——只數得到有圖的，還沒圖的也勾著，跟店家在試算表上數的勾對不上
+          names => `目錄只放得下 ${SHEET_CATALOG_MAX_CARDS} 個，排在後面的${names}沒放上去`,
         )),
         probe('sheetProductNoImage', () => catalogProbe(
           c => c.noImage,
-          names => `${names}抓不到商品圖，先不放進目錄`,
+          names => `${names}還沒有圖（商品頁抓不到），先不放進目錄`,
         )),
         probe('sheetProductMissing', () => catalogProbe(
           c => c.missing,
-          names => `試算表少了${names}，AI 也答不出了`,
+          names => `${names}在試算表上找不到了，AI 也答不出了`,
         )),
         probe('sheetProductRenameUnsure', () => catalogProbe(
           c => c.renameUnsure,
-          names => `試算表上找不到${names}了，是改名嗎？`,
+          names => `${names}在試算表上找不到了，是改名嗎？`,
         )),
         probe('sheetFieldMissing', async () => {
           const { fields } = await getSheetIssues()

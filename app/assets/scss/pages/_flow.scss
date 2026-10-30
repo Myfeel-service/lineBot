@@ -644,6 +644,8 @@
   flex: 1;
   min-width: 0;
 }
+/* `C-448`「教我怎麼用」接在選單右邊，不被擠 */
+.flow-preview-product .afh-btn { flex: none; }
 .flow-preview-product__hint {
   flex: none;
   margin: 0 0.25rem 0.5rem;
@@ -731,19 +733,24 @@
 
   &:hover, &.is-active { background: color-mix(in srgb, var(--color-warning) 16%, transparent); }
 }
-/* `C-438` 試算表商品要處理：模組名一行、什麼事一行（兩行都可以截，滑過去 title 有全文） */
+/*
+  `C-438` 試算表商品要處理：模組名一行、什麼事在下面。
+  `C-449`：什麼事那段要看得完（以前截成「1 個放不…」，最要緊的那句得滑過去才看得到）——照字數換行，模組名才截
+*/
 .flow-stale-list__item--why {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  white-space: normal;
 }
-.flow-stale-list__name,
-.flow-stale-list__why {
+.flow-stale-list__name {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .flow-stale-list__why {
   font-size: 0.72rem;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
@@ -932,7 +939,8 @@
 /* ─── `C-436` 商品目錄「照試算表排」（FlowSheetCatalogPanel）：取代一張張的卡片，唯讀清單＋換圖 ── */
 .sheet-catalog-panel {
   flex-shrink: 0;
-  width: 560px;
+  /* `C-449`：跟上面那張訊息卡同寬（`.flow-editor-messages .message-card` 380px）——以前 560，上下兩張卡右邊對不齊 */
+  width: 380px;
   max-width: 100%;
   background: var(--bg-surface);
   border: 1px solid var(--border);
@@ -985,6 +993,13 @@
   background: color-mix(in srgb, var(--color-warning) 9%, var(--bg-surface));
   border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
+/* `C-448` 缺「放進LINE目錄」那一欄：一句話＋「看範本長怎樣」靠左接在下面 */
+.sheet-catalog-warn--row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+}
 /* 系統已經處理好的變動：藍底（資訊），不是要他做事的橘色 */
 .sheet-catalog-changes {
   padding: 0.5rem 0.65rem;
@@ -1028,6 +1043,9 @@
   &:first-of-type { border-top: 0; }
   &.is-dim { opacity: 0.7; }
 }
+/* 名字下面還有一排按鈕的兩組：圖對齊名字那一行，不浮在整塊中間 */
+.sheet-catalog-group.is-rename .sheet-catalog-row,
+.sheet-catalog-group.is-missing .sheet-catalog-row { align-items: start; }
 .sheet-catalog-thumb {
   display: block;
   width: 72px;
@@ -1057,14 +1075,21 @@
   gap: 0.15rem;
   .el-button + .el-button { margin-left: 0; }
 }
-/* `C-438`「是，改名成「新名」」可能很長：可以換行，不撐破右邊清單 */
+/*
+  `C-438` 是改名嗎？／試算表上找不到了：按鈕在名字下面一排、靠左（`C-449`：以前在右邊，按鈕上的長名字把商品名擠成一行四五個字）。
+  好幾個候選時按鈕上寫新名字，可能很長：可以換行，不撐破清單
+*/
 .sheet-catalog-decide {
-  max-width: 55%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
   .el-button {
     height: auto;
     min-height: 24px;
+    margin-left: 0;
     white-space: normal;
-    text-align: right;
+    text-align: left;
     line-height: 1.35;
   }
 }

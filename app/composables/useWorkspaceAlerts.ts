@@ -451,12 +451,12 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'sheetCatalogOverflow',
     icon: Tickets,
-    impact: 'LINE 一則商品目錄最多 10 張，照試算表的順序放前 10 個。到試算表取消勾選幾個，或把要放的往前排。',
+    impact: 'LINE 一則商品目錄最多 10 個，照試算表的順序放前 10 個。到試算表取消勾選幾個，或把要放的往前排。',
     cta: '去看商品目錄',
     // 處理在試算表、看在商品目錄（模組頁）＝跟改模組同一項
     requires: 'marketing.write',
     route: wid => `/admin/${wid}/flow`,
-    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊會列出沒放上去的是哪幾個；上面有「打開試算表」。' },
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊「目錄放不下」那一組列著是哪幾個；上面有「打開試算表」。' },
   },
   {
     id: 'sheetProductNoImage',
@@ -483,7 +483,7 @@ const ALERTS: AlertDefinition[] = [
     cta: '去確認',
     requires: 'marketing.write',
     route: wid => `/admin/${wid}/flow`,
-    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊最上面「是改名嗎？」：是就按新的名字，不是就按「不賣了，拿掉」。' },
+    anchor: { selector: '[data-tour="flow-sheet-issues"]', note: '點商品目錄，右邊最上面「是改名嗎？」：是同一個商品就按「是，改名了」，不是就按「不賣了，拿掉」。' },
   },
   {
     id: 'sheetFieldMissing',

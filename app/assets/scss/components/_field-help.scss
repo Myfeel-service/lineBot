@@ -57,6 +57,46 @@
     .el-image__inner { height: auto; }
   }
 
+  /* `C-448`「設好之後，客人會看到」：淡綠底一塊，跟下面「怎麼設」分得開（結果在上、做法在下） */
+  &__result {
+    margin: 0 0 14px;
+    padding: 10px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--el-color-success) 7%, var(--el-bg-color));
+    border: 1px solid color-mix(in srgb, var(--el-color-success) 22%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .afh-dialog__shot { border: 0; background: none; }
+  }
+  &__result-title {
+    font-size: 13.5px;
+    color: var(--el-color-success-dark-2);
+  }
+
+  /* `C-448` 怎麼設：沿用開通引導的步驟輪播（.agm-carousel，_agent-chat.scss），在彈窗裡撐滿 */
+  &__steps {
+    margin: 0 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .agm-carousel { max-width: 100%; }
+  }
+  &__steps-title {
+    font-size: 13.5px;
+    color: var(--el-text-color-primary);
+  }
+
+  &__tip {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--el-text-color-secondary);
+  }
+  &__shot + &__tip { margin-top: 12px; }
+
   &__foot {
     display: flex;
     align-items: center;

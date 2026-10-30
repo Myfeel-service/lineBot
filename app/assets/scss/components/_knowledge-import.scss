@@ -1352,6 +1352,14 @@
     margin-top: 8px;
   }
 
+  /* `C-448` 手動那條路第 1 步底下：「要做 LINE 商品目錄的話，第一列照範本寫」＋看範本長怎樣 */
+  &__product-format {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
   /* Google 授權視窗沒成功的那一句（`C-299`）：跟探測「讀不到」同一個紅，但不加粗——這是說明下面為什麼變回三步 */
   &__pick-error {
     margin-bottom: 8px;

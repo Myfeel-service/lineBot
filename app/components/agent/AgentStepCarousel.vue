@@ -131,7 +131,14 @@
  * 樣式在 `app/assets/scss/components/_agent-chat.scss`（`.agm-carousel`）。
  */
 
-const props = defineProps<{ steps: readonly { readonly src: string, readonly caption: string }[] }>()
+const props = withDefaults(defineProps<{
+  steps: readonly { readonly src: string, readonly caption: string }[]
+  /**
+   * 第一張圖載好時，外層本來就貼在底部的話捲到底（開通引導的對話用，見 onImgLoad）。
+   * `C-448`「教我怎麼用」彈窗關掉：輪播上面還有一張「客人會看到」，捲到底就把它捲走了
+   */
+  autoScroll?: boolean
+}>(), { autoScroll: true })
 
 /** 這一步自動播多久換下一步 */
 const STEP_AUTO_MS = 4000
@@ -286,7 +293,7 @@ function onTouchEnd(e: TouchEvent) {
  */
 let scrolledOnce = false
 function onImgLoad() {
-  if (scrolledOnce)
+  if (scrolledOnce || !props.autoScroll)
     return
   scrolledOnce = true
   let el = rootEl.value?.parentElement

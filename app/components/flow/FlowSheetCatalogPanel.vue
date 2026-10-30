@@ -7,7 +7,8 @@
   <div class="sheet-catalog-panel" data-tour="sheet-catalog-panel">
     <div class="carousel-card-top">
       <span class="badge badge-blue">照試算表排</span>
-      <span v-if="view?.ready" class="sheet-catalog-count">目錄 {{ cards.length }}／{{ view.max }} 張</span>
+      <!-- `C-449`：單位一律「個」（提醒中心、模組清單都講幾個商品） -->
+      <span v-if="view?.ready" class="sheet-catalog-count">目錄上 {{ cards.length }}／{{ view.max }} 個</span>
     </div>
 
     <div class="sheet-catalog-body">
@@ -16,10 +17,11 @@
       <p v-else-if="!view" class="sheet-catalog-note">讀取中…</p>
 
       <template v-else>
+        <!-- `C-449`：哪一份表、照試算表排，上面都寫了——這裡只講要做的事 -->
         <div class="sheet-catalog-source">
-          <span>照試算表「{{ view.sourceName }}」排：「放進LINE目錄」打勾的商品，照試算表的順序。要加、拿掉、換順序，都到試算表改。</span>
+          <span>要加、拿掉、換順序，都在試算表改：「放進LINE目錄」打勾的，照試算表由上到下排上來。</span>
           <div class="sheet-catalog-source-line">
-            <span class="text-xs text-muted">LINE 一則目錄最多 {{ view.max }} 張<template v-if="lastFetchedLabel">・上次更新 {{ lastFetchedLabel }}</template></span>
+            <span class="text-xs text-muted">LINE 一則目錄最多 {{ view.max }} 個<template v-if="lastFetchedLabel">・上次更新 {{ lastFetchedLabel }}</template></span>
             <a v-if="view.sheetUrl" :href="view.sheetUrl" target="_blank" rel="noopener" class="sheet-catalog-link">打開試算表 ↗</a>
           </div>
         </div>
@@ -27,9 +29,11 @@
         <p v-if="!view.ready" class="sheet-catalog-note">
           這份試算表還沒整理出商品清單：到知識庫按「立即更新」，或等下一次自動更新（每小時）。
         </p>
-        <p v-else-if="!view.catalogColumn" class="sheet-catalog-warn">
-          試算表上還沒有「放進LINE目錄」這一欄：加一欄，在要放進目錄的商品打勾。
-        </p>
+        <!-- `C-448`：缺欄的人多半也不知道表要長怎樣——旁邊直接給看範本 -->
+        <div v-else-if="!view.catalogColumn" class="sheet-catalog-warn sheet-catalog-warn--row">
+          <span>試算表上還沒有「放進LINE目錄」這一欄：加一欄，在要放進目錄的商品打勾。</span>
+          <AdminFieldHelp id="productSheetFormat" />
+        </div>
 
         <div v-if="changeLines.length" class="sheet-catalog-changes">
           <b>試算表最近的變動</b>
@@ -45,33 +49,35 @@
             <span v-else class="sheet-catalog-thumb is-empty">沒有圖</span>
             <div class="sheet-catalog-name">
               <span class="sheet-catalog-title">{{ p.title }}</span>
-              <span v-if="g.key === 'rename'" class="sheet-catalog-meta">試算表上找不到了，同時多了{{ (p.renameCandidates ?? []).map(c => `「${c.title}」`).join('、') }}</span>
+              <span v-if="g.key === 'rename'" class="sheet-catalog-meta">試算表上找不到了，同時多了{{ (p.renameCandidates ?? []).map(c => `「${c.title}」`).join('、') }}——是同一個商品改了名字嗎？</span>
               <span v-else-if="g.key === 'missing'" class="sheet-catalog-meta">試算表上找不到了，AI 也答不出它</span>
               <span v-else class="sheet-catalog-meta">
                 <template v-if="p.image">{{ p.image.source === 'own' ? '自己換的圖' : '商品頁封面圖' }}</template>
                 <template v-else>{{ sheetCoverStatusText(p) }}</template>
                 <template v-if="p.tag">・點了貼「{{ p.tag.name }}」</template>
               </span>
+              <!--
+                `C-438`：試算表上找不到的商品，店家自己決定（規格 §5.2）——是改名就接到新的名字（圖、標籤跟著走），
+                不賣了就拿掉（不再提醒）。還要留著讓 AI 回答的，到試算表把那一列加回來，這裡不用按。
+                `C-449`：按鈕放在名字下面一排——以前放右邊、按鈕上寫整串新名字，把商品名擠成一行四五個字。
+                新名字已經寫在上面那句；只有一個候選就叫「是，改名了」，好幾個才在按鈕上寫是哪一個。
+              -->
+              <div v-if="canEdit && (g.key === 'rename' || g.key === 'missing')" class="sheet-catalog-decide">
+                <el-button
+                  v-for="c in (p.renameCandidates ?? []).slice(0, 3)"
+                  :key="c.id"
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="busyId === p.id"
+                  @click="confirmRename(p, c)"
+                >
+                  {{ (p.renameCandidates ?? []).length > 1 ? `是，改成「${c.title}」` : '是，改名了' }}
+                </el-button>
+                <el-button size="small" :disabled="busyId === p.id" @click="retire(p)">不賣了，拿掉</el-button>
+              </div>
             </div>
-            <!--
-              `C-438`：試算表上找不到的商品，店家自己決定（規格 §5.2）——是改名就接到新的名字（圖、標籤跟著走），
-              不賣了就拿掉（不再提醒）。還要留著讓 AI 回答的，到試算表把那一列加回來，這裡不用按。
-            -->
-            <div v-if="canEdit && (g.key === 'rename' || g.key === 'missing')" class="sheet-catalog-actions sheet-catalog-decide">
-              <el-button
-                v-for="c in (p.renameCandidates ?? []).slice(0, 3)"
-                :key="c.id"
-                size="small"
-                type="primary"
-                plain
-                :loading="busyId === p.id"
-                @click="confirmRename(p, c)"
-              >
-                是，改名成「{{ c.title }}」
-              </el-button>
-              <el-button size="small" :disabled="busyId === p.id" @click="retire(p)">不賣了，拿掉</el-button>
-            </div>
-            <div v-else-if="canEdit" class="sheet-catalog-actions">
+            <div v-if="canEdit && g.key !== 'rename' && g.key !== 'missing'" class="sheet-catalog-actions">
               <el-button size="small" :loading="busyId === p.id" @click="pickImage(p)">{{ p.image ? '換圖' : '上傳圖片' }}</el-button>
               <el-button
                 v-if="p.image?.source === 'own'"
@@ -125,7 +131,11 @@ const { validateFile, uploadToStorage } = useMediaUpload()
 const products = computed(() => props.view?.products ?? [])
 const cards = computed(() => products.value.filter(p => p.placement === 'card'))
 
-/** 分組照「他要做什麼」排：要處理的在上面，不用管的收起來 */
+/**
+ * 分組照「他要做什麼」排：要處理的在上面，不用管的收起來。
+ * `C-449`：四組的名字跟提醒中心、模組清單最上面那一塊同一個字（目錄放不下／還沒有圖／試算表上找不到了／是改名嗎？），
+ * 以前三個地方三種講法（「沒放上去」「抓不到圖」「少了」）。
+ */
 const openGroups = computed(() => [
   {
     // `C-438`：名字和商品頁網址一起換了，系統不猜——最上面問
@@ -136,21 +146,21 @@ const openGroups = computed(() => [
   },
   {
     key: 'overflow',
-    title: '沒放上去：目錄只放得下 10 張',
-    hint: '到試算表取消勾選，或把要放的往前排',
+    title: '目錄放不下',
+    hint: `只放得下 ${props.view?.max ?? 10} 個：到試算表取消勾選，或把要放的往前排`,
     items: products.value.filter(p => p.placement === 'overflow'),
   },
   {
     key: 'noImage',
-    title: '還沒有圖，先不放進目錄',
-    hint: '',
+    title: '還沒有圖',
+    hint: '先不放進目錄',
     items: products.value.filter(p => p.placement === 'noImage'),
   },
   {
     // `C-438`：以前收在下面——現在有提醒帶人來這裡，收著就找不到
     key: 'missing',
     title: '試算表上找不到了',
-    hint: '還要讓客人問得到，把那一列加回試算表（不要勾「放進LINE目錄」）；不要了就按「不賣了，拿掉」',
+    hint: '還要讓客人問得到，把那一列加回試算表、不要勾「放進LINE目錄」；不要了就按「不賣了，拿掉」',
     items: products.value.filter(p => p.placement === 'missing' && !p.renameCandidates?.length),
   },
   { key: 'card', title: '在目錄上', hint: '', items: cards.value },

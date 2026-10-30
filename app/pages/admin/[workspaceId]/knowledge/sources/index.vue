@@ -415,8 +415,9 @@
           `C-438`（規格 §3）：試算表只在知識庫連一次，但它同時排 LINE 的商品目錄——在這裡講一句、給一條路過去，
           ⛔ 不在機器人模組那邊再畫一個「連接試算表」
         -->
+        <!-- `C-449`：以前寫「也排…的回覆」讀不通（回覆不是「排」的） -->
         <p v-if="selectedCatalog" class="text-sm text-muted admin-subtext src-catalog-link">
-          這份試算表也排 LINE 的商品目錄和商品資訊的回覆
+          LINE 的商品目錄、商品資訊回覆也照這份試算表
           <NuxtLink :to="`/admin/${workspaceId}/flow?id=${selectedCatalog.flowId}`">看商品目錄 →</NuxtLink>
         </p>
       </div>
@@ -1408,6 +1409,7 @@
     :existing-sources="sources"
     :folders="folders"
     :prefill-paste="importPrefill"
+    :open-start="importStart"
     @imported="onImported"
     @job-state="importJobState = $event"
     @manual="onImportManual"
@@ -4526,6 +4528,9 @@ const importJobState = ref<'running' | 'batch' | 'ready' | 'added' | 'none'>('no
 const importJobDone = computed(() => importJobState.value === 'ready' || importJobState.value === 'added')
 /** `?import=1&url=…` 帶進來的網址：開通精靈的「把網站整理成知識卡」會這樣過來（`C-221`） */
 const importPrefill = ref('')
+/** 開窗時先展開哪一格（只用一次：自己按「加入知識」打開的照舊） */
+const importStart = ref<'' | 'sheet'>('')
+watch(importOpen, (open) => { if (!open) importStart.value = '' })
 function goImport() { importOpen.value = true }
 
 /**
@@ -5078,6 +5083,8 @@ onMounted(async () => {
     if (canEditKb.value) {
       // `&url=…`＝開通精靈把商家的官網帶過來（`C-221`）；填在貼上框裡讓既有偵測接手
       importPrefill.value = String(route.query.url ?? '').trim().slice(0, 500)
+      // `&start=sheet`＝機器人模組那邊「知識庫還沒有 Google 試算表 → 到知識庫接一份」（`C-449`）：直接打開試算表那一格
+      importStart.value = route.query.start === 'sheet' ? 'sheet' : ''
       importOpen.value = true
     }
     clearQuery()
