@@ -1056,15 +1056,16 @@ async function loadRichMessageSnapshot(id: string, workspaceId: string): Promise
 /**
  * 送出前把模組補齊：舊版圖文訊息換成最新那份；`C-423` 起「試算表的一格」換成知識卡上現在寫的。
  * ⭐ 每一條送模組的路（按鈕、關鍵字、加好友、推播、傳給自己看…）都先經過這裡再組 LINE 訊息，所以兩件事都放這一處。
+ * `product`＝客人在商品目錄點的那個商品（`C-437`：商品資訊範本裡「這個商品」的格子用它填；只有點目錄卡片的那條路有）。
  */
-async function hydrateRichMessageRefs(messages: any[], workspaceId: string): Promise<any[]> {
+async function hydrateRichMessageRefs(messages: any[], workspaceId: string, opts: { product?: string } = {}): Promise<any[]> {
   if (!Array.isArray(messages) || messages.length === 0) return []
   // `C-436`：照試算表排的商品目錄，送出前照商品清單產生卡片（一張都沒有的那則不送，見 sheet-catalog.ts）
   const hydrated = await hydrateSheetCatalogs([...messages], workspaceId)
   const ids = Array.from(new Set(hydrated
     .filter((msg: any) => msg?.type === 'richMessageRef' && msg?.richMessageId)
     .map((msg: any) => String(msg.richMessageId))))
-  if (ids.length === 0) return hydrateSheetFields(hydrated, workspaceId)
+  if (ids.length === 0) return hydrateSheetFields(hydrated, workspaceId, opts)
 
   const snapshots = await Promise.all(ids.map((id) => loadRichMessageSnapshot(id, workspaceId)))
   const snapshotMap = new Map<string, any | null>()
@@ -1075,7 +1076,7 @@ async function hydrateRichMessageRefs(messages: any[], workspaceId: string): Pro
     const latest = msg?.richMessageId ? snapshotMap.get(String(msg.richMessageId)) : null
     if (latest) return { ...msg, payload: latest }
     return msg
-  }), workspaceId)
+  }), workspaceId, opts)
 }
 
 function resolveRichMessageLayoutId(raw: unknown): string {
@@ -1991,14 +1992,15 @@ function buildLineMessages(
  */
 export async function renderFlowMessagesForSend(
   messages: any[],
-  options: { workspaceId: string; requestOrigin?: string; userId?: string },
+  options: { workspaceId: string; requestOrigin?: string; userId?: string; product?: string },
 ): Promise<{
   hydratedMessages: any[]
   renderFor: (attributes: Record<string, string>, userId?: string) => messagingApi.Message[]
 }> {
   const wid = requireWorkspaceId(options.workspaceId, 'renderFlowMessagesForSend')
   const { channelSecret } = await getLineWorkspaceCredentials(wid)
-  const hydratedMessages = await hydrateRichMessageRefs(messages, wid)
+  // `C-437`：試發商品資訊範本時帶著預覽的那個商品，收到的跟客人點那個商品一樣
+  const hydratedMessages = await hydrateRichMessageRefs(messages, wid, { product: options.product })
   /**
    * `D-118` A：推播一人一則送時，模組只抓一次、每一位用自己的 `attributes` 重組一次（不再讀資料庫）。
    * ⚠️ 名字換進去之後才截斷（`buildLineMessages` 本來就這樣做），⛔ 不要先組好再換字——
@@ -5081,7 +5083,8 @@ export async function handlePostbackEvent(
   const flowHydrateTask: Promise<{ flow: FlowDoc | null; hydrated: any[] }> = trigger.moduleId
     ? getFlowByModuleId(trigger.moduleId, workspaceId).then(async (f) =>
         f
-          ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[], workspaceId) }
+          // `C-437`：從商品目錄點的帶著那個商品（範本填它的格子）
+          ? { flow: f, hydrated: await hydrateRichMessageRefs(f.messages as any[], workspaceId, { product: trigger.product }) }
           : { flow: null, hydrated: [] },
       )
     : Promise.resolve({ flow: null, hydrated: [] })
@@ -5225,7 +5228,7 @@ export async function handlePostbackEvent(
         // Use preloaded hydrated messages (fetched in parallel with session/user above)
         const hydratedMessages = preloadedFlow
           ? preloadedHydrated
-          : await hydrateRichMessageRefs(flow.messages as any[], workspaceId)
+          : await hydrateRichMessageRefs(flow.messages as any[], workspaceId, { product: trigger.product })
         const lineMessages = buildLineMessages(
           hydratedMessages,
           userAttributes,

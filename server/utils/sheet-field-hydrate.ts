@@ -1,8 +1,11 @@
 import { getDb } from './firebase'
 import { KNOWLEDGE_SOURCES_COLLECTION, listChunksBySource } from './ai-knowledge-sources'
 import { loadSheetProductRegistry } from './sheet-products'
+import { cachedSheetProductRegistry } from './sheet-catalog'
 import { replaceSheetFieldTokens, sheetCardField, sheetRowKey, sheetFieldTokensIn, type SheetFieldRef } from '~~/shared/sheet-field'
-import { sheetProductAliasMap } from '~~/shared/sheet-products'
+import { productImage, sheetProductAliasMap } from '~~/shared/sheet-products'
+import { parseSheetProductRef } from '~~/shared/sheet-catalog'
+import { fillSheetCurrentProduct, usesCurrentProductDeep, type SheetCurrentProduct } from '~~/shared/sheet-current-product'
 
 /**
  * 機器人模組裡「試算表的一格」（`{{sheet:列|欄}}`）送出前換成那張知識卡上現在寫的（`C-423`）。
@@ -98,9 +101,41 @@ function mapStrings(value: unknown, fn: (s: string) => string): unknown {
   return value
 }
 
-/** 送出前把每一則裡的「試算表的一格」換成現在的內容（沒有的話原樣回，不多讀資料庫） */
-export async function hydrateSheetFields(messages: any[], workspaceId: string): Promise<any[]> {
+/**
+ * `C-437`：客人在商品目錄點的那個商品（postback 帶的 `來源id:商品id`）→ 範本要填的東西。
+ * 名字、圖照商品清單；其他格照這份試算表上這一列現在寫的（同一份快取，不多讀）。找不到那個商品＝null。
+ */
+export async function loadSheetCurrentProduct(workspaceId: string, productRef: string | undefined): Promise<SheetCurrentProduct | null> {
+  const ref = parseSheetProductRef(productRef)
+  if (!ref) return null
+  const reg = await cachedSheetProductRegistry(workspaceId, ref.sourceId)
+  const p = reg?.products[ref.productId]
+  if (!p) return null
+  let values: Record<string, string> = {}
+  try {
+    const source = (await loadSheetRows(workspaceId)).sources.find(s => s.id === ref.sourceId)
+    values = source?.rows.find(r => sheetRowKey(r.title) === sheetRowKey(p.title))?.values ?? {}
+  }
+  catch (e) {
+    console.error('[sheet-field] 讀不到試算表的卡，範本裡這個商品的格子先不顯示：', workspaceId, ref, e)
+  }
+  return { title: p.title, imageUrl: productImage(p)?.url ?? '', values }
+}
+
+/**
+ * 送出前把每一則裡的「試算表的一格」換成現在的內容（沒有的話原樣回，不多讀資料庫）。
+ * `product`＝客人在商品目錄點的那個商品（`C-437`，範本裡「這個商品」的格子用它填）。
+ */
+export async function hydrateSheetFields(messages: any[], workspaceId: string, opts: { product?: string } = {}): Promise<any[]> {
   if (!Array.isArray(messages)) return []
+  if (usesCurrentProductDeep(messages)) {
+    const current = await loadSheetCurrentProduct(workspaceId, opts.product).catch((e) => {
+      console.error('[sheet-field] 讀不到這個商品：', workspaceId, opts.product, e)
+      return null
+    })
+    if (!current) console.warn('[sheet-field] 範本用到「這個商品」，但這次不是從商品目錄點進來的（或找不到那個商品），那幾行不顯示：', workspaceId, opts.product ?? '')
+    messages = fillSheetCurrentProduct(messages, current)
+  }
   const uses = messages.some(m => JSON.stringify(m ?? {}).includes('{{sheet:'))
   if (!uses) {
     return messages.some(m => m && typeof m === 'object' && 'sheetSnapshots' in m)

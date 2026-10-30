@@ -584,6 +584,74 @@
   gap: 0.5rem;
 }
 
+/* ─── 商品資訊範本（`C-437`）────────────────────────────── */
+/* 「這個商品的圖」：預覽商品那張的縮圖＋一句講清楚每個商品各自的 */
+.flow-product-image {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem;
+  border: 1px solid color-mix(in srgb, var(--color-info) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-info) 6%, transparent);
+}
+.flow-product-image__thumb {
+  flex: none;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.flow-product-image__thumb--empty {
+  display: block;
+  border: 1px dashed var(--border);
+}
+.flow-product-image__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+/* 連結鈕直接放在欄位群組（flex column）裡會被撐成整行：靠左、照字寬 */
+.flow-product-image__switch {
+  align-self: flex-start;
+}
+
+/* 按鈕網址「用這個商品的網址 ▾」 */
+.flow-uri-product {
+  align-self: flex-start;
+}
+
+/* 預覽上面「預覽商品」 */
+.flow-preview-product {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0.25rem 0.25rem;
+  font-size: 0.8125rem;
+}
+.flow-preview-product__label {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.flow-preview-product__select {
+  flex: 1;
+  min-width: 0;
+}
+.flow-preview-product__hint {
+  flex: none;
+  margin: 0 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 /* ─── 清單：客人走不到的模組（`C-418`）────────────────── */
 .flow-list-filter {
   display: flex;

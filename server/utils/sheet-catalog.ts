@@ -33,7 +33,7 @@ export async function hydrateSheetCatalogs(messages: any[], workspaceId: string)
       continue
     }
     const { sheetSource: _drop, ...rest } = msg
-    const reg = await cachedRegistry(workspaceId, source.sourceId)
+    const reg = await cachedSheetProductRegistry(workspaceId, source.sourceId)
     const columns = reg && source.tapModuleId ? sheetCatalogColumns(source, reg) : []
     if (!columns.length) {
       console.warn('[sheet-catalog] 商品目錄一張卡都沒有（沒勾「放進LINE目錄」、勾了的都還沒有圖、或讀不到商品清單），這一則不送：', workspaceId, source.sourceId)
@@ -44,7 +44,8 @@ export async function hydrateSheetCatalogs(messages: any[], workspaceId: string)
   return out
 }
 
-async function cachedRegistry(workspaceId: string, sourceId: string): Promise<SheetProductRegistry | null> {
+/** 商品清單（30 秒快取，讀不到＝null）。商品資訊範本填「這個商品」也用這份（`C-437`） */
+export async function cachedSheetProductRegistry(workspaceId: string, sourceId: string): Promise<SheetProductRegistry | null> {
   const key = `${workspaceId}/${sourceId}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.reg

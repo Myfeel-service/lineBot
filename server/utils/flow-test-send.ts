@@ -23,7 +23,7 @@ import { assertSomeoneReceived, pushToTestRecipients, resolveTestRecipients } fr
 export async function flowTestSend(event: H3Event) {
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
 
-  const body = await readBody<{ messages?: unknown, lineUserIds?: unknown, lineUserId?: unknown, name?: unknown, flowId?: unknown }>(event)
+  const body = await readBody<{ messages?: unknown, lineUserIds?: unknown, lineUserId?: unknown, name?: unknown, flowId?: unknown, product?: unknown }>(event)
   const friends = await resolveTestRecipients(body, workspaceId, uid)
 
   const messages = body?.messages
@@ -31,7 +31,9 @@ export async function flowTestSend(event: H3Event) {
 
   const runtimeConfig = useRuntimeConfig()
   const requestOrigin = String(runtimeConfig.clickTrackingBaseUrl || '').trim().replace(/\/$/, '')
-  const { renderFor } = await renderFlowMessagesForSend(messages, { workspaceId, requestOrigin })
+  // `C-437`：商品資訊範本試發的是畫面上「預覽商品」那一個（`來源id:商品id`；商品清單照帳號讀，別人的對不到）
+  const product = typeof body?.product === 'string' ? body.product.slice(0, 120) : undefined
+  const { renderFor } = await renderFlowMessagesForSend(messages, { workspaceId, requestOrigin, product })
   /** 則數每一位都一樣（換名字不會多出一則），回給畫面講「每人送了幾則」 */
   const messageCount = renderFor({}).length
   if (!messageCount) {

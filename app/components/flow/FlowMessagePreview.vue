@@ -5,6 +5,8 @@
       ⛔ 放在手機**上面**：放底下會被右下角的小幫手浮鈕蓋住（實機截圖看到；推播頁那句也是這樣搬上去的）
     -->
     <p v-if="variableNote" class="fmp-var-note">{{ variableNote }}</p>
+    <!-- 手機上面多放的東西（`C-437` 商品資訊範本的「預覽商品」）；一樣放上面，理由同上 -->
+    <slot name="top" />
     <div class="fmp-frame">
       <!--
         `bare`：只畫泡泡，不要自己的聊天室外框（`C-256`）。

@@ -38,6 +38,29 @@ export function sheetFieldToken(ref: SheetFieldRef): string {
   return `{{sheet:${encodeURIComponent(ref.row)}|${encodeURIComponent(ref.field)}}}`
 }
 
+// ── `C-437` 商品資訊範本：「這個商品」的某一格 ─────────────────
+/**
+ * 列名稱寫 `@`＝客人在商品目錄點的那個商品（`{{sheet:@|出貨時間}}`）——一份範本給所有商品用。
+ * 另外兩格不在試算表的欄裡：`@name` 商品名（第一欄）、`@image` 商品目錄上那張圖。
+ * 填法（空白整行拿掉、網址按鈕）在 `shared/sheet-current-product.ts`。
+ */
+export const SHEET_CURRENT_ROW = '@'
+export const SHEET_FIELD_NAME = '@name'
+export const SHEET_FIELD_IMAGE = '@image'
+/** 膠囊上怎麼叫（「出貨時間・這個商品」「商品名・這個商品」）；⛔ 店家真的有一個商品叫「這個商品」的話會被當成這個 */
+export const SHEET_CURRENT_ROW_LABEL = '這個商品'
+const NAME_FIELD_LABEL = '商品名'
+const IMAGE_FIELD_LABEL = '商品圖'
+
+export function isCurrentProductRef(ref: SheetFieldRef): boolean {
+  return ref.row === SHEET_CURRENT_ROW
+}
+
+/** 這段字有沒有用到「這個商品」的格子 */
+export function usesCurrentProduct(text: unknown): boolean {
+  return typeof text === 'string' && sheetFieldTokensIn(text).some(t => isCurrentProductRef(t.ref))
+}
+
 /** 存的格式裡每一個標記（照出現順序，重複的也列） */
 export function sheetFieldTokensIn(text: string): Array<{ token: string, ref: SheetFieldRef }> {
   if (typeof text !== 'string' || !text.includes('{{sheet:')) return []
@@ -52,12 +75,22 @@ export function replaceSheetFieldTokens(text: string, replacer: (ref: SheetField
 
 const cleanLabelPart = (s: string) => s.replace(/[\n\r ]+/g, ' ').trim()
 
+function labelRow(ref: SheetFieldRef): string {
+  return isCurrentProductRef(ref) ? SHEET_CURRENT_ROW_LABEL : cleanLabelPart(ref.row)
+}
+
+function labelField(ref: SheetFieldRef): string {
+  if (isCurrentProductRef(ref) && ref.field === SHEET_FIELD_NAME) return NAME_FIELD_LABEL
+  if (isCurrentProductRef(ref) && ref.field === SHEET_FIELD_IMAGE) return IMAGE_FIELD_LABEL
+  return cleanLabelPart(ref.field)
+}
+
 /**
  * 膠囊上的全名「欄・列」（`C-428`：欄名在前——「出貨時間・Giaretti…」一眼先看到是哪一項）。
  * 換行、膠囊邊界字元（U+202F）不能出現在膠囊裡，換成一般空白。
  */
 export function sheetFieldLabel(ref: SheetFieldRef): string {
-  return `${cleanLabelPart(ref.field)}${SHEET_FIELD_SEP}${cleanLabelPart(ref.row)}`
+  return `${labelField(ref)}${SHEET_FIELD_SEP}${labelRow(ref)}`
 }
 
 /** 膠囊上的全名 → 標記（取**第一個**「・」切：欄名幾乎不會有，商品名偶爾有）。不是「欄・列」的樣子＝null */
@@ -66,7 +99,13 @@ export function sheetFieldRefFromLabel(label: string): SheetFieldRef | null {
   if (i <= 0 || i === label.length - 1) return null
   const field = label.slice(0, i).trim()
   const row = label.slice(i + 1).trim()
-  return row && field ? { row, field } : null
+  if (!row || !field) return null
+  if (row === SHEET_CURRENT_ROW_LABEL) {
+    if (field === NAME_FIELD_LABEL) return { row: SHEET_CURRENT_ROW, field: SHEET_FIELD_NAME }
+    if (field === IMAGE_FIELD_LABEL) return { row: SHEET_CURRENT_ROW, field: SHEET_FIELD_IMAGE }
+    return { row: SHEET_CURRENT_ROW, field }
+  }
+  return { row, field }
 }
 
 /** 商品名超過這幾個字就截短（膠囊太長會佔兩行、被輸入框的按鈕壓到——`D-166` 實機截圖） */
@@ -84,9 +123,9 @@ export interface SheetLabelRegistry {
 }
 
 export function sheetFieldShortLabel(ref: SheetFieldRef, rowMax = SHEET_LABEL_ROW_MAX): string {
-  const row = cleanLabelPart(ref.row)
+  const row = labelRow(ref)
   const chars = [...row]
-  return `${cleanLabelPart(ref.field)}${SHEET_FIELD_SEP}${chars.length > rowMax ? `${chars.slice(0, rowMax).join('')}…` : row}`
+  return `${labelField(ref)}${SHEET_FIELD_SEP}${chars.length > rowMax ? `${chars.slice(0, rowMax).join('')}…` : row}`
 }
 
 export function buildSheetLabelRegistry(refs: readonly SheetFieldRef[]): SheetLabelRegistry {

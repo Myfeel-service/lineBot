@@ -71,6 +71,12 @@ describe('傳給我自己看：送畫面上那一份', () => {
     expect(res).toMatchObject({ ok: true, messageCount: 1, sent: [{ lineUserId: ME, displayName: '吉米', ok: true }] })
   })
 
+  it('`C-437` 商品資訊範本：帶著畫面上「預覽商品」那一個組，收到的跟客人點那個商品一樣', async () => {
+    body = { ...body, product: 'src1:a1b2c3d4e5' }
+    await send()
+    expect((mockRender.mock.calls[0]![1] as Record<string, unknown>).product).toBe('src1:a1b2c3d4e5')
+  })
+
   it('⛔ 不帶貼標連結：組訊息時不傳收件人的 userId（看稿的同事點了不該被貼標籤）', async () => {
     await send()
     const opts = mockRender.mock.calls[0]![1] as Record<string, unknown>

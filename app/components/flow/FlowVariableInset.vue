@@ -73,17 +73,26 @@
         <template v-else-if="pickedSource">
           <div class="admin-field-group">
             <AdminFieldLabel text="商品" tight />
-            <el-select v-model="sheetRow" filterable class="control-full" placeholder="打字找商品">
+            <!--
+              `C-437`：第一個選項「這個商品」＝商品資訊範本的寫法——一份回覆給所有商品，
+              客人在商品目錄點了哪個商品就填哪個的。其他是寫死某一個商品（`C-423`）。
+            -->
+            <el-select v-model="sheetRow" filterable class="control-full" placeholder="打字找商品" @change="onSheetRowChange">
+              <el-option :value="SHEET_CURRENT_ROW" :label="CURRENT_ROW_OPTION" />
               <el-option v-for="r in pickedSource.rows" :key="r.title" :label="r.title" :value="r.title" />
             </el-select>
           </div>
           <div class="admin-field-group">
             <AdminFieldLabel text="哪一項" tight />
             <el-select v-model="sheetField" class="control-full">
+              <el-option v-if="isCurrentRow" :value="SHEET_FIELD_NAME" label="商品名" />
               <el-option v-for="h in pickedSource.headers" :key="h" :label="h" :value="h" />
             </el-select>
           </div>
-          <div v-if="sheetRow && sheetField" class="admin-field-group">
+          <p v-if="isCurrentRow && sheetField" class="flow-sheet-dialog__hint">
+            送出時填客人在商品目錄點的那個商品。那個商品的「{{ sheetField === SHEET_FIELD_NAME ? '商品名' : sheetField }}」空白的話，這一行整行不顯示。
+          </p>
+          <div v-else-if="sheetRow && sheetField" class="admin-field-group">
             <AdminFieldLabel text="現在寫的是" tight />
             <p v-if="pickedValue" class="flow-sheet-dialog__value">{{ pickedValue }}</p>
             <p v-else class="flow-sheet-dialog__empty">這個商品的「{{ sheetField }}」是空的——插進去的話客人會看到空白，先到試算表填好。</p>
@@ -109,7 +118,7 @@ import { computed, inject, nextTick, ref } from 'vue'
 import type { CaretRange } from '~/utils/insert-token-at-caret'
 import { insertTokenAtCaret } from '~/utils/insert-token-at-caret'
 import { FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY } from '~/utils/flow-sheet-picker'
-import { sheetFieldLabel, sheetFieldToken } from '~~/shared/sheet-field'
+import { SHEET_CURRENT_ROW, SHEET_FIELD_NAME, sheetFieldLabel, sheetFieldToken } from '~~/shared/sheet-field'
 import { VAR_TOKEN_EDGE } from '~~/shared/variable-tokens'
 
 /**
@@ -239,6 +248,13 @@ const pickedValue = computed(() => pickedSource.value?.rows.find(r => r.title ==
 function onSheetSourceChange() {
   sheetRow.value = ''
   sheetField.value = pickedSource.value?.headers?.[0] ?? ''
+}
+
+// `C-437`：「這個商品」多一項「商品名」（第一欄，不在欄名清單裡）；換回某個商品時這一項就不在了
+const CURRENT_ROW_OPTION = '這個商品（客人在商品目錄點的那一個）'
+const isCurrentRow = computed(() => sheetRow.value === SHEET_CURRENT_ROW)
+function onSheetRowChange() {
+  if (!isCurrentRow.value && sheetField.value === SHEET_FIELD_NAME) sheetField.value = pickedSource.value?.headers?.[0] ?? ''
 }
 
 async function openSheetPicker(range: CaretRange | null) {

@@ -435,13 +435,31 @@
                       </AdminFieldLabel>
                       <el-button link type="danger" size="small" @click="removeTextImage(msg)">移除圖片</el-button>
                     </div>
-                    <FlowUploadZone
-                      :model-value="textMessageImageUrl(msg)"
-                      type="image"
-                      label="點擊上傳圖片"
-                      @update:model-value="(v) => setTextImage(msg, v)"
-                      @image-sized="(size) => applyTextImageSize(msg, size)"
-                    />
+                    <!--
+                      `C-437` 商品資訊範本：圖可以是「這個商品的圖」＝商品目錄上那張（預設是商品頁封面圖），每個商品各自的。
+                      只有用到「這個商品」的模組才有這個選項。
+                    -->
+                    <div v-if="isProductImage(msg)" class="flow-product-image">
+                      <img v-if="previewCurrentProduct?.imageUrl" :src="previewCurrentProduct.imageUrl" alt="" class="flow-product-image__thumb">
+                      <span v-else class="flow-product-image__thumb flow-product-image__thumb--empty" aria-hidden="true" />
+                      <div class="flow-product-image__text">
+                        <b>這個商品的圖</b>
+                        <span class="text-muted">用商品目錄上那張（預設是商品頁封面圖），每個商品各自的</span>
+                        <el-button link type="primary" size="small" class="flow-product-image__switch" @click="setTextImage(msg, '')">改用自己上傳的圖</el-button>
+                      </div>
+                    </div>
+                    <template v-else>
+                      <FlowUploadZone
+                        :model-value="textMessageImageUrl(msg)"
+                        type="image"
+                        label="點擊上傳圖片"
+                        @update:model-value="(v) => setTextImage(msg, v)"
+                        @image-sized="(size) => applyTextImageSize(msg, size)"
+                      />
+                      <el-button v-if="formUsesCurrentProduct" link type="primary" size="small" class="flow-product-image__switch" @click="useProductImage(msg)">
+                        改用這個商品的圖
+                      </el-button>
+                    </template>
                     <p v-if="textMessageImageUrl(msg) && msg.buttons?.length" class="text-xs text-muted">客人點圖片＝按第 1 顆按鈕</p>
                   </div>
                   <div v-if="textMessageImageUrl(msg)" class="admin-field-group">
@@ -1308,7 +1326,28 @@
               :rich-messages="richMessages"
               :oa-name="currentWorkspaceName"
               :variable-note="previewVariableNote(previewMessages.keys)"
-            />
+            >
+              <!-- `C-437` 商品資訊範本：預覽、試發用哪個商品（客人收到的是他點的那一個） -->
+              <template v-if="formUsesCurrentProduct" #top>
+                <div class="flow-preview-product">
+                  <span class="flow-preview-product__label">預覽商品</span>
+                  <el-select
+                    v-if="previewProductGroups.length"
+                    v-model="previewProductRef"
+                    size="small"
+                    filterable
+                    class="flow-preview-product__select"
+                    data-tour="preview-product"
+                  >
+                    <el-option-group v-for="g in previewProductGroups" :key="g.sourceId" :label="previewProductGroups.length > 1 ? g.name : ''">
+                      <el-option v-for="p in g.products" :key="p.ref" :label="p.title" :value="p.ref" />
+                    </el-option-group>
+                  </el-select>
+                  <span v-else class="text-muted">{{ sheetSourcesLoading ? '讀試算表中…' : '試算表上還沒有商品' }}</span>
+                </div>
+                <p class="flow-preview-product__hint">客人在商品目錄點了哪個商品，就填那個商品的；試算表上空白的那一格，那一行不顯示。</p>
+              </template>
+            </FlowMessagePreview>
           </Transition>
         </div>
       </div>
@@ -1382,6 +1421,9 @@
       <p class="tags-hint">
         內容裡的 LINE 名稱會換成收件人自己的；他按按鈕會照常回覆，跟客人按一樣。
       </p>
+      <p v-if="formUsesCurrentProduct && previewCurrentProduct" class="tags-hint">
+        試算表的格子填的是右邊預覽的商品：<b>{{ previewCurrentProduct.title }}</b>。
+      </p>
     </template>
   </AdminTestSendDialog>
 
@@ -1420,9 +1462,21 @@ import {
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
 import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
 import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
-import { buildSheetLabelRegistry, replaceSheetFieldTokens, sheetFieldLabel, sheetRowKey, type SheetFieldRef, type SheetLabelRegistry } from '~~/shared/sheet-field'
-import { FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
-import type { SheetCatalogView } from '~~/shared/sheet-catalog'
+import {
+  SHEET_CURRENT_ROW,
+  SHEET_FIELD_IMAGE,
+  buildSheetLabelRegistry,
+  isCurrentProductRef,
+  replaceSheetFieldTokens,
+  sheetFieldLabel,
+  sheetFieldToken,
+  sheetRowKey,
+  type SheetFieldRef,
+  type SheetLabelRegistry,
+} from '~~/shared/sheet-field'
+import { FLOW_CURRENT_PRODUCT_KEY, FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, type SheetPickerSource } from '~/utils/flow-sheet-picker'
+import { parseSheetProductRef, sheetProductRef, type SheetCatalogView } from '~~/shared/sheet-catalog'
+import { fillSheetCurrentProduct, usesCurrentProductDeep, type SheetCurrentProduct } from '~~/shared/sheet-current-product'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -1899,7 +1953,7 @@ const variableKeys = computed(() => variableTokenOptions.value.map(o => o.value)
  * 以前直接畫 form.messages，預覽上印著「Hi {{displayName}}」（老闆 10-17 截圖：左右都一樣、像程式碼）。
  * ⛔ 一律回新的物件（renderPreviewVariablesDeep 不就地改），範例值不會寫進正在編的模組
  */
-const previewMessages = computed(() => renderPreviewVariablesDeep(withSheetValues(withSheetCatalogPreview(form.value.messages ?? [])), { mark: true }))
+const previewMessages = computed(() => renderPreviewVariablesDeep(withSheetValues(withCurrentProduct(withSheetCatalogPreview(form.value.messages ?? []))), { mark: true }))
 
 // ── `C-423`：試算表的一格（插入選單在 `FlowVariableInset`，送出端在 `server/utils/sheet-field-hydrate.ts`）──
 const sheetSources = ref<SheetPickerSource[] | null>(null)
@@ -1983,6 +2037,64 @@ function setCardSource(msg: any, mode: string) {
   delete msg.sheetSource
   if (!Array.isArray(msg.columns) || !msg.columns.length) addFlexImageCarouselColumn(msg)
 }
+// ── `C-437`：商品資訊範本（「這個商品」的格子；填法在 shared/sheet-current-product.ts，跟送出端同一支）──
+const formUsesCurrentProduct = computed(() => usesCurrentProductDeep(form.value.messages ?? []))
+/** 右邊預覽、試發用哪個商品（`來源id:商品id`）。只留在這一頁，不存進模組 */
+const previewProductRef = ref('')
+/** 有欄名的試算表才挑得到商品（商品清單照每份表讀，大部分帳號只有一份） */
+const productSourceIds = computed(() => (formUsesCurrentProduct.value ? (sheetSources.value ?? []).filter(s => s.headers).map(s => s.id) : []))
+watch(productSourceIds, (ids) => {
+  for (const id of ids) if (!catalogViews.value[id]) void loadCatalogView(id)
+}, { immediate: true })
+const previewProductGroups = computed(() => productSourceIds.value
+  .map((id) => {
+    const view = catalogViews.value[id]
+    const products = (view?.products ?? []).filter(p => p.placement !== 'missing')
+    return { sourceId: id, name: view?.sourceName ?? '', products: products.map(p => ({ ref: sheetProductRef(id, p.id), title: p.title })) }
+  })
+  .filter(g => g.products.length))
+// 預設挑第一個（照試算表順序）；挑的那個不見了（換了表、被刪）也重挑
+watch(previewProductGroups, (groups) => {
+  const all = groups.flatMap(g => g.products)
+  if (!all.some(p => p.ref === previewProductRef.value)) previewProductRef.value = all[0]?.ref ?? ''
+}, { immediate: true })
+const previewCurrentProduct = computed<SheetCurrentProduct | null>(() => {
+  const ref = parseSheetProductRef(previewProductRef.value)
+  const p = ref ? catalogViews.value[ref.sourceId]?.products.find(x => x.id === ref.productId) : null
+  if (!ref || !p) return null
+  const row = sheetSources.value?.find(s => s.id === ref.sourceId)?.rows.find(r => sheetRowKey(r.title) === sheetRowKey(p.title))
+  return { title: p.title, imageUrl: p.image?.url ?? '', values: row?.values ?? {} }
+})
+/** 按鈕網址可以挑的欄：試算表上有寫網址的那幾欄（「商品頁面」「常見問答頁」） */
+const productUrlFields = computed(() => {
+  const fields = new Set<string>()
+  for (const s of sheetSources.value ?? []) {
+    if (!productSourceIds.value.includes(s.id)) continue
+    for (const h of s.headers ?? []) if (s.rows.some(r => /https?:\/\//i.test(r.values[h] ?? ''))) fields.add(h)
+  }
+  return [...fields]
+})
+provide(FLOW_CURRENT_PRODUCT_KEY, { enabled: formUsesCurrentProduct, urlFields: productUrlFields })
+
+/**
+ * 預覽：「這個商品」的格子填預覽商品的（空白的那一行不顯示——跟送出一模一樣）。
+ * 還沒挑到商品（讀取中、這份表還沒有商品）：先畫「［出貨時間・這個商品］」，⛔ 不要先把那幾行拿掉，看起來像壞了。
+ */
+function withCurrentProduct(messages: any[]): any[] {
+  if (!formUsesCurrentProduct.value) return messages
+  if (previewCurrentProduct.value) return fillSheetCurrentProduct(messages, previewCurrentProduct.value)
+  const placeholder = (value: unknown, key: string): unknown => {
+    if (typeof value === 'string') {
+      if (key === 'imageUrl' && value === PRODUCT_IMAGE_TOKEN) return ''
+      return replaceSheetFieldTokens(value, (ref, token) => (isCurrentProductRef(ref) ? `［${sheetFieldLabel(ref)}］` : token))
+    }
+    if (Array.isArray(value)) return value.map(v => placeholder(v, ''))
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, placeholder(v, k)]))
+    return value
+  }
+  return messages.map(m => placeholder(m, ''))
+}
+
 // 切成照試算表排時試算表還沒讀到：讀到了替還沒選的補上第一份
 watch(sheetSources, (list) => {
   const first = list?.[0]?.id
@@ -2131,6 +2243,21 @@ function removeTextImage(msg: any) {
 function applyTextImageSize(msg: any, size: { width: number; height: number }) {
   msg.imageWidth = size.width
   msg.imageHeight = size.height
+}
+
+// `C-437`：「這個商品的圖」——比例照預覽商品那張量（同一家的商品圖通常同一個比例；送出用 fit 不裁，最差是留白）
+const PRODUCT_IMAGE_TOKEN = sheetFieldToken({ row: SHEET_CURRENT_ROW, field: SHEET_FIELD_IMAGE })
+function isProductImage(msg: any): boolean {
+  return textMessageImageUrl(msg) === PRODUCT_IMAGE_TOKEN
+}
+async function useProductImage(msg: any) {
+  msg.imageUrl = PRODUCT_IMAGE_TOKEN
+  delete msg.imageWidth
+  delete msg.imageHeight
+  const url = previewCurrentProduct.value?.imageUrl
+  if (!url) return
+  const size = await loadImageNaturalSize(url).catch(() => null)
+  if (size && isProductImage(msg)) applyTextImageSize(msg, size)
 }
 
 // ── Load ──────────────────────────────────────────────
@@ -3204,7 +3331,17 @@ async function sendFlowTest(lineUserIds: string[]) {
   return apiFetch<{ messageCount: number; sent: Array<{ lineUserId: string; displayName: string; ok: boolean; error?: string }> }>(
     // 借新增模組那支路由（什麼都不建，見 `server/api/flow/create.post.ts` 最上面）
     '/api/flow/create?part=test-send',
-    { method: 'POST', body: { messages, lineUserIds, name: form.value.name, flowId: selectedId.value ?? undefined } },
+    {
+      method: 'POST',
+      body: {
+        messages,
+        lineUserIds,
+        name: form.value.name,
+        flowId: selectedId.value ?? undefined,
+        // `C-437`：商品資訊範本試發右邊「預覽商品」那一個
+        product: formUsesCurrentProduct.value && previewProductRef.value ? previewProductRef.value : undefined,
+      },
+    },
   )
 }
 

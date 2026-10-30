@@ -27,3 +27,15 @@ export const FLOW_SHEET_PICKER_KEY: InjectionKey<FlowSheetPicker> = Symbol('flow
  * 沒有 provide（別的頁、或試算表還沒讀到）＝null，膠囊照舊畫全名。
  */
 export const SHEET_LABELS_KEY: InjectionKey<Ref<SheetLabelRegistry | null>> = Symbol('sheet-labels')
+
+/**
+ * 商品資訊範本（`C-437`）：這個模組用到了「這個商品」的格子，按鈕網址可以選「這個商品的網址」。
+ * `urlFields`＝試算表上寫著網址的那幾欄（「商品頁面」「常見問答頁」），按鈕編輯器（`FlowActionEditor`）列出來給挑。
+ * 只有模組頁 provide；沒用到「這個商品」＝`enabled` false，按鈕編輯器照舊。
+ */
+export interface FlowCurrentProduct {
+  enabled: Ref<boolean>
+  urlFields: Ref<string[]>
+}
+
+export const FLOW_CURRENT_PRODUCT_KEY: InjectionKey<FlowCurrentProduct> = Symbol('flow-current-product')

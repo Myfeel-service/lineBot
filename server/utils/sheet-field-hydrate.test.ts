@@ -19,6 +19,7 @@ vi.mock('./ai-knowledge-sources', () => ({
 const REGISTRIES: Record<string, any> = {}
 vi.mock('./sheet-products', () => ({
   loadSheetProductRegistry: vi.fn(async (_db: unknown, _ws: string, sourceId: string) => REGISTRIES[sourceId] ?? null),
+  updateSheetProductRegistry: vi.fn(),
 }))
 
 const { hydrateSheetFields, attachSheetSnapshots, loadSheetRows } = await import('./sheet-field-hydrate')
@@ -193,5 +194,78 @@ describe('`C-432` 試算表上改了名的商品：模組裡用舊名寫的那�
     CARDS.src2 = [{ title: KIE_OLD, content: '出貨時間：別份表寫的' }]
     const [msg] = await hydrateSheetFields([{ type: 'text', text: OLD_TOKEN }], nextWs())
     expect(msg.text).toBe('別份表寫的')
+  })
+})
+
+describe('`C-437` 商品資訊範本：填客人在商品目錄點的那個商品', () => {
+  const at = (field: string) => sheetFieldToken({ row: '@', field })
+  const COVER = 'https://storage.googleapis.com/b/uploads/ws/sheet-products/g.jpg'
+  const product = (over: Record<string, unknown> = {}) => ({
+    id: 'pg', title: GIARETTI, nameKey: '', aliases: [], pageUrl: null, urlKey: null, inCatalog: true, order: 0, firstSeenAt: 0, missingSince: null,
+    cover: { url: COVER, fromUrlKey: 'x', at: 1 },
+    ...over,
+  })
+  const template = () => ({
+    type: 'text',
+    imageUrl: at('@image'),
+    title: at('@name'),
+    text: `出貨時間：${at('出貨時間')}\n${at('額外資訊')}\n有問題直接留言`,
+    buttons: [{ type: 'uri', label: '查看商品頁', uri: at('商品頁面') }],
+  })
+
+  beforeEach(() => {
+    SOURCES[0]!.gsheetFieldHeaders = [...HEADERS, '額外資訊']
+    REGISTRIES.src1 = { products: { pg: product() }, changes: [], catalogColumn: true, pageHeader: '商品頁面' }
+  })
+
+  it('⭐ 名字、圖照商品清單；出貨時間、商品頁照這份試算表這一列現在寫的；空白的額外資訊整行不顯示', async () => {
+    const [msg] = await hydrateSheetFields([template()], nextWs(), { product: 'src1:pg' })
+    expect(msg).toEqual({
+      type: 'text',
+      imageUrl: COVER,
+      title: GIARETTI,
+      text: '出貨時間：依原廠公告：\n第一批 10 月底，\n10/7 起第二批 11 月底。\n有問題直接留言',
+      buttons: [{ type: 'uri', label: '查看商品頁', uri: 'https://www.myfeel-tw.com/projects/GL-5680' }],
+    })
+  })
+
+  it('自己換過圖：用自己換的那張', async () => {
+    REGISTRIES.src1.products.pg = product({ ownImage: { url: 'https://s/own.jpg', at: 2 } })
+    const [msg] = await hydrateSheetFields([template()], nextWs(), { product: 'src1:pg' })
+    expect(msg.imageUrl).toBe('https://s/own.jpg')
+  })
+
+  it('⛔ 沒帶商品（關鍵字、別的按鈕叫出來的）：用到這個商品的行都不顯示、網址按鈕拿掉、不帶圖，留 log', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const [msg] = await hydrateSheetFields([template()], nextWs())
+    expect(msg).toEqual({ type: 'text', text: '有問題直接留言', buttons: [] })
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('⛔ 商品代號對不到（別份表、被清掉）：當作沒有，絕不把 {{sheet:…}} 原字送出去', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    for (const ref of ['src9:pg', 'src1:nope', '壞掉的']) {
+      const [msg] = await hydrateSheetFields([template()], nextWs(), { product: ref })
+      expect(JSON.stringify(msg)).not.toContain('{{sheet:')
+      expect(msg.text).toBe('有問題直接留言')
+    }
+    warn.mockRestore()
+  })
+
+  it('表上已經沒有這一列（商品還在清單上）：名字、圖照放，其他格當空白', async () => {
+    CARDS.src1 = []
+    const [msg] = await hydrateSheetFields([template()], nextWs(), { product: 'src1:pg' })
+    expect(msg).toMatchObject({ title: GIARETTI, imageUrl: COVER, text: '有問題直接留言', buttons: [] })
+  })
+
+  it('同一則裡也有列名寫死的格子：兩種都換好', async () => {
+    const [msg] = await hydrateSheetFields([{ type: 'text', text: `${at('@name')}｜${PAGE}` }], nextWs(), { product: 'src1:pg' })
+    expect(msg.text).toBe(`${GIARETTI}｜https://www.myfeel-tw.com/projects/GL-5680`)
+  })
+
+  it('存檔時：「這個商品」的格子不記存檔當時的內容（每個商品不一樣，記了也不能用）', async () => {
+    const [msg] = await attachSheetSnapshots([{ type: 'text', text: `${at('出貨時間')}\n${SHIP}` }], nextWs())
+    expect(Object.keys(msg.sheetSnapshots)).toEqual([SHIP])
   })
 })

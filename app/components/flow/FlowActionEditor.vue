@@ -59,7 +59,26 @@
     <template v-else-if="action.type === uriTypeValue">
       <div class="admin-field-group">
         <AdminFieldLabel :text="uriTitle" tight />
-        <el-input v-model="action.uri" :placeholder="uriPlaceholder" :size="fieldSize" />
+        <!--
+          `C-437` 商品資訊範本：網址可以是「這個商品」試算表上那一格（藍色膠囊，送出時取格子裡第一個 https 網址；
+          那個商品空白＝這顆按鈕不顯示）。只有用到「這個商品」的模組才有這個選項。
+        -->
+        <VariableTextField v-if="uriUsesSheet" v-model="action.uri" :size="fieldSize" />
+        <el-input v-else v-model="action.uri" :placeholder="uriPlaceholder" :size="fieldSize" />
+        <el-dropdown
+          v-if="currentProduct?.enabled.value && currentProduct.urlFields.value.length && !uriUsesSheet"
+          trigger="click"
+          class="flow-uri-product"
+          @command="useProductUrl"
+        >
+          <el-button link type="primary" size="small">用這個商品的網址 ▾</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-for="f in currentProduct.urlFields.value" :key="f" :command="f">{{ f }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <p v-else-if="uriUsesCurrentProduct" class="text-xs text-muted">這個商品的這一格沒寫網址的話，這顆按鈕不顯示。</p>
       </div>
     </template>
 
@@ -132,6 +151,8 @@
 
 <script setup lang="ts">
 import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-caret'
+import { FLOW_CURRENT_PRODUCT_KEY } from '~/utils/flow-sheet-picker'
+import { SHEET_CURRENT_ROW, sheetFieldToken, sheetFieldTokensIn, usesCurrentProduct } from '~~/shared/sheet-field'
 import { toDisplayText, toStoredText } from '~~/shared/variable-tokens'
 
 type ActionOption = {
@@ -246,6 +267,15 @@ const variableKeys = computed(() => props.variableOptions.map(o => o.value))
  */
 function insertToken(key: 'label' | 'text', token: string, range?: CaretRange | null) {
   props.action[key] = toStoredText(insertTokenAtCaret(toDisplayText(props.action[key] ?? ''), token, range).text, 'send', variableKeys.value)
+}
+
+// ── `C-437`：按鈕網址用「這個商品」的那一格 ──
+const currentProduct = inject(FLOW_CURRENT_PRODUCT_KEY, null)
+const uriUsesSheet = computed(() => sheetFieldTokensIn(String(props.action.uri ?? '')).length > 0)
+const uriUsesCurrentProduct = computed(() => usesCurrentProduct(props.action.uri))
+
+function useProductUrl(field: string | number | object) {
+  props.action.uri = sheetFieldToken({ row: SHEET_CURRENT_ROW, field: String(field) })
 }
 
 function setTagIds(ids: string[]) {
