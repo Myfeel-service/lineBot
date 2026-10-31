@@ -10,6 +10,7 @@ import { writeAuditLog, auditSnapshot, diffChangedFields } from '~~/server/utils
 import { planAllowsScripting } from '~~/shared/billing/plans'
 import { attachSheetSnapshots } from '~~/server/utils/sheet-field-hydrate'
 import { configureSheetCatalogs } from '~~/server/utils/sheet-catalog'
+import { changedMessageNumbers, messageNumbersText } from '~~/server/utils/flow-message-changes'
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'marketing.write')
@@ -54,15 +55,18 @@ export default defineEventHandler(async (event) => {
   const summarize = (d: Record<string, unknown>) =>
     auditSnapshot(d, { keep: ['name', 'isActive', 'folderId'], count: ['messages'] })!
   const diff = diffChangedFields(summarize(existing), summarize({ ...existing, ...updates }))
-  if (diff.changedKeys.length) {
+  // `C-411`：則數沒變、只改了字／按鈕／圖——以前上面四格都一樣＝一筆都不寫，改壞了查不到誰改的。
+  // 只記改了哪幾則（⛔ 不存內容）；這一格不在還原改得回的欄位裡，那筆會照實講「沒辦法一鍵還原」
+  const edited = messages !== undefined ? changedMessageNumbers(existing.messages, messages) : []
+  if (diff.changedKeys.length || edited.length) {
     await writeAuditLog({
       workspaceId,
       uid,
       actor: 'human',
       action: 'flow.put',
       targetId: id,
-      before: diff.before,
-      after: diff.after,
+      before: edited.length ? { ...diff.before, messagesEdited: '原本的內容' } : diff.before,
+      after: edited.length ? { ...diff.after, messagesEdited: `${messageNumbersText(edited)}改過了` } : diff.after,
       note: String(existing.name ?? ''),
     })
   }

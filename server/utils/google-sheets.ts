@@ -12,7 +12,7 @@
  */
 import { JWT } from 'google-auth-library'
 import { knowledgeTitleKey } from '~~/shared/knowledge-title-key'
-import { isSheetControlHeader } from '~~/shared/sheet-products'
+import { isSheetControlHeader, parseSheetCheckbox } from '~~/shared/sheet-products'
 
 const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly'
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets'
@@ -754,6 +754,11 @@ export function rowsToCards(
   const { headerAt, titles: titleRows } = legacy ? { headerAt: 0, titles: [] as string[] } : locateHeaderRow(indexed)
   const headers = indexed[headerAt]!.cells.map(h => String(h ?? '').trim())
   let dataRows = indexed.slice(headerAt + 1)
+  // `C-451`：勾選框設了、從沒勾過的格子，Google 也讀成 FALSE——只有這種沒勾的開關欄有值的列＝空列。
+  // 以前算「第一欄空白」：「幫我開一份商品表」一開就 200 列勾選框，還沒填商品亮「N 列被略過」、填了之後剩下的變延續列。
+  // 新舊讀法都拿掉：這種列本來就不會變成任何一張卡（舊讀法略過、新讀法併進上一列也沒內容），拿掉只少了那些提醒、知識不變
+  const controlCols = headers.flatMap((h, i) => (i > 0 && h && isSheetControlHeader(h) ? [i] : []))
+  if (controlCols.length) dataRows = dataRows.filter(r => !onlyUncheckedControls(r.cells, controlCols))
   // 第一欄是 1、2、3… 流水號（新讀法才看）：拿它當名稱的話每一條都叫「1」「2」，而且**不同分頁的「1」會被當成同一項併在一起**
   // （2026-10-11 拿本機真的試算表比對：66 條裡 30 條名稱是數字，「1」那條混了兩張不相干的表）。改用下一欄當名稱（見 retitleSerialRows）
   const serialColumns: string[] = []
@@ -925,6 +930,14 @@ type RowReadMode = { legacy: true } | { legacy: false, tableWidth: number }
  * 新讀法只看整張表最寬幾欄——Google 試算表會把列尾的空格剪掉，三欄表的「W1｜12L」那一列以前會變成
  * 只剩「12L」、少了「容量」；欄位名稱那一列認錯、只剩一格時，也不會因此只留第二欄。
  */
+/** 這一列有字的格子全是開關欄、而且都沒勾（`C-451`）；有勾的照舊（第一欄空白就是延續列） */
+function onlyUncheckedControls(cells: readonly unknown[], controlCols: readonly number[]): boolean {
+  return cells.every((c, i) => {
+    const v = String(c ?? '').trim()
+    return !v || (controlCols.includes(i) && !parseSheetCheckbox(v))
+  })
+}
+
 function rowToCardParsed(headers: string[], row: string[], mode: RowReadMode): { card: SheetCard; hasAnswer: boolean } | null {
   const title = String(row[0] ?? '').trim()
   if (!title) return null

@@ -917,3 +917,37 @@ describe('`C-434` 開關欄「放進LINE目錄」：另外收、⛔ 不進 AI �
     expect(r.cards[0]!.controls).toEqual({ 放進LINE目錄: 'TRUE' })
   })
 })
+
+describe('`C-451` 只有沒勾的勾選框的列＝空列（Google 把沒勾過的勾選框讀成 FALSE）', () => {
+  const header = ['商品名', '出貨時間', '商品頁面', '放進LINE目錄']
+  const blankBoxes = (n: number) => Array.from({ length: n }, () => ['', '', '', 'FALSE'])
+  for (const legacy of [true, false]) {
+    it(`${legacy ? '舊讀法' : '新讀法'}：商品下面 150 列空勾選框——不算「第一欄空白」、不算延續列，卡片照舊`, () => {
+      const r = rowsToCards([header, ['YiMi', '11 月中下旬', 'https://a.example/y', 'TRUE'], ...blankBoxes(150)], { legacy })
+      expect(r.cards).toHaveLength(1)
+      expect(r.cards[0]!.controls).toEqual({ 放進LINE目錄: 'TRUE' })
+      expect(r.stats.skippedNoTitle).toBe(0)
+      expect(r.stats.continuedRows).toBe(0)
+    })
+  }
+
+  it('剛開的商品表（只有欄名＋200 列空勾選框）：不亮「N 列第一欄空白被略過」', () => {
+    const r = rowsToCards([header, ...blankBoxes(200)], { legacy: false })
+    expect(r.cards).toHaveLength(0)
+    expect(r.stats.skippedNoTitle).toBe(0)
+    expect(sheetHealthWarnings(r.cards, r.stats).join('\n')).not.toContain('第一欄')
+  })
+
+  it('對照組：第一欄空白但勾了（TRUE）＝延續列照舊；勾選框以外的欄有字也照舊', () => {
+    const r = rowsToCards([header, ['W1', '現貨', '', ''], ['', '', '', 'TRUE'], ['', '16L 款 11 月', '', 'FALSE']], { legacy: false })
+    expect(r.cards).toHaveLength(1)
+    expect(r.cards[0]!.controls).toEqual({ 放進LINE目錄: 'TRUE' })
+    expect(r.cards[0]!.content).toContain('16L 款 11 月')
+    expect(r.stats.continuedRows).toBe(2)
+  })
+
+  it('對照組：沒有開關欄的表，只有一格寫 FALSE 的第一欄空白列照舊算（不是勾選框就不認）', () => {
+    const r = rowsToCards([['商品名', '出貨時間', '備註'], ['A', '10 月底', ''], ['', '', 'FALSE']], { legacy: false })
+    expect(r.stats.continuedRows).toBe(1)
+  })
+})

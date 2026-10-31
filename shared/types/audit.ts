@@ -376,6 +376,8 @@ export const AUDIT_FIELD_LABELS: Record<string, string> = {
   onChangeBehavior: '資料變動時怎麼處理',
   productName: '商品名稱',
   messagesCount: '訊息則數',
+  // `C-411`：模組裡改了哪幾則（只記第幾則，不存內容）
+  messagesEdited: '訊息內容',
   areasCount: '可按的格子數',
   actionsCount: '可按的格子數',
   altText: '收不到圖時顯示的文字',

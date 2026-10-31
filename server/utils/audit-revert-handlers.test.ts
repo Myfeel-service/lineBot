@@ -206,6 +206,9 @@ describe('機器人模組改名／搬資料夾', () => {
     expect(reason(planRevert({ ...row, before: { messagesCount: 2 }, after: { messagesCount: 3 } }))).toContain('沒記內容')
     // 名字跟訊息一起改的那種也不行（⛔ 寫一半比不寫更糟）
     expect(planRevert({ ...row, before: { name: 'a', messagesCount: 2 }, after: { name: 'b', messagesCount: 3 } }).ok).toBe(false)
+    // `C-411`：則數沒變、只記「第幾則改過了」的也一樣（⛔ 不可以假裝還原了：手上沒有原本的內容）
+    expect(reason(planRevert({ ...row, before: { messagesEdited: '原本的內容' }, after: { messagesEdited: '第 1 則改過了' } }))).toContain('沒記內容')
+    expect(planRevert({ ...row, before: { name: 'a', messagesEdited: '原本的內容' }, after: { name: 'b', messagesEdited: '第 2 則改過了' } }).ok).toBe(false)
   })
 
   it('🔴 原本的資料夾已經刪掉：放不回去，講清楚', async () => {

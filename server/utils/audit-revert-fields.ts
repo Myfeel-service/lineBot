@@ -78,14 +78,15 @@ const FLOW_KEYS = ['name', 'isActive', 'folderId'] as const
 const FLOW_FIELD_LABELS: Record<string, string> = { name: '名稱', isActive: '開關', folderId: '所在資料夾' }
 
 const flowPut: RevertHandler = {
-  // ⛔ 講改回了哪幾格，不講「整個模組改回原本的樣子」：同一次存檔改的訊息文字紀錄沒記（`C-411`），還原也不會動它
+  // ⛔ 講改回了哪幾格，不講「整個模組改回原本的樣子」
   plan: row => planFields(row, {
     allowed: FLOW_KEYS,
     capability: 'marketing.write',
     what: `把這個模組的${fieldsText(row.before, FLOW_FIELD_LABELS)}改回原本的樣子`,
     page: '「機器人模組」頁',
-    // 訊息內容紀錄只記「幾則」（整份存進來會被截斷、反而整筆不能還原），寫不回去
-    refuse: '這筆改了模組裡的訊息，紀錄只記了幾則、沒記內容，沒辦法一鍵還原——請到「機器人模組」頁改回來。',
+    // 訊息只記「幾則」「改了第幾則」（`C-411`；整份存進來會被截斷、反而整筆不能還原），寫不回去；
+    // 名字跟訊息同一次改的也整筆不給（⛔ 只改回一半比不改更糟）
+    refuse: '這筆改了模組裡的訊息，紀錄只記了幾則、改了哪幾則，沒記內容，沒辦法一鍵還原——請到「機器人模組」頁改回來。',
   }),
   async check(row, ctx) {
     const { db, workspaceId } = ctx

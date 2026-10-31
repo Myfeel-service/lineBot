@@ -59,3 +59,11 @@ describe('商品教學不用廠商的東西', () => {
     expect(VENDOR_WORDS.filter(w => html.includes(w))).toEqual([])
   })
 })
+
+describe('`C-450` 教學不對店家做做不到的承諾', () => {
+  it('「不賣了」要叫他把出貨時間改成已停售：「放進LINE目錄」那欄 AI 不讀，只取消打勾 AI 照樣講原本的出貨時間', () => {
+    const tip = String(FIELD_HELP.productSheetFormat.tip ?? '')
+    expect(tip).toContain('改成「已停售」')
+    expect(tip).not.toContain('取消打勾就好')
+  })
+})
