@@ -3,7 +3,7 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { getDb, getStorage } from './firebase'
 import { requireCapability } from './workspace-auth'
 import { writeAuditLog } from './audit-log'
-import { KNOWLEDGE_SOURCES_COLLECTION, listChunksBySource } from './ai-knowledge-sources'
+import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage, updateSheetProductRegistry } from './sheet-products'
 import { clearSheetCatalogCache } from './sheet-catalog'
 import { invalidateSheetIssuesCache } from './sheet-issues'
@@ -25,6 +25,9 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
     throw createError({ statusCode: 404, statusMessage: '找不到這份試算表' })
   }
   const interval = Number(srcSnap.get('refreshIntervalMinutes') ?? 0) || 0
+  // `C-453`①：被手動改過、跟試算表不一樣的是哪幾條——同步時記在來源上（跟提醒中心、知識庫同一份，⛔ 不另外讀知識卡）
+  const keptTitles = Array.isArray(srcSnap.get('manualKeptTitles')) ? (srcSnap.get('manualKeptTitles') as unknown[]).map(String) : []
+  const keptCount = Math.max(Number(srcSnap.get('manualKeptCount') ?? 0) || 0, keptTitles.length)
   const base = {
     sourceId,
     sourceName: String(srcSnap.get('name') ?? srcSnap.get('title') ?? '試算表'),
@@ -33,18 +36,18 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
     // 關掉自動同步的表（`gsheetAutoApply === false`）排程不會動它，跟沒設間隔一樣要自己按
     autoSyncMinutes: interval > 0 && srcSnap.get('gsheetAutoApply') !== false ? interval : null,
     max: SHEET_CATALOG_MAX_CARDS,
+    lockedCount: keptCount,
   }
   const reg = await loadSheetProductRegistry(db, workspaceId, sourceId)
-  if (!reg) return { ...base, ready: false, catalogColumn: false, pageHeader: null, products: [], changes: [], locked: [] }
+  if (!reg) return { ...base, ready: false, catalogColumn: false, pageHeader: null, products: [], changes: [], locked: keptTitles }
 
-  // `C-453`①：知識庫被手動改過的那幾條＝試算表改了不跟（商品資訊卡讀的也是知識卡）。一份表一次讀完它的卡（最多 150 張）
-  const lockedKeys = new Set((await listChunksBySource(db, workspaceId, sourceId))
-    .filter(c => c.manuallyEditedAtMs > 0 && !c.isOverview)
-    .map(c => sheetRowKey(c.title)))
-  // `C-453`⑦：同一個商品頁＝複製上一列忘了改網址（還在表上的才算）
+  /*
+   * `C-453`⑦：同一個商品頁＝複製上一列忘了改網址。只看**兩個都在目錄上**的（code review 第 9 條）：
+   * 同一頁的不同款式（單入組／雙入組）是正確的資料；不在目錄上的，「圖會一樣」也不會出現在客人眼前
+   */
   const byUrl = new Map<string, string[]>()
   for (const p of Object.values(reg.products)) {
-    if (p.missingSince !== null || !p.urlKey) continue
+    if (p.missingSince !== null || !p.urlKey || !p.inCatalog) continue
     byUrl.set(p.urlKey, [...(byUrl.get(p.urlKey) ?? []), p.title])
   }
 
@@ -75,7 +78,7 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
       ...(p.missingSince !== null && liveRenameCandidates(reg, p).length
         ? { renameCandidates: liveRenameCandidates(reg, p).map(c => ({ id: c.id, title: c.title })) }
         : {}),
-      ...(p.missingSince === null && p.urlKey && (byUrl.get(p.urlKey)?.length ?? 0) > 1
+      ...(p.missingSince === null && p.inCatalog && p.urlKey && (byUrl.get(p.urlKey)?.length ?? 0) > 1
         ? { sameUrlAs: byUrl.get(p.urlKey)!.filter(t => t !== p.title) }
         : {}),
     }))
@@ -88,11 +91,16 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
     pageHeader: reg.pageHeader,
     products,
     changes: reg.changes.slice(0, 8),
-    locked: Object.values(reg.products)
-      .filter(p => p.missingSince === null && (lockedKeys.has(p.nameKey) || lockedKeys.has(sheetRowKey(p.title))))
-      .sort((a, b) => a.order - b.order)
-      .map(p => p.title),
+    // 照試算表的順序講（表上已經沒有的那幾條排最後）
+    locked: [...keptTitles].sort((a, b) => orderOf(reg, a) - orderOf(reg, b)),
   }
+}
+
+/** 這個名字在試算表上排第幾（找不到＝排最後） */
+function orderOf(reg: { products: Record<string, { title: string, nameKey: string, order: number, missingSince: number | null }> }, title: string): number {
+  const key = sheetRowKey(title)
+  const p = Object.values(reg.products).find(x => x.missingSince === null && (x.nameKey === key || sheetRowKey(x.title) === key))
+  return p ? p.order : Number.MAX_SAFE_INTEGER
 }
 
 /**

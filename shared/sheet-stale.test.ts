@@ -40,6 +40,12 @@ describe('模組有沒有還寫著舊字', () => {
     expect(quotedValueIn([{ text: MODULE_TEXT.replace('10 月底', '11 月底') }], [OLD_SHIP])).toBeNull()
   })
 
+  it('`C-453` code review 第 13 條：照試算表排的目錄裡留著可以切回去的舊卡片不送出——寫著舊字也不算；切回去（沒有 sheetSource）照算', () => {
+    const cards = [{ imageUrl: 'a.png', text: MODULE_TEXT }]
+    expect(quotedValueIn([{ type: 'flexImageCarousel', columns: cards, sheetSource: { sourceId: 's', tapModuleId: 't' } }], [OLD_SHIP])).toBeNull()
+    expect(quotedValueIn([{ type: 'flexImageCarousel', columns: cards }], [OLD_SHIP])).toBe(OLD_SHIP)
+  })
+
   it('⛔ 存檔時記的 sheetSnapshots 不算（那是試算表的字，不是店家手打的）', () => {
     expect(quotedValueIn([{ text: sheetFieldToken({ row: 'G', field: '出貨時間' }), sheetSnapshots: { x: OLD_SHIP } }], [OLD_SHIP])).toBeNull()
   })

@@ -88,6 +88,12 @@ describe('`C-453`① 試算表被手動改過的提醒', () => {
     expect(locked!.detail).toBe('「客服（商品資訊）」有 1 條在知識庫被手動改過，試算表改了也不會跟著變')
   })
 
+  it('同步記了是哪幾條（`C-453` 之後）：講商品名，跟商品目錄同一個講法（code review 第 6、15 條）', async () => {
+    const { locked } = await run([{ type: 'gsheet', name: '客服（商品資訊）', manualKeptCount: 4, manualKeptTitles: ['A', 'B', 'C', 'D'] }])
+    expect(locked).toMatchObject({ state: 'active', count: 4 })
+    expect(locked!.detail).toBe('「A」、「B」、「C」等 4 個在知識庫被手動改過，試算表改了也不會跟著變')
+  })
+
   it('對照組：都沒有、或是網址來的（不是試算表）＝不亮', async () => {
     expect((await run([{ type: 'gsheet', name: 'A', manualKeptCount: 0 }])).locked).toMatchObject({ state: 'clear' })
     expect((await run([{ type: 'url', name: '官網', manualKeptCount: 3 }])).locked).toMatchObject({ state: 'clear' })

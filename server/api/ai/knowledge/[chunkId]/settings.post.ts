@@ -162,7 +162,26 @@ export default defineEventHandler(async (event) => {
   await ref.update(update)
   // ⚠️ 先解鎖再清指紋：反過來的話，中間剛好跑一輪同步會「整份比對、這條還鎖著、指紋又寫回去」，解鎖照樣不生效
   if (sheetToRecompare) {
-    await sheetToRecompare.update({ contentHash: '', updatedAt: FieldValue.serverTimestamp() })
+    /*
+     * `C-453` code review 第 3 條：「N 條被手動改過、不跟表格」以前只有下一次整份同步才重算——
+     * 店家照提醒按了鎖頭，提醒中心照樣亮（沒開自動更新的表永遠亮）。解鎖這一條＝當場從名單拿掉、數字減一。
+     * 舊的來源沒有名單（`C-453` 以前同步的）：數字照減，下一次同步會照實重算
+     */
+    const recompare = sheetToRecompare
+    const title = String(chunk.title ?? '')
+    await db.runTransaction(async (tx) => {
+      const s = (await tx.get(recompare)).data() as { manualKeptCount?: number, manualKeptTitles?: unknown } | undefined
+      const count = Number(s?.manualKeptCount ?? 0) || 0
+      const titles = Array.isArray(s?.manualKeptTitles) ? s!.manualKeptTitles.map(String) : null
+      const at = titles ? titles.indexOf(title) : -1
+      const counted = titles ? at >= 0 : count > 0
+      tx.update(recompare, {
+        contentHash: '',
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(counted ? { manualKeptCount: Math.max(0, count - 1) } : {}),
+        ...(titles && at >= 0 ? { manualKeptTitles: titles.filter((_, i) => i !== at) } : {}),
+      })
+    })
   }
   const after = (await ref.get()).data() as any
 

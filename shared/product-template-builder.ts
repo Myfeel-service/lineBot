@@ -1,3 +1,4 @@
+import { CARD_BODY_MAX } from './card-message'
 import { sheetFieldToken, SHEET_CURRENT_ROW, SHEET_FIELD_IMAGE, SHEET_FIELD_NAME } from './sheet-field'
 import { findProductPageHeader, isSheetControlHeader, sheetHeaderKey, SHEET_FAQ_HEADER } from './sheet-products'
 
@@ -14,8 +15,14 @@ export interface ProductTemplateInput {
   headers: readonly string[]
   /** 「看其他商品」回哪個目錄；新的目錄還沒存檔沒有 id＝不放這顆 */
   catalogModuleId?: string
-  /** 「真人客服」那顆（`${workspaceId}_live_agent`，每個帳號都有） */
-  liveAgentModuleId: string
+  /** 「真人客服」那顆：這個帳號的真人客服系統模組（從模組清單找，⛔ 不自己拼編號）；找不到＝不放這顆 */
+  liveAgentModuleId?: string
+}
+
+export interface ProductTemplateResult {
+  messages: any[]
+  /** 欄位太多、內文放不下的那幾欄（code review 第 2 條：卡片內文最多 1000 字，「這個商品」的每一格在存檔時就佔約 50 字） */
+  omitted: string[]
 }
 
 export const PRODUCT_TEMPLATE_NAME = '商品資訊範本'
@@ -23,21 +30,32 @@ export const PRODUCT_TEMPLATE_CLOSING = '還有其他問題，也歡迎直接留
 
 const NO_TAG = { enabled: false, addTagIds: [] as string[] }
 
-export function buildProductTemplateMessages(input: ProductTemplateInput): any[] {
+export function buildProductTemplateMessages(input: ProductTemplateInput): ProductTemplateResult {
   const at = (field: string) => sheetFieldToken({ row: SHEET_CURRENT_ROW, field })
   const headers = input.headers.map(h => String(h ?? '').trim()).filter(h => h && !isSheetControlHeader(h))
   const pageHeader = findProductPageHeader(headers)
   const faqHeader = headers.find(h => sheetHeaderKey(h) === sheetHeaderKey(SHEET_FAQ_HEADER)) ?? null
   // 網址那兩欄做成按鈕，不放進內文（一長串網址放在卡片上只是雜訊）
   const bodyFields = headers.filter(h => h !== pageHeader && h !== faqHeader)
-  const text = ['{{displayName}}您好，', ...bodyFields.flatMap(h => ['', `${h}：${at(h)}`])].join('\n')
+  // 照試算表的順序一欄一欄放，放到卡片內文的上限為止；放不下的講出來（⛔ 不要建一份存不了的範本，也不默默少欄）
+  let text = '{{displayName}}您好，'
+  const omitted: string[] = []
+  for (const h of bodyFields) {
+    const next = `${text}\n\n${h}：${at(h)}`
+    if (omitted.length || next.length > CARD_BODY_MAX) omitted.push(h)
+    else text = next
+  }
   const button = (label: string, field: string, style: 'primary' | 'link') => ({
     type: 'uri', label, uri: at(field), text: '', moduleId: '', tagging: NO_TAG, style,
   })
   const quick = (label: string, moduleId: string) => ({
     imageUrl: '', action: { type: 'module', label, text: label, moduleId, tagging: NO_TAG },
   })
-  return [
+  const quickReplies = [
+    ...(input.catalogModuleId ? [quick('看其他商品', input.catalogModuleId)] : []),
+    ...(input.liveAgentModuleId ? [quick('真人客服', input.liveAgentModuleId)] : []),
+  ]
+  const messages = [
     {
       type: 'flexImageCarousel',
       altText: at(SHEET_FIELD_NAME),
@@ -54,15 +72,10 @@ export function buildProductTemplateMessages(input: ProductTemplateInput): any[]
         ],
       }],
     },
-    {
-      type: 'quickReply',
-      text: PRODUCT_TEMPLATE_CLOSING,
-      quickReplies: [
-        ...(input.catalogModuleId ? [quick('看其他商品', input.catalogModuleId)] : []),
-        quick('真人客服', input.liveAgentModuleId),
-      ],
-    },
+    // 一顆快速回覆都沒有就不放這則（空的快速回覆存不了）
+    ...(quickReplies.length ? [{ type: 'quickReply', text: PRODUCT_TEMPLATE_CLOSING, quickReplies }] : []),
   ]
+  return { messages, omitted }
 }
 
 /** 名字撞到就加序號（「商品資訊範本 2」）：模組名稱不能重複得一眼分不出 */

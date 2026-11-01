@@ -795,7 +795,8 @@ function alertRoutes(def: AlertDefinition, scopes: WorkspaceAlertScope[] | undef
  * 「幫我修」一鍵修（同步失敗、沒學起來那兩顆有）沒有消失：右下角小幫手的同一張卡上照樣按得到。
  */
 export const PAGE_LIST_COVERED_ALERTS: Record<string, readonly WorkspaceAlertId[]> = {
-  'knowledge/sources': ['knowledgeSyncFailed', 'knowledgeDetectStalled', 'knowledgeIndexFailed', 'knowledgeWrongAnswers', 'knowledgeOutdated'],
+  // `C-453`：試算表被手動改過那顆＝「要處理的事」的 manualKeptSheets，同一件事不在頁頂再講一次
+  'knowledge/sources': ['knowledgeSyncFailed', 'knowledgeDetectStalled', 'knowledgeIndexFailed', 'knowledgeWrongAnswers', 'knowledgeOutdated', 'sheetKnowledgeLocked'],
   // `D-146`：登入後第一頁最上面那一條「LINE 訊息」本身就是這兩顆（同一個位置、同一個顏色、同一句後果、按鈕就在上面），
   // 頁頂提醒帶再講一次＝同一件事上下兩條
   'conversation-stats': ['lineQuotaExhausted', 'lineQuotaRunningOut'],

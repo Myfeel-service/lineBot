@@ -12,6 +12,7 @@ import {
   sheetCatalogSyncNote,
   sheetCoverStatusText,
   sheetLockedText,
+  sheetProductNames,
   sheetProductChangeText,
   sheetProductRef,
   sheetProductTagName,
@@ -147,9 +148,14 @@ describe('編輯畫面的白話', () => {
     expect(sheetCatalogSyncNote(60)).toContain('封面圖')
     expect(sheetCatalogSyncNote(null)).toContain('沒有開自動更新')
   })
-  it('`C-453`①：被手動改過的商品——講後果（LINE 跟 AI 都不跟）；超過 3 個講總數', () => {
+  it('`C-453`①：被手動改過的商品——講後果（LINE 跟 AI 都不跟）；超過 3 個講總數（跟提醒同一個講法，code review 第 15 條）', () => {
     expect(sheetLockedText(['KIESLECT'])).toBe('「KIESLECT」在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。')
-    expect(sheetLockedText(['A', 'B', 'C', 'D'])).toContain('「A」、「B」、「C」 等 4 個')
+    expect(sheetLockedText(['A', 'B', 'C', 'D'])).toContain('「A」、「B」、「C」等 4 個在知識庫')
+    expect(sheetLockedText(['A', 'B', 'C', 'D'])).toContain(sheetProductNames(['A', 'B', 'C', 'D']))
+    // 名單只記了前 50 條：總數照數字講
+    expect(sheetLockedText(['A'], 60)).toContain('「A」等 60 個')
+    // `C-453` 以前同步的表只有數字沒有名單
+    expect(sheetLockedText([], 2)).toMatch(/^有 2 條在知識庫被手動改過/)
   })
 })
 

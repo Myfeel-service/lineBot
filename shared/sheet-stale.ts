@@ -1,4 +1,5 @@
 import { sheetCardField, sheetFieldToken } from './sheet-field'
+import { isHiddenCatalogCards } from './sheet-catalog'
 
 /**
  * 試算表改了、模組還寫著改之前的原字（`C-429`，`D-165`）。
@@ -58,7 +59,8 @@ function eachString(value: unknown, fn: (s: string) => void, key?: string): void
   if (key === 'sheetSnapshots') return
   if (typeof value === 'string') { fn(value); return }
   if (Array.isArray(value)) { for (const v of value) eachString(v, fn); return }
-  if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) eachString(v, fn, k)
+  // 照試算表排的目錄裡留著可以切回去的舊卡片不送出：寫著舊字也不用提醒（`C-453` code review 第 13 條）
+  if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!isHiddenCatalogCards(value, k)) eachString(v, fn, k)
 }
 
 /** 這個模組有沒有一字不差（空白不算）寫著這幾段舊字的其中一段；回傳是哪一段 */

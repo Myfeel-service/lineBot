@@ -305,6 +305,20 @@ describe('`C-438` code review：商品目錄「點卡片送的範本」也算引
     expect([...collectModuleRefs(manual)]).toEqual(['old-info'])
   })
 
+  it('code review 第 13 條：改接（replaceModuleRefs）、試算表的格子（collectSheetUse）也跳過那些留著的舊卡片——四支認法一樣', () => {
+    const kept = [{
+      ...catalog[0],
+      columns: [{ imageUrl: 'a.png', text: '{{sheet:Giaretti|出貨時間}}', action: { type: 'module', moduleId: 'old-info' } }],
+    }]
+    const r = replaceModuleRefs(kept, 'old-info', 'new-info')
+    expect(r.changed).toBe(false)
+    expect(collectSheetUse(kept)).toEqual({ catalogSourceIds: ['src1'], fieldRefs: [] })
+    // 對照組：沒有 sheetSource＝照舊認、照舊改
+    const manual = [{ type: 'flexImageCarousel', columns: kept[0]!.columns }]
+    expect(replaceModuleRefs(manual, 'old-info', 'new-info').changed).toBe(true)
+    expect(collectSheetUse(manual)?.fieldRefs).toHaveLength(1)
+  })
+
   it('改接得掉（壞按鈕代改）；別的設定原樣', () => {
     const r = replaceModuleRefs(catalog, 'tpl-1', 'tpl-2')
     expect(r.changed).toBe(true)

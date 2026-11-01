@@ -130,6 +130,7 @@ describe('提醒帶：知識庫來源頁不重講「要處理的事」已經列�
       knowledgeIndexFailed: 'failedChunks',
       knowledgeWrongAnswers: 'wrongAnswerChunks',
       knowledgeOutdated: 'outdatedSources',
+      sheetKnowledgeLocked: 'manualKeptSheets',
     }
     const page = readFileSync(fileURLToPath(new URL('../pages/admin/[workspaceId]/knowledge/sources/index.vue', import.meta.url)), 'utf8')
     const todoBody = page.slice(page.indexOf('const todoItems = computed'), page.indexOf('// ── 工作台入口'))

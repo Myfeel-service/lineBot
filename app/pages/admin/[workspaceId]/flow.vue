@@ -2187,26 +2187,41 @@ function templateHeaders(sourceId: unknown): string[] | null {
 async function makeProductTemplate(msg: any) {
   const headers = templateHeaders(msg?.sheetSource?.sourceId)
   if (!headers || !assertCan('marketing.write')) return
+  // 按下去那一刻是哪個模組、哪一份設定（code review 第 8 條：建的那一兩秒他可能切成「自己一張張做」或換了模組）
+  const target = msg.sheetSource
+  const editingAtStart = selectedId.value
   makingTemplate.value = true
+  let created: { id: string } | null = null
+  let name = ''
+  let omitted: string[] = []
   try {
-    const name = productTemplateName(allFlows.value.map(f => String((f as any).name ?? '')))
-    const messages = buildProductTemplateMessages({
+    name = productTemplateName(allFlows.value.map(f => String((f as any).name ?? '')))
+    // 「真人客服」：這個帳號的真人客服系統模組（code review 第 14 條：⛔ 不自己拼編號；找不到就不放那顆）
+    const liveAgent = allFlows.value.find(f => f.isSystem && (f as any).moduleType === 'live_agent')
+    const built = buildProductTemplateMessages({
       headers,
       // 「看其他商品」回這個目錄：新的目錄還沒存檔沒有 id，就先不放這顆
       ...(!isCreating.value && selectedId.value ? { catalogModuleId: selectedId.value } : {}),
-      liveAgentModuleId: `${workspaceId.value}_live_agent`,
+      ...(liveAgent ? { liveAgentModuleId: liveAgent.id } : {}),
     })
-    const created = await apiFetch<{ id: string }>('/api/flow/create', { method: 'POST', body: { name, messages, isActive: true } })
-    await loadFlows()
-    msg.sheetSource.tapModuleId = created.id
-    showToast(`做好了「${name}」，已經選上；按「儲存變更」之後客人點目錄就會收到。想改字到模組清單點「${name}」`, 'success')
+    omitted = built.omitted
+    created = await apiFetch<{ id: string }>('/api/flow/create', { method: 'POST', body: { name, messages: built.messages, isActive: true } })
   }
   catch (err: any) {
     showToast(err?.data?.statusMessage || '範本沒做成，請再試一次', 'error')
-  }
-  finally {
     makingTemplate.value = false
+    return
   }
+  // ⛔ 建好了就不要講「沒做成」（以前後面任何一步出錯都講沒做成，他再按一次＝多一份重複的範本）
+  try { await loadFlows() } catch { /* 清單晚一點自己會重讀 */ }
+  makingTemplate.value = false
+  const tail = omitted.length ? `。欄位太多，內文只放到「${omitted[0]}」之前，沒放的：${omitted.map(h => `「${h}」`).join('、')}（AI 照樣讀得到）` : ''
+  if (msg.sheetSource !== target || selectedId.value !== editingAtStart) {
+    showToast(`範本「${name}」做好了，但這個目錄剛剛改了設定，沒有幫你選上；要用的話在「點卡片送哪個模組」選它${tail}`, 'warning')
+    return
+  }
+  target.tapModuleId = created!.id
+  showToast(`做好了「${name}」，已經選上；按「儲存變更」之後客人點目錄就會收到。想改字到模組清單點「${name}」${tail}`, omitted.length ? 'warning' : 'success')
 }
 // ── `C-437`：商品資訊範本（「這個商品」的格子；填法在 shared/sheet-current-product.ts，跟送出端同一支）──
 const formUsesCurrentProduct = computed(() => usesCurrentProductDeep(form.value.messages ?? []))

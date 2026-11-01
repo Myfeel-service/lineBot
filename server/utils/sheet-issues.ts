@@ -107,11 +107,8 @@ export function sheetFieldIssues(modules: SheetModuleUse[], rows: Map<string, Sh
   return out
 }
 
-/** 提醒那一句（第一個例子＋還有幾個）：只講商品名，最多三個 */
-export function sheetProductNames(names: string[], max = 3): string {
-  const head = names.slice(0, max).map(n => `「${n}」`).join('、')
-  return names.length > max ? `${head}等 ${names.length} 個` : head
-}
+/** 提醒那一句的商品名（搬到 shared：商品目錄畫面也要同一個講法，`C-453` code review 第 15 條） */
+export { sheetProductNames } from '~~/shared/sheet-catalog'
 
 /** 範本／模組用到的那一格找不到了：哪個模組、哪一欄（或哪一列）、客人會怎樣 */
 export function sheetFieldIssueText(i: SheetFieldIssue): string {

@@ -33,11 +33,10 @@ vi.mock('./firebase', () => ({ getDb: () => db, getStorage: () => ({ bucket: () 
 vi.mock('./workspace-auth', () => ({ requireCapability: vi.fn(async () => ({ workspaceId: 'ws1', uid: 'u1' })) }))
 const { writeAuditLog } = vi.hoisted(() => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./audit-log', () => ({ writeAuditLog }))
-/** 這份試算表的知識卡（`C-453`①：被手動改過的＝不跟試算表） */
-const { chunks } = vi.hoisted(() => ({ chunks: { current: [] as Array<{ title: string, manuallyEditedAtMs: number, isOverview?: boolean }> } }))
+/** ⛔ 不讀知識卡（`C-453` code review 第 7、11 條）：讀了就讓測試炸，被手動改過的名單一律讀來源上同步記的那一份 */
 vi.mock('./ai-knowledge-sources', () => ({
   KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
-  listChunksBySource: vi.fn(async () => chunks.current.map(c => ({ isOverview: false, ...c }))),
+  listChunksBySource: vi.fn(async () => { throw new Error('商品目錄不該讀知識卡') }),
 }))
 const { invalidateSheetIssuesCache } = vi.hoisted(() => ({ invalidateSheetIssuesCache: vi.fn() }))
 vi.mock('./sheet-issues', () => ({ invalidateSheetIssuesCache }))
@@ -52,7 +51,6 @@ const prod = (title: string) => Object.values(store.sheetProductRegistries!.src1
 beforeEach(async () => {
   for (const k of Object.keys(store)) delete store[k]
   writeAuditLog.mockClear()
-  chunks.current = []
   store.knowledgeSources = { src1: { workspaceId: 'ws1', type: 'gsheet', name: '客服（商品資訊）', url: 'https://docs.google.com/spreadsheets/d/x', lastFetchedAt: { toMillis: () => 1234 } } }
 })
 
@@ -98,16 +96,21 @@ describe('① ② 編輯畫面的資料', () => {
     expect(v.products[0]!.tag).toBeNull()
   })
 
-  it('`C-453`①：知識庫被手動改過的商品列出來（照試算表順序）；沒改過的、總覽卡不算', async () => {
+  it('`C-453`①：被手動改過、跟試算表不一樣的那幾條——讀同步記在來源上的名單（跟提醒中心、知識庫同一份），照試算表順序', async () => {
     await seed([['A', true], ['B', true], ['C', false]])
-    chunks.current = [
-      { title: 'C', manuallyEditedAtMs: 5 },
-      { title: 'A', manuallyEditedAtMs: 0 },
-      { title: 'B', manuallyEditedAtMs: 9 },
-      { title: 'B', manuallyEditedAtMs: 9, isOverview: true },
-    ]
+    // 表上已經沒有的那一條（「舊品」）排最後
+    store.knowledgeSources!.src1 = { ...store.knowledgeSources!.src1, manualKeptCount: 3, manualKeptTitles: ['舊品', 'C', 'B'] }
     const v = await readSheetCatalogView(db, 'ws1', 'src1')
-    expect(v.locked).toEqual(['B', 'C'])
+    expect(v.locked).toEqual(['B', 'C', '舊品'])
+    expect(v.lockedCount).toBe(3)
+  })
+
+  it('`C-453`：舊的來源只有數字沒有名單＝講幾條；什麼都沒有＝0', async () => {
+    await seed([['A', true]])
+    store.knowledgeSources!.src1 = { ...store.knowledgeSources!.src1, manualKeptCount: 2 }
+    expect(await readSheetCatalogView(db, 'ws1', 'src1')).toMatchObject({ locked: [], lockedCount: 2 })
+    store.knowledgeSources!.src1 = { ...store.knowledgeSources!.src1, manualKeptCount: 0 }
+    expect(await readSheetCatalogView(db, 'ws1', 'src1')).toMatchObject({ locked: [], lockedCount: 0 })
   })
 
   it('`C-453`②：多久自動更新——有設間隔＝分鐘數；關掉自動同步、沒設間隔＝null（要自己按）', async () => {
@@ -125,6 +128,8 @@ describe('① ② 編輯畫面的資料', () => {
         { title: 'A', content: '商品頁面：https://a.com/x', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
         { title: 'A 新款', content: '商品頁面：https://a.com/x', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
         { title: 'B', content: '商品頁面：https://a.com/b', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
+        // 同一頁的另一個款式、沒放進目錄（code review 第 9 條：單入組／雙入組那種是對的資料，不在目錄上也不會出現同一張圖）
+        { title: 'A 加購款', content: '商品頁面：https://a.com/x', tags: [], controls: { 放進LINE目錄: 'FALSE' } },
       ],
       fieldHeaders: ['商品頁面'],
       controlHeaders: ['放進LINE目錄'],
@@ -134,6 +139,7 @@ describe('① ② 編輯畫面的資料', () => {
     expect(same.A).toEqual(['A 新款'])
     expect(same['A 新款']).toEqual(['A'])
     expect(same.B).toBeUndefined()
+    expect(same['A 加購款']).toBeUndefined()
   })
 
   it('③ ⛔ 不是這個帳號的試算表、不是試算表＝404', async () => {

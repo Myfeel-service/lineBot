@@ -69,7 +69,10 @@ function docRef(col: string, id: string): any {
     },
   }
 }
-const db: any = { collection: (col: string) => ({ doc: (id: string) => docRef(col, id) }) }
+const db: any = {
+  collection: (col: string) => ({ doc: (id: string) => docRef(col, id) }),
+  runTransaction: async (fn: (tx: any) => Promise<unknown>) => fn({ get: (r: any) => r.get(), update: (r: any, v: any) => { void r.update(v) } }),
+}
 vi.mock('~~/server/utils/firebase', () => ({ getDb: () => db }))
 
 let body: Record<string, unknown> = {}
@@ -203,6 +206,26 @@ describe('解除鎖定要真的生效（`C-308`②）', () => {
     const order = WRITES.map(w => w.col)
     expect(order.indexOf('knowledgeChunks')).toBeLessThan(order.indexOf('knowledgeSources'))
     expect(lastAudit().note).toBe('出貨時間：解除了鎖定，下一次同步會換回表格上的內容')
+  })
+
+  it('`C-453` 第 3 條：解鎖名單上的那一條＝當場從「不跟表格」名單拿掉、數字減一（提醒中心不用等下一次同步才消失）', async () => {
+    STORE.knowledgeChunks!.c1!.manuallyEditedAt = '__ts__'
+    STORE.knowledgeSources!.s1 = { ...STORE.knowledgeSources!.s1, manualKeptCount: 2, manualKeptTitles: ['出貨時間', '退貨'] }
+    body = { clearManualLock: true }
+    await run(settingsHandler)
+    expect(STORE.knowledgeSources!.s1).toMatchObject({ contentHash: '', manualKeptCount: 1, manualKeptTitles: ['退貨'] })
+  })
+
+  it('`C-453`：舊的來源沒有名單＝數字照減（下一次同步照實重算）；不在名單上的（跟表格一樣、本來就沒算）＝數字不動', async () => {
+    STORE.knowledgeChunks!.c1!.manuallyEditedAt = '__ts__'
+    STORE.knowledgeSources!.s1 = { ...STORE.knowledgeSources!.s1, manualKeptCount: 1 }
+    body = { clearManualLock: true }
+    await run(settingsHandler)
+    expect(STORE.knowledgeSources!.s1!.manualKeptCount).toBe(0)
+
+    STORE.knowledgeSources!.s1 = { ...STORE.knowledgeSources!.s1, manualKeptCount: 1, manualKeptTitles: ['退貨'] }
+    await run(settingsHandler)
+    expect(STORE.knowledgeSources!.s1).toMatchObject({ manualKeptCount: 1, manualKeptTitles: ['退貨'] })
   })
 
   it.each([

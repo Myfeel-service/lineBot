@@ -42,10 +42,13 @@ export interface SheetCatalogView {
   /** 多久自動更新一次（分鐘）；null＝這份沒開自動更新（`C-453`②：改了試算表要等多久，畫面要講） */
   autoSyncMinutes: number | null
   /**
-   * 在知識庫被手動改過的商品（`C-453`①）：試算表改了，LINE 上的商品資訊和 AI 都照手動改的那一版，不會跟著變。
-   * 以前只有知識庫那一頁講，商品目錄這裡、提醒中心都不講
+   * 在知識庫被手動改過、跟試算表不一樣的那幾條（`C-453`①）：試算表改了，LINE 上的商品資訊和 AI 都照手動改的那一版。
+   * 以前只有知識庫那一頁講。名單跟數字都是同步時記的（`manualKeptTitles`／`manualKeptCount`）——
+   * 提醒中心、知識庫讀同一份，三個地方講的才一樣（code review 第 6 條；以前這裡另外讀全部知識卡、口徑不同）
    */
   locked: string[]
+  /** 幾條（名單最多記 50 條；`C-453` 以前同步的表只有數字、名單是空的） */
+  lockedCount: number
   /** 表上有沒有「放進LINE目錄」這欄（沒有＝要先加，畫面講缺哪一欄） */
   catalogColumn: boolean
   pageHeader: string | null
@@ -77,6 +80,16 @@ export function readSheetCatalogSource(msg: any): SheetCatalogSource | null {
   }
   if (typeof s.tagPrefix === 'string') out.tagPrefix = s.tagPrefix
   return out
+}
+
+/**
+ * 照試算表排的卡片訊息裡，留著可以切回去的舊卡片（`columns`）——不會送出（`C-453` code review 第 8、13 條）。
+ * 掃「這個模組用到什麼」的每一支（模組引用、改接、試算表的格子、還寫著舊字）都照這個跳過，四支的認法才一樣
+ */
+export function isHiddenCatalogCards(owner: unknown, key: string): boolean {
+  if (key !== 'columns' || !owner || typeof owner !== 'object') return false
+  const s = (owner as { sheetSource?: unknown }).sheetSource
+  return !!s && typeof s === 'object'
 }
 
 /** 存檔檢查：照試算表排的卡片訊息只看這兩格（卡片是送出時才產生的）。沒問題回空字串 */
@@ -217,10 +230,23 @@ export function sheetCatalogSyncNote(autoSyncMinutes: number | null): string {
   return `改了試算表，約${wait}內會自動換上（新勾的商品再等抓封面圖，約 10 分鐘）。急的話：`
 }
 
-/** 被手動改過的商品那一句（`C-453`①）：商品目錄、提醒同一句 */
-export function sheetLockedText(titles: readonly string[]): string {
-  const names = titles.slice(0, 3).map(t => `「${t}」`).join('、') + (titles.length > 3 ? ` 等 ${titles.length} 個` : '')
-  return `${names}在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。`
+/**
+ * 提醒、商品目錄講商品名的那一段（第一個例子＋還有幾個）：只講商品名，最多三個。
+ * `total`＝其實有幾個（名單只記了前面幾個的時候，例如被手動改過的最多記 50 條）
+ */
+export function sheetProductNames(names: readonly string[], max = 3, total = names.length): string {
+  const shown = names.slice(0, max)
+  const head = shown.map(n => `「${n}」`).join('、')
+  return total > shown.length ? `${head}等 ${total} 個` : head
+}
+
+/**
+ * 被手動改過、不跟試算表的那一句（`C-453`①）：商品目錄、提醒中心同一句。
+ * 名單是同步時記的（`manualKeptTitles`）；`C-453` 以前同步的表只有數字沒有名單＝講「有 N 條」
+ */
+export function sheetLockedText(titles: readonly string[], count = titles.length): string {
+  const who = titles.length ? sheetProductNames(titles, 3, Math.max(count, titles.length)) : `有 ${count} 條`
+  return `${who}在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。`
 }
 
 /** 自動建的標籤叫什麼：開頭＋商品名（截到 50 字：標籤管理、推播挑人的畫面放不下更長的） */

@@ -1,7 +1,7 @@
 import { capMapSize } from './bounded-cache'
 import { SCRIPTS_COLLECTION } from './ai-scripts'
 import { encodeTriggerModule, TRIGGER_MODULE_PREFIX, parseTriggerModuleData } from '~~/shared/action-schema'
-import { readSheetCatalogSource } from '~~/shared/sheet-catalog'
+import { isHiddenCatalogCards, readSheetCatalogSource } from '~~/shared/sheet-catalog'
 import { sheetFieldTokensIn, type SheetFieldRef } from '~~/shared/sheet-field'
 
 /**
@@ -74,7 +74,8 @@ export function collectSheetUse(messages: unknown): Pick<SheetModuleUse, 'catalo
       return
     }
     if (Array.isArray(v)) return v.forEach(walk)
-    if (v && typeof v === 'object') Object.values(v).forEach(walk)
+    // 留著可以切回去的舊卡片不送出：裡面的格子找不到也不用提醒（`C-453` code review 第 13 條）
+    if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) if (!isHiddenCatalogCards(v, k)) walk(x)
   }
   for (const m of messages) {
     const src = m?.type === 'flexImageCarousel' ? readSheetCatalogSource(m) : null
@@ -114,8 +115,7 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
     // `C-438` code review：照試算表排的商品目錄，點卡片送的範本存在 `sheetSource.tapModuleId`（卡片送出時才產生）。
     // ⛔ 不認的話，刪掉／停用範本時「誰在用它」說沒人、壞按鈕提醒也不亮，每張目錄卡點了都沒反應
     const sheetSource = obj.sheetSource as { tapModuleId?: unknown } | undefined
-    const sheetDriven = !!sheetSource && typeof sheetSource === 'object'
-    if (sheetDriven) {
+    if (sheetSource && typeof sheetSource === 'object') {
       const id = String(sheetSource.tapModuleId ?? '').trim()
       if (id) out.add(id)
     }
@@ -123,7 +123,7 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
     // 不跳過的話，換新做法之後舊的商品模組照樣算「有人在用」：不標「客人走不到」、編輯頁還說「會從商品目錄送出」，
     // 店家繼續改舊模組卻沒有用；刪掉舊模組還會亮「按鈕壞了」
     for (const key of Object.keys(obj)) {
-      if (sheetDriven && key === 'columns') continue
+      if (isHiddenCatalogCards(obj, key)) continue
       collectModuleRefs(obj[key], out)
     }
   }
@@ -164,6 +164,8 @@ export function replaceModuleRefs(value: unknown, from: string, to: string): { v
     let changed = false
     const next: Record<string, unknown> = {}
     for (const key of Object.keys(obj)) {
+      // 跟 collectModuleRefs 同一個認法：留著可以切回去的舊卡片找不到、也不改（切回去時再照當時的狀況提醒）
+      if (isHiddenCatalogCards(obj, key)) { next[key] = obj[key]; continue }
       const r = replaceModuleRefs(obj[key], from, to)
       next[key] = r.value
       if (r.changed) changed = true

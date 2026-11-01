@@ -155,3 +155,28 @@ describe('syncGoogleSheetSource 大量刪除守門', () => {
     expect(ops.some(o => o.col === 'knowledgeSources' && o.op === 'update')).toBe(true)
   })
 })
+
+describe('`C-453` 被手動改過、不跟表格的是哪幾條（商品目錄、提醒中心、知識庫三個地方照這一份講）', () => {
+  const source = { url: '', gsheetId: 'sheet1', gsheetGid: null, contentHash: 'old' } as any
+
+  it('⭐ 表格改了、卡被手動改過＝記名字；表格少了那一列、卡鎖著留著＝也記；手動改過但跟表格一樣＝不記', async () => {
+    listChunksBySource.mockResolvedValue([
+      { id: 'c0', title: 't0', content: '內容0', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 5, updatedAtMs: 0, activeUntilMs: 0, expiredAtMs: 0 },
+      { id: 'c1', title: 't1', content: '手動改的', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 5, updatedAtMs: 0, activeUntilMs: 0, expiredAtMs: 0 },
+      { id: 'c2', title: 't2', content: '內容2', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 5, updatedAtMs: 0, activeUntilMs: 0, expiredAtMs: 0 },
+      { id: 'c3', title: 't3', content: '內容3', tags: [], questions: [], status: 'indexed', isOverview: false, manuallyEditedAtMs: 0, updatedAtMs: 0, activeUntilMs: 0, expiredAtMs: 0 },
+    ])
+    readGoogleSheetAsCards.mockResolvedValue({
+      // t0 跟卡一樣（手動改過但沒分歧）、t1 表格寫的跟卡不一樣、t2 表格上沒了、t3 沒鎖照常
+      cards: [{ title: 't0', content: '內容0', tags: [] }, { title: 't1', content: '表格的', tags: [] }, { title: 't3', content: '內容3', tags: [] }],
+      stats: {},
+      warnings: [],
+    })
+    const { db, ops } = makeDb()
+    const r = await syncGoogleSheetSource(db, 'ws1', 'src1', source)
+    expect(r.manualKept).toBe(2)
+    const src = ops.find(o => o.col === 'knowledgeSources' && (o.payload as any)?.manualKeptCount !== undefined)!.payload as any
+    expect(src.manualKeptCount).toBe(2)
+    expect(src.manualKeptTitles).toEqual(['t1', 't2'])
+  })
+})

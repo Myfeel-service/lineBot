@@ -4332,8 +4332,13 @@ interface GsheetSyncRes {
 async function syncGsheetNow() {
   if (!selectedId.value) return
   gsheetSyncing.value = true
-  // `C-453`③：按之前「上次更新」是幾點——逾時之後看它有沒有往前跳，就知道主機到底做完沒（不比電腦的時鐘）
+  /*
+   * `C-453`③：按之前「上次更新」是幾點——逾時之後看它有沒有往前跳，就知道主機到底做完沒（不比電腦的時鐘）。
+   * ⛔ 先重讀一次（code review 第 4 條）：頁面開著的這段時間跑過自動更新，畫面上記的還是更早的時間，
+   *    一逾時第一次重讀就會被當成「做完了」——其實是上一輪自動更新
+   */
   const syncSid = selectedId.value
+  await loadSources().catch(() => {})
   const fetchedBefore = sources.value.find(s => s.id === syncSid)?.lastFetchedAtMs ?? 0
   try {
     let res = await apiFetch<GsheetSyncRes>(
@@ -4372,11 +4377,7 @@ async function syncGsheetNow() {
     // 只重載明細的話,體檢有 60 秒快取,商家修好了畫面仍紅著,只能自己 F5。
     await loadSources(true)
     if (res.outcome === 'synced' && (res.added || res.updated || res.deleted)) refreshSummaryAfterContentChange(sid)
-    // 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了更新卻什麼都沒發生。
-    // 什麼時候補照自動更新的頻率講（`C-308`④）：設成不自動更新的不會「自動」補
-    const quotaTail = res.quotaSkipped
-      ? `；還有 ${res.quotaSkipped} 列因為 AI 知識量用滿了沒收進來（刪掉用不到的或升級方案後${gsheetAutoSync.value ? '，下一次自動更新會補上' : '再按一次「立即更新」就會補上'}）`
-      : ''
+    const quotaTail = sheetQuotaTail(res.quotaSkipped ?? 0)
     if (res.outcome === 'unchanged') {
       showToast(quotaTail ? `表格沒有變動${quotaTail}` : '已是最新，無變動', quotaTail ? 'warning' : 'success')
     }
@@ -4412,28 +4413,50 @@ async function syncGsheetNow() {
   }
 }
 
+/**
+ * 空間滿了沒收的列一定要講（`C-296`）：不講的話，表格加了一列、按了更新卻什麼都沒發生。
+ * 什麼時候補照自動更新的頻率講（`C-308`④）：設成不自動更新的不會「自動」補。逾時那條路也講（`C-453` code review 第 1 條）
+ */
+function sheetQuotaTail(skipped: number): string {
+  return skipped
+    ? `；還有 ${skipped} 列因為 AI 知識量用滿了沒收進來（刪掉用不到的或升級方案後${gsheetAutoSync.value ? '，下一次自動更新會補上' : '再按一次「立即更新」就會補上'}）`
+    : ''
+}
+
 /** 逾時之後：每 10 秒看一次「上次更新」有沒有往前跳，最多 2 分鐘（按鈕這段時間照樣轉圈，不讓他重按） */
 const SLOW_SYNC_POLL_MS = 10_000
 const SLOW_SYNC_POLLS = 12
+/** 離開這一頁就不再等（code review 第 10 條：以前離開了還每 10 秒讀一次、在別的頁跳「更新完成」） */
+let slowSyncPageAlive = true
+onBeforeUnmount(() => { slowSyncPageAlive = false })
 async function waitForSlowSheetSync(sid: string, fetchedBefore: number) {
   showToast('這次要整理的比較多，還在處理中；好了這裡會自己更新（約一兩分鐘），不用再按', 'warning')
   for (let i = 0; i < SLOW_SYNC_POLLS; i++) {
     await new Promise(resolve => setTimeout(resolve, SLOW_SYNC_POLL_MS))
+    // 離開這一頁、或換去看別份：不再等（按鈕的轉圈不會卡到別份上；回來看「上次更新」的時間就知道）
+    if (!slowSyncPageAlive || selectedId.value !== sid) return
     await loadSources()
     const now = sources.value.find(s => s.id === sid)
     if (now && (now.lastFetchedAtMs ?? 0) > fetchedBefore) {
-      if (selectedId.value === sid) await loadSourceDetail(sid)
+      await loadSourceDetail(sid)
       await loadSources(true)
+      const fresh = sources.value.find(s => s.id === sid) ?? now
+      // 「這份在講什麼」：主機在內容真的有變時會清掉（code review 第 1 條：以前這條路不重整理，一直停在舊的）
+      if (!(fresh.summary ?? []).some(s => String(s ?? '').trim())) refreshSummaryAfterContentChange(sid)
+      const kept = fresh.manualKeptCount ?? 0
+      const quotaTail = sheetQuotaTail(fresh.quotaSkippedCount ?? 0)
       showToast(
-        (now.manualKeptCount ?? 0) > 0
-          ? `更新完成；另有 ${now.manualKeptCount} 條是你改過的，沒跟著表格更新（點那一條旁邊的鎖頭可以改回）`
-          : '更新完成',
-        (now.manualKeptCount ?? 0) > 0 ? 'warning' : 'success',
+        '更新完成'
+        + (kept ? `；另有 ${kept} 條是你改過的，沒跟著表格更新（點那一條旁邊的鎖頭可以改回）` : '')
+        + quotaTail,
+        kept || quotaTail ? 'warning' : 'success',
       )
       return
     }
   }
-  showToast('等了兩分鐘還沒好：過一會兒重新整理這一頁看「上次更新」的時間；時間沒變再按一次「立即更新」', 'warning')
+  if (slowSyncPageAlive && selectedId.value === sid) {
+    showToast('等了兩分鐘還沒好：過一會兒重新整理這一頁看「上次更新」的時間；時間沒變再按一次「立即更新」', 'warning')
+  }
 }
 
 async function applyDiff() {

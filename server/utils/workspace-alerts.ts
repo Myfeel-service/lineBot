@@ -474,7 +474,7 @@ export async function collectWorkspaceAlerts(
   let sourceScanPromise: Promise<Array<Record<string, unknown>>> | null = null
   const getSourceScan = () => (sourceScanPromise ??= db.collection(KNOWLEDGE_SOURCES_COLLECTION)
     .where('workspaceId', '==', wid)
-    .select('name', 'type', 'detectStalledAt', 'manualKeptCount')
+    .select('name', 'type', 'detectStalledAt', 'manualKeptCount', 'manualKeptTitles')
     .limit(FALLBACK_SCAN_LIMIT)
     .get()
     .then(snap => snap.docs.map(d => d.data() as Record<string, unknown>)))
@@ -553,11 +553,16 @@ export async function collectWorkspaceAlerts(
            */
           const hit = (await getSourceScan()).filter(s => s.type === 'gsheet' && Number(s.manualKeptCount ?? 0) > 0)
           if (!hit.length) return { active: false }
+          const count = hit.reduce((n, s) => n + Number(s.manualKeptCount), 0)
+          // 是哪幾條：同步時記的名單（跟商品目錄同一份、同一個講法）；`C-453` 以前同步的表只有數字＝講是哪一份
+          const titles = hit.flatMap(s => (Array.isArray(s.manualKeptTitles) ? s.manualKeptTitles.map(String) : []))
           const first = hit[0]!
           return {
             active: true,
-            count: hit.reduce((n, s) => n + Number(s.manualKeptCount), 0),
-            detail: `「${String(first.name ?? '試算表')}」有 ${Number(first.manualKeptCount)} 條在知識庫被手動改過，試算表改了也不會跟著變`,
+            count,
+            detail: titles.length
+              ? `${sheetProductNames(titles, 3, Math.max(count, titles.length))}在知識庫被手動改過，試算表改了也不會跟著變`
+              : `「${String(first.name ?? '試算表')}」有 ${Number(first.manualKeptCount)} 條在知識庫被手動改過，試算表改了也不會跟著變`,
           }
         }),
         probe('knowledgeIndexFailed', async () => {

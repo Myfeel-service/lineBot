@@ -153,6 +153,9 @@ export function shouldBlockSheetDeletion(existingCount: number, deleteCount: num
  */
 export const ENRICH_SYNC_MAX = 60
 
+/** 來源上記「被手動改過、不跟表格」的是哪幾條，最多記幾條（`C-453`；畫面最多講前 3 個＋總數） */
+export const MANUAL_KEPT_TITLES_MAX = 50
+
 /**
  * 整張表的內容指紋（與列順序無關；標題或內容變了就會變）。
  * ⚠️ 分隔字寫成跳脫字 \u0000／\u0001，**不可以**改成別的字：以前檔案裡是直接打的 NUL／0x01 位元組
@@ -275,6 +278,8 @@ export async function syncGoogleSheetSource(
   let kept = 0
   let deleted = 0
   let manualKept = 0
+  /** 哪幾條（`C-453` code review 第 6 條）：商品目錄、提醒中心、知識庫三個地方照這一份講，數字才對得上 */
+  const manualKeptTitles: string[] = []
   let excludedSkipped = 0
 
   for (const card of sheet.cards) {
@@ -293,7 +298,10 @@ export async function syncGoogleSheetSource(
     else if (old.manuallyEditedAtMs > 0) {
       kept++ // 人工編輯過：尊重人工版本，不覆蓋
       // 表格版與卡片版不同才算「被鎖住的分歧」；相同的手編卡沒有分歧不用提醒
-      if (old.content !== card.content || old.title !== card.title) manualKept++
+      if (old.content !== card.content || old.title !== card.title) {
+        manualKept++
+        manualKeptTitles.push(old.title)
+      }
     }
     else if (old.content !== card.content || old.title !== card.title) {
       toUpdate.push({ oldId: old.id, card })
@@ -373,6 +381,7 @@ export async function syncGoogleSheetSource(
       if (old.manuallyEditedAtMs > 0) {
         kept++
         manualKept++ // 表上已刪、卡片被鎖住留著＝分歧
+        manualKeptTitles.push(old.title)
         continue
       }
       await db.collection(KNOWLEDGE_CHUNKS_COLLECTION).doc(old.id)
@@ -452,6 +461,8 @@ export async function syncGoogleSheetSource(
       // C-44：被手動編輯鎖住、與表格分歧的條數。來源頁用它常駐提示
       // 「N 條不會跟表格更新」；0 也要寫（分歧解掉後提示要消失）。
       manualKeptCount: manualKept,
+      // 是哪幾條（`C-453`）：最多記 50 條，數字照上面那格（解鎖時兩格一起減，見 knowledge/[chunkId]/settings）
+      manualKeptTitles: manualKeptTitles.slice(0, MANUAL_KEPT_TITLES_MAX),
       // 額度滿了沒新增的列數；0 也要寫（空出位置收完之後提示要消失）。
       // 指紋照樣前進：還有少收的時候，上面「沒變就跳過」會先看額度，不會把這幾列藏起來。
       quotaSkippedCount: quotaSkipped,

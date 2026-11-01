@@ -32,8 +32,8 @@
         </div>
 
         <!-- `C-453`①：知識庫被手動改過的商品不跟試算表——以前只有知識庫那一頁講 -->
-        <div v-if="view.locked?.length" class="sheet-catalog-warn sheet-catalog-warn--row" data-tour="sheet-catalog-locked">
-          <span>{{ sheetLockedText(view.locked) }}</span>
+        <div v-if="view.lockedCount" class="sheet-catalog-warn sheet-catalog-warn--row" data-tour="sheet-catalog-locked">
+          <span>{{ sheetLockedText(view.locked, view.lockedCount) }}</span>
           <NuxtLink :to="knowledgeLink" class="sheet-catalog-link">到知識庫改回跟著試算表 →</NuxtLink>
         </div>
 
@@ -67,9 +67,12 @@
                 <template v-else>{{ sheetCoverStatusText(p, view.pageHeader !== null) }}</template>
                 <template v-if="p.tag">・點了貼「{{ p.tag.name }}」</template>
               </span>
-              <!-- `C-453`⑦：複製上一列忘了改網址＝兩個商品同一張圖、點進去同一頁 -->
+              <!--
+                `C-453`⑦：兩個都在目錄上、填了同一個商品頁＝目錄上兩張同一張圖。可能是複製上一列忘了改網址，
+                也可能是同一頁的不同款式（那是對的）——兩種都給一個做法，⛔ 不叫他去改正確的資料
+              -->
               <span v-if="p.sameUrlAs?.length && g.key !== 'rename' && g.key !== 'missing'" class="sheet-catalog-meta is-warn">
-                跟{{ p.sameUrlAs.map(t => `「${t}」`).join('、') }}填了同一個商品頁：圖和「查看商品頁」會一樣，確認網址有沒有改到
+                跟{{ p.sameUrlAs.map(t => `「${t}」`).join('、') }}用同一個商品頁，目錄上會是同一張圖：網址填錯了就到試算表改；同一頁的不同款式，幫其中一個換張圖就好
               </span>
               <!--
                 `C-438`：試算表上找不到的商品，店家自己決定（規格 §5.2）——是改名就接到新的名字（圖、標籤跟著走），
