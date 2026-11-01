@@ -1039,6 +1039,31 @@
                         <p v-if="tapModuleSendsSame(msg.sheetSource.tapModuleId)" class="text-xs text-warning">
                           這個模組沒有用到「這個商品」，每個商品點了都會收到一樣的內容。
                         </p>
+                        <!--
+                          `C-453`④：還沒有範本（或選到的那個每個商品都一樣）＝照這份試算表的欄名幫他做一份。
+                          以前只有「＋ 新模組」：建出來是一段固定的字，真的範本要自己到模組頁一格一格插「這個商品」
+                        -->
+                        <div
+                          v-if="can('marketing.write') && msg.sheetSource.sourceId && (!msg.sheetSource.tapModuleId || tapModuleSendsSame(msg.sheetSource.tapModuleId))"
+                          class="sheet-template-make"
+                          data-tour="sheet-template-make"
+                        >
+                          <el-button
+                            size="small"
+                            type="primary"
+                            plain
+                            :loading="makingTemplate"
+                            :disabled="!templateHeaders(msg.sheetSource.sourceId)"
+                            @click="makeProductTemplate(msg)"
+                          >
+                            幫我做一份商品資訊範本
+                          </el-button>
+                          <span class="text-xs text-muted">
+                            {{ templateHeaders(msg.sheetSource.sourceId)
+                              ? '照這份試算表的欄位排好：商品圖、商品名、每一欄、查看商品頁、常見問答；做好之後可以再改'
+                              : '這份試算表要先同步一次，才知道有哪幾欄（到知識庫按「立即更新」）' }}
+                          </span>
+                        </div>
                         <p class="text-xs text-muted">點了也會貼上那個商品的標籤（勾進目錄時自動建）</p>
                       </div>
                     </template>
@@ -1520,6 +1545,7 @@ import {
 import { FLOW_CURRENT_PRODUCT_KEY, FLOW_SHEET_PICKER_KEY, SHEET_LABELS_KEY, SHEET_MISSING_KEY, sheetRefKey, type SheetPickerSource } from '~/utils/flow-sheet-picker'
 import { parseSheetProductRef, sheetProductRef, type SheetCatalogView } from '~~/shared/sheet-catalog'
 import { fillSheetCurrentProduct, usesCurrentProductDeep, type SheetCurrentProduct } from '~~/shared/sheet-current-product'
+import { buildProductTemplateMessages, productTemplateName } from '~~/shared/product-template-builder'
 import {
   createRichMessageActions,
   normalizeRichMessageActions,
@@ -2150,6 +2176,38 @@ function tapModuleSendsSame(moduleId: unknown): boolean {
 }
 /** 知識庫的「加入知識」直接打開在 Google 試算表那一格（`C-449`） */
 const addSheetLink = computed(() => `/admin/${workspaceId.value}/knowledge/sources?import=1&start=sheet`)
+
+// ── `C-453`④：幫我做一份商品資訊範本（照這份試算表的欄名；長相＝替 MYFEEL 換的那份） ──
+const makingTemplate = ref(false)
+/** 這份試算表的欄名；null＝還沒同步過、不知道有哪幾欄（上線前接的表） */
+function templateHeaders(sourceId: unknown): string[] | null {
+  const src = (sheetSources.value ?? []).find(s => s.id === String(sourceId ?? ''))
+  return src?.headers?.length ? src.headers : null
+}
+async function makeProductTemplate(msg: any) {
+  const headers = templateHeaders(msg?.sheetSource?.sourceId)
+  if (!headers || !assertCan('marketing.write')) return
+  makingTemplate.value = true
+  try {
+    const name = productTemplateName(allFlows.value.map(f => String((f as any).name ?? '')))
+    const messages = buildProductTemplateMessages({
+      headers,
+      // 「看其他商品」回這個目錄：新的目錄還沒存檔沒有 id，就先不放這顆
+      ...(!isCreating.value && selectedId.value ? { catalogModuleId: selectedId.value } : {}),
+      liveAgentModuleId: `${workspaceId.value}_live_agent`,
+    })
+    const created = await apiFetch<{ id: string }>('/api/flow/create', { method: 'POST', body: { name, messages, isActive: true } })
+    await loadFlows()
+    msg.sheetSource.tapModuleId = created.id
+    showToast(`做好了「${name}」，已經選上；按「儲存變更」之後客人點目錄就會收到。想改字到模組清單點「${name}」`, 'success')
+  }
+  catch (err: any) {
+    showToast(err?.data?.statusMessage || '範本沒做成，請再試一次', 'error')
+  }
+  finally {
+    makingTemplate.value = false
+  }
+}
 // ── `C-437`：商品資訊範本（「這個商品」的格子；填法在 shared/sheet-current-product.ts，跟送出端同一支）──
 const formUsesCurrentProduct = computed(() => usesCurrentProductDeep(form.value.messages ?? []))
 /** 右邊預覽、試發用哪個商品（`來源id:商品id`）。只留在這一頁，不存進模組 */

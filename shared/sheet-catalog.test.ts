@@ -9,7 +9,9 @@ import {
   readSheetCatalogSource,
   sheetCatalogColumns,
   sheetCatalogError,
+  sheetCatalogSyncNote,
   sheetCoverStatusText,
+  sheetLockedText,
   sheetProductChangeText,
   sheetProductRef,
   sheetProductTagName,
@@ -132,6 +134,22 @@ describe('編輯畫面的白話', () => {
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: null })).toContain('正在抓')
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'noCover', attempts: 1 } })).toContain('找不到封面圖')
     expect(sheetCoverStatusText({ hasPageUrl: true, coverError: { reason: 'pageUnreachable', attempts: 3 } })).toContain('連不上商品頁')
+  })
+  it('`C-453`⑤：認不出哪一欄是商品頁（欄名叫「官網」）不講「沒有商品頁網址」——他明明有填；講欄名要有「商品頁」', () => {
+    const t = sheetCoverStatusText({ hasPageUrl: false, coverError: null }, false)
+    expect(t).toContain('欄名裡要有「商品頁」')
+    expect(t).not.toContain('試算表上沒有商品頁網址')
+  })
+  it('`C-453`②：改了試算表要等多久——照這份的自動更新間隔講；沒開自動更新講要自己按', () => {
+    expect(sheetCatalogSyncNote(60)).toContain('約一小時內')
+    expect(sheetCatalogSyncNote(120)).toContain('約 2 小時內')
+    expect(sheetCatalogSyncNote(30)).toContain('約 30 分鐘內')
+    expect(sheetCatalogSyncNote(60)).toContain('封面圖')
+    expect(sheetCatalogSyncNote(null)).toContain('沒有開自動更新')
+  })
+  it('`C-453`①：被手動改過的商品——講後果（LINE 跟 AI 都不跟）；超過 3 個講總數', () => {
+    expect(sheetLockedText(['KIESLECT'])).toBe('「KIESLECT」在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。')
+    expect(sheetLockedText(['A', 'B', 'C', 'D'])).toContain('「A」、「B」、「C」 等 4 個')
   })
 })
 

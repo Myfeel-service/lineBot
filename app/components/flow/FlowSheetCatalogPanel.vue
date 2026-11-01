@@ -24,6 +24,17 @@
             <span class="text-xs text-muted">LINE 一則目錄最多 {{ view.max }} 個<template v-if="lastFetchedLabel">・上次更新 {{ lastFetchedLabel }}</template></span>
             <a v-if="view.sheetUrl" :href="view.sheetUrl" target="_blank" rel="noopener" class="sheet-catalog-link">打開試算表 ↗</a>
           </div>
+          <!-- `C-453`②：改完試算表馬上開 LINE 看還是舊的＝以為壞了。要等多久、急的話去哪按，講在這裡 -->
+          <p class="sheet-catalog-sync text-xs text-muted" data-tour="sheet-catalog-sync">
+            {{ sheetCatalogSyncNote(view.autoSyncMinutes) }}
+            <NuxtLink :to="knowledgeLink" class="sheet-catalog-link">{{ view.autoSyncMinutes ? '到知識庫按「立即更新」→' : '到知識庫 →' }}</NuxtLink>
+          </p>
+        </div>
+
+        <!-- `C-453`①：知識庫被手動改過的商品不跟試算表——以前只有知識庫那一頁講 -->
+        <div v-if="view.locked?.length" class="sheet-catalog-warn sheet-catalog-warn--row" data-tour="sheet-catalog-locked">
+          <span>{{ sheetLockedText(view.locked) }}</span>
+          <NuxtLink :to="knowledgeLink" class="sheet-catalog-link">到知識庫改回跟著試算表 →</NuxtLink>
         </div>
 
         <p v-if="!view.ready" class="sheet-catalog-note">
@@ -53,8 +64,12 @@
               <span v-else-if="g.key === 'missing'" class="sheet-catalog-meta">試算表上找不到了，AI 也答不出它</span>
               <span v-else class="sheet-catalog-meta">
                 <template v-if="p.image">{{ p.image.source === 'own' ? '自己換的圖' : '商品頁封面圖' }}</template>
-                <template v-else>{{ sheetCoverStatusText(p) }}</template>
+                <template v-else>{{ sheetCoverStatusText(p, view.pageHeader !== null) }}</template>
                 <template v-if="p.tag">・點了貼「{{ p.tag.name }}」</template>
+              </span>
+              <!-- `C-453`⑦：複製上一列忘了改網址＝兩個商品同一張圖、點進去同一頁 -->
+              <span v-if="p.sameUrlAs?.length && g.key !== 'rename' && g.key !== 'missing'" class="sheet-catalog-meta is-warn">
+                跟{{ p.sameUrlAs.map(t => `「${t}」`).join('、') }}填了同一個商品頁：圖和「查看商品頁」會一樣，確認網址有沒有改到
               </span>
               <!--
                 `C-438`：試算表上找不到的商品，店家自己決定（規格 §5.2）——是改名就接到新的名字（圖、標籤跟著走），
@@ -110,7 +125,7 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
-import { sheetCoverStatusText, sheetProductChangeText, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
+import { sheetCatalogSyncNote, sheetCoverStatusText, sheetLockedText, sheetProductChangeText, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 
 const props = defineProps<{
   sourceId: string
@@ -124,8 +139,10 @@ const emit = defineEmits<{
   changed: []
 }>()
 
-const { apiFetch } = useWorkspace()
+const { apiFetch, workspaceId } = useWorkspace()
 const { showToast } = useAdminToast()
+/** 知識庫直接打開這一份試算表（上面有「立即更新」、被手動改過的那幾條旁邊有鎖頭） */
+const knowledgeLink = computed(() => `/admin/${workspaceId.value}/knowledge/sources?sourceId=${encodeURIComponent(props.sourceId)}`)
 const { validateFile, uploadToStorage } = useMediaUpload()
 
 const products = computed(() => props.view?.products ?? [])

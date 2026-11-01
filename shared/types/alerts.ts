@@ -33,6 +33,8 @@ export type WorkspaceAlertId =
   | 'knowledgeSyncFailed'
   /** 網址來源每輪抓到的內容都不同＝變動偵測形同關閉（輪播/隨機區塊首頁必落入；官網改版不會通知） */
   | 'knowledgeDetectStalled'
+  /** 試算表來的知識在知識庫被手動改過、試算表改了不跟（`C-453`①：商品資訊卡讀的也是它） */
+  | 'sheetKnowledgeLocked'
   /** 知識卡學習失敗（embedding 失敗，這些卡答不出來） */
   | 'knowledgeIndexFailed'
   /**
@@ -196,6 +198,7 @@ export const ALERT_LABELS: Record<WorkspaceAlertId, string> = {
   liffEndpointUrlMismatch: 'LINE 填的活動頁網址不是正式網址',
   knowledgeSyncFailed: '有資料抓不到內容',
   knowledgeDetectStalled: '有網址的自動偵測失效',
+  sheetKnowledgeLocked: '有試算表的資料被手動改過，不會跟著試算表更新',
   knowledgeIndexFailed: '有知識 AI 沒學起來',
   knowledgeOutdated: '有資料內容變了還沒重新學',
   anyTextBlocking: 'AI 被一條自動回應擋住了',
@@ -282,6 +285,7 @@ export const ALERT_SEVERITY: Record<WorkspaceAlertId, AlertSeverity> = {
   llmError: 'critical',
   knowledgeSyncFailed: 'critical',
   knowledgeDetectStalled: 'warning',
+  sheetKnowledgeLocked: 'warning',
   knowledgeIndexFailed: 'critical',
   knowledgeWrongAnswers: 'critical',
   // `D-136`：沒有東西壞掉（AI 照常在答），是「這類題目交給真人比較好」的建議 → 不進紅點

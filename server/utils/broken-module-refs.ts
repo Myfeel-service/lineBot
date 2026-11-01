@@ -114,11 +114,18 @@ export function collectModuleRefs(value: unknown, out: Set<string> = new Set()):
     // `C-438` code review：照試算表排的商品目錄，點卡片送的範本存在 `sheetSource.tapModuleId`（卡片送出時才產生）。
     // ⛔ 不認的話，刪掉／停用範本時「誰在用它」說沒人、壞按鈕提醒也不亮，每張目錄卡點了都沒反應
     const sheetSource = obj.sheetSource as { tapModuleId?: unknown } | undefined
-    if (sheetSource && typeof sheetSource === 'object') {
+    const sheetDriven = !!sheetSource && typeof sheetSource === 'object'
+    if (sheetDriven) {
       const id = String(sheetSource.tapModuleId ?? '').trim()
       if (id) out.add(id)
     }
-    for (const key of Object.keys(obj)) collectModuleRefs(obj[key], out)
+    // `C-453`⑧：照試算表排的時候，原本一張張做的卡片（`columns`）只是留著可以切回去、不會送出——
+    // 不跳過的話，換新做法之後舊的商品模組照樣算「有人在用」：不標「客人走不到」、編輯頁還說「會從商品目錄送出」，
+    // 店家繼續改舊模組卻沒有用；刪掉舊模組還會亮「按鈕壞了」
+    for (const key of Object.keys(obj)) {
+      if (sheetDriven && key === 'columns') continue
+      collectModuleRefs(obj[key], out)
+    }
   }
   return out
 }

@@ -1600,7 +1600,7 @@ import { ElMessageBox } from 'element-plus'
 import { SHORT_CHUNK_CONTENT_CHARS } from '~~/shared/types/ai-knowledge'
 import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { formatFileSize } from '~/utils/knowledge-upload'
-import { apiErrorText, isRetryableError } from '~/utils/api-error-text'
+import { apiErrorStatus, apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 import type { AddOneCreated } from '~/utils/kb-add-one'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
@@ -3169,6 +3169,14 @@ const quotaSkippedSheets = computed(() => sources.value
   .filter(s => s.type === 'gsheet' && (s.quotaSkippedCount ?? 0) > 0)
   .sort((a, b) => (b.quotaSkippedCount ?? 0) - (a.quotaSkippedCount ?? 0)))
 
+/**
+ * 試算表上改了、這幾條不跟的試算表（`C-453`①）：在知識庫被手動改過的那幾條，同步時保留手動改的版本。
+ * 以前只有點進那一份才看得到黃條——KIESLECT 改了試算表、AI 跟 LINE 商品卡兩週都還是舊的。清單本來就帶著這個數
+ */
+const manualKeptSheets = computed(() => sources.value
+  .filter(s => s.type === 'gsheet' && (s.manualKeptCount ?? 0) > 0)
+  .sort((a, b) => (b.manualKeptCount ?? 0) - (a.manualKeptCount ?? 0)))
+
 const todoItems = computed<TodoItem[]>(() => {
   const items: TodoItem[] = []
   const h = health.value
@@ -3249,6 +3257,18 @@ const todoItems = computed<TodoItem[]>(() => {
       why: '表格上新加的那幾列 AI 還答不出來。刪掉用不到的知識或升級方案之後，同步時就會補上。',
       cta: '查看',
       action: singleOrList(quotaSkippedSheets.value, 'source', 'quotaSkippedSheets'),
+    })
+  }
+  // `C-453`①：跟上面那條同一種「表格上改了、AI 沒跟上」，只是原因是被手動改過
+  if (manualKeptSheets.value.length) {
+    const kept = manualKeptSheets.value.reduce((n, s) => n + (s.manualKeptCount ?? 0), 0)
+    items.push({
+      id: 'manualKeptSheets',
+      tone: 'warning',
+      title: `${manualKeptSheets.value.length} 份試算表有 ${kept} 條被手動改過，試算表改了不會跟著變`,
+      why: 'AI 的回答和 LINE 上的商品資訊都停在手動改的那一版。點進去，那幾條旁邊有鎖頭，按了就改回跟著試算表。',
+      cta: '查看',
+      action: singleOrList(manualKeptSheets.value, 'source', 'manualKeptSheets'),
     })
   }
   if (h.outdatedSources.length) {
@@ -3392,14 +3412,15 @@ async function loadHealth(force = false) {
   }
 }
 
-type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'quotaSkippedSheets' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
+type HealthCategory = 'failedSources' | 'outdatedSources' | 'stalledSources' | 'noProductSources' | 'quotaSkippedSheets' | 'manualKeptSheets' | 'failedChunks' | 'shortChunks' | 'expiredChunks' | 'wrongAnswerChunks'
 const HEALTH_META: Record<HealthCategory, { title: string; hint: string }> = {
   failedSources: { title: '資料同步失敗', hint: '這些資料自動同步一直失敗,知識停留在最後一次成功的內容。點進資料看失敗原因(常見:試算表沒分享給服務帳號、網頁被移走)。' },
   outdatedSources: { title: '資料偵測到變動', hint: '網頁內容跟上次不一樣了。點進資料按「立即更新」看差異,決定要不要更新知識。' },
   stalledSources: { title: '自動偵測失效', hint: '這幾個網址每次抓到的內容都不一樣(常見於有隨機推薦、輪播區塊的首頁),系統分不出哪次才算真的改版,所以官網改了也不會通知你。要更新知識請點進資料按「立即更新」,或改用內容固定的頁面當資料來源。' },
   // `D-127`：點一份直接打開「移到哪一組」那個小視窗（gotoHealthItem），所以只講「點一份放進去」
   noProductSources: { title: '檔案還沒放進商品分組', hint: '單一商品的說明書要放進那一台的分組，AI 才知道在講哪一台。點一份放進去。' },
-  quotaSkippedSheets: { title: '試算表還有列沒收', hint: 'AI 知識量滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
+  manualKeptSheets: { title: '試算表改了沒跟上', hint: '這幾份試算表有幾條在知識庫被手動改過，同步時保留手動改的版本、不吃試算表的修改（LINE 上的商品資訊也是）。點一份進去，那幾條旁邊有鎖頭，按了就改回跟著試算表。' },
+  quotaSkippedSheets: { title: '試算表還有列沒收', hint:'AI 知識量滿了，這幾份試算表上新加的列先沒收進知識庫。點進那一份看還差幾列。' },
   // `D-129`：這一類只有「系統自己試了 5 次還是沒學會」的（還在自動再試的不列）
   failedChunks: { title: 'AI 試了 5 次都沒學會', hint: `這幾條系統自己試了 5 次，AI 還是沒學會，客人問到相關問題時找不到它們。點開那一條按「${KB_RETRY_BUTTON}」；還是不行的話，改一下內容再存，或聯絡我們。` },
   // ⛔ 字數不要寫死：門檻是 SHORT_CHUNK_CONTENT_CHARS，前後端共用同一把尺。
@@ -3433,6 +3454,9 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
   if (cat === 'quotaSkippedSheets') {
     return quotaSkippedSheets.value.map(s => ({ id: s.id, title: s.name, meta: `${s.quotaSkippedCount ?? 0} 列沒收`, kind: 'source' as const }))
   }
+  if (cat === 'manualKeptSheets') {
+    return manualKeptSheets.value.map(s => ({ id: s.id, title: s.name, meta: `${s.manualKeptCount ?? 0} 條被手動改過`, kind: 'source' as const }))
+  }
   if (cat === 'wrongAnswerChunks') {
     // 次數是這一類唯一的排序依據,不放進 meta 等於把最重要的資訊藏起來
     return h.wrongAnswerChunks.items.map(c => ({
@@ -3448,7 +3472,7 @@ const healthListItems = computed<Array<{ id: string; title: string; meta: string
 const healthListTruncatedNote = computed(() => {
   const cat = healthListCategory.value
   // 一列是一份資料的那幾類沒有「先列前幾條」這回事（⚠️ 一個個比：TS 才收得窄，下面那行才查得到 health[cat]）
-  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'stalledSources' || cat === 'noProductSources' || cat === 'quotaSkippedSheets') return ''
+  if (cat === 'failedSources' || cat === 'outdatedSources' || cat === 'stalledSources' || cat === 'noProductSources' || cat === 'quotaSkippedSheets' || cat === 'manualKeptSheets') return ''
   const group = health.value[cat]
   const notes: string[] = []
   if (group.count > group.items.length) {
@@ -4308,6 +4332,9 @@ interface GsheetSyncRes {
 async function syncGsheetNow() {
   if (!selectedId.value) return
   gsheetSyncing.value = true
+  // `C-453`③：按之前「上次更新」是幾點——逾時之後看它有沒有往前跳，就知道主機到底做完沒（不比電腦的時鐘）
+  const syncSid = selectedId.value
+  const fetchedBefore = sources.value.find(s => s.id === syncSid)?.lastFetchedAtMs ?? 0
   try {
     let res = await apiFetch<GsheetSyncRes>(
       `/api/ai/sources/${selectedId.value}/gsheet-sync`,
@@ -4367,12 +4394,46 @@ async function syncGsheetNow() {
     }
   }
   catch (err: any) {
+    /*
+     * `C-453`③：一次改很多列（例如整欄加一欄）時，AI 要重寫每一條的問法，超過閘道 30 秒、這裡收到逾時——
+     * 主機多半照樣做完（10-31 MYFEEL 實測：504 之後 19:49 做完了）。以前紅字「更新沒有完成」，店家以為失敗、一直重按。
+     * 逾時、沒回應才等；其他錯（表格沒分享之類）照講原因
+     */
+    const status = apiErrorStatus(err)
+    if (status === 504 || status === 502 || status === 0) {
+      await waitForSlowSheetSync(syncSid, fetchedBefore)
+      return
+    }
     // 中文原因在 data.statusMessage（err.statusMessage 是 HTTP 狀態那一行，HTTP/2 下是空的）
     showToast(apiErrorText(err, '更新沒有完成'), 'error')
   }
   finally {
     gsheetSyncing.value = false
   }
+}
+
+/** 逾時之後：每 10 秒看一次「上次更新」有沒有往前跳，最多 2 分鐘（按鈕這段時間照樣轉圈，不讓他重按） */
+const SLOW_SYNC_POLL_MS = 10_000
+const SLOW_SYNC_POLLS = 12
+async function waitForSlowSheetSync(sid: string, fetchedBefore: number) {
+  showToast('這次要整理的比較多，還在處理中；好了這裡會自己更新（約一兩分鐘），不用再按', 'warning')
+  for (let i = 0; i < SLOW_SYNC_POLLS; i++) {
+    await new Promise(resolve => setTimeout(resolve, SLOW_SYNC_POLL_MS))
+    await loadSources()
+    const now = sources.value.find(s => s.id === sid)
+    if (now && (now.lastFetchedAtMs ?? 0) > fetchedBefore) {
+      if (selectedId.value === sid) await loadSourceDetail(sid)
+      await loadSources(true)
+      showToast(
+        (now.manualKeptCount ?? 0) > 0
+          ? `更新完成；另有 ${now.manualKeptCount} 條是你改過的，沒跟著表格更新（點那一條旁邊的鎖頭可以改回）`
+          : '更新完成',
+        (now.manualKeptCount ?? 0) > 0 ? 'warning' : 'success',
+      )
+      return
+    }
+  }
+  showToast('等了兩分鐘還沒好：過一會兒重新整理這一頁看「上次更新」的時間；時間沒變再按一次「立即更新」', 'warning')
 }
 
 async function applyDiff() {

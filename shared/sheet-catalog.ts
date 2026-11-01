@@ -27,6 +27,8 @@ export interface SheetCatalogViewProduct {
   tag: { id: string, name: string } | null
   /** 表上找不到、而且同一輪多了這幾列：「是改名嗎？」的候選（`C-438`）；沒有＝不用問 */
   renameCandidates?: Array<{ id: string, title: string }>
+  /** 跟這幾個商品填了同一個商品頁（`C-453`⑦：複製上一列忘了改網址＝同一張圖、同一個商品頁）；沒有＝不講 */
+  sameUrlAs?: string[]
 }
 
 export interface SheetCatalogView {
@@ -37,6 +39,13 @@ export interface SheetCatalogView {
   /** 「打開試算表 ↗」 */
   sheetUrl: string
   lastFetchedAt: number | null
+  /** 多久自動更新一次（分鐘）；null＝這份沒開自動更新（`C-453`②：改了試算表要等多久，畫面要講） */
+  autoSyncMinutes: number | null
+  /**
+   * 在知識庫被手動改過的商品（`C-453`①）：試算表改了，LINE 上的商品資訊和 AI 都照手動改的那一版，不會跟著變。
+   * 以前只有知識庫那一頁講，商品目錄這裡、提醒中心都不講
+   */
+  locked: string[]
   /** 表上有沒有「放進LINE目錄」這欄（沒有＝要先加，畫面講缺哪一欄） */
   catalogColumn: boolean
   pageHeader: string | null
@@ -179,8 +188,13 @@ export function sheetProductChangeText(c: SheetProductChange): string {
   }
 }
 
-/** 還沒有圖的商品，那一行講為什麼（有商品頁網址、沒有失敗紀錄＝排程還在抓） */
-export function sheetCoverStatusText(p: Pick<SheetCatalogViewProduct, 'coverError' | 'hasPageUrl'>): string {
+/**
+ * 還沒有圖的商品，那一行講為什麼（有商品頁網址、沒有失敗紀錄＝排程還在抓）。
+ * `pageHeaderKnown`＝系統認得出哪一欄是商品頁（`C-453`⑤）：欄名叫「官網」「購買連結」認不出來，
+ * 以前照樣講「試算表上沒有商品頁網址」——他明明有填，看不懂
+ */
+export function sheetCoverStatusText(p: Pick<SheetCatalogViewProduct, 'coverError' | 'hasPageUrl'>, pageHeaderKnown = true): string {
+  if (!p.hasPageUrl && !pageHeaderKnown) return '認不出試算表哪一欄是商品頁：欄名裡要有「商品頁」（例如「商品頁面」），系統才會去抓封面圖；或直接上傳一張'
   if (!p.hasPageUrl) return '試算表上沒有商品頁網址：補上網址會自動抓封面圖，或直接上傳一張'
   switch (p.coverError?.reason) {
     case undefined: return '正在抓商品頁的封面圖（約 10 分鐘內）'
@@ -189,6 +203,24 @@ export function sheetCoverStatusText(p: Pick<SheetCatalogViewProduct, 'coverErro
     case 'imageUnreachable': return '抓不到商品頁的封面圖，請上傳一張'
     case 'badImage': return '商品頁的封面圖不是讀得懂的圖，請上傳一張'
   }
+}
+
+/**
+ * 改了試算表要等多久才會到 LINE（`C-453`②）：以前只寫「上次更新 幾點」，店家改完馬上開 LINE 看還是舊的，以為壞了。
+ * 新勾進目錄的商品還要再等抓封面圖（約 10 分鐘），一起講。
+ */
+export function sheetCatalogSyncNote(autoSyncMinutes: number | null): string {
+  if (!autoSyncMinutes) return '這份試算表沒有開自動更新：改了之後，要到知識庫按「立即更新」才會換。'
+  const wait = autoSyncMinutes % 60 === 0
+    ? (autoSyncMinutes === 60 ? '一小時' : ` ${autoSyncMinutes / 60} 小時`)
+    : ` ${autoSyncMinutes} 分鐘`
+  return `改了試算表，約${wait}內會自動換上（新勾的商品再等抓封面圖，約 10 分鐘）。急的話：`
+}
+
+/** 被手動改過的商品那一句（`C-453`①）：商品目錄、提醒同一句 */
+export function sheetLockedText(titles: readonly string[]): string {
+  const names = titles.slice(0, 3).map(t => `「${t}」`).join('、') + (titles.length > 3 ? ` 等 ${titles.length} 個` : '')
+  return `${names}在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。`
 }
 
 /** 自動建的標籤叫什麼：開頭＋商品名（截到 50 字：標籤管理、推播挑人的畫面放不下更長的） */

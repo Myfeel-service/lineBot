@@ -3,12 +3,13 @@ import type { Firestore } from 'firebase-admin/firestore'
 import { getDb, getStorage } from './firebase'
 import { requireCapability } from './workspace-auth'
 import { writeAuditLog } from './audit-log'
-import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
+import { KNOWLEDGE_SOURCES_COLLECTION, listChunksBySource } from './ai-knowledge-sources'
 import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage, updateSheetProductRegistry } from './sheet-products'
 import { clearSheetCatalogCache } from './sheet-catalog'
 import { invalidateSheetIssuesCache } from './sheet-issues'
 import { liveRenameCandidates, planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 import { confirmSheetProductRename, productImage, retireSheetProduct } from '~~/shared/sheet-products'
+import { sheetRowKey } from '~~/shared/sheet-field'
 
 /**
  * 機器人模組「商品目錄（照試算表排）」編輯畫面要的資料與動作（`C-436`）。畫面看到的形狀在 `shared/sheet-catalog.ts`。
@@ -23,15 +24,29 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
   if (!srcSnap.exists || srcSnap.get('workspaceId') !== workspaceId || srcSnap.get('type') !== 'gsheet') {
     throw createError({ statusCode: 404, statusMessage: '找不到這份試算表' })
   }
+  const interval = Number(srcSnap.get('refreshIntervalMinutes') ?? 0) || 0
   const base = {
     sourceId,
     sourceName: String(srcSnap.get('name') ?? srcSnap.get('title') ?? '試算表'),
     sheetUrl: String(srcSnap.get('url') ?? ''),
     lastFetchedAt: toMs(srcSnap.get('lastFetchedAt')),
+    // 關掉自動同步的表（`gsheetAutoApply === false`）排程不會動它，跟沒設間隔一樣要自己按
+    autoSyncMinutes: interval > 0 && srcSnap.get('gsheetAutoApply') !== false ? interval : null,
     max: SHEET_CATALOG_MAX_CARDS,
   }
   const reg = await loadSheetProductRegistry(db, workspaceId, sourceId)
-  if (!reg) return { ...base, ready: false, catalogColumn: false, pageHeader: null, products: [], changes: [] }
+  if (!reg) return { ...base, ready: false, catalogColumn: false, pageHeader: null, products: [], changes: [], locked: [] }
+
+  // `C-453`①：知識庫被手動改過的那幾條＝試算表改了不跟（商品資訊卡讀的也是知識卡）。一份表一次讀完它的卡（最多 150 張）
+  const lockedKeys = new Set((await listChunksBySource(db, workspaceId, sourceId))
+    .filter(c => c.manuallyEditedAtMs > 0 && !c.isOverview)
+    .map(c => sheetRowKey(c.title)))
+  // `C-453`⑦：同一個商品頁＝複製上一列忘了改網址（還在表上的才算）
+  const byUrl = new Map<string, string[]>()
+  for (const p of Object.values(reg.products)) {
+    if (p.missingSince !== null || !p.urlKey) continue
+    byUrl.set(p.urlKey, [...(byUrl.get(p.urlKey) ?? []), p.title])
+  }
 
   const plan = planSheetCatalog(reg)
   const placeOf = new Map<string, SheetCatalogPlacement>()
@@ -60,6 +75,9 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
       ...(p.missingSince !== null && liveRenameCandidates(reg, p).length
         ? { renameCandidates: liveRenameCandidates(reg, p).map(c => ({ id: c.id, title: c.title })) }
         : {}),
+      ...(p.missingSince === null && p.urlKey && (byUrl.get(p.urlKey)?.length ?? 0) > 1
+        ? { sameUrlAs: byUrl.get(p.urlKey)!.filter(t => t !== p.title) }
+        : {}),
     }))
     .sort((a, b) => Number(a.placement === 'missing') - Number(b.placement === 'missing') || a.order - b.order)
 
@@ -70,6 +88,10 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
     pageHeader: reg.pageHeader,
     products,
     changes: reg.changes.slice(0, 8),
+    locked: Object.values(reg.products)
+      .filter(p => p.missingSince === null && (lockedKeys.has(p.nameKey) || lockedKeys.has(sheetRowKey(p.title))))
+      .sort((a, b) => a.order - b.order)
+      .map(p => p.title),
   }
 }
 

@@ -470,6 +470,14 @@ export async function collectWorkspaceAlerts(
   // 等真人／接手沒結束（`D-116`）：兩顆共用這一次查詢，用到才讀；讀失敗兩顆都是 unknown
   let humanQueuePromise: Promise<HumanQueue> | null = null
   const getHumanQueue = () => (humanQueuePromise ??= readHumanQueue(db, wid))
+  // 知識來源全掃（`C-453`①）：自動偵測失效、試算表被手動改過兩顆共用這一次，用到才讀
+  let sourceScanPromise: Promise<Array<Record<string, unknown>>> | null = null
+  const getSourceScan = () => (sourceScanPromise ??= db.collection(KNOWLEDGE_SOURCES_COLLECTION)
+    .where('workspaceId', '==', wid)
+    .select('name', 'type', 'detectStalledAt', 'manualKeptCount')
+    .limit(FALLBACK_SCAN_LIMIT)
+    .get()
+    .then(snap => snap.docs.map(d => d.data() as Record<string, unknown>)))
   // 試算表商品五顆（`C-438`）共用這一次（模組掃描跟壞按鈕那顆共用快取，⛔ 不另外讀 flows）
   let sheetIssuesPromise: Promise<SheetIssues> | null = null
   const getSheetIssues = () => (sheetIssuesPromise ??= findSheetIssues(db, wid))
@@ -534,14 +542,23 @@ export async function collectWorkspaceAlerts(
         probe('knowledgeDetectStalled', async () => {
           // 每輪抓到的內容都不同＝變動偵測形同關閉（MYFEEL 首頁型的輪播頁必落入）。
           // 原本只有點進知識庫來源頁才看得到——官網改版半年也不會有人知道（C-48）。
-          // 免新索引：來源數量級小（health 同樣全掃 300），select 單欄位全掃即可。
-          const snap = await db.collection(KNOWLEDGE_SOURCES_COLLECTION)
-            .where('workspaceId', '==', wid)
-            .select('detectStalledAt')
-            .limit(FALLBACK_SCAN_LIMIT)
-            .get()
-          const n = snap.docs.filter(d => (d.data() as Record<string, unknown>).detectStalledAt).length
+          // 免新索引：來源數量級小（health 同樣全掃 300），select 幾個欄位全掃即可（下面那顆共用這一次）。
+          const n = (await getSourceScan()).filter(s => s.detectStalledAt).length
           return n ? { active: true, count: n } : { active: false }
+        }),
+        probe('sheetKnowledgeLocked', async () => {
+          /*
+           * `C-453`①：試算表來的那幾條在知識庫被手動改過，試算表改了也不跟（同步時記在來源上的 `manualKeptCount`）。
+           * 商品資訊卡讀的也是這幾條——以前只有知識庫那一頁亮黃條，KIESLECT 卡了兩週沒人發現。跟上面那顆共用同一次全掃
+           */
+          const hit = (await getSourceScan()).filter(s => s.type === 'gsheet' && Number(s.manualKeptCount ?? 0) > 0)
+          if (!hit.length) return { active: false }
+          const first = hit[0]!
+          return {
+            active: true,
+            count: hit.reduce((n, s) => n + Number(s.manualKeptCount), 0),
+            detail: `「${String(first.name ?? '試算表')}」有 ${Number(first.manualKeptCount)} 條在知識庫被手動改過，試算表改了也不會跟著變`,
+          }
         }),
         probe('knowledgeIndexFailed', async () => {
           /*

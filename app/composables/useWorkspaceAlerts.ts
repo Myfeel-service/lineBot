@@ -254,6 +254,17 @@ const ALERTS: AlertDefinition[] = [
     anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著這些網址，建議換成內容固定的頁面當來源。' },
   },
   {
+    // `C-453`①：知識庫被手動改過的那幾條，試算表改了不跟（LINE 上的商品資訊讀的也是它）
+    id: 'sheetKnowledgeLocked',
+    icon: Reading,
+    impact: '這幾條在知識庫被手動改過，之後試算表怎麼改，AI 的回答和 LINE 上的商品資訊都停在手動改的那一版。要改回跟著試算表，點那一條旁邊的鎖頭。',
+    cta: '去看是哪幾條',
+    // 解鎖＝改知識卡（`POST /api/ai/knowledge/:id/settings` 要 `knowledge.write`）
+    requires: 'knowledge.write',
+    route: wid => `/admin/${wid}/knowledge/sources?health=manualKeptSheets`,
+    anchor: { selector: '[data-tour="kb-health"]', note: '「要處理的事」這一區列著是哪幾份試算表；點進去，被手動改過的那幾條旁邊有鎖頭，按了就改回跟著試算表。' },
+  },
+  {
     id: 'knowledgeIndexFailed',
     icon: Reading,
     // `D-129`：這顆只為「系統自己試了 5 次都沒學會」的亮（還在自動再試的不算），所以這裡講的就是要人看一下的那幾條

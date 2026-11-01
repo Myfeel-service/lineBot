@@ -999,6 +999,15 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 0.2rem;
+  /* `C-453`① 被手動改過：連結接在那句話下面靠左（一般的 .sheet-catalog-link 是靠右放在出處那一行） */
+  .sheet-catalog-link { margin-left: 0; }
+}
+/* `C-453`② 改了試算表要等多久：一句話後面直接接連結 */
+.sheet-catalog-sync {
+  margin: 0;
+  line-height: 1.5;
+  /* 連結整段一起換行（拆成「立即更／新」讀不懂） */
+  .sheet-catalog-link { margin-left: 0.25rem; }
 }
 /* 系統已經處理好的變動：藍底（資訊），不是要他做事的橘色 */
 .sheet-catalog-changes {
@@ -1068,6 +1077,16 @@
 }
 .sheet-catalog-title { font-weight: 600; }
 .sheet-catalog-meta { font-size: 0.75rem; color: var(--text-secondary); }
+/* `C-453`⑦ 兩個商品同一個商品頁 */
+.sheet-catalog-meta.is-warn { color: var(--el-color-warning, #d97706); }
+/* `C-453`④ 幫我做一份商品資訊範本：按鈕靠左、說明接在下面（跟上面那句警告同一欄寬） */
+.sheet-template-make {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
 .sheet-catalog-actions {
   display: flex;
   flex-direction: column;

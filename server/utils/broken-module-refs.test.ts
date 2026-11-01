@@ -295,6 +295,16 @@ describe('`C-438` code review：商品目錄「點卡片送的範本」也算引
     expect([...collectModuleRefs(catalog)]).toEqual(['tpl-1'])
   })
 
+  it('`C-453`⑧：照試算表排時留著可以切回去的舊卡片不算引用（不送出）——舊模組才會標「客人走不到」、刪了也不亮壞按鈕', () => {
+    const kept = [{ ...catalog[0], columns: [{ imageUrl: 'a.png', action: { type: 'module', moduleId: 'old-info' } }] }]
+    expect([...collectModuleRefs(kept)]).toEqual(['tpl-1'])
+  })
+
+  it('對照組：切回「自己一張張做」（沒有 sheetSource）那些卡片照樣算引用', () => {
+    const manual = [{ type: 'flexImageCarousel', columns: [{ imageUrl: 'a.png', action: { type: 'module', moduleId: 'old-info' } }] }]
+    expect([...collectModuleRefs(manual)]).toEqual(['old-info'])
+  })
+
   it('改接得掉（壞按鈕代改）；別的設定原樣', () => {
     const r = replaceModuleRefs(catalog, 'tpl-1', 'tpl-2')
     expect(r.changed).toBe(true)

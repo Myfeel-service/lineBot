@@ -33,7 +33,12 @@ vi.mock('./firebase', () => ({ getDb: () => db, getStorage: () => ({ bucket: () 
 vi.mock('./workspace-auth', () => ({ requireCapability: vi.fn(async () => ({ workspaceId: 'ws1', uid: 'u1' })) }))
 const { writeAuditLog } = vi.hoisted(() => ({ writeAuditLog: vi.fn(async () => {}) }))
 vi.mock('./audit-log', () => ({ writeAuditLog }))
-vi.mock('./ai-knowledge-sources', () => ({ KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources' }))
+/** 這份試算表的知識卡（`C-453`①：被手動改過的＝不跟試算表） */
+const { chunks } = vi.hoisted(() => ({ chunks: { current: [] as Array<{ title: string, manuallyEditedAtMs: number, isOverview?: boolean }> } }))
+vi.mock('./ai-knowledge-sources', () => ({
+  KNOWLEDGE_SOURCES_COLLECTION: 'knowledgeSources',
+  listChunksBySource: vi.fn(async () => chunks.current.map(c => ({ isOverview: false, ...c }))),
+}))
 const { invalidateSheetIssuesCache } = vi.hoisted(() => ({ invalidateSheetIssuesCache: vi.fn() }))
 vi.mock('./sheet-issues', () => ({ invalidateSheetIssuesCache }))
 
@@ -47,6 +52,7 @@ const prod = (title: string) => Object.values(store.sheetProductRegistries!.src1
 beforeEach(async () => {
   for (const k of Object.keys(store)) delete store[k]
   writeAuditLog.mockClear()
+  chunks.current = []
   store.knowledgeSources = { src1: { workspaceId: 'ws1', type: 'gsheet', name: '客服（商品資訊）', url: 'https://docs.google.com/spreadsheets/d/x', lastFetchedAt: { toMillis: () => 1234 } } }
 })
 
@@ -90,6 +96,44 @@ describe('① ② 編輯畫面的資料', () => {
     store.tags = { 'tag-x': { workspaceId: 'other', name: '別人的' } }
     const v = await readSheetCatalogView(db, 'ws1', 'src1')
     expect(v.products[0]!.tag).toBeNull()
+  })
+
+  it('`C-453`①：知識庫被手動改過的商品列出來（照試算表順序）；沒改過的、總覽卡不算', async () => {
+    await seed([['A', true], ['B', true], ['C', false]])
+    chunks.current = [
+      { title: 'C', manuallyEditedAtMs: 5 },
+      { title: 'A', manuallyEditedAtMs: 0 },
+      { title: 'B', manuallyEditedAtMs: 9 },
+      { title: 'B', manuallyEditedAtMs: 9, isOverview: true },
+    ]
+    const v = await readSheetCatalogView(db, 'ws1', 'src1')
+    expect(v.locked).toEqual(['B', 'C'])
+  })
+
+  it('`C-453`②：多久自動更新——有設間隔＝分鐘數；關掉自動同步、沒設間隔＝null（要自己按）', async () => {
+    store.knowledgeSources!.src1.refreshIntervalMinutes = 60
+    expect((await readSheetCatalogView(db, 'ws1', 'src1')).autoSyncMinutes).toBe(60)
+    store.knowledgeSources!.src1.gsheetAutoApply = false
+    expect((await readSheetCatalogView(db, 'ws1', 'src1')).autoSyncMinutes).toBeNull()
+    store.knowledgeSources!.src1 = { ...store.knowledgeSources!.src1, gsheetAutoApply: true, refreshIntervalMinutes: 0 }
+    expect((await readSheetCatalogView(db, 'ws1', 'src1')).autoSyncMinutes).toBeNull()
+  })
+
+  it('`C-453`⑦：兩個商品填了同一個商品頁（複製上一列忘了改網址）各自講是跟誰；網址不同的不講', async () => {
+    await syncSheetProducts(db, 'ws1', 'src1', {
+      cards: [
+        { title: 'A', content: '商品頁面：https://a.com/x', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
+        { title: 'A 新款', content: '商品頁面：https://a.com/x', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
+        { title: 'B', content: '商品頁面：https://a.com/b', tags: [], controls: { 放進LINE目錄: 'TRUE' } },
+      ],
+      fieldHeaders: ['商品頁面'],
+      controlHeaders: ['放進LINE目錄'],
+    })
+    const v = await readSheetCatalogView(db, 'ws1', 'src1')
+    const same = Object.fromEntries(v.products.map(p => [p.title, p.sameUrlAs]))
+    expect(same.A).toEqual(['A 新款'])
+    expect(same['A 新款']).toEqual(['A'])
+    expect(same.B).toBeUndefined()
   })
 
   it('③ ⛔ 不是這個帳號的試算表、不是試算表＝404', async () => {
