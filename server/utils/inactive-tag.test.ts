@@ -170,7 +170,7 @@ describe('resolveInactiveTagId：系統標籤的建立與改名', () => {
 
 const at = (ms: number) => ({ toMillis: () => ms })
 /** 落在 60 天門檻窗口 [67 天前, 60 天前) 裡的時間 */
-const IN_WINDOW_MS = Date.now() - 62 * DAY
+const inWindow = (nowMs: number) => nowMs - 62 * DAY
 
 /**
  * 每日掃描的假 db：記下對 conversations 下的每一個條件；修復掃描的 getAll 回 seed 的對話。
@@ -187,6 +187,8 @@ function fakeScanDb(seed: {
   state?: Record<string, unknown>
   /** 有哪些帳號（預設只有 WS）；只拿來測「帳號之間同時做」，cronState 等其他部分不分帳號 */
   workspaces?: string[]
+  /** windowDocs 給字串時，時間照這個「現在」排進窗口（預設真的現在） */
+  nowMs?: number
 }) {
   const convCalls: Array<[string, ...unknown[]]> = []
   const stateWrites: Array<Record<string, unknown>> = []
@@ -204,7 +206,7 @@ function fakeScanDb(seed: {
   const docsOf = (ids: string[], data: (id: string) => Record<string, unknown>) =>
     ({ docs: ids.map(id => ({ id, data: () => data(id) })), size: ids.length, empty: ids.length === 0 })
   const tagged = new Set((seed.taggedUserIds ?? []).map(u => `${u}_tag9`))
-  const window = (seed.windowDocs ?? []).map((d, i) => typeof d === 'string' ? { id: d, ms: IN_WINDOW_MS - i } : d)
+  const window = (seed.windowDocs ?? []).map((d, i) => typeof d === 'string' ? { id: d, ms: inWindow(seed.nowMs ?? Date.now()) - i } : d)
 
   const stateRef = {
     get: async () => ({ data: () => (Object.keys(state).length ? { ...state } : undefined) }),
@@ -292,7 +294,14 @@ describe('scanInactiveTag：看「最後一次有動作」（`D-154`）', () => 
  * 釘三件事：插「我在做」的牌子、先批讀誰貼過再一次多位同時貼、時間到記下做到哪下一輪接著做。
  */
 describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做（`E-49`）', () => {
-  const today = taipeiDate()
+  /**
+   * ⛔ 一律用固定的「現在」（台北中午 12 點），不用真的時鐘：「10 分鐘後下一輪」在 23:50 以後跑
+   * 會跨過半夜、程式當成新的一天從頭做（這是對的），測試就紅——2026-11-04 23:57 推版前在乾淨副本實際紅過。
+   * Amplify 建置時會跑這些測試，哪個時間推都不能紅。
+   */
+  const NOW = Date.parse('2026-11-04T04:00:00Z')
+  const clock = () => NOW
+  const today = taipeiDate(new Date(NOW))
   const added = { added: ['tag9'], skipped: [], hits: [] } as any
 
   beforeEach(() => {
@@ -302,8 +311,8 @@ describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做�
   })
 
   it('已經貼過的人不再丟進 addTagsToUser（以前每晚重掃就把「被判到幾次」+1、每位多一次寫入）', async () => {
-    const { db } = fakeScanDb({ windowDocs: ['ws1_U1', 'ws1_U2', 'ws1_U3'], taggedUserIds: ['ws1_U1', 'ws1_U3'] })
-    const stats = await scanInactiveTag(db)
+    const { db } = fakeScanDb({ nowMs: NOW, windowDocs: ['ws1_U1', 'ws1_U2', 'ws1_U3'], taggedUserIds: ['ws1_U1', 'ws1_U3'] })
+    const stats = await scanInactiveTag(db, { clock })
     expect(addTagsToUser).toHaveBeenCalledTimes(1)
     expect(addTagsToUser).toHaveBeenCalledWith('ws1_U2', ['tag9'], 'system', 'inactive-tag:scan', WS)
     expect(stats.tagged).toBe(1)
@@ -320,8 +329,8 @@ describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做�
       return added
     })
     const ids = Array.from({ length: 25 }, (_, i) => `ws1_U${i}`)
-    const { db } = fakeScanDb({ windowDocs: ids })
-    const stats = await scanInactiveTag(db)
+    const { db } = fakeScanDb({ nowMs: NOW, windowDocs: ids })
+    const stats = await scanInactiveTag(db, { clock })
     expect(stats.tagged).toBe(25)
     expect(maxInFlight).toBe(20)
   })
@@ -339,15 +348,15 @@ describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做�
       return { inactiveTag: { enabled: false, days: 60 } } as any
     })
     const ids = Array.from({ length: 13 }, (_, i) => `w${String(i).padStart(2, '0')}`)
-    const { db } = fakeScanDb({ workspaces: ids })
-    await scanInactiveTag(db)
+    const { db } = fakeScanDb({ nowMs: NOW, workspaces: ids })
+    await scanInactiveTag(db, { clock })
     expect(maxInFlight).toBe(10)
     expect(seen.sort()).toEqual(ids) // 每個帳號剛好一次
   })
 
   it('別輪正在做（牌子還沒過期）→ 這個帳號跳過，一個客人都不碰', async () => {
-    const { db, convCalls, stateWrites } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { leaseUntil: Date.now() + 60_000 } })
-    const stats = await scanInactiveTag(db)
+    const { db, convCalls, stateWrites } = fakeScanDb({ nowMs: NOW, windowDocs: ['ws1_U1'], state: { leaseUntil: NOW + 60_000 } })
+    const stats = await scanInactiveTag(db, { clock })
     expect(stats.busy).toBe(1)
     expect(convCalls).toHaveLength(0)
     expect(addTagsToUser).not.toHaveBeenCalled()
@@ -355,24 +364,24 @@ describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做�
   })
 
   it('牌子過期了（那輪死掉了）→ 接手做完，收回牌子、記今天做完、用了 1 輪', async () => {
-    const { db, state } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { leaseUntil: Date.now() - 1 } })
-    const stats = await scanInactiveTag(db)
+    const { db, state } = fakeScanDb({ nowMs: NOW, windowDocs: ['ws1_U1'], state: { leaseUntil: NOW - 1 } })
+    const stats = await scanInactiveTag(db, { clock })
     expect(stats.busy).toBe(0)
     expect(stats.tagged).toBe(1)
     expect(state).toMatchObject({ lastRunDay: today, leaseUntil: 0, progress: null, lastRunTicks: 1 })
   })
 
   it('今天做完了 → 只讀一次狀態，不開交易、不查客人', async () => {
-    const { db, convCalls, transactions } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { lastRunDay: today } })
-    await scanInactiveTag(db)
+    const { db, convCalls, transactions } = fakeScanDb({ nowMs: NOW, windowDocs: ['ws1_U1'], state: { lastRunDay: today } })
+    await scanInactiveTag(db, { clock })
     expect(transactions()).toBe(0)
     expect(convCalls).toHaveLength(0)
   })
 
   it('時間到 → 記下做到哪、收回牌子、不記今天做完；下一輪從那裡接著做，每位剛好貼一次', async () => {
     // 45 位都還沒貼；每貼一位時鐘走 1 秒 → 第一批 20 位貼完就超過 15 秒，停在第 21 位
-    const docs = Array.from({ length: 45 }, (_, i) => ({ id: `ws1_U${i}`, ms: IN_WINDOW_MS - i * 1000 }))
-    let now = Date.now()
+    const docs = Array.from({ length: 45 }, (_, i) => ({ id: `ws1_U${i}`, ms: inWindow(NOW) - i * 1000 }))
+    let now = NOW
     let step = 1000
     vi.mocked(addTagsToUser).mockImplementation(async () => {
       now += step
@@ -401,23 +410,24 @@ describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做�
 
   it('做到一半的紀錄是昨天的 → 當沒有，從窗口最新的開始', async () => {
     const { db, convCalls } = fakeScanDb({
+      nowMs: NOW,
       windowDocs: ['ws1_U1'],
-      state: { progress: { day: '2000-01-01', phase: 'repair', cursorMs: 5, left: 3, ticks: 4 } },
+      state: { progress: { day: '2026-11-03', phase: 'repair', cursorMs: 5, left: 3, ticks: 4 } },
     })
-    const stats = await scanInactiveTag(db)
+    const stats = await scanInactiveTag(db, { clock })
     expect(stats.tagged).toBe(1)
     expect(convCalls).toContainEqual(['limit', 300])
   })
 
   it('上一輪貼完、停在修復掃描 → 這輪不再查窗口，直接做修復', async () => {
-    const now = Date.now()
     const { db, convCalls, state } = fakeScanDb({
+      nowMs: NOW,
       windowDocs: ['ws1_U1'],
       taggedUserIds: ['ws1_menu'],
-      convs: { ws1_menu: { lastPeerActivityAt: at(now - 2 * DAY) } },
+      convs: { ws1_menu: { lastPeerActivityAt: at(NOW - 2 * DAY) } },
       state: { progress: { day: today, phase: 'repair', cursorMs: null, left: 0, ticks: 1 } },
     })
-    const stats = await scanInactiveTag(db)
+    const stats = await scanInactiveTag(db, { clock })
     expect(convCalls).toHaveLength(0)
     expect(addTagsToUser).not.toHaveBeenCalled()
     expect(stats.repaired).toBe(1)
