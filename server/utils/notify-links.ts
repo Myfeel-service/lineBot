@@ -67,6 +67,14 @@ export function adminHomePath(workspaceId: string): string {
   return `/admin/${workspaceId}`
 }
 
+/**
+ * 早上報告「今天幾位壽星」底下那條（`D-170`）：推播頁自己撈這一天的壽星、寫好祝福開一張草稿。
+ * ⚠️ 帶日期不帶名單：從 LINE 點開的是新的瀏覽器，sessionStorage 一定是空的；名單也塞不進網址。
+ */
+export function birthdayBroadcastPath(workspaceId: string, dayKey: string): string {
+  return `/admin/${workspaceId}/broadcasts?from=birthday&day=${encodeURIComponent(dayKey)}`
+}
+
 function randomCode(): string {
   let out = ''
   for (let i = 0; i < CODE_LENGTH; i++) out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]

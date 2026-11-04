@@ -368,6 +368,56 @@ describe('dailyBacklogDigest 順利的一天也要發', () => {
  * ⛔ 原本七個來源查詢全是「不分工作區撈全站前 200 筆」：租戶一多就會有帳號的數字
  * 被別家吃掉、甚至整家從摘要裡消失，而訊息照發、看起來完全正常。
  */
+/**
+ * 生日（`D-170`）：排程那一頭真的把查到的生日塞進那一則。NOW＝台北 8/7。
+ * users 換成會照條件篩的假查詢（workspaceId＋月＋日、workspaceId＋birthdaySetDay）。
+ */
+describe('dailyBacklogDigest 生日（D-170）', () => {
+  function withUsers(db: any, rows: Array<Record<string, unknown> & { id: string }>) {
+    const collection = db.collection.bind(db)
+    const q = (filters: Array<[string, unknown]>): any => {
+      const hits = () => rows.filter(r => filters.every(([f, v]) => r[f] === v))
+      return {
+        where: (f: string, _op: string, v: unknown) => q([...filters, [f, v]]),
+        select: () => q(filters),
+        limit: () => q(filters),
+        get: async () => ({ docs: hits().map(r => ({ id: r.id, data: () => r })) }),
+        count: () => ({ get: async () => ({ data: () => ({ count: hits().length }) }) }),
+      }
+    }
+    db.collection = (name: string) => name === 'users'
+      ? { ...q([]), doc: (id: string) => ({ get: async () => ({ data: () => ({ displayName: `客人${id}` }) }) }) }
+      : collection(name)
+  }
+
+  it('今天有壽星、昨天有人留生日 → 點名＋「寫好了」那一句；不縮成順利的一天那一行', async () => {
+    const { db } = makeDb([])
+    withUsers(db, [
+      { id: 'WS_U1', workspaceId: WS, birthdayMonth: 8, birthdayDay: 7, displayName: '王小美', lineUserId: 'U1' },
+      { id: 'WS_U2', workspaceId: WS, birthdaySetDay: '2026-08-06' },
+      { id: 'X_U3', workspaceId: 'X', birthdayMonth: 8, birthdayDay: 7, displayName: '別家' },
+    ])
+    await dailyBacklogDigest(db)
+    const t = sentText()
+    expect(t).toContain('🎂 今天 1 位壽星：王小美')
+    expect(t).toContain('生日祝福寫好了')
+    expect(t).toContain('1 位留了生日')
+    expect(t).not.toContain('別家')
+    expect(t.split('\n').length).toBeGreaterThan(1)
+  })
+
+  it('生日查不到：開了「加好友時問生日」才講查不到；沒開就不講（⛔ 沒用這個功能的店不看噪音）', async () => {
+    // makeDb 原本的 users 只有 doc()，生日那兩個查詢會掛
+    getAiSettings.mockResolvedValue({ ...settings(), birthday: { enabled: true, gift: '' } })
+    await dailyBacklogDigest(makeDb([]).db)
+    expect(sentText()).toContain('生日的部分這次查不到')
+    pushMessage.mockClear()
+    getAiSettings.mockResolvedValue(settings())
+    await dailyBacklogDigest(makeDb([]).db)
+    expect(sentText()).not.toContain('生日')
+  })
+})
+
 describe('dailyBacklogDigest 逐工作區查', () => {
   it('別家的等待真人不會算到自己頭上', async () => {
     const { db } = makeDb(['U1', 'U2'], {}, {}, {}, [WS, 'OTHER'])

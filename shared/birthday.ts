@@ -142,6 +142,39 @@ export function buildBirthdayAskMessage(gift: string, today: string): Record<str
   }
 }
 
+/**
+ * 這一天（`YYYY-MM-DD`）要祝哪些生日（`D-170` 早上報告「今天幾位壽星」）。
+ * ⚠️ 平年的 2 月 28 日連 2/29 生日的一起算：不然他四年才被祝一次。
+ */
+export function birthdayKeysForDay(dayKey: string): Array<{ month: number, day: number }> {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey)
+  if (!m) return []
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const keys = [{ month: mo, day: d }]
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+  if (mo === 2 && d === 28 && !leap) keys.push({ month: 2, day: 29 })
+  return keys
+}
+
+/**
+ * 生日祝福那則的預設字（`D-170`：早上報告按連結 → 推播頁已經寫好，店家看一眼再送）。
+ * `{{displayName}}`＝一人一則換成他自己的名字（`D-118`）。⛔ 沒寫禮物就不提禮物；⛔ 不替店家編領取方式。
+ */
+export function birthdayGreetingText(gift: string): string {
+  const g = gift.trim()
+  return g
+    ? `{{displayName}}，生日快樂 🎂\n生日當月${g}。`
+    : '{{displayName}}，生日快樂 🎂\n謝謝你一直以來的支持，祝你今天開心！'
+}
+
+/** 早上報告那一段要的事實（`D-170`）。`null`＝這次查不到（⛔ 不可以當成 0） */
+export interface BirthdayDigestFacts {
+  /** 那幾天新留了生日的人數（改生日不算） */
+  newlySet: number | null
+  /** 今天的壽星（已封鎖的不算） */
+  today: { count: number, names: string[] } | null
+}
+
 /** 台北這個月（1–12） */
 export function taipeiMonth(now: Date = new Date()): number {
   return Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', month: 'numeric' }).format(now))

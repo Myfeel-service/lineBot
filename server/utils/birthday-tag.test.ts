@@ -13,7 +13,7 @@ vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn(
 
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser, removeTagsFromUser } from './tagging'
-import { _clearBirthdayTagCacheForTest, birthdayStats, saveCustomerBirthday, syncBirthdayMonthTag } from './birthday-tag'
+import { _clearBirthdayTagCacheForTest, birthdayPeopleOn, birthdayStats, loadBirthdayDigest, saveCustomerBirthday, syncBirthdayMonthTag } from './birthday-tag'
 
 const WS = 'ws1'
 const NOV = new Date('2026-11-04T04:00:00Z') // 台北 11 月
@@ -65,7 +65,10 @@ describe('saveCustomerBirthday', () => {
     const w = writes.find(x => x.col === 'users')!
     expect(w.id).toBe('ws1_U1')
     expect(w.data).toMatchObject({ workspaceId: WS, birthdayMonth: 3, birthdayDay: 12 })
-    expect(JSON.stringify(w.data)).not.toMatch(/year|19\d\d|20\d\d/i)
+    // birthdaySetDay 是「哪一天留的」（台北今天），⛔ 不是出生年；其餘欄位裡不可以有年份
+    const { birthdaySetDay, ...rest } = w.data
+    expect(birthdaySetDay).toBe('2026-11-04')
+    expect(JSON.stringify(rest)).not.toMatch(/year|19\d\d|20\d\d/i)
   })
 
   it('這個月生日＝馬上貼「本月壽星」（沒有標籤就建）', async () => {
@@ -83,6 +86,15 @@ describe('saveCustomerBirthday', () => {
     expect(r.changed).toBe(true)
     expect(removeTagsFromUser).toHaveBeenCalledWith('ws1_U1', ['t-bday'], 'system', 'birthday:changed', WS)
     expect(addTagsToUser).not.toHaveBeenCalled()
+  })
+
+  it('`D-170`：第一次留才記那一天（台北日期），改生日不動它', async () => {
+    const first = fakeDb({ tags: [tag] })
+    await saveCustomerBirthday(first.db, WS, 'U1', { month: 5, day: 1 }, NOV)
+    expect(first.writes.find(x => x.col === 'users')!.data.birthdaySetDay).toBe('2026-11-04')
+    const again = fakeDb({ tags: [tag], users: [{ id: 'ws1_U1', data: { birthdayMonth: 3, birthdayDay: 1, birthdaySetDay: '2026-10-01' } }] })
+    await saveCustomerBirthday(again.db, WS, 'U1', { month: 5, day: 1 }, NOV)
+    expect(again.writes.find(x => x.col === 'users')!.data.birthdaySetDay).toBeUndefined()
   })
 
   it('有 X 的對照組：別的月份、之前也不是這個月＝不貼不摘', async () => {
@@ -133,6 +145,39 @@ describe('syncBirthdayMonthTag（每月對齊）', () => {
     const s = await syncBirthdayMonthTag(db, NOV)
     expect(s.workspaces).toBe(0)
     expect(addTagsToUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('早上報告（`D-170`）', () => {
+  const people = () => fakeDb({
+    users: [
+      { id: 'ws1_UA', data: { workspaceId: WS, birthdayMonth: 2, birthdayDay: 28, displayName: '阿明', lineUserId: 'UA' } },
+      { id: 'ws1_UB', data: { workspaceId: WS, birthdayMonth: 2, birthdayDay: 29, displayName: '小美' } }, // 舊文件沒有 lineUserId
+      { id: 'ws1_UC', data: { workspaceId: WS, birthdayMonth: 2, birthdayDay: 28, displayName: '封鎖的', isBlocked: true } },
+      { id: 'ws2_UD', data: { workspaceId: 'ws2', birthdayMonth: 2, birthdayDay: 28, displayName: '別家' } },
+      { id: 'ws1_UE', data: { workspaceId: WS, birthdaySetDay: '2027-02-27' } },
+      { id: 'ws1_UF', data: { workspaceId: WS, birthdaySetDay: '2027-02-27' } },
+      { id: 'ws1_UG', data: { workspaceId: WS, birthdaySetDay: '2027-02-26' } },
+    ],
+  })
+
+  it('今天的壽星：平年 2/28 連 2/29 一起；已封鎖、別家的不算；LINE 編號沒存就從文件 id 還原', async () => {
+    const { db } = people()
+    expect(await birthdayPeopleOn(db, WS, '2027-02-28')).toEqual([
+      { lineUserId: 'UA', displayName: '阿明' },
+      { lineUserId: 'UB', displayName: '小美' },
+    ])
+  })
+
+  it('幾位留了生日＝那幾天加起來；今天的壽星點名最多 3 位', async () => {
+    const { db } = people()
+    const f = await loadBirthdayDigest(db, WS, ['2027-02-26', '2027-02-27'], '2027-02-28')
+    expect(f).toEqual({ newlySet: 3, today: { count: 2, names: ['阿明', '小美'] } })
+  })
+
+  it('⛔ 查不到不當成 0：哪一半壞了哪一半回 null', async () => {
+    const broken: any = { collection: () => { throw new Error('boom') } }
+    expect(await loadBirthdayDigest(broken, WS, ['2027-02-27'], '2027-02-28')).toEqual({ newlySet: null, today: null })
   })
 })
 

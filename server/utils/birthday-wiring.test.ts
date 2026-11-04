@@ -81,6 +81,35 @@ describe('機器人模組的「問生日」按鈕（`C-57` 甲）', () => {
   })
 })
 
+describe('早上報告的生日（`D-170`）', () => {
+  const cronSrc = read('server/utils/cron-maintenance.ts')
+  const broadcasts = read('app/pages/admin/[workspaceId]/broadcasts.vue')
+  const listGet = read('server/api/broadcast/list.get.ts')
+  const links = read('server/utils/notify-links.ts')
+  it('摘要排程一起查生日、查不到要講、塞進 buildDigestLines', () => {
+    const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
+    expect(fn).toContain('loadBirthdayDigest(db, ws, coverDays, today)')
+    expect(fn).toContain("unknownNotes.push('生日的部分')")
+    expect(fn).toContain('birthday: {')
+  })
+  it('今天有壽星才查方案、才產連結；連結帶日期（⛔ 不靠 sessionStorage：從 LINE 點開是新的瀏覽器）', () => {
+    const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
+    expect(fn).toMatch(/const birthdayLink = birthdayToday && birthdayCanSend/)
+    expect(fn).toContain('birthdayBroadcastPath(ws, today)')
+    expect(links).toContain('/broadcasts?from=birthday&day=')
+  })
+  it('推播頁接 ?from=birthday：自己撈那天的壽星、寫好祝福、⛔ 不存檔（markClean）', () => {
+    const fn = between(broadcasts, 'async function applyBirthdayHandoff', '\n}\n')
+    expect(fn).toContain("query: { part: 'birthday', day }")
+    expect(fn).toContain("form.value.audienceType = 'import'")
+    expect(fn).toContain('birthdayGreetingText(')
+    expect(fn).toContain('markClean()')
+    expect(fn).not.toMatch(/create\.post|\/api\/broadcast\/create|sendNow|method: 'POST'/)
+    expect(broadcasts).toContain('await applyBirthdayHandoff()')
+    expect(listGet).toContain("query.part === 'birthday'")
+  })
+})
+
 describe('後台', () => {
   it('好友頁有「生日」、框裡的字吃 shared/birthday（跟送出端同一份）', () => {
     expect(users).toContain('data-tour="usr-birthday"')

@@ -310,3 +310,63 @@ describe('休假日之後的第一則：講上一則之後的每一天', () => {
     expect(text()).toContain('昨天 23 場對話')
   })
 })
+
+/**
+ * 生日（`D-170`，John 哥 11-04「只要有人生日，我就會被逼著做動作」）。
+ * ⭐ 連結打開推播頁＝今天的壽星＋寫好的祝福，看一眼再送；⛔ 不在 LINE 裡一按就發。
+ */
+describe('生日那兩件', () => {
+  const bd = (over: Partial<NonNullable<DigestInput['birthday']>> = {}): NonNullable<DigestInput['birthday']> => ({
+    newlySet: 0, todayCount: 0, todayNames: [], canSend: true, ...over,
+  })
+
+  it('留了生日接在新朋友後面；沒有新朋友就自己成句；0 與查不到都不講', () => {
+    expect(text({ birthday: bd({ newlySet: 3 }) })).toContain('新朋友 +5 位，3 位留了生日。')
+    expect(text({ yesterday: { ...base.yesterday!, newFriends: 0 }, birthday: bd({ newlySet: 2 }) })).toContain('2 位留了生日。')
+    expect(text({ birthday: bd({ newlySet: 0 }) })).not.toContain('留了生日')
+    expect(text({ birthday: bd({ newlySet: null }) })).not.toContain('留了生日')
+  })
+
+  it('今天有壽星：點名、附連結、講「寫好了看一眼就能發」，⛔ 不縮成順利的一天那一行', () => {
+    const lines = buildDigestLines({ ...base, birthday: bd({ todayCount: 2, todayNames: ['王小美', '陳大文'], link: 'https://x.test/c/Bd12345' }) })!
+    expect(lines.length).toBeGreaterThan(1)
+    const i = lines.indexOf('🎂 今天 2 位壽星：王小美與陳大文')
+    expect(i).toBeGreaterThan(-1)
+    expect(lines[i - 1]).toBe('')
+    expect(lines[i + 1]).toBe('生日祝福寫好了，看一眼就能發')
+    expect(lines[i + 2]).toBe('👉 https://x.test/c/Bd12345')
+  })
+
+  it('壽星比點名多：接「等 N 位」；沒有名字就只講人數', () => {
+    expect(text({ birthday: bd({ todayCount: 5, todayNames: ['王小美', '陳大文', '林阿明'] }) })).toContain('🎂 今天 5 位壽星：王小美、陳大文與林阿明等 5 位')
+    expect(text({ birthday: bd({ todayCount: 2, todayNames: [] }) })).toContain('🎂 今天 2 位壽星\n')
+  })
+
+  it('⛔ 免費方案發不了推播：不叫他按一顆會被擋的鈕', () => {
+    const out = text({ birthday: bd({ todayCount: 1, todayNames: ['王小美'], canSend: false, link: 'https://x.test/c/x' }) })
+    expect(out).toContain('目前的方案發不了推播')
+    expect(out).not.toContain('https://x.test/c/x')
+    expect(out).not.toContain('看一眼就能發')
+  })
+
+  it('沒有連結（本機）→ 指去後台「推播」', () => {
+    expect(text({ birthday: bd({ todayCount: 1, todayNames: ['王小美'] }) })).toContain('在後台「推播」看一眼就能發')
+  })
+
+  it('有 X 的對照組：今天沒有壽星＝順利的一天照舊一行', () => {
+    expect(buildDigestLines({ ...base, birthday: bd({ todayCount: 0 }) })).toHaveLength(1)
+    expect(buildDigestLines({ ...base, birthday: bd({ todayCount: null }) })).toHaveLength(1)
+  })
+
+  it('順序：今天的壽星在「有人在等」之後、「今天可以處理」之前', () => {
+    const lines = buildDigestLines({
+      ...base,
+      waiting: { count: 1, offHoursCount: 0, samples: [], truncated: false, staleHumanCount: 0 },
+      todo: { ...base.todo, failedSources: 1 },
+      birthday: bd({ todayCount: 1, todayNames: ['王小美'] }),
+    })!
+    const at = (s: string) => lines.findIndex(l => l.includes(s))
+    expect(at('在等真人')).toBeLessThan(at('今天 1 位壽星'))
+    expect(at('今天 1 位壽星')).toBeLessThan(at('今天可以處理'))
+  })
+})

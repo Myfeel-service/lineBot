@@ -38,7 +38,7 @@ import { buildWeeklyInsights } from './weekly-insights'
 import { notifyHandoffToStaff, notifyOverdueHandoffBatch, wasAiCallCeilingNotified, wasQuotaExhaustedNotified } from './ai-handoff-notify'
 import type { HandoffNotifyReason } from './ai-handoff-notify'
 import { pushToNotifyList } from './line-notify-delivery'
-import { adminHomePath, createNotifyLink } from './notify-links'
+import { adminHomePath, birthdayBroadcastPath, createNotifyLink } from './notify-links'
 import { buildCriticalAlertText } from '~~/shared/line-notify-messages'
 import { notifyRecipients } from '~~/shared/line-notify-list'
 import type { messagingApi } from '@line/bot-sdk'
@@ -48,6 +48,7 @@ import { daysBetween, isServiceDayOff, isServiceHoursDnd } from '~~/shared/time'
 import { loadDayStats, mergeDays, type DayStats } from './conversation-stats-rollup'
 import { digestCoverDays, weeklyInsightMondays } from '~~/shared/digest-window'
 import { buildDigestLines, digestPlaces, taipeiDateLabel } from './daily-digest-message'
+import { loadBirthdayDigest } from './birthday-tag'
 import type { DigestWaiting, DigestYesterday } from './daily-digest-message'
 import {
   TAIWAN_FESTIVALS,
@@ -1481,14 +1482,20 @@ export async function dailyBacklogDigest(db: Firestore) {
 
     // ── 這裡開始才是真的要花錢的查詢（每個工作區一天只會走到一次）──────
     const unknownNotes: string[] = []
-    const [yesterday, waiting, counts] = await Promise.all([
+    const [yesterday, waiting, counts, birthdayFacts] = await Promise.all([
       loadDigestYesterday(db, ws, coverDays),
       loadDigestWaiting(db, ws, nowMs, settings.serviceHours),
       loadDigestCounts(db, ws, nowMs, coverDays.length),
+      // `D-170`：幾位留了生日（那幾天）＋今天的壽星。兩個等號的 count／查詢，⛔ 不用開複合索引
+      loadBirthdayDigest(db, ws, coverDays, today),
     ])
     // 成績查不到不進這裡：開頭那句自己講、指去統計頁（括號那句的「明天會再看一次」對成績是假承諾，`C-362`）
     if (!waiting) unknownNotes.push('正在等真人的名單')
     if (counts.unknown) unknownNotes.push('知識庫與標籤的部分')
+    // 生日查不到：只有開了「加好友時問生日」的店才講（⛔ 沒用這個功能的店每天看到「生日的部分查不到」只是噪音；
+    // 查不到的那一次照樣記 log）。查得到的時候不管開沒開都照講——客人也可能從「問生日」模組留的
+    if ((birthdayFacts.newlySet === null || birthdayFacts.today === null) && settings.birthday?.enabled)
+      unknownNotes.push('生日的部分')
 
     // 週報查詢排在所有便宜閘門之後：只有真的走到「要發」的帳號、而且是週一才花這幾個查詢。
     // 但要排在認領**之前**——週一「只有週報可講」的帳號得先知道有沒有東西，
@@ -1601,6 +1608,18 @@ export async function dailyBacklogDigest(db: Firestore) {
     const digestLink = digestPlaces({ waiting: digestWaiting, todo: digestTodo }).length
       ? await createNotifyLink(ws, adminHomePath(ws), db).catch(() => undefined)
       : undefined
+    /**
+     * `D-170`：今天有壽星才查方案、才產那條連結（推播頁 `?from=birthday&day=` 自己去撈今天的壽星、寫好祝福）。
+     * ⚠️ 用網址參數不用 sessionStorage：他是從 LINE 點連結開瀏覽器，暫存一定是空的。
+     * 方案讀不到＝照舊給連結（fail-open，同節日那句；推播頁與送出端照擋）。
+     */
+    const birthdayToday = birthdayFacts.today?.count ?? 0
+    const birthdayCanSend = birthdayToday
+      ? await workspaceBroadcastTier(ws, db).then(t => t !== 'none').catch(() => true)
+      : true
+    const birthdayLink = birthdayToday && birthdayCanSend
+      ? await createNotifyLink(ws, birthdayBroadcastPath(ws, today), db).catch(() => undefined)
+      : undefined
     const lines = buildDigestLines({
       dateLabel: taipeiDateLabel(today),
       coverDays,
@@ -1611,6 +1630,13 @@ export async function dailyBacklogDigest(db: Firestore) {
       weeklyLines: insights,
       unknownNotes,
       link: digestLink,
+      birthday: {
+        newlySet: birthdayFacts.newlySet,
+        todayCount: birthdayFacts.today?.count ?? null,
+        todayNames: birthdayFacts.today?.names ?? [],
+        canSend: birthdayCanSend,
+        link: birthdayLink,
+      },
     })
     // 連昨天的數字都查不到、又沒有任何事可講 → 整則不發，但名額已經認領掉了，
     // 所以要拆章讓下一輪重來（否則今天就再也沒有摘要）

@@ -1,4 +1,6 @@
-import { listDocs } from '~~/server/utils/firebase'
+import { getDb, listDocs } from '~~/server/utils/firebase'
+import { birthdayPeopleOn } from '~~/server/utils/birthday-tag'
+import { getAiSettings } from '~~/server/utils/ai-settings'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
@@ -14,6 +16,21 @@ export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'workspace.read')
 
   const query = getQuery(event)
+
+  /**
+   * `part=birthday&day=YYYY-MM-DD`（`D-170`）：早上報告「今天幾位壽星」的連結打開推播頁時，
+   * 推播頁拿這一天的壽星（LINE 編號＋名字）與生日禮，自己開一張草稿（⛔ 不存檔：最後一顆按鈕留給人）。
+   * ⚠️ 借這支路由不另開一支（TS2589）；已封鎖的不回（發不到）。
+   */
+  if (query.part === 'birthday') {
+    const day = String(query.day ?? '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw createError({ statusCode: 400, statusMessage: '日期格式不對' })
+    const [people, settings] = await Promise.all([
+      birthdayPeopleOn(getDb(), workspaceId, day),
+      getAiSettings(workspaceId),
+    ])
+    return { day, people, gift: settings.birthday?.enabled ? settings.birthday.gift : '' }
+  }
 
   /**
    * `planOnly=1`：**只問推播等級**（`C-352`①）——好友頁、好友統計、首頁檔期卡、活動精靈要在入口就講方案限制，

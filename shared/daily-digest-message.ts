@@ -112,6 +112,26 @@ export interface DigestInput {
   unknownNotes: string[]
   /** 打開後台的短網址；沒有就只講去哪 */
   link?: string
+  /** 生日那兩件（`D-170`，John 哥 11-04「只要有人生日，我就會被逼著做動作」）；沒帶＝不講（預覽等舊呼叫端不用改） */
+  birthday?: DigestBirthday
+}
+
+/**
+ * 早上報告裡的生日（`D-170`）。
+ * ⭐「今天幾位壽星」底下的連結打開推播頁：收件人＝今天的壽星、祝福已經寫好，**店家看一眼再按送出**
+ *    （⛔ 不在 LINE 裡一按就發：對客人說話的東西，最後一顆按鈕永遠留給人；一按就發是之後的第二版）。
+ */
+export interface DigestBirthday {
+  /** 那幾天新留了生日的人數；`null`＝查不到（⛔ 不講成 0） */
+  newlySet: number | null
+  /** 今天的壽星人數；`null`＝查不到 */
+  todayCount: number | null
+  /** 點名用（最多 3 位） */
+  todayNames: string[]
+  /** 這個方案能不能發推播（免費方案 `broadcast: 'none'`＝發不了，⛔ 不叫他去按一顆會被擋的鈕） */
+  canSend: boolean
+  /** 打開推播頁（已帶好壽星與祝福）的短網址；沒有就只講去哪 */
+  link?: string
 }
 
 /** 中文頓號串接：一項照原樣、兩項用「與」、三項以上「A、B 與 C」 */
@@ -188,13 +208,21 @@ export function buildDigestLines(input: DigestInput): string[] | null {
   }
 
   const hasWaiting = waiting.count > 0 || waiting.staleHumanCount > 0
-  const nothingToDo = !hasWaiting && !todoLines.length
+  // `D-170`：今天有壽星＝有事可做（⛔ 不可以縮成「順利的一天」那一行，生日那段會消失）
+  const bd = input.birthday
+  const birthdayToday = bd?.todayCount ? bd.todayCount : 0
+  const nothingToDo = !hasWaiting && !todoLines.length && !birthdayToday
   // 全部查不到、昨天也查不到 → 沒有一句話是真的，不發
   if (!y && nothingToDo && !input.festivalText && !input.weeklyLines.length) return null
 
   const places = digestPlaces(input)
 
-  const friendsLine = y && y.newFriends !== null && y.newFriends > 0 ? `新朋友 +${y.newFriends} 位。` : ''
+  // `D-170`：留了生日接在新朋友後面（同一件事：昨天有誰來、留了什麼）；只有一邊就各自成句
+  const newFriends = y && y.newFriends !== null && y.newFriends > 0 ? y.newFriends : 0
+  const newlySet = bd?.newlySet ? bd.newlySet : 0
+  const friendsLine = newFriends && newlySet
+    ? `新朋友 +${newFriends} 位，${newlySet} 位留了生日。`
+    : newFriends ? `新朋友 +${newFriends} 位。` : newlySet ? `${newlySet} 位留了生日。` : ''
   const unknownLine = input.unknownNotes.length
     ? `（${joinZh(input.unknownNotes)}這次查不到，明天會再看一次。）`
     : ''
@@ -245,6 +273,17 @@ export function buildDigestLines(input: DigestInput): string[] | null {
       if (waiting.staleHumanCount) {
         lines.push(`另有 ${waiting.staleHumanCount} 條對話停在「真人處理中」超過 ${HUMAN_STALE_HOURS} 小時。`)
       }
+    }
+
+    // ── 段二之二：今天的壽星（`D-170`）──────────────────────
+    //    ⭐ 祝福已經寫好在推播頁：連結打開就是今天的壽星＋那則字，看一眼再送（⛔ 不在 LINE 裡一按就發）
+    if (bd && birthdayToday) {
+      const more = birthdayToday > bd.todayNames.length ? `等 ${birthdayToday} 位` : ''
+      const who = bd.todayNames.length ? `：${joinZh(bd.todayNames)}${more}` : ''
+      lines.push('', `🎂 今天 ${birthdayToday} 位壽星${who}`)
+      if (!bd.canSend) lines.push('目前的方案發不了推播，升級後就能從這裡發生日祝福。')
+      else if (bd.link) lines.push('生日祝福寫好了，看一眼就能發', `👉 ${bd.link}`)
+      else lines.push('生日祝福寫好了，在後台「推播」看一眼就能發。')
     }
 
     // ── 段三：今天可以處理 ────────────────────────────────

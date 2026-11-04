@@ -7,6 +7,8 @@ import {
   BIRTHDAY_POSTBACK_DATA,
   birthdayAskText,
   birthdayConfirmText,
+  birthdayGreetingText,
+  birthdayKeysForDay,
   birthdayPickerAction,
   buildBirthdayAskMessage,
   buildBirthdayModuleMessages,
@@ -77,6 +79,22 @@ describe('模組的「問生日」按鈕（`C-57` 甲）', () => {
     const [m] = buildBirthdayModuleMessages('') as any[]
     expect(m).toEqual({ type: 'text', text: `告訴我們你的生日 🎂\n${BIRTHDAY_ASK_NOTE}`, buttons: [{ type: BIRTHDAY_BUTTON_TYPE, label: BIRTHDAY_BUTTON_LABEL }] })
     expect((buildBirthdayModuleMessages('來店招待一杯飲料')[0] as any).text).toContain('生日當月來店招待一杯飲料')
+  })
+})
+
+describe('早上報告（`D-170`）', () => {
+  it('哪幾種生日算今天：平年 2/28 連 2/29 的一起祝，閏年不用', () => {
+    expect(birthdayKeysForDay('2026-11-05')).toEqual([{ month: 11, day: 5 }])
+    expect(birthdayKeysForDay('2027-02-28')).toEqual([{ month: 2, day: 28 }, { month: 2, day: 29 }])
+    expect(birthdayKeysForDay('2028-02-28')).toEqual([{ month: 2, day: 28 }])
+    expect(birthdayKeysForDay('2028-02-29')).toEqual([{ month: 2, day: 29 }])
+    expect(birthdayKeysForDay('2100-02-28')).toHaveLength(2) // 2100 不是閏年
+    expect(birthdayKeysForDay('bad')).toEqual([])
+  })
+  it('生日祝福：一人一則換名字；⛔ 沒寫禮物不提禮物、⛔ 不替店家編領取方式', () => {
+    expect(birthdayGreetingText('')).toMatch(/^\{\{displayName\}\}，生日快樂 🎂\n/)
+    expect(birthdayGreetingText('')).not.toMatch(/送|招待|禮|領/)
+    expect(birthdayGreetingText('來店招待一杯飲料')).toBe('{{displayName}}，生日快樂 🎂\n生日當月來店招待一杯飲料。')
   })
 })
 

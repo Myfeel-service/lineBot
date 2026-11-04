@@ -681,7 +681,8 @@ import { followUpAudienceText } from '~~/shared/broadcast-follow-up'
 import type { BroadcastAudienceSource, BroadcastFollowUpTarget } from '~~/shared/types/tag-broadcast'
 // `D-128`：推播文字可以插入客人的 LINE 名稱（一人一則送時換成每位自己的）
 import { DISPLAY_NAME_VARIABLE_OPTION } from '~~/shared/variable-tokens'
-import { taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
+import { mdw, taipeiDate, taipeiDateTime, taipeiYyyyMm } from '~~/shared/time'
+import { birthdayGreetingText } from '~~/shared/birthday'
 import { lineQuotaHint, lineQuotaWarning, type LineMessageQuota } from '~~/shared/line-quota'
 import { festivalHint } from '~/utils/festival-hint'
 
@@ -1887,6 +1888,43 @@ function applyTagHandoff() {
   showToast(`發送對象已選好「${hit.name}」。這是草稿，還沒有送出去。`, 'success')
 }
 
+/**
+ * `D-170`：早上報告「今天 N 位壽星」那條連結（`?from=birthday&day=YYYY-MM-DD`）。
+ * 自己撈那一天的壽星、寫好生日祝福，開一張**還沒存的草稿**——店家看一眼再按送出
+ * （⛔ 不存檔、不自動送：對客人說話的東西，最後一顆按鈕永遠留給人）。
+ * ⚠️ 讀網址參數不讀 sessionStorage：他是從 LINE 點連結開瀏覽器，暫存一定是空的。
+ * ⛔ 撈不到、沒有人都要講出來，⛔ 不安靜地開一張空白推播。
+ */
+async function applyBirthdayHandoff() {
+  const q = useRoute().query
+  if (String(q.from ?? '') !== 'birthday') return
+  const day = String(q.day ?? '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    showToast('連結少了日期，請從早上的報告重新點一次', 'warning')
+    return
+  }
+  let r: { people?: Array<{ lineUserId: string, displayName: string }>, gift?: string } | null = null
+  try {
+    r = await apiFetch<{ people?: Array<{ lineUserId: string, displayName: string }>, gift?: string }>('/api/broadcast/list', { query: { part: 'birthday', day } })
+  }
+  catch {
+    showToast('讀不到這一天的壽星，請重新整理再試一次', 'error')
+    return
+  }
+  const ids = (r?.people ?? []).map(p => String(p.lineUserId ?? '').trim()).filter(Boolean)
+  if (!ids.length) {
+    showToast(`${mdw(day)}現在沒有壽星（可能剛改了生日或封鎖了官方帳號）`, 'warning')
+    return
+  }
+  openCreate()
+  form.value.name = `生日祝福 ${mdw(day)}`
+  form.value.audienceType = 'import'
+  form.value.importText = ids.join('\n')
+  form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: birthdayGreetingText(String(r?.gift ?? '')) }, 'A')
+  markClean() // 系統幫他填的，還沒動到手
+  showToast(`已帶入${mdw(day)}的 ${ids.length} 位壽星，生日祝福也寫好了。這是草稿，看一眼再按送出。`, 'success')
+}
+
 /** 這一次帶過來的三版文案（空陣列＝不是從月曆進來的） */
 const draftVariants = ref<string[]>([])
 const draftVariantIndex = ref(0)
@@ -1922,6 +1960,7 @@ onMounted(async () => {
   applyAudienceHandoff()
   applyDraftHandoff()
   applyTagHandoff()
+  await applyBirthdayHandoff()
   syncDuePollTimer()
   // `C-237`：網址帶 ?id= 就直接開那一則（「這個東西誰在用」名單點得進來）
   await openFromQueryId({
