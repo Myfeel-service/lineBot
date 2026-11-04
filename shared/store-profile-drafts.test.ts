@@ -14,6 +14,9 @@ import {
   type DraftContext,
 } from './store-profile-drafts'
 import { emptyStoreProfile, setStoreProfileField, type StoreProfileDoc } from './types/store-profile'
+import { needsRecords } from './tag-ideas'
+import { TAG_TEMPLATES } from './tag-templates'
+import { TAG_CODE_MAX_LENGTH } from './tag-code-suggest'
 
 function profileOf(over: Partial<Record<string, string>> = {}): StoreProfileDoc {
   let p = emptyStoreProfile()
@@ -216,49 +219,103 @@ describe('AI 語氣', () => {
   })
 })
 
-describe('建議標籤', () => {
-  it('固定三顆', () => {
-    expect(buildTagDrafts(ctxOf())).toHaveLength(3)
-  })
+describe('建議標籤（D-171 示意頁 v2：一排六顆、先勾三顆）', () => {
+  /** 每一種走得到的組合都列一次：守門測試要掃過每一顆 */
+  const EVERY_KIND: [string, DraftContext][] = [
+    ['零售・網購・送禮旺季', ctxOf()],
+    ['零售・網購・夏天', ctxOf({ profile: profileOf({ season: '夏天' }) })],
+    ['零售・實體店面', ctxOf({ profile: profileOf({ channel: '實體店面' }) })],
+    ['零售・預約制', ctxOf({ profile: profileOf({ channel: '預約制' }) })],
+    ['餐飲・實體店面', ctxOf({ profile: profileOf({ industry: '餐飲／飲料', channel: '實體店面' }) })],
+    ['餐飲・網購為主', ctxOf({ profile: profileOf({ industry: '餐飲／飲料', channel: '網購為主' }) })],
+    ['醫療', ctxOf({ profile: profileOf({ industry: '醫療／健康' }) })],
+    ['美容', ctxOf({ profile: profileOf({ industry: '美容／美業' }) })],
+    ['教育', ctxOf({ profile: profileOf({ industry: '教育／課程' }) })],
+    ['自己打的產業別', ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室' }) })],
+  ]
+  const picked = (c: DraftContext) => buildTagDrafts(c).filter(t => t.picked).map(t => t.name)
+  const all = (c: DraftContext) => buildTagDrafts(c).map(t => t.name)
 
-  it('每顆都講得出「之後拿來做什麼」', () => {
-    for (const t of buildTagDrafts(ctxOf())) {
-      expect(t.name.length).toBeGreaterThan(0)
-      expect(t.why.length).toBeGreaterThan(5)
+  it('每一種店都是六顆、先勾三顆，而且勾好的排在前面', () => {
+    for (const [kind, c] of EVERY_KIND) {
+      const tags = buildTagDrafts(c)
+      expect(tags, kind).toHaveLength(6)
+      expect(tags.map(t => t.picked), kind).toEqual([true, true, true, false, false, false])
     }
   })
 
-  it('送禮旺季的店給「送禮客」，其他店給「問過還沒買」', () => {
-    const gift = buildTagDrafts(ctxOf()).map(t => t.name)
-    expect(gift).toContain('送禮客')
-    const summer = buildTagDrafts(ctxOf({ profile: profileOf({ season: '夏天' }) })).map(t => t.name)
-    expect(summer).toContain('問過還沒買')
-    expect(summer).not.toContain('送禮客')
+  // 🔴 D-171：沒有貼法的標籤永遠 0 人（舊版「回購客」就是這樣）
+  it('⛔ 每顆都帶 AI 判斷條件、講得出之後拿來做什麼', () => {
+    for (const [kind, c] of EVERY_KIND) {
+      for (const t of buildTagDrafts(c)) {
+        expect(t.criteria.length, `${kind} ${t.name}`).toBeGreaterThan(10)
+        expect(t.criteria.length, `${kind} ${t.name}`).toBeLessThanOrEqual(200)
+        expect(t.why.length, `${kind} ${t.name}`).toBeGreaterThan(5)
+      }
+    }
   })
 
-  it('預約制的店給「預約過」而不是「問過出貨」', () => {
-    const names = buildTagDrafts(ctxOf({ profile: profileOf({ channel: '預約制' }) })).map(t => t.name)
-    expect(names).toContain('預約過')
-    expect(names).not.toContain('問過出貨')
+  it('⛔ 沒有要訂單或來店紀錄才分得出來的（回購客、常客、第一次來、問過還沒買）', () => {
+    for (const [kind, c] of EVERY_KIND) {
+      for (const name of all(c)) {
+        expect(needsRecords(name), `${kind} ${name}`).toBe(false)
+        expect(['回購客', '回頭客', '回訪客', '續報家長', '問過還沒買', '問過沒預約', '問過沒報名', '問過沒成交'], kind).not.toContain(name)
+      }
+    }
   })
 
-  it('名字不重複', () => {
-    const names = buildTagDrafts(ctxOf()).map(t => t.name)
-    expect(new Set(names).size).toBe(names.length)
+  it('名字、代號不重複；代號是建標籤 API 收得下的格式', () => {
+    for (const [kind, c] of EVERY_KIND) {
+      const tags = buildTagDrafts(c)
+      expect(new Set(tags.map(t => t.name)).size, kind).toBe(6)
+      expect(new Set(tags.map(t => t.code)).size, kind).toBe(6)
+      for (const t of tags) {
+        expect(t.code, `${kind} ${t.name}`).toMatch(/^[a-z][a-z0-9_]*$/)
+        expect(t.code!.length, `${kind} ${t.name}`).toBeLessThanOrEqual(TAG_CODE_MAX_LENGTH)
+      }
+    }
   })
 
-  // 🔴 `C-250`／`D-99`：標籤建了就留在帳號裡（代號改不了）——⛔ 診所不可以拿到「送禮客／問過出貨」
-  it('⛔ 不是賣東西的店拿到的是自己那一型的三顆', () => {
-    const clinic = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '醫療／健康' }) })).map(t => t.name)
-    expect(clinic).toEqual(['回訪客', '問過沒預約', '預約過'])
-    const school = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '教育／課程' }) })).map(t => t.name)
-    expect(school).toEqual(['續報家長', '問過沒報名', '問過時段'])
+  it('跟「標籤管理」範本同一顆的，代號與判斷條件照範本（之後按範本不會建出第二顆）', () => {
+    const tags = buildTagDrafts(ctxOf())
+    for (const code of ['asked_price', 'asked_shipping_status', 'complained', 'return_in_progress', 'waiting_launch']) {
+      const t = tags.find(x => x.code === code)
+      if (!t) continue
+      expect(t.criteria, code).toBe(TAG_TEMPLATES.find(x => x.code === code)!.criteria)
+    }
+    expect(tags.map(t => t.code)).toContain('asked_price')
+  })
+
+  it('送禮旺季先勾「想買來送禮」，其他季節先勾「在等開賣」', () => {
+    expect(picked(ctxOf())).toContain('想買來送禮')
+    expect(picked(ctxOf({ profile: profileOf({ season: '夏天' }) }))).toContain('在等開賣')
+    expect(picked(ctxOf({ profile: profileOf({ season: '夏天' }) }))).not.toContain('想買來送禮')
+  })
+
+  it('網購的店先勾「問過出貨進度」；實體店面、預約制不給出貨', () => {
+    expect(picked(ctxOf())).toContain('問過出貨進度')
+    expect(all(ctxOf({ profile: profileOf({ channel: '實體店面' }) }))).not.toContain('問過出貨進度')
+    expect(all(ctxOf({ profile: profileOf({ channel: '預約制' }) }))).not.toContain('問過出貨進度')
+  })
+
+  it('吃的店先勾訂位、外帶外送、客訴過（示意頁 v2）；網購為主的食品店照賣東西那一套', () => {
+    const food = ctxOf({ profile: profileOf({ industry: '餐飲／飲料', channel: '實體店面' }) })
+    expect(picked(food)).toEqual(['問過訂位', '問過外帶外送', '客訴過'])
+    const onlineFood = ctxOf({ profile: profileOf({ industry: '餐飲／飲料', channel: '網購為主' }) })
+    expect(all(onlineFood)).not.toContain('問過訂位')
+    expect(picked(onlineFood)).toContain('問過出貨進度')
+  })
+
+  // 🔴 `C-250`／`D-99`：標籤建了就留在帳號裡（代號改不了）——⛔ 診所不可以拿到「送禮／出貨」
+  it('⛔ 不是賣東西的店拿到的是自己那一型', () => {
+    expect(picked(ctxOf({ profile: profileOf({ industry: '醫療／健康' }) }))).toEqual(['問過預約時段', '問過價格優惠', '問過服務內容'])
+    expect(picked(ctxOf({ profile: profileOf({ industry: '教育／課程' }) }))).toEqual(['問過開課時間', '問過學費優惠', '問過試聽'])
     // 自己打的產業別＝中性型，⛔ 不猜成賣東西
-    const free = buildTagDrafts(ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室' }) })).map(t => t.name)
-    expect(free).toEqual(['回頭客', '問過沒成交', '問過細節'])
-    for (const names of [clinic, school, free]) {
-      expect(names).not.toContain('送禮客')
-      expect(names).not.toContain('問過出貨')
+    expect(picked(ctxOf({ profile: profileOf({ industry: '手工皂與香氛的工作室' }) }))).toEqual(['問過價格優惠', '在等新消息', '客訴過'])
+    for (const industry of ['醫療／健康', '美容／美業', '教育／課程', '手工皂與香氛的工作室']) {
+      const names = all(ctxOf({ profile: profileOf({ industry }) }))
+      expect(names, industry).not.toContain('問過出貨進度')
+      expect(names, industry).not.toContain('退換貨處理中')
     }
   })
 })
@@ -332,6 +389,16 @@ describe('buildStoreDrafts', () => {
       expect(d.where.length, d.key).toBeGreaterThan(0)
       expect(d.body.length, d.key).toBeGreaterThan(0)
     }
+  })
+
+  it('標籤卡：上面一句、下面講怎麼貼上去；標題不帶顆數（勾的數量會變，顆數寫在「建立 N 顆」）', () => {
+    const t = buildStoreDrafts(ctxOf()).find(d => d.key === 'tags')!
+    expect(t.title).toBe('分眾標籤')
+    expect(t.lead).toBe('勾起來，之後發推播就能只發給他們。')
+    expect(t.note).toBe('客人在對話裡聊到，AI 會提醒你貼上。')
+    expect(t.tags).toHaveLength(6)
+    // body＝先勾好的那三個名字（決定前的唯讀樣子）
+    expect(t.body.split('、')).toEqual(t.tags!.filter(x => x.picked).map(x => x.name))
   })
 })
 

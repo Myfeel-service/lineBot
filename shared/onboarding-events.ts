@@ -26,6 +26,8 @@ export const ONBOARDING_EVENTS = {
   profile_edit: '在輪廓卡上就地改了一格',
   draft_decision: '一樣草稿的決定（採用／先不要／改到空的／沒成功；自己改過沒、換過幾次說法）',
   draft_reword: '草稿按了「換個說法」（換成了沒）',
+  tag_ask: '標籤卡按了「問 AI」（問成了沒、回幾顆、擋掉幾顆；`D-171`）',
+  tag_build: '標籤建好了（新建幾顆、本來就有幾顆、AI 建議貼標開成了沒；`D-171`）',
   site_cards_shown: '看到網站整理出來的卡',
   build_finish: '走到成績單',
   // ── 落地 ──

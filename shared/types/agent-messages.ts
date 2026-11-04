@@ -194,8 +194,20 @@ export type AgentMsg =
      * 改的內容由頁面把 `draft-input` 事件交給劇本，按「採用」時用的是**他改過的那一版**。
      */
     editable?: 'text' | 'tags'
-    /** `editable === 'tags'` 時的三顆（`on`＝要不要建這一顆，預設全勾） */
-    tags?: { name: string; why: string; on: boolean }[]
+    /**
+     * `editable === 'tags'` 時那一排（`D-171`：六顆、先勾三顆；`on`＝要不要建這一顆）。
+     * `criteria`／`code` 跟著走到建立那一刻（AI 判斷條件、固定代號），畫面上不顯示。
+     */
+    tags?: DraftTagChip[]
+    /** 卡片上面那一句（標籤卡：「勾起來，之後發推播就能只發給他們。」） */
+    lead?: string
+    /**
+     * 標籤卡的「還想怎麼分？問 AI」（`D-171`）。有這個欄位才長那一行。
+     * - `rev`＝問成一次加一；畫面看 rev 換了才把新的 `ideas` 攤出來（按過「加進上面」就收起來）
+     * - `left`＝還能問幾次；0＝用完了，`note` 要講
+     * - `note`＝擋掉了什麼／這次沒問成的原因（⛔ 不可以按了沒反應）
+     */
+    tagAsk?: { busy?: boolean; rev: number; left: number; ideas: DraftTagIdea[]; note?: string }
     /**
      * 「換個說法」（`D-89` ②）：有這個欄位才長那顆鈕（只有歡迎訊息與語氣，`REWORDABLE_DRAFTS`）。
      * - `rev`＝換過幾次；每換成一次加一，框裡的字就換成新的 `body`（⚠️ 靠它不靠 body 比對：
@@ -213,11 +225,31 @@ export interface AgentChatEntry {
   msg: AgentMsg
 }
 
+/** 標籤卡上的一顆（`D-171`） */
+export interface DraftTagChip {
+  name: string
+  why: string
+  on: boolean
+  /** AI 判斷條件（建立時寫進標籤的 aiCriteria） */
+  criteria?: string
+  /** 固定代號（跟「標籤管理」範本同一顆時用範本的） */
+  code?: string
+}
+
+/** 「問 AI」回來、還沒加進那一排的一顆 */
+export interface DraftTagIdea {
+  name: string
+  why: string
+  criteria: string
+}
+
 export interface AgentChoice {
   label: string
   value: string
   /** 主要動作（填色按鈕），一組選項最多一顆 */
   primary?: boolean
+  /** 現在不能按（例：標籤一顆都沒勾時的「建立 0 顆」）。按了也當沒發生 */
+  disabled?: boolean
   /**
    * 跳過／離開類（例：先跳過測試、我會了直接貼上）。
    * 只影響排版位置——會被排到最左邊，遠離拇指落點與主要鈕，降低誤按

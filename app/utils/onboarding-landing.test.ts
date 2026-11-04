@@ -41,7 +41,7 @@ const setupStatus = read('composables/useSetupStatus.ts')
 const ALL: OnboardingBuiltItem[] = [
   { key: 'welcome', label: '加好友歡迎訊息' },
   { key: 'tone', label: 'AI 說話的語氣' },
-  { key: 'tags', label: '建議的分眾標籤 2 顆' },
+  { key: 'tags', label: '分眾標籤 2 顆' },
 ]
 
 describe('打造完的落地 3 步（`D-102`）', () => {
@@ -199,7 +199,29 @@ describe('看看你剛剛做的東西（`D-95`）', () => {
   it('⛔ 標籤那一步不講「聊過了就會貼上」（AI 只會建議、要人採用，而且要先開開關）', () => {
     const tags = builtTourSteps([ALL[2]!])[0]!
     expect(tags.description).not.toContain('聊過')
+    expect(tags.description).not.toContain('AI 會')
     expect(tags.description).toContain('代號不行')
+  })
+
+  // `D-171` 甲：開帳時 AI 建議貼標開成了，才講怎麼貼上去；⛔ 講的是「提醒你、你按採用」，不是「自動貼」
+  it('開帳時 AI 建議貼標開成了：講「AI 會提醒你貼上、你按採用才算」', () => {
+    const on = builtTourSteps([{ ...ALL[2]!, aiSuggest: true }])[0]!
+    expect(on.description).toContain('AI 會在「好友」頁提醒你貼上')
+    expect(on.description).toContain('按採用才算')
+    expect(on.description).not.toContain('自動貼')
+    // 對照組：沒開成照舊
+    expect(builtTourSteps([{ ...ALL[2]!, aiSuggest: false }])[0]!.description).not.toContain('AI 會')
+  })
+
+  it('紀錄存得下「AI 建議貼標有沒有開成」那一格', () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v) },
+    })
+    saveOnboardingBuilt('ws1', [{ key: 'tags', label: '分眾標籤 4 顆', aiSuggest: true }])
+    expect(readOnboardingBuilt('ws1')).toEqual([{ key: 'tags', label: '分眾標籤 4 顆', aiSuggest: true }])
+    vi.unstubAllGlobals()
   })
 })
 

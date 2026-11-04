@@ -183,7 +183,8 @@ export function useAgentScriptRunner(opts: { sayDelayMs?: number, pollIntervalMs
       startTurn()
     // 對不上目前的選項（例如點到剛被換掉的舊按鈕）：整個當沒發生，
     // 不能默默 settle——上一組選單的值被當成這一組的答案，就是「沒人按過卻跳過了」
-    if (!opt)
+    // 停用的鈕（例：一顆都沒勾的「建立 0 顆」）同樣當沒發生——畫面擋住了，這裡是第二道
+    if (!opt || opt.disabled)
       return
     // silent＝導覽動作不是對話內容（例：回看教學），不留使用者泡泡；
     // 也因為 push 一則就會把畫面拉回底部，會抵銷掉劇本剛要求的「捲回上面那則」

@@ -21,8 +21,10 @@ export const LINE_FLOW_MINUTES = '10–15 分鐘'
 
 export interface OnboardingBuiltItem {
   key: StoreDraftKey
-  /** 成績單上那一行的字（標籤那一樣帶顆數：「建議的分眾標籤 2 顆」） */
+  /** 成績單上那一行的字（標籤那一樣帶顆數：「分眾標籤 4 顆」） */
   label: string
+  /** 標籤那一樣：開帳時「AI 建議貼標」有沒有開成（`D-171` 甲；導覽照它決定要不要講「AI 會提醒你貼上」） */
+  aiSuggest?: boolean
 }
 
 interface BuiltPlace {
@@ -222,7 +224,8 @@ export function liveTourStepCount(received: boolean): number {
 
 /**
  * 「看看你剛剛做的東西」（`D-95`，手動按，入口見檔頭）：一樣一步，只走他真的建了的。
- * ⛔ 標籤那一步不講「客人聊過了就會貼上」：AI 讀對話只會**建議**、要人按採用才貼，而且要先開開關。
+ * ⛔ 標籤那一步不講「客人聊過了就會貼上」：AI 讀對話只會**建議**、要人按採用才貼。
+ *    開帳時「AI 建議貼標」開成了（`D-171` 甲）才講「AI 會提醒你貼上」；沒開成照舊只講「還沒有人」。
  */
 export function builtTourSteps(built: OnboardingBuiltItem[]): TutorialStep[] {
   const TEXT: Partial<Record<StoreDraftKey, { title: string, description: string }>> = {
@@ -239,9 +242,13 @@ export function builtTourSteps(built: OnboardingBuiltItem[]): TutorialStep[] {
       description: '你剛剛採用的那一段就存在這。<strong>最後那幾條安全規則不要刪</strong>——刪了 AI 就可能自己編價格。',
     },
   }
+  /** `D-171` 甲：AI 建議貼標開成了，標籤那一步多講怎麼貼上去（⛔ 不是「會自動貼」：要他按採用） */
+  const TAGS_WITH_AI = '之後發推播就是挑這幾顆來分眾。現在還沒有人身上有這些標籤；<strong>客人在對話裡聊到，AI 會在「好友」頁提醒你貼上</strong>，你按採用才算。名字可以改，代號不行。'
   return built.flatMap((b) => {
     const place = BUILT_PLACE[b.key]
     const t = TEXT[b.key]
-    return place && t ? [{ target: place.nav, title: t.title, description: t.description, placement: 'right' as const }] : []
+    if (!place || !t) return []
+    const description = b.key === 'tags' && b.aiSuggest ? TAGS_WITH_AI : t.description
+    return [{ target: place.nav, title: t.title, description, placement: 'right' as const }]
   })
 }

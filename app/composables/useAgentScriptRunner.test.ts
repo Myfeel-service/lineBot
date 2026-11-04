@@ -32,6 +32,24 @@ describe('useAgentScriptRunner（原語）', () => {
     expect(r.ask.value.kind).toBe('idle')
   })
 
+  // `D-171`：標籤一顆都沒勾時「建立 0 顆」是停用的——畫面擋住之外，這裡是第二道
+  it('askChoices：停用的選項按了當沒發生；換成可以按之後照常', async () => {
+    const r = make()
+    const p = r.askChoices([
+      { label: '先不要', value: 'no', escape: true },
+      { label: '建立 0 顆', value: 'yes', primary: true, disabled: true },
+    ])
+    await tick()
+    r.onChoice('yes')
+    expect(r.ask.value.kind).toBe('choices')
+    expect(r.entries.value, '沒按成就不該留泡泡').toHaveLength(0)
+    // 他勾了一顆：劇本把那顆鈕換成可以按
+    r.ask.value = { kind: 'choices', options: [{ label: '先不要', value: 'no', escape: true }, { label: '建立 1 顆', value: 'yes', primary: true }] }
+    r.onChoice('yes')
+    await expect(p).resolves.toBe('yes')
+    expect(r.entries.value.at(-1)).toMatchObject({ role: 'user', msg: { kind: 'text', html: '建立 1 顆' } })
+  })
+
   it('askChoices：silent 的選項按下去不留使用者泡泡（回看教學那種導覽鈕）', async () => {
     // ⛔ 這條看起來只是「少一則泡泡」，其實是**捲回能不能成立**的前提：
     //    使用者泡泡一 push 進去，頁面的 watcher 就會把畫面拉回底部，

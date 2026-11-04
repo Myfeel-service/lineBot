@@ -61,6 +61,7 @@
           @profile-edit="onProfileEdit"
           @draft-input="onDraftInput"
           @draft-reword="onDraftReword"
+          @draft-tag-ask="onDraftTagAsk"
         />
         <div v-if="typing" class="agm-msg agm-msg--agent">
           <div class="agm-bubble agm-typing"><i /><i /><i /></div>
@@ -113,7 +114,7 @@ const mode = ref<'chat' | 'locked'>('chat')
 
 const {
   entries, ask, typing, busy, progress, flow, flowInfo, activeWorkspaceId, scrollToId, turnStartId,
-  onChoice, onSubmit, onPick, onSkip, onProfileEdit, onDraftInput, onDraftReword, markLeaving,
+  onChoice, onSubmit, onPick, onSkip, onProfileEdit, onDraftInput, onDraftReword, onDraftTagAsk, markLeaving,
   start, dispose,
 } = useOnboardingChat()
 

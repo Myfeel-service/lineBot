@@ -8,7 +8,7 @@
       :key="opt.value"
       :type="opt.primary ? 'primary' : 'default'"
       round
-      :disabled="busy"
+      :disabled="busy || opt.disabled"
       @click="$emit('choice', opt.value)"
     >{{ opt.label }}</el-button>
   </div>

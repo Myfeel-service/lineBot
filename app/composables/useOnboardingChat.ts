@@ -9,7 +9,7 @@
  * - 每一步可跳過，但只作用當下這一輪（⛔跳過記憶已拆：它跟「沒做完每次都拉回」互相打架）。
  */
 
-import type { AgentChoice, AgentMsg } from '~~/shared/types/agent-messages'
+import type { AgentChoice, AgentMsg, DraftTagChip, DraftTagIdea } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
@@ -32,11 +32,14 @@ import {
   canBuildDrafts,
   REWORD_MAX_PER_CARD,
   REWORDABLE_DRAFTS,
+  STORE_DRAFT_WHERE,
   summarizeDraftApply,
   type DraftApplyStep,
   type StoreDraft,
   type StoreDraftKey,
+  type TagDraft,
 } from '~~/shared/store-profile-drafts'
+import { TAG_IDEA_ASKS_PER_CARD, tagIdeasNote, type TagIdeaSkip } from '~~/shared/tag-ideas'
 import { buildFollowWelcomeScript, followWelcomeRow } from '~~/shared/follow-welcome'
 import { type ScriptNode, scriptTriggerEvent } from '~~/shared/types/ai-script'
 import { suggestTagCode } from '~~/shared/tag-code-suggest'
@@ -552,16 +555,82 @@ export function useOnboardingChat() {
    * 草稿卡上他改過的內容（`D-94`：草稿一開始就是可以改的框）。key＝那張卡的 entry id。
    * ⚠️ 按「採用」時用的是**這一份**，不是範本原文——他改了卻寫出去原文，是最糟的那種假按鈕。
    */
-  const draftEdits = new Map<number, { body?: string, tags?: { name: string, why: string, on: boolean }[] }>()
+  const draftEdits = new Map<number, { body?: string, tags?: DraftTagChip[] }>()
 
   /** 頁面轉交的「草稿框內容變了」 */
-  function onDraftInput(p: { entryId: number, body?: string, tags?: { name: string, why: string, on: boolean }[] }) {
+  function onDraftInput(p: { entryId: number, body?: string, tags?: DraftTagChip[] }) {
     const prev = draftEdits.get(p.entryId) ?? {}
     draftEdits.set(p.entryId, {
       ...prev,
       ...(p.body != null ? { body: p.body } : {}),
       ...(p.tags ? { tags: p.tags } : {}),
     })
+    if (p.tags && p.entryId === tagChoiceCardId) refreshTagChoices(p.tags)
+  }
+
+  // ── 標籤卡（`D-171` 示意頁 v2）────────────────────────────────
+  /** 那顆鈕寫「建立 N 顆」：N 跟著勾選變；一顆都沒勾就不能按（⛔ 不讓他送出一個空的） */
+  function tagChoiceOptions(n: number): AgentChoice[] {
+    return [
+      { label: '先不要', value: 'no', escape: true },
+      { label: `建立 ${n} 顆`, value: 'yes', primary: true, disabled: n === 0 },
+    ]
+  }
+  /** 現在掛著「建立 N 顆」的是哪一張卡（決定完歸 null） */
+  let tagChoiceCardId: number | null = null
+  function refreshTagChoices(tags: DraftTagChip[]) {
+    if (ask.value.kind !== 'choices') return
+    ask.value = { ...ask.value, options: tagChoiceOptions(tags.filter(t => t.on && t.name.trim()).length) }
+  }
+
+  /**
+   * 「還想怎麼分？問 AI」每張卡的狀態（key＝entry id）。
+   * ⛔ `decided`：按了建立／先不要之後才回來的結果一律丟掉（同「換個說法」）。
+   */
+  const tagAskCards = new Map<number, {
+    base: Extract<AgentMsg, { kind: 'store-draft' }>
+    used: number
+    rev: number
+    ideas: DraftTagIdea[]
+    busy: boolean
+    decided: boolean
+  }>()
+
+  /** 頁面轉交的「標籤卡按了問 AI」 */
+  async function onDraftTagAsk(p: { entryId: number, ask: string, have: string[] }) {
+    const tc = tagAskCards.get(p.entryId)
+    if (!tc || tc.decided || tc.busy || tc.used >= TAG_IDEA_ASKS_PER_CARD) return
+    // ⚠️ 卡片本體（那一排）留在元件自己手上；這裡只換「問 AI」那一塊
+    const render = (extra: { busy?: boolean, note?: string } = {}) => updateMsg(p.entryId, {
+      ...tc.base,
+      tagAsk: { rev: tc.rev, left: TAG_IDEA_ASKS_PER_CARD - tc.used, ideas: tc.ideas, ...extra },
+    })
+    tc.busy = true
+    render({ busy: true })
+    try {
+      const r = await apiFetch<{ ideas: DraftTagIdea[], skipped: TagIdeaSkip[], already: string[] }>(
+        '/api/store-profile/reword?part=tag-ideas',
+        { method: 'POST', body: { ask: p.ask, have: p.have } },
+      )
+      if (tc.decided || isDisposed()) return
+      tc.used++
+      track('tag_ask', { ok: true, ideas: r.ideas.length, skipped: r.skipped.length, n: tc.used })
+      if (r.ideas.length) {
+        tc.ideas = r.ideas
+        tc.rev++
+      }
+      const used = tc.used >= TAG_IDEA_ASKS_PER_CARD ? `已經問了 ${TAG_IDEA_ASKS_PER_CARD} 次；其他的分法之後到「標籤管理」自己加。` : ''
+      render({ note: `${tagIdeasNote(r)}${used}` || undefined })
+    }
+    catch (e: unknown) {
+      if (tc.decided || isDisposed()) return
+      track('tag_ask', { ok: false, n: tc.used })
+      const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+      render({ note: msg || '這次沒問成，上面那一排沒動——再按一次試試。' })
+    }
+    finally {
+      tc.busy = false
+    }
   }
 
   /** 這一趟真的建成了哪幾樣（成績單、痛點回扣句都要看它——⛔ 講「剛剛採用的」之前先確認真的有） */
@@ -643,24 +712,7 @@ export function useOnboardingChat() {
         await apiFetch('/api/ai/settings', { method: 'PUT', body: { systemPrompt: d.body } })
         return { key: d.key, label, status: 'done' }
       }
-      if (d.key === 'tags') {
-        // ⛔ 代號由系統自己生（`D-83`③ 拍板），而且**撞號要自動換下一組**——
-        //    畫面上沒有那一格，丟「請換一個代號」給他是做不到的事。
-        const taken: string[] = []
-        let built = 0
-        for (const t of d.tags ?? []) {
-          const code = suggestTagCode(t.name, taken)
-          taken.push(code)
-          await apiFetch('/api/tag/create', {
-            method: 'POST',
-            body: { code, name: t.name, category: 'custom', description: t.why },
-          })
-          built++
-        }
-        return built > 0
-          ? { key: d.key, label: `建議的分眾標籤 ${built} 顆`, status: 'done' }
-          : { key: d.key, label, status: 'skipped' }
-      }
+      if (d.key === 'tags') return await applyTagDraft(d.tags ?? [], label)
       return { key: d.key, label, status: 'skipped' }
     }
     catch (e: unknown) {
@@ -669,6 +721,66 @@ export function useOnboardingChat() {
         || '沒有成功'
       return { key: d.key, label, status: 'failed', error: String(msg).slice(0, 120) }
     }
+  }
+
+  /**
+   * 建標籤＋打開「AI 建議貼標」（`D-171` 甲，2026-11-05 老闆「好 執行」）。
+   *
+   * ⛔ 代號由系統自己給（`D-83`③ 拍板），而且**撞號要自動換下一組**——畫面上沒有那一格，
+   *    丟「請換一個代號」給他是做不到的事。範本同一顆的用範本代號；被佔了才照名字生。
+   * ⛔ **帳號裡已經有同名的就不再建**（重跑開帳、老店本來就有）：多一顆同名標籤，發推播時挑錯一顆那批人就漏了。
+   * ⭐ 每顆都帶 AI 判斷條件、設成「AI 先建議」：沒有貼法的標籤永遠 0 人（舊版「回購客」的病）。
+   * ⭐ 建好之後順手打開「AI 建議貼標」總開關（新帳號預設是關的）——不開的話上面那幾句全是空話。
+   *    打開失敗不算標籤失敗（標籤已經建好了），但**要講**：`aiSuggest: false` 讓成績單與導覽改口。
+   */
+  async function applyTagDraft(tags: TagDraft[], label: string): Promise<DraftApplyStep> {
+    const existing = await apiFetch<{ code?: string, name?: string }[]>('/api/tag/list')
+    const taken = existing.map(t => String(t.code ?? '')).filter(Boolean)
+    const haveNames = new Set(existing.map(t => String(t.name ?? '').trim()).filter(Boolean))
+    let built = 0
+    let already = 0
+    for (const t of tags) {
+      if (haveNames.has(t.name)) { already++; continue }
+      const code = t.code && !taken.includes(t.code) ? t.code : suggestTagCode(t.name, taken)
+      taken.push(code)
+      await apiFetch('/api/tag/create', {
+        method: 'POST',
+        body: {
+          code,
+          name: t.name,
+          category: 'behavior',
+          description: t.why,
+          aiMode: 'suggest',
+          aiCriteria: t.criteria,
+        },
+      })
+      haveNames.add(t.name)
+      built++
+    }
+    if (built + already === 0) return { key: 'tags', label, status: 'skipped' }
+
+    let aiSuggest = false
+    try {
+      await apiFetch('/api/ai/settings', { method: 'PUT', body: { autoTagSuggest: { enabled: true } } })
+      aiSuggest = true
+    }
+    catch { /* 標籤已經建好；沒開成由成績單與卡片改口（見上） */ }
+    track('tag_build', { built, already, aiSuggest })
+    return {
+      key: 'tags',
+      // 全部本來就有＝這一趟沒有新建，⛔ 不寫「建了 0 顆」
+      label: built ? `分眾標籤 ${built} 顆` : `分眾標籤（帳號裡本來就有）`,
+      status: 'done',
+      aiSuggest,
+    }
+  }
+
+  /** 標籤卡採用後那一句（⛔ AI 建議貼標沒開成就不可以講「AI 會提醒你」） */
+  function tagAdoptedText(r: DraftApplyStep): string {
+    const where = `存在「${STORE_DRAFT_WHERE.tags}」`
+    return r.aiSuggest
+      ? `已建立 ✓ ${where}。AI 建議貼標也幫你打開了：客人聊到，會在「好友」頁提醒你貼上。`
+      : `已建立 ✓ ${where}。⚠️ AI 建議貼標這次沒打開——到「AI 設定」的「顧客標籤」打開，AI 才會提醒你貼上。`
   }
 
   /** 草稿那一段的逐樣結果（成績單要列得出「哪幾樣」，⛔ 不是只寫數字） */
@@ -692,10 +804,11 @@ export function useOnboardingChat() {
     // ⚠️ 數字吃 `adoptable`（真的要他決定的那幾樣）——說「準備了 4 樣」卻只有 3 樣要按，他會一直找第 4 顆
     await say(`我照你講的準備了 <b>${adoptable} 樣</b>，按「採用」才會生效。`)
 
+    const lastAdopt = [...drafts].reverse().find(x => x.kind === 'adopt')
     for (const d of drafts) {
       /**
        * ⭐ `D-94`：**一開始就是可以改的**（輸入框自己就是說明；少按一次「改一下」）。
-       * ⛔ 標籤不給大文字框：它是三顆名字（結構），開 textarea 等於請他把「名字——說明」的格式改壞。
+       * ⛔ 標籤不給大文字框：它是一排名字（結構），開 textarea 等於請他把格式改壞。
        */
       const editable = d.kind !== 'adopt' ? undefined : d.key === 'tags' ? 'tags' as const : 'text' as const
       const base = {
@@ -703,43 +816,64 @@ export function useOnboardingChat() {
         title: d.title,
         where: d.where,
         body: d.body,
+        ...(d.lead ? { lead: d.lead } : {}),
         ...(d.note ? { note: d.note } : {}),
         variant: d.kind,
+        // ⚠️ 那一排放在 base：「問 AI」重畫卡片時要帶著（元件自己手上那一份才是他勾過的，這裡只是初值）
+        ...(d.key === 'tags' && d.tags ? { tags: d.tags.map(t => ({ ...t, on: t.picked })) } : {}),
       }
+      // ⭐ `D-171` 示意頁 v2：標籤卡前面先問一句「以後想分哪幾種客人？」（它是最後一樣就講「最後一樣」）
+      if (d.key === 'tags') await say(`${d === lastAdopt ? '最後一樣：' : ''}<b>以後想分哪幾種客人？</b>`)
       // ⭐ `D-89`：只有歡迎訊息與語氣給「換個說法」（⛔ 標籤不給，理由見 `REWORDABLE_DRAFTS`）
       const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)
+      const canAskTags = editable === 'tags'
       const cardId = card({
         ...base,
         ...(editable ? { editable } : {}),
-        ...(d.key === 'tags' && d.tags ? { tags: d.tags.map(t => ({ ...t, on: true })) } : {}),
         ...(canReword ? { reword: { rev: 0, left: REWORD_MAX_PER_CARD } } : {}),
+        ...(canAskTags ? { tagAsk: { rev: 0, left: TAG_IDEA_ASKS_PER_CARD, ideas: [] } } : {}),
       })
       if (canReword) rewordCards.set(cardId, { key: d.key, base, body: d.body, used: 0, rev: 0, busy: false, decided: false })
+      if (canAskTags) tagAskCards.set(cardId, { base: { ...base, editable: 'tags' }, used: 0, rev: 0, ideas: [], busy: false, decided: false })
       if (d.kind === 'info') continue
 
-      const c = await askChoices([
-        { label: '採用', value: 'yes', primary: true },
-        { label: '先不要', value: 'no', escape: true },
-      ])
+      // 標籤那張的主鈕寫「建立 N 顆」、跟著勾選變（`refreshTagChoices`）
+      if (canAskTags) tagChoiceCardId = cardId
+      const c = await askChoices(canAskTags
+        ? tagChoiceOptions((d.tags ?? []).filter(t => t.picked).length)
+        : [
+            { label: '採用', value: 'yes', primary: true },
+            { label: '先不要', value: 'no', escape: true },
+          ])
       const rc = rewordCards.get(cardId)
       if (rc) rc.decided = true
+      const tc = tagAskCards.get(cardId)
+      if (tc) tc.decided = true
+      if (canAskTags) tagChoiceCardId = null
       const reworded = rc?.used ?? 0
 
       // 他最後決定的那一版（沒動過就是範本原文）
       const edit = draftEdits.get(cardId)
       const finalBody = (edit?.body ?? d.body).trim()
-      const finalTags = d.key === 'tags'
-        ? (edit?.tags ?? (d.tags ?? []).map(t => ({ ...t, on: true })))
+      const finalTags: TagDraft[] | undefined = d.key === 'tags'
+        ? (edit?.tags ?? (d.tags ?? []).map(t => ({ ...t, on: t.picked })))
             .filter(t => t.on && t.name.trim())
-            .map(t => ({ name: t.name.trim(), why: t.why }))
+            .map(t => ({
+              name: t.name.trim(),
+              why: t.why,
+              criteria: t.criteria ?? '',
+              ...(t.code ? { code: t.code } : {}),
+              picked: true,
+            }))
         : undefined
-      const shownBody = finalTags ? finalTags.map(t => `${t.name}——${t.why}`).join('\n') : finalBody
+      const shownBody = finalTags ? finalTags.map(t => t.name).join('、') : finalBody
       /**
        * 他有沒有親手動過（`D-94` 要驗「一開始就能改」到底有沒有人改）。
        * ⚠️ 比的是**機器給的最後一版**（換過說法就是換出來那一版）：換說法不算他改的，那個另記 `reworded`
+       * 標籤：勾的跟先勾好的那幾顆不一樣（多勾、取消、問 AI 加的）就算他動過。
        */
       const edited = finalTags
-        ? finalTags.map(t => t.name).join('|') !== (d.tags ?? []).map(t => t.name.trim()).join('|')
+        ? finalTags.map(t => t.name).join('|') !== (d.tags ?? []).filter(t => t.picked).map(t => t.name).join('|')
         : finalBody !== (rc?.body ?? d.body).trim()
 
       // 改到空的（字刪光、標籤全取消勾）＝這一樣不建，⛔ 不可以照樣送一個空的出去
@@ -749,6 +883,8 @@ export function useOnboardingChat() {
         draftSteps.push({ key: d.key, label: d.title, status: 'declined' })
         updateMsg(cardId, {
           ...base,
+          // 標籤卡那句「AI 會提醒你貼上」是採用前的預告，⛔ 按了先不要還留著就是假話
+          ...(d.key === 'tags' ? { note: undefined } : {}),
           state: 'declined',
           // ⛔ `D-89` 修掉的假承諾：原本寫「之後在『組織與 LINE』頁的輪廓卡還找得到」，
           //    但那張卡上根本沒有這幾樣。講一條**真的走得到**的路。
@@ -770,10 +906,14 @@ export function useOnboardingChat() {
       updateMsg(cardId, {
         ...base,
         body: shownBody,
+        // 標籤卡：採用後由 `tagAdoptedText` 講實際結果（AI 建議貼標有沒有開成），預告那句收掉
+        ...(d.key === 'tags' ? { note: undefined } : {}),
         state: r.status === 'done' ? 'adopted' : 'failed',
-        stateText: r.status === 'done'
-          ? `已採用 ✓ 存在「${d.where}」，之後隨時可以改`
-          : `沒有成功——${r.error}`,
+        stateText: r.status !== 'done'
+          ? `沒有成功——${r.error}`
+          : d.key === 'tags'
+            ? tagAdoptedText(r)
+            : `已採用 ✓ 存在「${d.where}」，之後隨時可以改`,
       })
     }
 
@@ -2455,6 +2595,8 @@ export function useOnboardingChat() {
     const payoff = profileDone ? painPayoff(String(revealedProfile?.fields?.pain?.value ?? '').trim()) : ''
     if (payoff) await say(payoff)
     const welcomeBuilt = builtKeys.has('welcome') && !!builtWelcomeText
+    // `D-171` 甲：標籤建了、AI 建議貼標也開成了才講（⛔ 沒開成講了就是假承諾）
+    const tagsAiOn = draftSteps.some(s => s.key === 'tags' && s.status === 'done' && s.aiSuggest)
     card({
       kind: 'summary',
       title: 'MiniMe 打造完成',
@@ -2462,6 +2604,7 @@ export function useOnboardingChat() {
         title: '接上 LINE 之後，我會幫你',
         lines: [
           ...(welcomeBuilt ? ['客人一加好友，就送出你的歡迎訊息'] : []),
+          ...(tagsAiOn ? ['客人聊到你勾的那幾種事，提醒你幫他貼標籤'] : []),
           // 摘要講的是「新朋友 +N 位」（人數），⛔ 不寫「誰加入」——那則不點名新朋友
           '每天早上報告：昨天幾位新朋友、誰還在等你',
           '節日快到時先提醒你，給你這一檔的建議',
@@ -2483,7 +2626,11 @@ export function useOnboardingChat() {
     })
     // ⭐ `C-250`②：建成的那幾樣記下來——落地導覽第 1 步、小幫手「開帳那一趟建了什麼」、
     //    「看看你剛剛做的東西」三處都吃這一份（⛔ 沒建成的不記：列了就得解釋「它其實沒建」）
-    saveOnboardingBuilt(wid.value, draftSteps.filter(s => s.status === 'done').map(s => ({ key: s.key, label: s.label })))
+    saveOnboardingBuilt(wid.value, draftSteps.filter(s => s.status === 'done').map(s => ({
+      key: s.key,
+      label: s.label,
+      ...(s.key === 'tags' ? { aiSuggest: s.aiSuggest === true } : {}),
+    })))
     track('build_finish', {
       profileDone,
       built: draftSteps.filter(s => s.status === 'done').length,
@@ -2772,6 +2919,8 @@ export function useOnboardingChat() {
     /** 互動卡片的事件（輪廓卡就地修改、草稿框改內容）——頁面從 AgentMessageRenderer 轉交過來 */
     onProfileEdit,
     onDraftInput,
+    /** 標籤卡的「還想怎麼分？問 AI」（`D-171`） */
+    onDraftTagAsk,
     /** 草稿卡的「換個說法」（`D-89` ②） */
     onDraftReword,
     markLeaving,

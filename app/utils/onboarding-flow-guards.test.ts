@@ -341,7 +341,13 @@ describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被�
     expect(catchBody, '失敗那條也要先看 decided').toMatch(/^catch \(e: unknown\) \{\s*\n\s*if \(rc\.decided \|\| isDisposed\(\)\) return/)
     // 按下採用／先不要的那一刻就標定案（⛔ 不可以等寫完才標：寫出去要幾秒）
     const drafts = fnBody('async function stepStoreDrafts', 'async function revealStoreProfile')
-    expect(drafts).toMatch(/const c = await askChoices\(\[[\s\S]*?\]\)\s*\n\s*const rc = rewordCards\.get\(cardId\)\s*\n\s*if \(rc\) rc\.decided = true/)
+    // ⚠️ `D-171` 起標籤那張的選項換成「建立 N 顆」（`askChoices(canAskTags ? … : [...])`），所以不再鎖 `askChoices([`
+    expect(drafts).toMatch(/const c = await askChoices\([\s\S]*?\]\)\s*\n\s*const rc = rewordCards\.get\(cardId\)\s*\n\s*if \(rc\) rc\.decided = true/)
+    // 「問 AI」慢回來的那一批同一條規矩（`D-171`）：按下去的那一刻就標定案
+    expect(drafts).toMatch(/if \(rc\) rc\.decided = true\s*\n\s*const tc = tagAskCards\.get\(cardId\)\s*\n\s*if \(tc\) tc\.decided = true/)
+    const tagAsk = fnBody('async function onDraftTagAsk', 'const builtKeys')
+    expect(tagAsk, '「問 AI」成功那條要先看 decided').toMatch(/\)\s*\n\s*if \(tc\.decided \|\| isDisposed\(\)\) return/)
+    expect(tagAsk.slice(tagAsk.indexOf('catch (e: unknown)')), '失敗那條也要先看 decided').toMatch(/^catch \(e: unknown\) \{\s*\n\s*if \(tc\.decided \|\| isDisposed\(\)\) return/)
     // ⛔ 標籤不給換：只有 REWORDABLE_DRAFTS 那兩樣、而且是一段話的框
     expect(drafts).toContain("const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)")
   })

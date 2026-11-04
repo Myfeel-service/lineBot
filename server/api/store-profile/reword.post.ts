@@ -5,7 +5,10 @@ import { getDb } from '~~/server/utils/firebase'
 import { getStoreProfile } from '~~/server/utils/store-profile'
 import { hitAgentRateLimit } from '~~/server/utils/agent-rate-limit'
 import { rewordStoreDraft, type RewordKey } from '~~/server/utils/store-draft-reword'
+import { suggestStoreTagIdeas } from '~~/server/utils/store-tag-ideas'
 import { REWORDABLE_DRAFTS, canBuildDrafts } from '~~/shared/store-profile-drafts'
+import { TAG_IDEA_ASK_MAX } from '~~/shared/tag-ideas'
+import type { H3Event } from 'h3'
 
 /**
  * POST /api/store-profile/reword   Body: { key: 'welcome' | 'tone', current?: string }
@@ -13,14 +16,23 @@ import { REWORDABLE_DRAFTS, canBuildDrafts } from '~~/shared/store-profile-draft
  * 開帳草稿的「換個說法」（`D-89` ②）：按一次打一次模型、回一版新的文字。
  * ⛔ **只回文字，不寫任何東西**：他還是要在草稿卡上按「採用」（08-14 紅線：最後一顆按鈕留給人）。
  * ⚠️ 用量記在「維運」那一側（跟讀網站同一桶），⛔ 不扣他每月的 AI 回覆額度——那一桶只算回客人的。
+ *
+ * POST /api/store-profile/reword?part=tag-ideas   Body: { ask: string, have?: string[] }
+ *
+ * 標籤卡的「還想怎麼分？問 AI」（`D-171`）：回 `{ ideas, skipped, already }`，同樣**不建任何東西**。
+ * ⚠️ 借這支路由不另開：再多一支 API 路由，不相干的 `$fetch` 就報 TS2589（`reference_nuxt_typecheck_traps`）。
  */
 const MAX_CURRENT = 4000
 /** 同一個人一分鐘最多按幾次（手滑連按型浪費；真正的上限是維運額度那道） */
 const REWORD_PER_MINUTE = 8
+/** 那一排最多帶幾個名字進 prompt（防亂塞） */
+const MAX_HAVE = 40
 
 export default defineEventHandler(async (event) => {
   const { workspaceId, uid } = await requireCapability(event, 'ai.settings.write')
   await assertMaintenanceBudget(workspaceId)
+
+  if (getQuery(event).part === 'tag-ideas') return tagIdeas(event, workspaceId, uid)
 
   const body = await readBody(event).catch(() => ({})) as { key?: unknown, current?: unknown }
   const key = String(body?.key ?? '') as RewordKey
@@ -68,3 +80,44 @@ export default defineEventHandler(async (event) => {
   }
   return { body: out.body, dropped: out.dropped }
 })
+
+/** 「還想怎麼分？問 AI」（`D-171`）。⛔ 只回草稿；擋掉的要回給他看（`skipped`／`already`） */
+async function tagIdeas(event: H3Event, workspaceId: string, uid: string) {
+  const body = await readBody(event).catch(() => ({})) as { ask?: unknown, have?: unknown }
+  const ask = String(body?.ask ?? '').trim().slice(0, TAG_IDEA_ASK_MAX)
+  if (!ask) throw createError({ statusCode: 400, statusMessage: '先打一句你想怎麼分客人' })
+  const have = (Array.isArray(body?.have) ? body.have : [])
+    .map(n => String(n ?? '').trim().slice(0, 30))
+    .filter(Boolean)
+    .slice(0, MAX_HAVE)
+
+  const rl = hitAgentRateLimit(`tag-ideas:${workspaceId}:${uid}`, { max: REWORD_PER_MINUTE })
+  if (rl.limited) {
+    throw createError({ statusCode: 429, statusMessage: `按太快了，${Math.ceil(rl.retryAfterMs / 1000)} 秒後再問一次` })
+  }
+
+  const db = getDb()
+  const profile = await getStoreProfile(workspaceId, db)
+  if (!canBuildDrafts(profile)) {
+    throw createError({ statusCode: 409, statusMessage: 'MiniMe 還不認識你的店，想出來的會是空話。' })
+  }
+  const wsSnap = await db.collection('workspaces').doc(workspaceId).get()
+  const shopName = String((wsSnap.data() as { name?: string } | undefined)?.name ?? '').trim()
+
+  let out: Awaited<ReturnType<typeof suggestStoreTagIdeas>>
+  try {
+    out = await suggestStoreTagIdeas(workspaceId, { shopName, profile, ask, have })
+  }
+  catch (e) {
+    const lost = aiUsageOfError(e)
+    if (lost) await recordAiUsage(workspaceId, usageFromCalls('build', [lost]), db)
+    throw e
+  }
+  if (out.inputTokens || out.outputTokens) {
+    await recordAiUsage(workspaceId, usageFromCalls('build', callsOf(out)), db)
+  }
+  if (out.dropped.length) {
+    console.warn(`[store-profile/reword?part=tag-ideas] ${workspaceId} 丟掉 ${out.dropped.length} 顆：`, out.dropped.map(d => `${d.text}（${d.reason}）`).join('、'))
+  }
+  return { ideas: out.ideas, skipped: out.skipped, already: out.already }
+}

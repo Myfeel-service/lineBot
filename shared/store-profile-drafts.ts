@@ -24,6 +24,7 @@ import {
 import { TAIWAN_FESTIVALS, type TaiwanFestival } from './taiwan-festivals'
 import { daysBetween } from './time'
 import { storeBizTypeOf, storeBizWording, welcomeAskFor } from './store-profile-biz'
+import { TAG_TEMPLATES } from './tag-templates'
 
 // ── 哪幾樣 ─────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ export const STORE_DRAFT_WHERE: Record<StoreDraftKey, string> = {
 export const STORE_DRAFT_TITLE: Record<StoreDraftKey, string> = {
   welcome: '加好友歡迎訊息',
   tone: 'AI 說話的語氣',
-  tags: '建議的分眾標籤',
+  tags: '分眾標籤',
   knowledge: '知識庫初稿',
   calendar: '未來 90 天的行銷月曆',
 }
@@ -213,64 +214,200 @@ export const REWORD_MAX_PER_CARD = 5
 
 export interface TagDraft {
   name: string
-  /** 給人看的一句話：這顆標籤之後拿來做什麼 */
+  /** 給人看的一句話：這顆標籤之後拿來做什麼（建立時寫進標籤的說明，給團隊看） */
   why: string
+  /**
+   * AI 判斷條件（`D-171`）：建立時寫進標籤的 `aiCriteria`，AI 讀對話時照這一句判斷要不要建議貼上。
+   * ⛔ **講不出這一句的標籤不放進開帳**——沒有貼法的標籤永遠 0 人（舊版的「回購客」就是這樣）。
+   */
+  criteria: string
+  /**
+   * 固定代號。跟「標籤管理」範本是同一顆的就用範本的代號：之後再按範本會認得是同一顆，不會建出第二顆。
+   * 沒給（「問 AI」加進來的）就照名字生。
+   */
+  code?: string
+  /** 一開始有沒有勾（`D-171` 示意頁 v2：一排六顆、先勾三顆推薦的） */
+  picked: boolean
+}
+
+/** 標籤卡上面那一句（`D-171` 示意頁 v2） */
+export const TAG_DRAFT_LEAD = '勾起來，之後發推播就能只發給他們。'
+/**
+ * 標籤卡下面那一句：怎麼貼上去。
+ * ⚠️ 前提是採用時會順手打開「AI 建議貼標」（`D-171` 甲，2026-11-05 老闆「好 執行」）——
+ *    打開失敗時，採用後的那一句要改口（見開帳劇本）。
+ */
+export const TAG_DRAFT_AI_LINE = '客人在對話裡聊到，AI 會提醒你貼上。'
+
+type TagChip = Omit<TagDraft, 'picked'>
+
+/** 跟「標籤管理」範本同一顆：代號、判斷條件照範本（範本的判斷條件是拿真實對話調過的） */
+function fromTemplate(code: string, name: string, why: string): TagChip {
+  const t = TAG_TEMPLATES.find(x => x.code === code)
+  // ⛔ 範本改了代號這裡要一起改；判斷條件空掉＝這顆永遠 0 人（守門測試鎖著）
+  return { code, name, why, criteria: t?.criteria ?? '' }
 }
 
 /**
- * 建議的三顆標籤。
- * ⛔ **名字要照使用者的單位取**：正式庫實況是標籤全叫「問卷 - X」「客服 - X」，
- *    也就是他們的單位是「一檔商品」不是「一種屬性」（`D-83` 盤點）。
- *    所以這裡給的是**用得上的三種分眾**，不是漂亮的分類學。
+ * 開帳可以挑的標籤（`D-171`）。⛔ **每一顆都要是客人在 LINE 對話裡講得出來的事**：
+ *   AI 讀對話判斷得出來，才有人會被貼上。「回購客」「第一次來」「VIP」要訂單或來店紀錄，
+ *   我們沒有＝永遠 0 人，⛔ 不放。
+ * ⛔ 名字要照使用者的單位取（`D-83` 盤點：正式庫的標籤是「一檔商品」「一件事」，不是漂亮的分類學）。
+ */
+const TAG_CHIP = {
+  price: fromTemplate('asked_price', '問過價格優惠', '對價格敏感的一群，限時折扣一發最快有反應。'),
+  complained: fromTemplate('complained', '客訴過', '發優惠前先排除他們，也是要回頭關心的名單。'),
+  shipping: fromTemplate('asked_shipping_status', '問過出貨進度', '出貨延誤時一次通知這群人，不用等他們一個個來問。'),
+  waiting: fromTemplate('waiting_launch', '在等開賣', '新品開賣、補貨當天最準的名單——他們自己說過在等。'),
+  returning: fromTemplate('return_in_progress', '退換貨處理中', '發促銷前先排除，正在辦退貨還收到優惠最容易引爆客訴。'),
+  gift: {
+    code: 'asked_gift',
+    name: '想買來送禮',
+    why: '節慶檔期的推播最先想到的就是這一群。',
+    criteria: '客人提到要買來送人、問禮盒、包裝、提袋、卡片，或問送長輩、送客戶送什麼好。自己要用的不算。',
+  },
+  bulk: {
+    code: 'asked_bulk',
+    name: '問過大量訂購',
+    why: '有團購價或企業禮盒時先找他們。',
+    criteria: '客人詢問團購、大量購買、公司或活動訂購、企業禮品的數量與價格。只買一兩件的不算。',
+  },
+  // ── 吃的（餐飲／飲料、不是網購為主） ──
+  reserve: {
+    code: 'asked_reservation',
+    name: '問過訂位',
+    why: '平日有空位或有優惠時，先通知想來的這群人。',
+    criteria: '客人詢問訂位、還有沒有位子、要不要排隊，或直接說要訂幾位、幾點到。只問營業時間的不算。',
+  },
+  takeout: {
+    code: 'asked_takeout',
+    name: '問過外帶外送',
+    why: '外帶、外送有活動時只發給他們。',
+    criteria: '客人詢問能不能外帶、自取、外送，用哪個外送平台，或外送範圍與運費。',
+  },
+  diet: {
+    code: 'asked_diet',
+    name: '問過素食過敏',
+    why: '出新的素食或不含過敏原的餐點時先告訴他們。',
+    criteria: '客人詢問有沒有素食、蛋奶素、無麩質，或提到自己對某種食物過敏、不吃牛等飲食限制。',
+  },
+  party: {
+    code: 'asked_party',
+    name: '問過包場聚餐',
+    why: '尾牙、慶生這種聚餐旺季前先找他們。',
+    criteria: '客人詢問包場、聚餐、慶生、尾牙、多人訂位或團體套餐。兩三個人的一般訂位不算。',
+  },
+  // ── 做服務 ──
+  booking: {
+    code: 'asked_booking',
+    name: '問過預約時段',
+    why: '臨時有空檔或加開時段時，先通知想約的這群人。',
+    criteria: '客人詢問還有沒有空檔、某天某時段能不能約、要等多久，或說想預約。已經約好、只是來確認時間的不算。',
+  },
+  service: {
+    code: 'asked_service',
+    name: '問過服務內容',
+    why: '還在了解的人；有體驗價或新項目時先找他們。',
+    criteria: '客人詢問某項服務或療程怎麼做、要多久、適不適合自己、前後要注意什麼。只問價格的不算。',
+  },
+  voucher: {
+    code: 'asked_voucher',
+    name: '問過禮券套票',
+    why: '節日推禮券、套票時先找他們。',
+    criteria: '客人詢問禮券、儲值、套票、多堂優惠，或想買來送人。',
+  },
+  reschedule: {
+    code: 'asked_reschedule',
+    name: '改過時間',
+    why: '常改期的人；臨時有空檔釋出時最可能補進來。',
+    criteria: '客人要改預約時間、延後、取消，或說臨時不能來。只問「可以改時間嗎」但沒有真的要改的不算。',
+  },
+  // ── 教課 ──
+  schedule: {
+    code: 'asked_schedule',
+    name: '問過開課時間',
+    why: '開新班或加開時段時先通知他們。',
+    criteria: '客人詢問下一期什麼時候開、上課時段、平日班或週末班、還有沒有名額。',
+  },
+  // ⚠️ 跟賣東西那顆「問過價格優惠」同一個代號（同一件事，教課的說法）——兩顆不會出現在同一家店
+  tuition: {
+    code: 'asked_price',
+    name: '問過學費優惠',
+    why: '早鳥或團報優惠一發最快有反應。',
+    criteria: '客人詢問學費、早鳥價、團報、分期付款或退費規定。',
+  },
+  trial: {
+    code: 'asked_trial',
+    name: '問過試聽',
+    why: '有試聽或體驗課時先找他們。',
+    criteria: '客人詢問能不能試聽、上體驗課、旁聽，或想先看看上課狀況再決定。',
+  },
+  level: {
+    code: 'asked_level',
+    name: '問過適不適合',
+    why: '還在評估的人；有說明會或程度測驗時先找他們。',
+    criteria: '客人詢問程度、年齡、沒有基礎能不能上、要準備什麼，或描述自己（或孩子）的狀況問適不適合。',
+  },
+  online: {
+    code: 'asked_online',
+    name: '問過線上補課',
+    why: '開線上班或錄影課時先告訴他們。',
+    criteria: '客人詢問有沒有線上課、錄影，或請假怎麼補課。',
+  },
+  // ── 中性（自己打的產業別） ──
+  news: {
+    code: 'waiting_news',
+    name: '在等新消息',
+    why: '有新活動、新品推出時先通知他們。',
+    criteria: '客人詢問下一次什麼時候有、新活動或新品何時推出，或說有消息再通知他。',
+  },
+  coop: {
+    code: 'asked_cooperation',
+    name: '問過合作',
+    why: '有企業方案或合作機會時先找他們。',
+    criteria: '客人詢問合作、批發、代理、企業或團體方案。一般消費者自己要用的不算。',
+  },
+  hours: {
+    code: 'asked_hours',
+    name: '問過時間地點',
+    why: '時間或地點有變動時先通知他們。',
+    criteria: '客人詢問營業或服務時間、地址、怎麼去、哪天有開。',
+  },
+} satisfies Record<string, TagChip>
+
+function chipRow(picked: TagChip[], more: TagChip[]): TagDraft[] {
+  return [...picked.map(c => ({ ...c, picked: true })), ...more.map(c => ({ ...c, picked: false }))]
+}
+
+/**
+ * 開帳那張標籤卡的六顆：前三顆先勾好（推薦的），後三顆不勾（`D-171` 示意頁 v2）。
+ *
+ * 🔴 2026-09-26（`C-250`／`D-99`）照型換：牙醫診所拿到「送禮客」「問過出貨」是兩顆一輩子用不到的標籤，
+ *    而標籤**建了就留在帳號裡**（名字可改、代號改不了）。
+ * 🔴 2026-11-05（`D-171`）拿掉「回購客／續報家長／回頭客／問過還沒買」這類：要訂單或來店紀錄才分得出來，
+ *    我們沒有，那幾顆建了永遠 0 人。換成對話裡講得出來的事，並且每顆帶 AI 判斷條件。
  */
 export function buildTagDrafts(ctx: DraftContext): TagDraft[] {
   const channel = fieldValue(ctx.profile, 'channel')
   const season = fieldValue(ctx.profile, 'season')
+  const industry = fieldValue(ctx.profile, 'industry')
+  const C = TAG_CHIP
 
-  /**
-   * 🔴 2026-09-26（`C-250`／`D-99`）三顆標籤照型換。⛔ 原本固定是賣東西那一套——
-   *    牙醫診所拿到「送禮客」「問過出貨」，那是兩顆一輩子用不到的標籤，
-   *    而標籤是**建了就留在帳號裡**的東西（名字可改、代號改不了）。
-   */
-  const type = storeBizTypeOf(fieldValue(ctx.profile, 'industry'))
-  if (type === 'service') {
-    return [
-      { name: '回訪客', why: '來過第二次的人。要提醒定期回訪時挑這一顆。' },
-      { name: '問過沒預約', why: '問了但還沒約時間的人。有空檔時最值得回頭找的一群。' },
-      { name: '預約過', why: '約過一次的人。改時間或臨時有空檔時要優先通知他們。' },
-    ]
-  }
-  if (type === 'class') {
-    return [
-      { name: '續報家長', why: '續報第二期的人。下一期招生時先找他們。' },
-      { name: '問過沒報名', why: '問了但還沒報名的人。開課前最值得回頭找的一群。' },
-      { name: '問過時段', why: '在意上課時間的人。調課或加開時段時要優先通知。' },
-    ]
-  }
-  if (type === 'neutral') {
-    return [
-      { name: '回頭客', why: '來過第二次的人。要發新消息或老客優惠時挑這一顆。' },
-      { name: '問過沒成交', why: '問了但還沒下一步的人。有檔期時最值得回頭找的一群。' },
-      { name: '問過細節', why: '問過價格或時間的人。有變動時要優先通知他們。' },
-    ]
+  const type = storeBizTypeOf(industry)
+  if (type === 'service') return chipRow([C.booking, C.price, C.service], [C.complained, C.voucher, C.reschedule])
+  if (type === 'class') return chipRow([C.schedule, C.tuition, C.trial], [C.level, C.online, C.complained])
+  if (type === 'neutral') return chipRow([C.price, C.news, C.complained], [C.gift, C.coop, C.hours])
+
+  // 吃的：訂位、外帶外送比「出貨」貼切（⚠️ 網購為主的食品店照一般賣東西那一套：他們真的要出貨）
+  if (industry === '餐飲／飲料' && !channel.includes('網購為主')) {
+    return chipRow([C.reserve, C.takeout, C.complained], [C.diet, C.price, C.party])
   }
 
-  const drafts: TagDraft[] = [
-    { name: '回購客', why: '買過第二次的人。之後要發新品或老客優惠，挑這一顆。' },
-  ]
-
-  if (season.includes('送禮') || season.includes('春節') || season.includes('中秋')) {
-    drafts.push({ name: '送禮客', why: '買來送人的人。節慶檔期的推播最先想到的就是這一群。' })
-  }
-  else {
-    drafts.push({ name: '問過還沒買', why: '問了但沒下單的人。檔期開跑時最值得回頭找的一群。' })
-  }
-
-  drafts.push(channel.includes('預約')
-    ? { name: '預約過', why: '來過一次的人。要提醒回訪或推新服務時用得到。' }
-    : { name: '問過出貨', why: '在意到貨時間的人。出貨有變動時要優先通知他們。' })
-
-  return drafts.slice(0, 3)
+  const giftSeason = season.includes('送禮') || season.includes('春節') || season.includes('中秋')
+  const [first, other] = giftSeason ? [C.gift, C.waiting] : [C.waiting, C.gift]
+  return channel.includes('網購')
+    ? chipRow([C.price, first, C.shipping], [C.complained, other, C.returning])
+    : chipRow([C.price, first, C.complained], [other, C.bulk, C.returning])
 }
 
 export interface CalendarEntry {
@@ -300,9 +437,11 @@ export interface StoreDraft {
   title: string
   where: string
   kind: 'adopt' | 'info'
-  /** 給人看的內容（歡迎訊息＝那段話；標籤＝三個名字；月曆＝節日清單） */
+  /** 給人看的內容（歡迎訊息＝那段話；標籤＝先勾的那幾個名字；月曆＝節日清單） */
   body: string
-  /** 採用之後這一樣要講的補充（例如去 LINE 後台關掉內建歡迎） */
+  /** 卡片上面那一句（標籤卡：「勾起來，之後發推播就能只發給他們。」） */
+  lead?: string
+  /** 卡片下面的補充（例如去 LINE 後台關掉內建歡迎；標籤卡＝怎麼貼上去） */
   note?: string
   /** 標籤那一樣的結構化內容（套用時要用） */
   tags?: TagDraft[]
@@ -341,14 +480,19 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     note: '這會取代原本那段通用的設定。裡面的安全規則都留著。',
   })
 
+  /**
+   * ⭐ `D-171`（示意頁 v2）：一排六顆、先勾三顆，可以用講的再加。
+   * ⛔ 標題不帶顆數：勾的數量會變，顆數寫在「建立 N 顆」那顆鈕上。
+   */
   const tags = buildTagDrafts(ctx)
   drafts.push({
     key: 'tags',
-    title: `${STORE_DRAFT_TITLE.tags} ${tags.length} 顆`,
+    title: STORE_DRAFT_TITLE.tags,
     where: STORE_DRAFT_WHERE.tags,
     kind: 'adopt',
-    body: tags.map(t => `${t.name}——${t.why}`).join('\n'),
-    note: '先建起來放著，之後發推播就是挑它們來分眾。現在還沒有人身上有這些標籤。',
+    body: tags.filter(t => t.picked).map(t => t.name).join('、'),
+    lead: TAG_DRAFT_LEAD,
+    note: TAG_DRAFT_AI_LINE,
     tags,
   })
 
@@ -372,6 +516,11 @@ export interface DraftApplyStep {
   label: string
   status: DraftApplyStatus
   error?: string
+  /**
+   * 標籤那一樣：「AI 建議貼標」這次有沒有開著（`D-171` 甲）。
+   * ⛔ 沒開成就不可以講「AI 會提醒你貼上」——成績單、落地導覽都看這一格。
+   */
+  aiSuggest?: boolean
 }
 
 export interface DraftApplyOutcome {

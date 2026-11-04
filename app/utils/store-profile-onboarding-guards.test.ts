@@ -342,7 +342,8 @@ describe('五樣草稿（C-221）', () => {
   it('⛔ 先畫草稿卡、再問採用（不可以先寫出去才問）', () => {
     const i = chat.indexOf('async function stepStoreDrafts')
     expect(i).toBeGreaterThan(-1)
-    const block = chat.slice(i, i + 4000)
+    // ⚠️ 切到下一支函式為止（`D-171` 標籤卡多了幾段之後，固定字數會切不到「採用」那顆）
+    const block = chat.slice(i, chat.indexOf('async function revealStoreProfile'))
     const cardAt = block.indexOf("kind: 'store-draft'")
     const askAt = block.indexOf("label: '採用'")
     const applyAt = block.indexOf('applyOneDraft')
@@ -353,7 +354,7 @@ describe('五樣草稿（C-221）', () => {
 
   it('⛔ 有東西沒成時一定要點名已經建好的（不然人會重跑而多出重複的東西）', () => {
     const i = chat.indexOf('async function stepStoreDrafts')
-    const block = chat.slice(i, i + 5000)
+    const block = chat.slice(i, chat.indexOf('async function revealStoreProfile'))
     expect(block).toContain('outcome.leftovers')
     expect(block).toContain('不要整個重來')
   })
@@ -367,7 +368,7 @@ describe('五樣草稿（C-221）', () => {
   it('⭐ 採用的是他改過的那一版（`D-94`：草稿一開始就可以改）', () => {
     // 踩到會怎樣：他改了字，寫出去的卻是範本原文——最糟的那種假按鈕
     const i = chat.indexOf('async function stepStoreDrafts')
-    const block = chat.slice(i, i + 6000)
+    const block = chat.slice(i, chat.indexOf('async function revealStoreProfile'))
     expect(block).toContain('draftEdits.get(cardId)')
     expect(block).toContain('body: finalBody')
     // 標籤只建有勾的那幾顆
@@ -376,7 +377,7 @@ describe('五樣草稿（C-221）', () => {
 
   it('⛔ 「先不要」講一條真的走得到的路（不再說「組織與 LINE 頁的輪廓卡還找得到」）', () => {
     const i = chat.indexOf('async function stepStoreDrafts')
-    const block = chat.slice(i, i + 6000)
+    const block = chat.slice(i, chat.indexOf('async function revealStoreProfile'))
     expect(stripComments(block)).not.toContain('輪廓卡還找得到')
   })
 
@@ -389,10 +390,36 @@ describe('五樣草稿（C-221）', () => {
   })
 
   it('標籤代號由系統生、撞號自動換（畫面上沒有那一格，不可以叫他改代號）', () => {
-    const i = chat.indexOf('async function applyOneDraft')
+    const i = chat.indexOf('async function applyTagDraft')
     const block = chat.slice(i, i + 2500)
     expect(block).toContain('suggestTagCode')
     expect(block).toContain('taken')
+  })
+
+  /**
+   * `D-171`（2026-11-05 老闆「好 執行」，甲）。踩到會怎樣：
+   * - 沒帶判斷條件／沒設「AI 先建議」→ AI 讀對話不會碰這顆＝永遠 0 人（舊版「回購客」的病）
+   * - 沒打開總開關 → 新帳號預設是關的，卡片上「AI 會提醒你貼上」是假話
+   * - 同名照建 → 重跑開帳多一顆同名標籤，發推播挑錯一顆那批人就漏了
+   */
+  it('⭐ 建標籤時帶 AI 判斷條件、設成先建議、同名不重建，建完打開 AI 建議貼標', () => {
+    const i = chat.indexOf('async function applyTagDraft')
+    const block = stripComments(chat.slice(i, i + 2500))
+    expect(block).toContain("aiMode: 'suggest'")
+    expect(block).toContain('aiCriteria: t.criteria')
+    expect(block).toContain('haveNames.has(t.name)')
+    expect(block).toContain('autoTagSuggest: { enabled: true }')
+    // ⛔ 開關沒開成不算標籤失敗，但要回報（成績單、導覽、卡片都看這一格）
+    expect(block).toContain('aiSuggest')
+  })
+
+  it('⛔ AI 建議貼標沒開成，採用後那句、成績單都不可以講「AI 會提醒你」', () => {
+    const t = chat.indexOf('function tagAdoptedText')
+    expect(chat.slice(t, t + 600)).toContain('r.aiSuggest')
+    const f = chat.indexOf('async function stepBuildFinish')
+    const finish = chat.slice(f, f + 2500)
+    expect(finish).toContain('s.aiSuggest')
+    expect(finish).toContain('tagsAiOn ?')
   })
 })
 

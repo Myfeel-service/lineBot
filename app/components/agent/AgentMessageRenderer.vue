@@ -335,20 +335,56 @@
       </el-button>
       <span v-if="entry.msg.reword.note" class="agm-draft__rwnote">{{ entry.msg.reword.note }}</span>
     </div>
-    <!-- 標籤：名字欄＋勾選。⛔ 沒勾的**整列**變灰（只讓小方框變化，一眼看不出哪幾顆不會建） -->
+    <!--
+      標籤（`D-171` 示意頁 v2）：一排可以勾的標籤，先勾三顆推薦的。
+      ⛔ 不再給名字輸入框：每顆的 AI 判斷條件是照名字寫的，在這裡改名會讓名字跟條件對不上；
+         要改名到「標籤管理」（那裡看得到判斷條件）。
+    -->
     <div v-else-if="entry.msg.editable === 'tags' && !entry.msg.state" class="agm-draft__tags">
-      <div
-        v-for="(t, i) in draftTags"
-        :key="i"
-        :class="['agm-draft__tag', { 'is-off': !t.on }]"
-      >
-        <el-checkbox v-model="t.on" @change="emitDraft" />
-        <el-input v-model="t.name" class="agm-draft__tag-name" size="small" :maxlength="20" :disabled="!t.on" @input="emitDraft" />
-        <span class="agm-draft__tag-why">{{ t.why }}</span>
+      <p v-if="entry.msg.lead" class="agm-draft__lead">{{ entry.msg.lead }}</p>
+      <div class="agm-draft__chips">
+        <el-checkbox
+          v-for="t in draftTags"
+          :key="t.name"
+          v-model="t.on"
+          class="agm-draft__chip"
+          border
+          size="small"
+          :title="t.why"
+          @change="emitDraft"
+        >{{ t.name }}</el-checkbox>
       </div>
     </div>
     <pre v-else class="agm-draft__body">{{ entry.msg.body }}</pre>
     <p v-if="entry.msg.note" class="agm-draft__note">{{ entry.msg.note }}</p>
+    <!-- 還想怎麼分？用講的（`D-171`）：問回來的先列在這裡，按「加進上面」才進那一排 -->
+    <div v-if="entry.msg.editable === 'tags' && entry.msg.tagAsk && !entry.msg.state" class="agm-draft__ask">
+      <form class="agm-draft__ask-row" @submit.prevent="emitTagAsk">
+        <span class="agm-draft__ask-label">還想怎麼分？</span>
+        <el-input
+          v-model="tagAskText"
+          class="agm-draft__ask-input"
+          size="small"
+          aria-label="還想怎麼分客人"
+          placeholder="例如：我想分內用、外帶、外送的客人"
+          :maxlength="TAG_IDEA_ASK_MAX"
+          :disabled="entry.msg.tagAsk.busy || entry.msg.tagAsk.left <= 0"
+        />
+        <el-button
+          size="small"
+          native-type="submit"
+          :loading="entry.msg.tagAsk.busy"
+          :disabled="entry.msg.tagAsk.busy || entry.msg.tagAsk.left <= 0 || !tagAskText.trim()"
+        >問 AI</el-button>
+      </form>
+      <div v-if="freshTagIdeas.length" class="agm-draft__ideas">
+        <div class="agm-draft__chips">
+          <span v-for="t in freshTagIdeas" :key="t.name" class="agm-draft__idea" :title="t.why">{{ t.name }}</span>
+        </div>
+        <el-button size="small" type="primary" @click="addTagIdeas">加進上面</el-button>
+      </div>
+      <p v-if="entry.msg.tagAsk.note" class="agm-draft__rwnote">{{ entry.msg.tagAsk.note }}</p>
+    </div>
     <p v-if="entry.msg.state" :class="['agm-draft__state', `is-${entry.msg.state}`]">{{ entry.msg.stateText }}</p>
   </div>
 </template>
@@ -359,7 +395,8 @@
  * 開通引導精靈與（未來的）後台查詢助理共用；型別合約在 shared/types/agent-messages.ts。
  */
 import { CircleCheckFilled, Loading, Remove, WarningFilled } from '@element-plus/icons-vue'
-import type { AgentChatEntry } from '~~/shared/types/agent-messages'
+import type { AgentChatEntry, DraftTagChip, DraftTagIdea } from '~~/shared/types/agent-messages'
+import { TAG_IDEA_ASK_MAX } from '~~/shared/tag-ideas'
 
 const props = defineProps<{ entry: AgentChatEntry }>()
 
@@ -371,9 +408,11 @@ const emit = defineEmits<{
   /** 輪廓卡某一格存起來（值可以是空字串＝清空） */
   (e: 'profile-edit', p: { entryId: number, fieldId: string, value: string }): void
   /** 草稿框的內容變了（按「採用」時劇本用的是這一份） */
-  (e: 'draft-input', p: { entryId: number, body?: string, tags?: { name: string, why: string, on: boolean }[] }): void
+  (e: 'draft-input', p: { entryId: number, body?: string, tags?: DraftTagChip[] }): void
   /** 按了「換個說法」（帶著框裡現在那一版：新的要跟它不一樣） */
   (e: 'draft-reword', p: { entryId: number, body: string }): void
+  /** 標籤卡按了「問 AI」（`D-171`；帶著那一排現在有的名字，回來的不要重複） */
+  (e: 'draft-tag-ask', p: { entryId: number, ask: string, have: string[] }): void
 }>()
 
 const copied = ref(false)
@@ -423,6 +462,34 @@ function emitDraft() {
 function emitReword() {
   if (props.entry.msg.kind !== 'store-draft') return
   emit('draft-reword', { entryId: props.entry.id, body: draftBody.value })
+}
+
+// ── 標籤卡・還想怎麼分？（`D-171`）────────────────────────────────
+const tagAskText = ref('')
+/** 已經按過「加進上面」的那一次（rev）：那一批就收起來，下一次問回來才再攤開 */
+const takenTagAskRev = ref(0)
+const freshTagIdeas = computed<DraftTagIdea[]>(() => {
+  const m = props.entry.msg
+  if (m.kind !== 'store-draft' || !m.tagAsk || m.tagAsk.rev === takenTagAskRev.value) return []
+  return m.tagAsk.ideas
+})
+function emitTagAsk() {
+  const ask = tagAskText.value.trim()
+  if (!ask || props.entry.msg.kind !== 'store-draft' || props.entry.msg.tagAsk?.busy) return
+  emit('draft-tag-ask', { entryId: props.entry.id, ask, have: draftTags.value.map(t => t.name) })
+}
+/** 加進那一排、而且勾好（示意頁 v2）；已經有同名的就只把它勾起來 */
+function addTagIdeas() {
+  const m = props.entry.msg
+  if (m.kind !== 'store-draft' || !m.tagAsk) return
+  for (const idea of freshTagIdeas.value) {
+    const same = draftTags.value.find(t => t.name === idea.name)
+    if (same) same.on = true
+    else draftTags.value.push({ name: idea.name, why: idea.why, criteria: idea.criteria, on: true })
+  }
+  takenTagAskRev.value = m.tagAsk.rev
+  tagAskText.value = ''
+  emitDraft()
 }
 /** 換成一次（`rev` 加一）＝框裡換成新的那一版（⚠️ 看 rev 不看 body，理由見型別註解） */
 watch(
