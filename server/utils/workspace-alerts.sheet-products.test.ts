@@ -77,7 +77,7 @@ describe('試算表商品五顆提醒', () => {
     // `C-449`：⛔ 不寫「勾了 12 個」——還沒圖的「兩全奇美燈」也勾著，店家在試算表上數到的是 13 個
     expect(r.sheetCatalogOverflow).toMatchObject({ state: 'active', count: 2, detail: '目錄只放得下 10 個，排在後面的「K」、「L」沒放上去' })
     expect(r.sheetProductNoImage).toMatchObject({ state: 'active', count: 1, detail: '「兩全奇美燈」還沒有圖（商品頁抓不到），先不放進目錄' })
-    expect(r.sheetProductMissing).toMatchObject({ state: 'active', count: 1, detail: '「YiMi」在試算表上找不到了，AI 也答不出了' })
+    expect(r.sheetProductMissing).toMatchObject({ state: 'active', count: 1, detail: '「YiMi」在試算表上找不到了，目錄上已經拿掉' })
     expect(r.sheetProductRenameUnsure).toMatchObject({ state: 'active', count: 1, detail: '「10S」在試算表上找不到了，是改名嗎？' })
     expect(r.sheetFieldMissing).toMatchObject({ state: 'active', count: 1, detail: '範本「商品資訊範本」用到的「額外資訊」這一欄找不到了，那一行不會顯示' })
     // 五顆共用同一次查詢

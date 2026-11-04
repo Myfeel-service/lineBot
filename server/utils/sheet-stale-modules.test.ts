@@ -8,6 +8,10 @@ vi.mock('firebase-admin/firestore', () => ({
   Timestamp: { fromMillis: (ms: number) => ({ toMillis: () => ms, __ms: ms }) },
 }))
 
+/** 引用索引：預設「ship 有人指著」（客人走得到）；`C-455` 那幾條自己換 */
+const { scanConfigReferences } = vi.hoisted(() => ({ scanConfigReferences: vi.fn() }))
+vi.mock('./config-references', () => ({ scanConfigReferences }))
+
 const { recordStaleSheetModules, findStaleSheetModules, SHEET_STALE_COLLECTION } = await import('./sheet-stale-modules')
 
 const OLD_A = '依原廠公告：商品將於 10 月底 依照訂單順序陸續出貨。'
@@ -44,6 +48,8 @@ function makeDb(flows: Record<string, { workspaceId: string, name: string, messa
 
 let flows: Record<string, { workspaceId: string, name: string, messages: unknown[] }>
 beforeEach(() => {
+  scanConfigReferences.mockReset()
+  scanConfigReferences.mockResolvedValue({ modules: { ship: [{ kind: 'richmenu', id: 'rm', label: '主選單' }] }, tags: {}, failedKinds: [] })
   flows = {
     ship: { workspaceId: 'ws1', name: '客服 - 出貨進度查詢 - Giaretti', messages: [{ type: 'quickReply', text: `您好，\n${OLD_A}\n謝謝` }] },
     info: { workspaceId: 'ws1', name: '客服 - 商品資訊 - Giaretti', messages: [{ type: 'text', text: '看商品頁' }] },
@@ -95,8 +101,43 @@ describe('提醒中心：現在還是舊的才算', () => {
     expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
   })
 
-  it('沒有任何記錄：空的', async () => {
+  it('沒有任何記錄：空的；⛔ 不掃引用索引（沒有舊字就一次查詢都不多花）', async () => {
     const { db } = makeDb(flows)
     expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
+    expect(scanConfigReferences).not.toHaveBeenCalled()
+  })
+})
+
+describe('`C-455` 客人走不到的模組不提醒（跟模組頁「客人走不到」同一把尺）', () => {
+  const record = async (db: any) => recordStaleSheetModules(db, 'ws1', 'src1', '客服（商品資訊）', [{ row: 'Giaretti', field: '出貨時間', oldValue: OLD_A, newValue: OLD_B }])
+  const ref = (over: Record<string, unknown> = {}) => ({ kind: 'flow', id: 'info', label: '客服 - 商品資訊 - Giaretti', ...over })
+
+  it('⭐ 沒有任何選單、按鈕指著（MYFEEL 收進資料夾的舊模組）＝不提醒；有人指著＝照提醒（對照組）', async () => {
+    const { db } = makeDb(flows)
+    await record(db)
+    scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: [] })
+    expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
+    scanConfigReferences.mockResolvedValue({ modules: { ship: [ref()] }, tags: {}, failedKinds: [] })
+    expect((await findStaleSheetModules(db, 'ws1')).map(m => m.flowId)).toEqual(['ship'])
+  })
+
+  it('指著它的都關掉了（關掉的自動回應）＝走不到，不提醒；停用的模組上的按鈕照樣按得到＝照提醒', async () => {
+    const { db } = makeDb(flows)
+    await record(db)
+    scanConfigReferences.mockResolvedValue({ modules: { ship: [ref({ kind: 'script', closed: true })] }, tags: {}, failedKinds: [] })
+    expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
+    scanConfigReferences.mockResolvedValue({ modules: { ship: [ref({ inactive: true })] }, tags: {}, failedKinds: [] })
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+  })
+
+  it('⛔ 引用索引查不完整（有一類查不到、撞到上限、整個讀失敗）＝照樣提醒（講不準就不藏）', async () => {
+    const { db } = makeDb(flows)
+    await record(db)
+    scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: ['richmenu'] })
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: [], truncatedKinds: ['flow'] })
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    scanConfigReferences.mockRejectedValue(new Error('firestore down'))
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
   })
 })

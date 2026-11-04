@@ -481,7 +481,8 @@ const ALERTS: AlertDefinition[] = [
   {
     id: 'sheetProductMissing',
     icon: Tickets,
-    impact: '試算表上那一列不見了，AI 也答不出那個商品。還要讓客人問得到（例如告訴他已停售），把那一列加回來、不要勾「放進LINE目錄」；確定不要了，到商品目錄按「不賣了，拿掉」。',
+    // `C-455`：只算本來勾著放進目錄的；沒勾的那一列被刪掉多半是刻意的，不亮
+    impact: '本來在目錄上的商品，試算表上那一列不見了：目錄上已經拿掉，AI 也讀不到那一列的資料。還要讓客人問得到（例如告訴他已停售），把那一列加回來、不要勾「放進LINE目錄」；確定不要了，到商品目錄按「不賣了，拿掉」。',
     cta: '去看商品目錄',
     requires: 'marketing.write',
     route: wid => `/admin/${wid}/flow`,

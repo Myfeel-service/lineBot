@@ -1501,7 +1501,7 @@
 import { Connection, CopyDocument, Delete, EditPen, Folder, FolderAdd, Plus } from '@element-plus/icons-vue'
 import { confirmSaveBeforeCopy } from '~/utils/confirm-save-before-copy'
 import { ElMessageBox } from 'element-plus'
-import { emptyReferenceIndex, refStillReaches, type ConfigReferenceIndex } from '~~/shared/config-references'
+import { emptyReferenceIndex, moduleReachable, refStillReaches, type ConfigReferenceIndex } from '~~/shared/config-references'
 import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
@@ -1673,10 +1673,11 @@ const moduleUsageText = computed(() => {
  */
 const unreachableIds = computed(() => {
   const ids = new Set<string>()
-  if (!configRefsReady.value || configRefs.value.failedKinds.length || configRefs.value.truncatedKinds?.length) return ids
+  if (!configRefsReady.value) return ids
   for (const f of allFlows.value) {
     if (f.isSystem) continue
-    if (!(configRefs.value.modules[f.id] ?? []).some(refStillReaches)) ids.add(f.id)
+    // 查不完整＝null，不標（`moduleReachable` 跟提醒中心「還寫著舊的」同一支）
+    if (moduleReachable(configRefs.value, f.id) === false) ids.add(f.id)
   }
   return ids
 })
@@ -1762,9 +1763,12 @@ async function loadSheetStale() {
 function staleRecordFor(flowId: string, messages: unknown): SheetStaleRecord | null {
   return sheetStaleRecords.value.find(r => r.moduleIds.includes(flowId) && quotedValueIn(messages, r.oldValues)) ?? null
 }
-/** 清單最上面點名的那幾個（用存好的那份比） */
+/**
+ * 清單最上面點名的那幾個（用存好的那份比）。
+ * `C-455`：⛔ 客人走不到的不點名（跟提醒中心同一把尺）——MYFEEL 收進資料夾的舊模組不用改；點進去照樣看得到上方那段並排
+ */
 const staleFlows = computed(() => sheetStaleRecords.value.length
-  ? allFlows.value.filter(f => !f.isSystem && staleRecordFor(f.id, (f as any).messages))
+  ? allFlows.value.filter(f => !f.isSystem && !unreachableIds.value.has(f.id) && staleRecordFor(f.id, (f as any).messages))
   : [])
 // ── `C-438`：試算表商品要處理的事（跟提醒中心五顆同一支算，見 server/utils/sheet-issues.ts）──
 interface SheetIssuesRes {

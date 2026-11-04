@@ -126,7 +126,7 @@ export type WorkspaceAlertId =
   | 'sheetCatalogOverflow'
   /** 勾進目錄的商品抓不到圖（商品頁沒有封面圖、連不上、或沒填商品頁網址），先不放進目錄 */
   | 'sheetProductNoImage'
-  /** 試算表少了一列：那個商品 AI 也答不出了（不賣了的話加回來、不要勾，或在商品目錄按「不賣了」） */
+  /** 本來勾進目錄的商品，試算表上那一列不見了（`C-455`：沒勾的不算）；不賣了的話加回來、不要勾，或在商品目錄按「不賣了」 */
   | 'sheetProductMissing'
   /** 名字和商品頁網址一起改了，系統不猜：等店家在商品目錄確認「是改名嗎？」 */
   | 'sheetProductRenameUnsure'

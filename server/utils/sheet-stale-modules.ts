@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
+import { scanConfigReferences } from './config-references'
 import { quoteKey, quotedValueIn, type SheetFieldChange } from '~~/shared/sheet-stale'
+import { moduleReachable } from '~~/shared/config-references'
 
 /**
  * 試算表改了、還寫著改之前原字的機器人模組（`C-429`，`D-165`）。規則在 `shared/sheet-stale.ts`。
@@ -107,8 +109,20 @@ export interface StaleSheetModule {
   field: string
 }
 
-/** 提醒中心：現在還寫著舊字的模組（記下來之後可能已經改掉了，再讀那幾個模組看一次） */
+/**
+ * 提醒中心：現在還寫著舊字的模組（記下來之後可能已經改掉了，再讀那幾個模組看一次）。
+ * `C-455`：⛔ 客人走不到的不算（跟模組頁「客人走不到」同一把尺 `moduleReachable`）——MYFEEL 11-04 亮的那一顆，
+ * 是換成試算表之後收進資料夾、沒有任何選單或按鈕指著的舊模組。引用索引查不完整＝照樣算（講不準就不藏）。
+ * 有還寫著舊字的才掃引用索引（60 秒快取）；沒有就一次查詢都不多花。
+ */
 export async function findStaleSheetModules(db: Firestore, workspaceId: string): Promise<StaleSheetModule[]> {
+  const stale = await findStaleSheetModulesAll(db, workspaceId)
+  if (!stale.length) return stale
+  const index = await scanConfigReferences(db, workspaceId).catch(() => null)
+  return index ? stale.filter(m => moduleReachable(index, m.flowId) !== false) : stale
+}
+
+async function findStaleSheetModulesAll(db: Firestore, workspaceId: string): Promise<StaleSheetModule[]> {
   const records = await listSheetStaleRecords(db, workspaceId)
   if (!records.length) return []
   const ids = [...new Set(records.flatMap(r => r.moduleIds))]

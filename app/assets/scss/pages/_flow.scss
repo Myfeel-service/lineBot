@@ -972,11 +972,15 @@
   flex-direction: column;
   gap: 0.2rem;
 }
-.sheet-catalog-source-line {
+/* `C-455` 打開試算表／急的話到知識庫：同一排靠左，放不下才換行（不再一個靠左一個擠到右邊） */
+.sheet-catalog-source-links {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.1rem 1rem;
+  .sheet-catalog-link { margin-left: 0; }
 }
+/* 日期時間不拆兩行（以前「上次更新 11/4」「11:27」被拆開） */
+.sheet-catalog-nowrap { white-space: nowrap; }
 .sheet-catalog-link {
   margin-left: auto;
   font-weight: 600;
@@ -1002,22 +1006,36 @@
   /* `C-453`① 被手動改過：連結接在那句話下面靠左（一般的 .sheet-catalog-link 是靠右放在出處那一行） */
   .sheet-catalog-link { margin-left: 0; }
 }
-/* `C-453`② 改了試算表要等多久：一句話後面直接接連結 */
-.sheet-catalog-sync {
-  margin: 0;
-  line-height: 1.5;
-  /* 連結整段一起換行（拆成「立即更／新」讀不懂） */
-  .sheet-catalog-link { margin-left: 0.25rem; }
-}
-/* 系統已經處理好的變動：藍底（資訊），不是要他做事的橘色 */
-.sheet-catalog-changes {
-  padding: 0.5rem 0.65rem;
+/* `C-453`② 多久讀一次試算表（`C-455` 跟「上次讀試算表 幾點」併成一行） */
+.sheet-catalog-sync { line-height: 1.5; }
+/*
+  `C-455` 三天內的變動：上面提一行（藍底＝系統已經處理好的資訊，不是要他做事的橘色）；
+  整條都按得到，打開最下面「試算表最近的變動」
+*/
+.sheet-catalog-recent {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.65rem;
+  border: 0;
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-info) 8%, var(--bg-surface));
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  > span:first-child { flex: 1; min-width: 0; }
+  &:hover { background: color-mix(in srgb, var(--color-info) 13%, var(--bg-surface)); }
+}
+.sheet-catalog-change-list {
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  b { color: var(--color-info); font-size: 0.78rem; }
+  color: var(--text-secondary);
 }
 .sheet-catalog-group {
   display: flex;

@@ -10,6 +10,8 @@ import {
   sheetCatalogColumns,
   sheetCatalogError,
   sheetCatalogSyncNote,
+  recentSheetChanges,
+  goneFromCatalog,
   sheetCoverStatusText,
   sheetLockedText,
   sheetProductNames,
@@ -142,11 +144,17 @@ describe('編輯畫面的白話', () => {
     expect(t).not.toContain('試算表上沒有商品頁網址')
   })
   it('`C-453`②：改了試算表要等多久——照這份的自動更新間隔講；沒開自動更新講要自己按', () => {
-    expect(sheetCatalogSyncNote(60)).toContain('約一小時內')
-    expect(sheetCatalogSyncNote(120)).toContain('約 2 小時內')
-    expect(sheetCatalogSyncNote(30)).toContain('約 30 分鐘內')
-    expect(sheetCatalogSyncNote(60)).toContain('封面圖')
-    expect(sheetCatalogSyncNote(null)).toContain('沒有開自動更新')
+    // `C-455`：接在「上次讀試算表 幾點・」後面，一行講完
+    expect(sheetCatalogSyncNote(60)).toBe('每小時自動讀一次')
+    expect(sheetCatalogSyncNote(120)).toBe('每 2 小時自動讀一次')
+    expect(sheetCatalogSyncNote(30)).toBe('每 30 分鐘自動讀一次')
+    expect(sheetCatalogSyncNote(null)).toBe('這份沒開自動更新，改了要到知識庫按「立即更新」')
+  })
+  it('`C-455`：最近的變動只有三天內的提在最上面（10-31 換新做法那 8 筆，11-04 還佔在最上面）', () => {
+    const now = 10 * 86_400_000
+    const at = (daysAgo: number) => ({ at: now - daysAgo * 86_400_000, kind: 'catalogOn' as const, productId: 'x', title: `${daysAgo}` })
+    expect(recentSheetChanges([at(0.1), at(2.9), at(3), at(4)], now).map(c => c.title)).toEqual(['0.1', '2.9'])
+    expect(recentSheetChanges([], now)).toEqual([])
   })
   it('`C-453`①：被手動改過的商品——講後果（LINE 跟 AI 都不跟）；超過 3 個講總數（跟提醒同一個講法，code review 第 15 條）', () => {
     expect(sheetLockedText(['KIESLECT'])).toBe('「KIESLECT」在知識庫被手動改過：試算表改了也不會跟著變，LINE 上的商品資訊和 AI 的回答都停在手動改的那一版。')
@@ -185,6 +193,23 @@ describe('`C-438` 商品目錄要店家處理的事（提醒中心跟模組頁�
     expect(issues.missing).toEqual([])
     expect(hasSheetCatalogIssues(issues)).toBe(true)
     expect(hasSheetCatalogIssues(sheetCatalogIssues(registry([['C', true, true]])))).toBe(false)
+  })
+
+  it('⭐ `C-455`：本來就沒勾進目錄的那一列被刪掉＝不用店家處理（不問、不亮提醒）；勾著的才算——對照組', () => {
+    // MYFEEL 11-04：刪掉一列重複的「電淨艙」（沒勾），商品目錄叫他按「不賣了」、提醒說 AI 答不出來
+    let reg = registry([['奇美 電淨艙', true, true], ['電淨艙', false, false], ['YiMi', true, true]])
+    reg = reconcileSheetProducts(reg, { rows: [{ title: '奇美 電淨艙', pageUrl: 'https://a.com/x', inCatalog: true }], catalogColumn: true, pageHeader: '商品頁面' }, 2000, ids).registry
+    expect(sheetCatalogIssues(reg)).toMatchObject({ missing: ['YiMi'], renameUnsure: [] })
+    const dup = Object.values(reg.products).find(p => p.title === '電淨艙')!
+    expect(dup.missingSince).toBe(2000) // 照樣記著（加回來接得上）、最近的變動照樣有一筆
+    expect(goneFromCatalog(dup)).toBe(false)
+    expect(reg.changes.some(c => c.kind === 'removed' && c.title === '電淨艙')).toBe(true)
+  })
+
+  it('`C-455`：名字跟網址一起改了，本來沒勾的不問「是改名嗎？」；勾著的照問', () => {
+    let reg = registry([['A', true, true], ['B', false, true]])
+    reg = reconcileSheetProducts(reg, { rows: [{ title: 'A2', pageUrl: 'https://a.com/A2', inCatalog: true }, { title: 'B2', pageUrl: 'https://a.com/B2', inCatalog: false }], catalogColumn: true, pageHeader: '商品頁面' }, 2000, ids).registry
+    expect(sheetCatalogIssues(reg)).toMatchObject({ renameUnsure: ['A'], missing: [] })
   })
 
   it('「不賣了，拿掉」：只收表上找不到的；拿掉之後不再列、記一筆變動，別人的候選裡也拿掉', () => {

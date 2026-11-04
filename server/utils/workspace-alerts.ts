@@ -976,7 +976,8 @@ export async function collectWorkspaceAlerts(
         )),
         probe('sheetProductMissing', () => catalogProbe(
           c => c.missing,
-          names => `${names}在試算表上找不到了，AI 也答不出了`,
+          // `C-455`：只算本來在目錄上的（`goneFromCatalog`）；⛔ 不講「AI 也答不出了」——別列寫著同一個商品時 AI 照樣答得出來
+          names => `${names}在試算表上找不到了，目錄上已經拿掉`,
         )),
         probe('sheetProductRenameUnsure', () => catalogProbe(
           c => c.renameUnsure,

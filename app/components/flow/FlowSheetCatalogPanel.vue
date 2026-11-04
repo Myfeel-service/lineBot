@@ -17,19 +17,31 @@
       <p v-else-if="!view" class="sheet-catalog-note">讀取中…</p>
 
       <template v-else>
-        <!-- `C-449`：哪一份表、照試算表排，上面都寫了——這裡只講要做的事 -->
+        <!--
+          `C-449`：哪一份表、照試算表排，上面都寫了——這裡只講要做的事。
+          `C-455`：三段五行縮成三行（老闆 11-04「這裡是否可以優化」）——「一則最多 10 個」右上角「7／10」講了、放不下那一組也會講；
+          「上次更新」跟「約一小時內會換上」講的是同一件事，併一行；新勾的商品要等抓圖，「還沒有圖」那一組每個商品旁邊會講
+        -->
         <div class="sheet-catalog-source">
-          <span>要加、拿掉、換順序，都在試算表改：「放進LINE目錄」打勾的，照試算表由上到下排上來。</span>
-          <div class="sheet-catalog-source-line">
-            <span class="text-xs text-muted">LINE 一則目錄最多 {{ view.max }} 個<template v-if="lastFetchedLabel">・上次更新 {{ lastFetchedLabel }}</template></span>
+          <span>在試算表的「放進LINE目錄」打勾就放上來，照試算表由上到下排。</span>
+          <!-- `C-453`②：改完試算表馬上開 LINE 看還是舊的＝以為壞了。多久讀一次、急的話去哪按，講在這裡 -->
+          <span class="sheet-catalog-sync text-xs text-muted" data-tour="sheet-catalog-sync">
+            <template v-if="lastFetchedLabel">上次讀試算表 <span class="sheet-catalog-nowrap">{{ lastFetchedLabel }}</span>・</template>{{ sheetCatalogSyncNote(view.autoSyncMinutes) }}
+          </span>
+          <div class="sheet-catalog-source-links">
             <a v-if="view.sheetUrl" :href="view.sheetUrl" target="_blank" rel="noopener" class="sheet-catalog-link">打開試算表 ↗</a>
+            <NuxtLink :to="knowledgeLink" class="sheet-catalog-link">{{ view.autoSyncMinutes ? '急的話：到知識庫按「立即更新」→' : '到知識庫 →' }}</NuxtLink>
           </div>
-          <!-- `C-453`②：改完試算表馬上開 LINE 看還是舊的＝以為壞了。要等多久、急的話去哪按，講在這裡 -->
-          <p class="sheet-catalog-sync text-xs text-muted" data-tour="sheet-catalog-sync">
-            {{ sheetCatalogSyncNote(view.autoSyncMinutes) }}
-            <NuxtLink :to="knowledgeLink" class="sheet-catalog-link">{{ view.autoSyncMinutes ? '到知識庫按「立即更新」→' : '到知識庫 →' }}</NuxtLink>
-          </p>
         </div>
+
+        <!--
+          `C-455`：最近的變動三天內才在這裡提一行（剛改完試算表回來看生效了沒，看這行就知道），全部收在最下面——
+          以前五行藍底一直佔在這裡，10-31 換新做法那幾筆四天後還把「在目錄上」擠到下面
+        -->
+        <button v-if="recentLine" type="button" class="sheet-catalog-recent" data-tour="sheet-catalog-recent" @click="openChanges">
+          <span>{{ recentLine }}</span>
+          <span v-if="changeLines.length > 1" class="sheet-catalog-link">看全部 ↓</span>
+        </button>
 
         <!-- `C-453`①：知識庫被手動改過的商品不跟試算表——以前只有知識庫那一頁講 -->
         <div v-if="view.lockedCount" class="sheet-catalog-warn sheet-catalog-warn--row" data-tour="sheet-catalog-locked">
@@ -46,11 +58,6 @@
           <AdminFieldHelp id="productSheetFormat" />
         </div>
 
-        <div v-if="changeLines.length" class="sheet-catalog-changes">
-          <b>試算表最近的變動</b>
-          <span v-for="c in changeLines" :key="c.key">{{ c.text }}</span>
-        </div>
-
         <section v-for="g in openGroups" :key="g.key" class="sheet-catalog-group" :class="`is-${g.key}`">
           <h4 class="sheet-catalog-group-title">
             {{ g.title }}<span v-if="g.hint" class="text-xs text-muted">{{ g.hint }}</span>
@@ -61,7 +68,8 @@
             <div class="sheet-catalog-name">
               <span class="sheet-catalog-title">{{ p.title }}</span>
               <span v-if="g.key === 'rename'" class="sheet-catalog-meta">試算表上找不到了，同時多了{{ (p.renameCandidates ?? []).map(c => `「${c.title}」`).join('、') }}——是同一個商品改了名字嗎？</span>
-              <span v-else-if="g.key === 'missing'" class="sheet-catalog-meta">試算表上找不到了，AI 也答不出它</span>
+              <!-- `C-455`：組名已經是「試算表上找不到了」，這裡講後果；⛔ 不講「AI 也答不出它」（別列寫著同一個商品時照樣答得出來） -->
+              <span v-else-if="g.key === 'missing'" class="sheet-catalog-meta">目錄上已經拿掉，AI 也讀不到這一列了</span>
               <span v-else class="sheet-catalog-meta">
                 <template v-if="p.image">{{ p.image.source === 'own' ? '自己換的圖' : '商品頁封面圖' }}</template>
                 <template v-else>{{ sheetCoverStatusText(p, view.pageHeader !== null) }}</template>
@@ -120,6 +128,14 @@
             </div>
           </div>
         </details>
+
+        <!-- `C-455`：收在最下面（上面那一行「看全部」會打開這裡、捲過來） -->
+        <details v-if="changeLines.length" ref="changesEl" class="sheet-catalog-folded" data-tour="sheet-catalog-changes">
+          <summary>試算表最近的變動（{{ changeLines.length }}）</summary>
+          <ul class="sheet-catalog-change-list">
+            <li v-for="c in changeLines" :key="c.key">{{ c.text }}</li>
+          </ul>
+        </details>
       </template>
       <input ref="fileInput" type="file" accept="image/jpeg,image/png" class="sheet-catalog-file" @change="onFile">
     </div>
@@ -128,7 +144,7 @@
 
 <script setup lang="ts">
 import { ElMessageBox } from 'element-plus'
-import { sheetCatalogSyncNote, sheetCoverStatusText, sheetLockedText, sheetProductChangeText, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
+import { recentSheetChanges, sheetCatalogSyncNote, sheetCoverStatusText, sheetLockedText, sheetProductChangeText, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 
 const props = defineProps<{
   sourceId: string
@@ -190,10 +206,25 @@ const foldedGroups = computed(() => [
   { key: 'off', title: '不在目錄上的商品', items: products.value.filter(p => p.placement === 'off') },
 ].filter(g => g.items.length))
 
-const changeLines = computed(() => (props.view?.changes ?? []).slice(0, 5).map((c, i) => ({
+const changeLines = computed(() => (props.view?.changes ?? []).map((c, i) => ({
   key: `${c.at}-${i}`,
   text: `${formatShort(c.at)} ${sheetProductChangeText(c)}`,
 })))
+/** 三天內的變動（新的在前）；有才在最上面提一行：最新那一筆＋還有幾件 */
+const recentLine = computed(() => {
+  const recent = recentSheetChanges(props.view?.changes ?? [], Date.now())
+  const first = recent[0]
+  if (!first) return ''
+  return `${formatShort(first.at)} ${sheetProductChangeText(first)}${recent.length > 1 ? `，還有 ${recent.length - 1} 件` : ''}`
+})
+
+const changesEl = ref<HTMLDetailsElement | null>(null)
+function openChanges() {
+  const el = changesEl.value
+  if (!el) return
+  el.open = true
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+}
 
 const lastFetchedLabel = computed(() => (props.view?.lastFetchedAt ? formatShort(props.view.lastFetchedAt) : ''))
 

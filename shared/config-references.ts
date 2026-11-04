@@ -57,6 +57,16 @@ export function refStillReaches(ref: ConfigRef): boolean {
   return !ref.closed
 }
 
+/**
+ * 客人還走不走得到這個模組（模組頁「客人走不到」、提醒中心「試算表改了，有模組還寫著舊的」同一把尺，`C-455`）。
+ * ⛔ 三態：索引有哪一類查不到、或撞到上限沒掃完＝null（講不準）——呼叫的地方⛔ 不可以當成走不到
+ * （模組頁會害人刪掉在用的模組；提醒會把客人看得到的舊字藏起來）。
+ */
+export function moduleReachable(index: ConfigReferenceIndex, moduleId: string): boolean | null {
+  if (index.failedKinds.length || index.truncatedKinds?.length) return null
+  return (index.modules[moduleId] ?? []).some(refStillReaches)
+}
+
 /** 側欄名字＝指路用的名字（⛔ 跟 `app/layouts/default.vue` 對齊，別自己另取） */
 export const CONFIG_REF_KIND_LABEL: Record<ConfigRefKind, string> = {
   flow: '機器人模組',

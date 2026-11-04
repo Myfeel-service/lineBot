@@ -64,8 +64,8 @@ describe('① ② 編輯畫面的資料', () => {
     expect(v).toMatchObject({ ready: false, sourceName: '客服（商品資訊）', sheetUrl: 'https://docs.google.com/spreadsheets/d/x', lastFetchedAt: 1234, products: [] })
   })
 
-  it('⭐ 每個商品分組；標籤顯示名稱；表上找不到的排最後', async () => {
-    const rows: Array<[string, boolean]> = [['A', true], ['B', true], ['C', false]]
+  it('⭐ 每個商品分組；標籤顯示名稱；表上找不到的排最後；⛔ 本來就沒勾進目錄的那一列被刪掉＝不列（`C-455`）', async () => {
+    const rows: Array<[string, boolean]> = [['A', true], ['B', true], ['C', false], ['D', true]]
     for (let i = 1; i <= 11; i++) rows.push([`M${i}`, true])
     await seed(rows)
     const reg = store.sheetProductRegistries!.src1
@@ -74,12 +74,16 @@ describe('① ② 編輯畫面的資料', () => {
     }
     prod('A').tagId = 'tag-a'
     store.tags = { 'tag-a': { workspaceId: 'ws1', name: '客服 - A' } }
-    await seed([...rows.slice(1), ['A', true]].filter(([t]) => t !== 'C') as Array<[string, boolean]>) // C 被刪掉、A 換到最後
+    // C（沒勾）、D（勾著）被刪掉，A 換到最後
+    await seed([...rows.slice(1), ['A', true]].filter(([t]) => t !== 'C' && t !== 'D') as Array<[string, boolean]>)
     const v = await readSheetCatalogView(db, 'ws1', 'src1')
     const place = Object.fromEntries(v.products.map(p => [p.title, p.placement]))
     expect(place.B).toBe('noImage')
-    expect(place.C).toBe('missing')
-    expect(v.products.at(-1)!.title).toBe('C')
+    expect(place.D).toBe('missing')
+    expect(place.C).toBeUndefined()
+    expect(v.products.at(-1)!.title).toBe('D')
+    // 被刪掉的照樣記在最近的變動（不列在清單上，不等於沒講）
+    expect(v.changes.map(c => c.kind === 'removed' && c.title).filter(Boolean).sort()).toEqual(['C', 'D'])
     expect(v.products.filter(p => p.placement === 'card')).toHaveLength(10)
     // 表上現在的順序：B、M1…M11、A（B 沒圖）→ 前 10 張是 M1…M10，第 11 張以後的是 M11、A
     expect(v.products.filter(p => p.placement === 'card').map(p => p.title)).toEqual(Array.from({ length: 10 }, (_, i) => `M${i + 1}`))

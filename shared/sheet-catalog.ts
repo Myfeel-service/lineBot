@@ -123,10 +123,20 @@ export function planSheetCatalog(reg: SheetProductRegistry, max = SHEET_CATALOG_
 }
 
 /**
+ * 表上找不到了、而且**不見之前勾著「放進LINE目錄」**的商品（`C-455`）：只有這種要店家決定（是改名嗎？／不賣了，拿掉）、亮提醒。
+ * 沒勾的那一列被刪掉，多半是店家刻意清的——MYFEEL 11-04 刪掉一列重複的「電淨艙」，商品目錄卻叫他按「不賣了，拿掉」、
+ * 提醒中心還說「AI 也答不出了」（另一列「奇美…電淨艙」明明還在）。那種記在「最近的變動」就好。
+ * `inCatalog` 是那一列不見之前最後一次讀到的勾（同步不改找不到的商品）。
+ */
+export function goneFromCatalog(p: SheetProduct): boolean {
+  return p.missingSince !== null && p.inCatalog
+}
+
+/**
  * 這份試算表的商品目錄有什麼要店家處理（`C-438`，提醒中心跟模組頁同一支）。都是商品名，照試算表順序。
  *  - overflow：勾了、有圖，第 11 個以後放不上去
  *  - noImage：勾了、沒圖、⛔ 而且系統不會再自己抓到了（沒填商品頁網址、找不到封面圖、試滿次數）——還在抓的不算，不然每上一個新商品就先亮一次
- *  - missing：表上找不到了（AI 也答不出它）；要問「是改名嗎？」的不在這裡，歸 renameUnsure
+ *  - missing：本來在目錄上、表上找不到了（目錄上已經拿掉，`goneFromCatalog`）；要問「是改名嗎？」的不在這裡，歸 renameUnsure
  */
 export interface SheetCatalogIssues {
   overflow: string[]
@@ -138,7 +148,7 @@ export interface SheetCatalogIssues {
 export function sheetCatalogIssues(reg: SheetProductRegistry): SheetCatalogIssues {
   const plan = planSheetCatalog(reg)
   const gone = Object.values(reg.products)
-    .filter(p => p.missingSince !== null)
+    .filter(goneFromCatalog)
     .sort((a, b) => a.order - b.order)
   const askRename = (p: SheetProduct) => liveRenameCandidates(reg, p).length > 0
   return {
@@ -187,6 +197,17 @@ export function sheetCatalogColumns(source: SheetCatalogSource, reg: SheetProduc
   }))
 }
 
+/**
+ * 「最近的變動」多近才在商品目錄最上面提一行（`C-455`）：三天內。更早的收在最下面——
+ * MYFEEL 11-04 那 8 筆是 10-31 換新做法時系統勾的，四天後還佔在最上面，把「在目錄上」擠到下面。
+ * 剛改完試算表回來看「生效了沒」的人，看最上面那一行就知道。
+ */
+export const SHEET_CHANGE_RECENT_MS = 3 * 86_400_000
+
+export function recentSheetChanges(changes: readonly SheetProductChange[], now: number): SheetProductChange[] {
+  return changes.filter(c => now - c.at < SHEET_CHANGE_RECENT_MS)
+}
+
 /** 「試算表最近的變動」一行怎麼講（店家看的話，不講代號） */
 export function sheetProductChangeText(c: SheetProductChange): string {
   switch (c.kind) {
@@ -220,14 +241,15 @@ export function sheetCoverStatusText(p: Pick<SheetCatalogViewProduct, 'coverErro
 
 /**
  * 改了試算表要等多久才會到 LINE（`C-453`②）：以前只寫「上次更新 幾點」，店家改完馬上開 LINE 看還是舊的，以為壞了。
- * 新勾進目錄的商品還要再等抓封面圖（約 10 分鐘），一起講。
+ * `C-455`：接在「上次讀試算表 幾點」後面，一行講完（老闆 11-04：上面那塊三段五行、有重複）。
+ * 新勾的商品要等抓封面圖那件事不講在這裡——「還沒有圖」那一組每個商品旁邊已經寫「正在抓…約 10 分鐘內」。
  */
 export function sheetCatalogSyncNote(autoSyncMinutes: number | null): string {
-  if (!autoSyncMinutes) return '這份試算表沒有開自動更新：改了之後，要到知識庫按「立即更新」才會換。'
-  const wait = autoSyncMinutes % 60 === 0
-    ? (autoSyncMinutes === 60 ? '一小時' : ` ${autoSyncMinutes / 60} 小時`)
-    : ` ${autoSyncMinutes} 分鐘`
-  return `改了試算表，約${wait}內會自動換上（新勾的商品再等抓封面圖，約 10 分鐘）。急的話：`
+  if (!autoSyncMinutes) return '這份沒開自動更新，改了要到知識庫按「立即更新」'
+  const every = autoSyncMinutes % 60 === 0
+    ? (autoSyncMinutes === 60 ? '每小時' : `每 ${autoSyncMinutes / 60} 小時`)
+    : `每 ${autoSyncMinutes} 分鐘`
+  return `${every}自動讀一次`
 }
 
 /**

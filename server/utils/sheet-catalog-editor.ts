@@ -7,7 +7,7 @@ import { KNOWLEDGE_SOURCES_COLLECTION } from './ai-knowledge-sources'
 import { loadSheetProductRegistry, revertSheetProductImage, setSheetProductOwnImage, updateSheetProductRegistry } from './sheet-products'
 import { clearSheetCatalogCache } from './sheet-catalog'
 import { invalidateSheetIssuesCache } from './sheet-issues'
-import { liveRenameCandidates, planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
+import { goneFromCatalog, liveRenameCandidates, planSheetCatalog, SHEET_CATALOG_MAX_CARDS, type SheetCatalogPlacement, type SheetCatalogView, type SheetCatalogViewProduct } from '~~/shared/sheet-catalog'
 import { confirmSheetProductRename, productImage, retireSheetProduct } from '~~/shared/sheet-products'
 import { sheetRowKey } from '~~/shared/sheet-field'
 
@@ -65,6 +65,8 @@ export async function readSheetCatalogView(db: Firestore, workspaceId: string, s
   }))
 
   const products = Object.values(reg.products)
+    // `C-455`：表上找不到、而且本來就沒勾進目錄的不列（多半是店家刻意刪的；「最近的變動」有記）
+    .filter(p => p.missingSince === null || goneFromCatalog(p))
     .map((p): SheetCatalogViewProduct => ({
       id: p.id,
       title: p.title,
