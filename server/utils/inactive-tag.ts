@@ -40,10 +40,63 @@ export const INACTIVE_TAG_CODE = 'sys_inactive'
 const DAY_MS = 86_400_000
 /** 掃描窗口往回補幾天：排程漏跑（部署、Scheduler 抖動）最多這幾天內都追得回來 */
 const CATCHUP_DAYS = 7
-/** 每輪每工作區最多貼幾位（10 分鐘就有下一輪，慢慢消化；每日窗口的量本來就小） */
+/** 每工作區每天最多看幾位窗口裡的客人（每日窗口的量本來就小） */
 const SCAN_LIMIT = 300
 /** 每日修復掃描一輪最多對帳幾筆已貼標紀錄 */
 const REPAIR_LIMIT = 200
+
+/*
+ * ── `E-49`（2026-11-04）：半夜這件從 5 分鐘拖到 35 分鐘、同一個帳號同時跑好幾份 ──
+ * 以前一位一位 `await`（每位跨海讀＋寫），MYFEEL 一次要 5 分鐘；run-tasks 每 10 分鐘一輪、
+ * 而「今天做完了」要整個帳號做完才寫，沒做完之前每一輪都從頭再掃一份，幾份互相拖慢。
+ * 改成三件事：
+ *   ① 開工前在 cronState 插「我在做」的牌子（leaseUntil），別輪看到就跳過這個帳號
+ *   ② 先一次批讀「誰已經貼過」，只對還沒貼的人一次 BATCH 位同時貼／摘
+ *   ③ 一輪最多做 RUN_BUDGET_MS，做不完記下做到哪（progress），下一輪接著做、不從頭來
+ */
+/** 一次同時處理幾位客人 */
+const BATCH = 20
+/**
+ * 同時做幾個帳號。每個帳號光是讀設定、插牌子、查窗口、批讀、修復就要十來趟往返——
+ * 2026-11-04 對正式資料乾跑（台北連美國）一個帳號 2～4.5 秒：一個一個做 3 個就用完一輪的預算，
+ * 一次 5 個 10 個帳號要 15 秒。現在 10 個帳號＝全部同時開始；帳號變多才會排隊
+ */
+const WS_CONCURRENCY = 10
+/**
+ * 一輪最多做多久。run-tasks 26 件同時跑，閘道約 28 秒就切斷回 504——
+ * 這件要遠低於那條線，超過就記下做到哪、10 分鐘後下一輪接著做。
+ */
+const RUN_BUDGET_MS = 15_000
+/**
+ * 「我在做」的牌子多久沒收回就當那一輪死掉了：比一輪預算長很多（正常一定會收回），
+ * 又比排程間隔 10 分鐘短——死掉的那輪，下一輪就能從記下的地方接手。
+ */
+const LEASE_MS = 5 * 60_000
+/** getAll 一次批讀幾筆（太大一包會撞單次請求上限，切幾包同時送） */
+const GET_ALL_SLICE = 100
+
+/** cronState/inactive-tag-{workspaceId} */
+interface InactiveTagState {
+  lastRunDay?: string
+  repairCursor?: string | null
+  /** 「我在做」的牌子：這個時間（ms）之前別輪不碰這個帳號；做完或暫停都收回成 0 */
+  leaseUntil?: number
+  /**
+   * 今天做到一半（③）。`day` 不是今天就當沒有，從頭來。
+   * - phase：還在貼標（scan）或已經到修復掃描（repair）
+   * - cursorMs：貼標接著從「最後一次有動作 < 這個時間」的人往下看（null＝從窗口最新的開始）
+   * - left：今天這頁（SCAN_LIMIT 位）還剩幾位沒看
+   * - ticks：今天用了幾輪（上線後拿來驗：正常是 1）
+   */
+  progress?: InactiveTagProgress | null
+}
+interface InactiveTagProgress {
+  day: string
+  phase: 'scan' | 'repair'
+  cursorMs: number | null
+  left: number
+  ticks: number
+}
 
 export function inactiveTagName(days: number): string {
   return `${days} 天沒互動`
@@ -156,105 +209,228 @@ export async function clearInactiveTagOnReturn(
   }
 }
 
+/** db.getAll 切幾包同時送（見 GET_ALL_SLICE） */
+async function getAllInSlices(db: Firestore, refs: FirebaseFirestore.DocumentReference[]) {
+  const slices: FirebaseFirestore.DocumentReference[][] = []
+  for (let i = 0; i < refs.length; i += GET_ALL_SLICE) slices.push(refs.slice(i, i + GET_ALL_SLICE))
+  return (await Promise.all(slices.map(s => db.getAll(...s)))).flat()
+}
+
+/**
+ * 插「我在做」的牌子（`E-49`①）。交易裡再看一次：別輪剛做完（lastRunDay）或牌子還沒過期 → 不接。
+ * 接到了就回今天的狀態（含做到一半的 progress）。
+ */
+async function claimInactiveScan(
+  db: Firestore,
+  stateRef: FirebaseFirestore.DocumentReference,
+  today: string,
+  nowMs: number,
+): Promise<{ kind: 'done' } | { kind: 'busy' } | { kind: 'claimed', state: InactiveTagState }> {
+  return db.runTransaction(async (tx) => {
+    const state = ((await tx.get(stateRef)).data() ?? {}) as InactiveTagState
+    if (state.lastRunDay === today) return { kind: 'done' as const }
+    if ((state.leaseUntil ?? 0) > nowMs) return { kind: 'busy' as const }
+    tx.set(stateRef, { leaseUntil: nowMs + LEASE_MS }, { merge: true })
+    return { kind: 'claimed' as const, state }
+  })
+}
+
 /**
  * 每日掃描（掛 cron/run-tasks，10 分鐘一輪但每工作區每天只真跑一次）。
- * 回傳統計給排程紀錄看。
+ * 回傳統計給排程紀錄看：busy＝別輪正在做所以跳過、paused＝這輪時間到、記下做到哪。
+ *
+ * `clock` 只給測試用（推時間看「時間到」那條路）。
  */
-export async function scanInactiveTag(db: Firestore): Promise<{
+export async function scanInactiveTag(
+  db: Firestore,
+  opts: { clock?: () => number } = {},
+): Promise<{
   workspaces: number
   tagged: number
   repaired: number
+  busy: number
+  paused: number
 }> {
-  const today = taipeiDate()
-  const nowMs = Date.now()
-  const stats = { workspaces: 0, tagged: 0, repaired: 0 }
+  const clock = opts.clock ?? Date.now
+  const deadline = clock() + RUN_BUDGET_MS
+  const today = taipeiDate(new Date(clock()))
+  const stats = { workspaces: 0, tagged: 0, repaired: 0, busy: 0, paused: 0 }
 
   // 工作區數量是個位數～十位數等級，整包列舉沒有讀取費問題（其他 cron 任務同款）
   const wsSnap = await db.collection('workspaces').select().get()
+  const queue = wsSnap.docs.map(d => d.id)
 
-  for (const wsDoc of wsSnap.docs) {
-    const workspaceId = wsDoc.id
-    try {
-      const settings = await getAiSettings(workspaceId, db)
-      if (!settings.inactiveTag?.enabled) continue
+  // WS_CONCURRENCY 個工人輪流從佇列拿帳號
+  const worker = async () => {
+    for (let workspaceId = queue.shift(); workspaceId; workspaceId = queue.shift()) {
+      try {
+        const settings = await getAiSettings(workspaceId, db)
+        if (!settings.inactiveTag?.enabled) continue
 
-      const stateRef = db.collection('cronState').doc(`inactive-tag-${workspaceId}`)
-      const state = (await stateRef.get()).data() as { lastRunDay?: string; repairCursor?: string | null } | undefined
-      if (state?.lastRunDay === today) continue // 今天掃過了
+        const stateRef = db.collection('cronState').doc(`inactive-tag-${workspaceId}`)
+        // 常態（今天做完了）只有這一次讀，不開交易
+        const pre = (await stateRef.get()).data() as InactiveTagState | undefined
+        if (pre?.lastRunDay === today) continue
+        // 時間到了就別再接新帳號（剩下的下一輪做；沒插牌子＝不會擋到別人）
+        if (clock() >= deadline) return
 
-      stats.workspaces += 1
-      const days = settings.inactiveTag.days
-      const tagId = await resolveInactiveTagId(db, workspaceId, { createWithDays: days })
-      if (!tagId) continue
+        const claim = await claimInactiveScan(db, stateRef, today, clock())
+        if (claim.kind === 'done') continue
+        if (claim.kind === 'busy') {
+          stats.busy += 1
+          continue
+        }
 
-      // ── 1. 窗口內的沉默客貼標 ──────────────────────────────
-      const { startMs, endMs } = inactiveWindow(nowMs, days)
-      // 新到舊＝吃現成的 DESC 索引（見檔頭）。窗口 7 天、一天的量遠小於 SCAN_LIMIT，
-      // 照新到舊每個人在進窗口的那天就會被貼到
-      const convSnap = await db.collection('conversations')
+        stats.workspaces += 1
+        const out = await scanOneWorkspace(db, {
+          workspaceId,
+          days: settings.inactiveTag.days,
+          state: claim.state,
+          stateRef,
+          today,
+          clock,
+          deadline,
+        })
+        stats.tagged += out.tagged
+        stats.repaired += out.repaired
+        if (out.paused) stats.paused += 1
+      }
+      catch (e) {
+        // 牌子不收回：5 分鐘後自己過期，下一輪（10 分鐘後）從記下的地方接手
+        console.warn('[inactive-tag] workspace scan failed:', workspaceId, e)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(WS_CONCURRENCY, queue.length) }, worker))
+
+  return stats
+}
+
+async function scanOneWorkspace(db: Firestore, ctx: {
+  workspaceId: string
+  days: number
+  state: InactiveTagState
+  stateRef: FirebaseFirestore.DocumentReference
+  today: string
+  clock: () => number
+  deadline: number
+}): Promise<{ tagged: number, repaired: number, paused: boolean }> {
+  const { workspaceId, days, state, stateRef, today, clock, deadline } = ctx
+  let tagged = 0
+  let repaired = 0
+
+  const tagId = await resolveInactiveTagId(db, workspaceId, { createWithDays: days })
+  if (!tagId) {
+    await stateRef.set({ leaseUntil: 0 }, { merge: true })
+    return { tagged, repaired, paused: false }
+  }
+
+  const progress: InactiveTagProgress = state.progress?.day === today
+    ? { ...state.progress, ticks: (state.progress.ticks ?? 0) + 1 }
+    : { day: today, phase: 'scan', cursorMs: null, left: SCAN_LIMIT, ticks: 1 }
+  const nowMs = clock()
+
+  /** 時間到：記下做到哪、收回牌子，下一輪接著做 */
+  const pause = async () => {
+    await stateRef.set({ leaseUntil: 0, progress, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+    return { tagged, repaired, paused: true }
+  }
+
+  // ── 1. 窗口內的沉默客貼標 ──────────────────────────────
+  if (progress.phase === 'scan') {
+    const { startMs, endMs } = inactiveWindow(nowMs, days)
+    const upperMs = progress.cursorMs == null ? endMs : Math.min(endMs, progress.cursorMs)
+    // 新到舊＝吃現成的 DESC 索引（見檔頭）。窗口 7 天、一天的量遠小於 SCAN_LIMIT，
+    // 照新到舊每個人在進窗口的那天就會被貼到
+    const convSnap = progress.left > 0
+      ? await db.collection('conversations')
         .where('workspaceId', '==', workspaceId)
         .where('lastPeerActivityAt', '>=', Timestamp.fromMillis(startMs))
-        .where('lastPeerActivityAt', '<', Timestamp.fromMillis(endMs))
+        .where('lastPeerActivityAt', '<', Timestamp.fromMillis(upperMs))
         .orderBy('lastPeerActivityAt', 'desc')
-        .limit(SCAN_LIMIT)
-        .select() // 只要 doc id（＝users 主鍵），內容一個欄位都不用讀
+        .limit(progress.left)
+        .select('lastPeerActivityAt') // doc id＝users 主鍵；時間拿來記「做到哪」
         .get()
+      : null
+    const page = (convSnap?.docs ?? []).map(d => ({
+      id: d.id,
+      ms: (d.get('lastPeerActivityAt') as Timestamp | undefined)?.toMillis?.() ?? 0,
+    }))
 
-      for (const conv of convSnap.docs) {
-        // addTagsToUser 冪等（已貼過自動 skip）＋寫 tagLogs；一位一位貼，
-        // 單筆失敗不連坐整批
-        const { added } = await addTagsToUser(conv.id, [tagId], 'system', 'inactive-tag:scan', workspaceId)
-          .catch((e) => {
-            console.warn('[inactive-tag] tag failed:', conv.id, e)
-            return { added: [] as string[] }
-          })
-        stats.tagged += added.length
+    // ② 先一次批讀誰已經貼過（userTags 主鍵＝{users 主鍵}_{tagId}）。
+    // ⛔ 已經貼過的不能再丟進 addTagsToUser：'system' 算客人訊號，它會把「被判到幾次」+1——
+    //    窗口 7 天，同一個人以前每晚被重掃一次就多算一次，而且每位都多一次寫入
+    const tagSnaps = await getAllInSlices(db, page.map(c => db.collection('userTags').doc(`${c.id}_${tagId}`)))
+    const todo = page.map((c, i) => ({ ...c, i })).filter((_, i) => !tagSnaps[i]?.exists)
+
+    for (let k = 0; k < todo.length; k += BATCH) {
+      if (clock() >= deadline) {
+        // 這頁 todo[k] 之前的都看過了（已貼過的、這輪貼上的）。
+        // 游標＝它的時間 +1ms 且用「<」：跟它同一毫秒的人也會再看到，不漏（貼標冪等，重看無妨）
+        const next = todo[k]!
+        progress.cursorMs = next.ms + 1
+        progress.left -= next.i
+        return pause()
       }
-
-      // ── 2. 修復掃描：已貼標的輪一批，回來過的補摘 ──────────
-      // （機制 2 在貼圖/並行路徑、純切換選單摘不到，見檔頭。游標輪轉，掃到底歸零重來）
-      let repairQ = db.collection('userTags')
-        .where('workspaceId', '==', workspaceId)
-        .where('tagId', '==', tagId)
-        .orderBy('__name__')
-        .limit(REPAIR_LIMIT)
-      if (state?.repairCursor) {
-        repairQ = repairQ.startAfter(db.collection('userTags').doc(state.repairCursor))
-      }
-      const tagSnap = await repairQ.get()
-
-      let repairCursor: string | null = null
-      if (tagSnap.size === REPAIR_LIMIT) repairCursor = tagSnap.docs[tagSnap.size - 1]!.id
-
-      if (!tagSnap.empty) {
-        // userTags.userId 與 conversations 主鍵同值（{wid}_{lineUserId}），getAll 一次批讀
-        const convRefs = tagSnap.docs.map(d =>
-          db.collection('conversations').doc(String(d.data()?.userId ?? '')))
-        const convs = await db.getAll(...convRefs)
-        const cutoffMs = nowMs - days * DAY_MS
-        for (const conv of convs) {
-          const lastActivityMs = (conv.data()?.lastPeerActivityAt as Timestamp | undefined)?.toMillis?.() ?? 0
-          if (lastActivityMs && lastActivityMs >= cutoffMs) {
-            const { removed } = await removeTagsFromUser(conv.id, [tagId], 'system', 'inactive-tag:repair', workspaceId)
-              .catch((e) => {
-                console.warn('[inactive-tag] repair failed:', conv.id, e)
-                return { removed: [] as string[] }
-              })
-            stats.repaired += removed.length
-          }
-        }
-      }
-
-      await stateRef.set({
-        lastRunDay: today,
-        repairCursor,
-        updatedAt: FieldValue.serverTimestamp(),
-      }, { merge: true })
+      const chunk = todo.slice(k, k + BATCH)
+      const results = await Promise.all(chunk.map(c =>
+        addTagsToUser(c.id, [tagId], 'system', 'inactive-tag:scan', workspaceId).catch((e) => {
+          // 單筆失敗不連坐整批；明天窗口還會再看到他
+          console.warn('[inactive-tag] tag failed:', c.id, e)
+          return { added: [] as string[] }
+        })))
+      for (const r of results) tagged += r.added.length
     }
-    catch (e) {
-      console.warn('[inactive-tag] workspace scan failed:', workspaceId, e)
+
+    progress.phase = 'repair'
+    progress.cursorMs = null
+    progress.left = 0
+    if (clock() >= deadline) return pause()
+  }
+
+  // ── 2. 修復掃描：已貼標的輪一批，回來過的補摘 ──────────
+  // （機制 2 在貼圖/並行路徑、純切換選單摘不到，見檔頭。游標輪轉，掃到底歸零重來）
+  // 中途時間到不動 repairCursor：下一輪從同一個地方再拿一頁（已摘掉的不會再出現，不漏也不重摘）
+  let repairQ = db.collection('userTags')
+    .where('workspaceId', '==', workspaceId)
+    .where('tagId', '==', tagId)
+    .orderBy('__name__')
+    .limit(REPAIR_LIMIT)
+  if (state.repairCursor) {
+    repairQ = repairQ.startAfter(db.collection('userTags').doc(state.repairCursor))
+  }
+  const tagSnap = await repairQ.get()
+
+  let repairCursor: string | null = null
+  if (tagSnap.size === REPAIR_LIMIT) repairCursor = tagSnap.docs[tagSnap.size - 1]!.id
+
+  if (!tagSnap.empty) {
+    // userTags.userId 與 conversations 主鍵同值（{wid}_{lineUserId}），getAll 批讀
+    const convs = await getAllInSlices(db, tagSnap.docs.map(d =>
+      db.collection('conversations').doc(String(d.data()?.userId ?? ''))))
+    const cutoffMs = nowMs - days * DAY_MS
+    const back = convs.filter((conv) => {
+      const lastActivityMs = (conv.data()?.lastPeerActivityAt as Timestamp | undefined)?.toMillis?.() ?? 0
+      return lastActivityMs && lastActivityMs >= cutoffMs
+    })
+    for (let k = 0; k < back.length; k += BATCH) {
+      if (clock() >= deadline) return pause()
+      const results = await Promise.all(back.slice(k, k + BATCH).map(conv =>
+        removeTagsFromUser(conv.id, [tagId], 'system', 'inactive-tag:repair', workspaceId).catch((e) => {
+          console.warn('[inactive-tag] repair failed:', conv.id, e)
+          return { removed: [] as string[] }
+        })))
+      for (const r of results) repaired += r.removed.length
     }
   }
 
-  return stats
+  await stateRef.set({
+    lastRunDay: today,
+    repairCursor,
+    leaseUntil: 0,
+    progress: null,
+    lastRunTicks: progress.ticks,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true })
+  return { tagged, repaired, paused: false }
 }

@@ -17,6 +17,7 @@ vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn(
 
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser, removeTagsFromUser } from './tagging'
+import { taipeiDate } from '~~/shared/time'
 import {
   inactiveWindow,
   inactiveTagName,
@@ -167,46 +168,89 @@ describe('resolveInactiveTagId：系統標籤的建立與改名', () => {
   })
 })
 
+const at = (ms: number) => ({ toMillis: () => ms })
+/** 落在 60 天門檻窗口 [67 天前, 60 天前) 裡的時間 */
+const IN_WINDOW_MS = Date.now() - 62 * DAY
+
 /**
  * 每日掃描的假 db：記下對 conversations 下的每一個條件；修復掃描的 getAll 回 seed 的對話。
  * 只做到 scanInactiveTag 會走到的那幾條路。
+ * - windowDocs：窗口查詢的候選（字串＝時間不重要）；查詢會照 `<`／`>=`／limit 真的篩，
+ *   「下一輪接著做」才驗得到游標有沒有接對
+ * - taggedUserIds：已經貼過的人（userTags `{uid}_tag9` 存在；修復掃描也拿這批）
+ * - state：cronState 那份；寫入會 merge 回來，同一個 db 連跑兩輪＝真的下一輪
  */
 function fakeScanDb(seed: {
-  windowDocs?: string[]
+  windowDocs?: Array<string | { id: string, ms: number }>
   taggedUserIds?: string[]
   convs?: Record<string, Record<string, unknown>>
+  state?: Record<string, unknown>
+  /** 有哪些帳號（預設只有 WS）；只拿來測「帳號之間同時做」，cronState 等其他部分不分帳號 */
+  workspaces?: string[]
 }) {
   const convCalls: Array<[string, ...unknown[]]> = []
-  const chain = (onGet: () => any, record?: Array<[string, ...unknown[]]>) => {
+  const stateWrites: Array<Record<string, unknown>> = []
+  const state: Record<string, unknown> = { ...seed.state }
+  let transactions = 0
+  const chain = (onGet: (calls: Array<[string, ...unknown[]]>) => any, record?: Array<[string, ...unknown[]]>) => {
+    const own: Array<[string, ...unknown[]]> = []
     const q: any = {}
     for (const m of ['where', 'orderBy', 'limit', 'select', 'startAfter']) {
-      q[m] = (...a: unknown[]) => { record?.push([m, ...a]); return q }
+      q[m] = (...a: unknown[]) => { record?.push([m, ...a]); own.push([m, ...a]); return q }
     }
-    q.get = async () => onGet()
+    q.get = async () => onGet(own)
     return q
   }
   const docsOf = (ids: string[], data: (id: string) => Record<string, unknown>) =>
     ({ docs: ids.map(id => ({ id, data: () => data(id) })), size: ids.length, empty: ids.length === 0 })
+  const tagged = new Set((seed.taggedUserIds ?? []).map(u => `${u}_tag9`))
+  const window = (seed.windowDocs ?? []).map((d, i) => typeof d === 'string' ? { id: d, ms: IN_WINDOW_MS - i } : d)
 
+  const stateRef = {
+    get: async () => ({ data: () => (Object.keys(state).length ? { ...state } : undefined) }),
+    set: async (data: Record<string, unknown>) => { stateWrites.push(data); Object.assign(state, data) },
+  }
   const db: any = {
     collection: (name: string) => {
-      if (name === 'workspaces') return chain(() => docsOf([WS], () => ({})))
+      if (name === 'workspaces') return chain(() => docsOf(seed.workspaces ?? [WS], () => ({})))
       if (name === 'tags') return { ...chain(() => docsOf(['tag9'], () => ({ name: '60 天沒互動' }))), doc: () => ({ update: async () => {} }) }
-      if (name === 'cronState') return { doc: () => ({ get: async () => ({ data: () => undefined }), set: async () => {} }) }
+      if (name === 'cronState') return { doc: () => stateRef }
       if (name === 'userTags') {
-        return { ...chain(() => docsOf((seed.taggedUserIds ?? []).map(u => `ut_${u}`), id => ({ userId: id.slice(3) }))), doc: (id: string) => ({ id }) }
+        return {
+          ...chain(() => docsOf((seed.taggedUserIds ?? []).map(u => `ut_${u}`), id => ({ userId: id.slice(3) }))),
+          doc: (id: string) => ({ col: 'userTags', id }),
+        }
       }
       if (name === 'conversations') {
-        return { ...chain(() => docsOf(seed.windowDocs ?? [], () => ({})), convCalls), doc: (id: string) => ({ id }) }
+        return {
+          ...chain((calls) => {
+            let rows = [...window].sort((a, b) => b.ms - a.ms)
+            for (const [m, f, op, v] of calls) {
+              if (m === 'where' && f === 'lastPeerActivityAt' && op === '<') rows = rows.filter(r => r.ms < (v as any).__ms)
+              if (m === 'where' && f === 'lastPeerActivityAt' && op === '>=') rows = rows.filter(r => r.ms >= (v as any).__ms)
+              if (m === 'limit') rows = rows.slice(0, f as number)
+            }
+            return {
+              docs: rows.map(r => ({ id: r.id, get: (k: string) => (k === 'lastPeerActivityAt' ? at(r.ms) : undefined), data: () => ({}) })),
+              size: rows.length,
+              empty: rows.length === 0,
+            }
+          }, convCalls),
+          doc: (id: string) => ({ col: 'conversations', id }),
+        }
       }
       throw new Error(`unexpected collection ${name}`)
     },
-    getAll: async (...refs: Array<{ id: string }>) => refs.map(r => ({ id: r.id, data: () => seed.convs?.[r.id] })),
+    getAll: async (...refs: Array<{ col: string, id: string }>) => refs.map(r => (r.col === 'userTags'
+      ? { id: r.id, exists: tagged.has(r.id), data: (): Record<string, unknown> | undefined => undefined }
+      : { id: r.id, data: (): Record<string, unknown> | undefined => seed.convs?.[r.id] })),
+    runTransaction: async (fn: (tx: any) => Promise<unknown>) => {
+      transactions += 1
+      return fn({ get: (ref: typeof stateRef) => ref.get(), set: (ref: typeof stateRef, data: Record<string, unknown>) => ref.set(data) })
+    },
   }
-  return { db, convCalls }
+  return { db, convCalls, state, stateWrites, transactions: () => transactions }
 }
-
-const at = (ms: number) => ({ toMillis: () => ms })
 
 describe('scanInactiveTag：看「最後一次有動作」（`D-154`）', () => {
   beforeEach(() => {
@@ -240,5 +284,143 @@ describe('scanInactiveTag：看「最後一次有動作」（`D-154`）', () => 
     expect(stats.repaired).toBe(1)
     expect(removeTagsFromUser).toHaveBeenCalledTimes(1)
     expect(removeTagsFromUser).toHaveBeenCalledWith('ws1_menu', ['tag9'], 'system', 'inactive-tag:repair', WS)
+  })
+})
+
+/**
+ * `E-49`（2026-11-04）：MYFEEL 半夜這件從 5 分鐘拖到 35 分鐘，還沒做完之前每 10 分鐘那輪又從頭跑一份。
+ * 釘三件事：插「我在做」的牌子、先批讀誰貼過再一次多位同時貼、時間到記下做到哪下一輪接著做。
+ */
+describe('scanInactiveTag：不重複跑、不一位一位、做不完接著做（`E-49`）', () => {
+  const today = taipeiDate()
+  const added = { added: ['tag9'], skipped: [], hits: [] } as any
+
+  beforeEach(() => {
+    vi.mocked(getAiSettings).mockResolvedValue({ inactiveTag: { enabled: true, days: 60 } } as any)
+    vi.mocked(addTagsToUser).mockResolvedValue(added)
+    vi.mocked(removeTagsFromUser).mockResolvedValue({ removed: ['tag9'], skipped: [] })
+  })
+
+  it('已經貼過的人不再丟進 addTagsToUser（以前每晚重掃就把「被判到幾次」+1、每位多一次寫入）', async () => {
+    const { db } = fakeScanDb({ windowDocs: ['ws1_U1', 'ws1_U2', 'ws1_U3'], taggedUserIds: ['ws1_U1', 'ws1_U3'] })
+    const stats = await scanInactiveTag(db)
+    expect(addTagsToUser).toHaveBeenCalledTimes(1)
+    expect(addTagsToUser).toHaveBeenCalledWith('ws1_U2', ['tag9'], 'system', 'inactive-tag:scan', WS)
+    expect(stats.tagged).toBe(1)
+  })
+
+  it('一次多位同時貼（最多 20 位），不是一位一位等', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    vi.mocked(addTagsToUser).mockImplementation(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise(r => setTimeout(r, 0))
+      inFlight -= 1
+      return added
+    })
+    const ids = Array.from({ length: 25 }, (_, i) => `ws1_U${i}`)
+    const { db } = fakeScanDb({ windowDocs: ids })
+    const stats = await scanInactiveTag(db)
+    expect(stats.tagged).toBe(25)
+    expect(maxInFlight).toBe(20)
+  })
+
+  it('帳號之間也同時做（最多 10 個）——一個一個做，10 個帳號就超過一輪的時間', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const seen: string[] = []
+    vi.mocked(getAiSettings).mockImplementation(async (wid: string) => {
+      seen.push(wid)
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise(r => setTimeout(r, 0))
+      inFlight -= 1
+      return { inactiveTag: { enabled: false, days: 60 } } as any
+    })
+    const ids = Array.from({ length: 13 }, (_, i) => `w${String(i).padStart(2, '0')}`)
+    const { db } = fakeScanDb({ workspaces: ids })
+    await scanInactiveTag(db)
+    expect(maxInFlight).toBe(10)
+    expect(seen.sort()).toEqual(ids) // 每個帳號剛好一次
+  })
+
+  it('別輪正在做（牌子還沒過期）→ 這個帳號跳過，一個客人都不碰', async () => {
+    const { db, convCalls, stateWrites } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { leaseUntil: Date.now() + 60_000 } })
+    const stats = await scanInactiveTag(db)
+    expect(stats.busy).toBe(1)
+    expect(convCalls).toHaveLength(0)
+    expect(addTagsToUser).not.toHaveBeenCalled()
+    expect(stateWrites).toHaveLength(0)
+  })
+
+  it('牌子過期了（那輪死掉了）→ 接手做完，收回牌子、記今天做完、用了 1 輪', async () => {
+    const { db, state } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { leaseUntil: Date.now() - 1 } })
+    const stats = await scanInactiveTag(db)
+    expect(stats.busy).toBe(0)
+    expect(stats.tagged).toBe(1)
+    expect(state).toMatchObject({ lastRunDay: today, leaseUntil: 0, progress: null, lastRunTicks: 1 })
+  })
+
+  it('今天做完了 → 只讀一次狀態，不開交易、不查客人', async () => {
+    const { db, convCalls, transactions } = fakeScanDb({ windowDocs: ['ws1_U1'], state: { lastRunDay: today } })
+    await scanInactiveTag(db)
+    expect(transactions()).toBe(0)
+    expect(convCalls).toHaveLength(0)
+  })
+
+  it('時間到 → 記下做到哪、收回牌子、不記今天做完；下一輪從那裡接著做，每位剛好貼一次', async () => {
+    // 45 位都還沒貼；每貼一位時鐘走 1 秒 → 第一批 20 位貼完就超過 15 秒，停在第 21 位
+    const docs = Array.from({ length: 45 }, (_, i) => ({ id: `ws1_U${i}`, ms: IN_WINDOW_MS - i * 1000 }))
+    let now = Date.now()
+    let step = 1000
+    vi.mocked(addTagsToUser).mockImplementation(async () => {
+      now += step
+      return added
+    })
+    const { db, state, convCalls } = fakeScanDb({ windowDocs: docs })
+
+    const first = await scanInactiveTag(db, { clock: () => now })
+    expect(first).toMatchObject({ tagged: 20, paused: 1 })
+    expect(state.lastRunDay).toBeUndefined()
+    expect(state.leaseUntil).toBe(0)
+    // 游標＝第 21 位的時間 +1ms、用「<」：跟他同一毫秒的人下一輪也看得到
+    expect(state.progress).toEqual({ day: today, phase: 'scan', cursorMs: docs[20]!.ms + 1, left: 300 - 20, ticks: 1 })
+
+    now += 10 * 60_000 // 10 分鐘後下一輪（這輪不卡，一次做完）
+    step = 0
+    convCalls.length = 0
+    const second = await scanInactiveTag(db, { clock: () => now })
+    expect(second).toMatchObject({ tagged: 25, paused: 0 })
+    expect(convCalls).toContainEqual(['limit', 280])
+    const taggedIds = vi.mocked(addTagsToUser).mock.calls.map(c => c[0])
+    expect(taggedIds).toHaveLength(45)
+    expect(new Set(taggedIds).size).toBe(45)
+    expect(state).toMatchObject({ lastRunDay: today, leaseUntil: 0, progress: null, lastRunTicks: 2 })
+  })
+
+  it('做到一半的紀錄是昨天的 → 當沒有，從窗口最新的開始', async () => {
+    const { db, convCalls } = fakeScanDb({
+      windowDocs: ['ws1_U1'],
+      state: { progress: { day: '2000-01-01', phase: 'repair', cursorMs: 5, left: 3, ticks: 4 } },
+    })
+    const stats = await scanInactiveTag(db)
+    expect(stats.tagged).toBe(1)
+    expect(convCalls).toContainEqual(['limit', 300])
+  })
+
+  it('上一輪貼完、停在修復掃描 → 這輪不再查窗口，直接做修復', async () => {
+    const now = Date.now()
+    const { db, convCalls, state } = fakeScanDb({
+      windowDocs: ['ws1_U1'],
+      taggedUserIds: ['ws1_menu'],
+      convs: { ws1_menu: { lastPeerActivityAt: at(now - 2 * DAY) } },
+      state: { progress: { day: today, phase: 'repair', cursorMs: null, left: 0, ticks: 1 } },
+    })
+    const stats = await scanInactiveTag(db)
+    expect(convCalls).toHaveLength(0)
+    expect(addTagsToUser).not.toHaveBeenCalled()
+    expect(stats.repaired).toBe(1)
+    expect(state).toMatchObject({ lastRunDay: today, lastRunTicks: 2 })
   })
 })
