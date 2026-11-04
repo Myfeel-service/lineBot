@@ -44,6 +44,13 @@ export interface UserDoc {
   orderInfoAsk?: { text: string; askedAt: number }
   /** 客人身上的自訂屬性（貼標／模組收集到的欄位） */
   attributes?: Record<string, string>
+  /**
+   * 客人自己在 LINE 上選的生日（`C-57`，見 `shared/birthday.ts`）：⛔ 只有月、日，不存年。
+   * 放頂層不放 `attributes`：每個月要用「workspaceId＋birthdayMonth」兩個等號查壽星（不需要另開複合索引）。
+   */
+  birthdayMonth?: number
+  birthdayDay?: number
+  birthdayUpdatedAt?: Timestamp | FieldValue
   /** 自動回覆規則 ID → 上次觸發時間（epoch ms） */
   autoReplyCooldowns?: Record<string, number>
   /**

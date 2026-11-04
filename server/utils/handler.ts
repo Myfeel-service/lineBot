@@ -105,6 +105,15 @@ import {
   type CustomerActionType,
 } from '~~/shared/customer-action'
 import { messageSearchTokens } from '~~/shared/message-search'
+import {
+  BIRTHDAY_POSTBACK_DATA,
+  birthdayConfirmText,
+  birthdayLabel,
+  buildBirthdayAskMessage,
+  parseBirthdayDate,
+} from '~~/shared/birthday'
+import { saveCustomerBirthday } from './birthday-tag'
+import { taipeiDate } from '~~/shared/time'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -452,12 +461,20 @@ async function runFollowWelcomeScript(params: {
   userData: UserDoc | null
 }): Promise<void> {
   const { lineUserId, workspaceId: wid, sessionId, replyToken } = params
-  const scripts = await loadActiveScripts(wid).catch(() => [])
+  const [scripts, birthdayCard] = await Promise.all([
+    loadActiveScripts(wid).catch(() => []),
+    followBirthdayCard(wid, params.userData),
+  ])
   const matched = scripts.find(s => scriptTriggerEvent(s) === 'follow') ?? null
-  if (!matched) return
+  if (!matched) {
+    // `C-57`：沒設歡迎訊息但開了「加好友時問生日」＝那張卡自己送
+    if (birthdayCard.length) await replyBirthdayCardAlone(birthdayCard, replyToken, lineUserId, wid, sessionId)
+    return
+  }
 
   const fsUserDocId = lineUserFirestoreDocId(lineUserId, wid)
   // 防重複觸發沿用同一顆冷卻：封鎖再解除封鎖會再收到一次 follow 事件，設了冷卻就不再吵一次
+  // （生日卡跟著一起不送：同一個理由）
   if (!(await claimScriptCooldown(fsUserDocId, matched.id, scriptCooldownMs(matched)))) {
     console.log('[script] follow script on cooldown → skip:', matched.id, matched.name)
     return
@@ -470,7 +487,7 @@ async function runFollowWelcomeScript(params: {
   if (result.moduleId) {
     const { channelSecret } = await getLineWorkspaceCredentials(wid)
     // enterAs：模組訊息在這裡是「客人沒問就送的」，蓋 system_notice 不記 bot 首接（口徑見上）
-    await replyWithFlowModule({
+    const sent = await replyWithFlowModule({
       moduleId: result.moduleId,
       replyToken,
       lineUserId,
@@ -482,12 +499,15 @@ async function runFollowWelcomeScript(params: {
       customerMessage: '',
       logContext: `follow-script=${matched.id}`,
       enterAs: 'system_notice',
+      appendMessages: birthdayCard,
     })
     // replyWithFlowModule 自己蓋章（enterAs）；模組被刪＝什麼都沒送，也就什麼都不蓋
+    // `C-57`：模組被刪、什麼都沒送＝replyToken 還沒用掉，生日卡自己送
+    if (!sent && birthdayCard.length) await replyBirthdayCardAlone(birthdayCard, replyToken, lineUserId, wid, sessionId)
   }
   else {
-    await sendScriptReply(result.replyText, replyToken, lineUserId, wid, 'bot', String(matched.name || ''), result.quickReplies, result.link)
-    if (hasScriptOutput(result)) {
+    await sendScriptReply(result.replyText, replyToken, lineUserId, wid, 'bot', String(matched.name || ''), result.quickReplies, result.link, birthdayCard)
+    if (hasScriptOutput(result) || birthdayCard.length) {
       await enterModule(sessionId, lineUserId, 'system_notice', undefined, wid).catch(e =>
         console.error('[script] follow enterModule error:', e),
       )
@@ -504,6 +524,74 @@ async function runFollowWelcomeScript(params: {
       reason: null,
     })
   }
+}
+
+/**
+ * 加好友時要不要附「告訴我生日」卡（`C-57`）：店家開了這個功能、而且這位客人還沒留過生日。
+ * ⛔ 留過的不再問（封鎖再加回來又問一次＝我們不記得他）。讀設定失敗＝不附（⛔ 不讓它擋掉歡迎訊息）。
+ */
+async function followBirthdayCard(workspaceId: string, userData: UserDoc | null): Promise<Record<string, unknown>[]> {
+  if ((userData as SharedUserDoc | null)?.birthdayMonth) return []
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  if (!settings?.birthday?.enabled) return []
+  return [buildBirthdayAskMessage(settings.birthday.gift, taipeiDate())]
+}
+
+/** 只送生日卡（沒有歡迎訊息、或歡迎訊息的模組被刪了）：同一個 replyToken、蓋 system_notice（客人沒問就送的） */
+async function replyBirthdayCardAlone(
+  card: Record<string, unknown>[],
+  replyToken: string,
+  lineUserId: string,
+  workspaceId: string,
+  sessionId: string | null,
+): Promise<void> {
+  try {
+    await replyMessage(replyToken, card as any[], workspaceId)
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, card as any[], workspaceId, { sender: 'bot', senderName: '問生日' })
+      .catch(e => console.error('[birthday] save outgoing error:', e))
+    await enterModule(sessionId, lineUserId, 'system_notice', undefined, workspaceId)
+  }
+  catch (e) {
+    console.error('[birthday] follow card reply failed:', e)
+  }
+}
+
+/**
+ * 客人在「告訴我生日」選了日期（`C-57`）：存月日（⛔ 不存年）、貼／摘「本月壽星」、回一句收到。
+ * ⚠️ 真人處理中也照回那一句：那是他剛按的按鈕的收據，不是機器人搶話——不回的話他會以為沒選成功、一直按。
+ * 生日禮的那半句只在功能開著時講（關掉＝店家可能不送了）。
+ */
+async function handleBirthdayPostback(p: {
+  event: webhook.PostbackEvent
+  lineUserId: string
+  workspaceId: string
+  sessionId: string | null
+  postbackTs?: number
+}): Promise<void> {
+  const { lineUserId, workspaceId } = p
+  const parsed = parseBirthdayDate((p.event.postback as { params?: { date?: string } }).params?.date)
+  if (!parsed) {
+    console.warn('[birthday] postback 沒有帶日期或格式不對:', JSON.stringify((p.event.postback as any).params ?? null))
+    return
+  }
+  const { changed } = await saveCustomerBirthday(getDb(), workspaceId, lineUserId, parsed)
+  invalidateUserDocCache(lineUserFirestoreDocId(lineUserId, workspaceId))
+  recordCustomerAction({
+    workspaceId,
+    userIdOrDocId: lineUserId,
+    actionType: 'birthday_set',
+    name: birthdayLabel(parsed.month, parsed.day),
+    lineEventTimestampMs: p.postbackTs,
+  })
+  if (!p.event.replyToken) return
+  const settings = await getAiSettings(workspaceId).catch(() => null)
+  const gift = settings?.birthday?.enabled ? settings.birthday.gift : ''
+  const reply = [{ type: 'text' as const, text: birthdayConfirmText(parsed.month, parsed.day, gift, changed) }]
+  await replyMessage(p.event.replyToken, reply, workspaceId)
+  saveOutgoingConversationMessagesByWorkspace(lineUserId, reply, workspaceId, { sender: 'bot', senderName: '問生日' })
+    .catch(e => console.error('[birthday] save outgoing error:', e))
+  enterModule(p.sessionId, lineUserId, 'system_notice', undefined, workspaceId)
+    .catch(e => console.error('[birthday] enterModule error:', e))
 }
 
 /**
@@ -3545,6 +3633,11 @@ async function replyWithFlowModule(params: {
    * 同一個模組推播時是通知、客人問到時是回答，答案只有呼叫端知道。
    */
   enterAs?: ModuleType
+  /**
+   * 接在模組後面一起回的系統訊息（`C-57`：加好友時的「告訴我生日」卡）。同一個 replyToken 一起送＝不吃推播額度。
+   * ⚠️ 一次回覆最多 5 則：模組已經用掉 5 則就放不下，這時候**不送**、記 log（⛔ 不切掉店家自己的訊息去塞）。
+   */
+  appendMessages?: Record<string, unknown>[]
 }): Promise<boolean> {
   const { moduleId, replyToken, lineUserId, workspaceId: wid, sessionId, userAttributes, channelSecret, logContext } = params
 
@@ -3568,13 +3661,20 @@ async function replyWithFlowModule(params: {
   const outMessages = liveAgent?.messages ?? lineMessages
   if (outMessages.length === 0) return false
 
-  await replyMessage(replyToken, outMessages, wid)
+  const append = params.appendMessages ?? []
+  const fits = append.length > 0 && outMessages.length + append.length <= 5
+  if (append.length && !fits) console.warn(`[module] ${logContext} 系統訊息放不下（模組已經 ${outMessages.length} 則，一次最多 5 則），這次不附上`)
+  await replyMessage(replyToken, fits ? [...outMessages, ...append] as any[] : outMessages, wid)
   if (liveAgent) markWaitingAckSent(wid, lineUserId)
   dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
   saveOutgoingConversationMessagesByWorkspace(lineUserId, outMessages, wid, {
     sender: liveAgent?.sender ?? 'bot',
     senderName: liveAgent?.senderName ?? String(flow.name || ''),
   }).catch(e => console.error('[conv] save error:', e))
+  if (fits) {
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, append as any[], wid, { sender: 'bot', senderName: '問生日' })
+      .catch(e => console.error('[conv] save error:', e))
+  }
 
   if (liveAgent) {
     await commitHandoff({
@@ -3614,9 +3714,11 @@ async function sendScriptReply(
   scriptName: string,
   quickReplies?: string[],
   link?: { url: string; label: string },
+  /** 接在後面一起回的系統訊息（`C-57`「告訴我生日」卡）；放不下 5 則就不附，見 replyWithFlowModule 同名參數 */
+  appendMessages?: Record<string, unknown>[],
 ): Promise<void> {
-  // 只有連結沒有文字也要送得出去（＝自動回覆的「開啟網址」動作那種形狀）
-  if ((!text && !link?.url) || !replyToken) return
+  // 只有連結沒有文字也要送得出去（＝自動回覆的「開啟網址」動作那種形狀）；只有附上的系統訊息也要送（腳本只有貼標步驟時）
+  if ((!text && !link?.url && !appendMessages?.length) || !replyToken) return
   const messages: messagingApi.Message[] = []
 
   if (text) {
@@ -3653,10 +3755,19 @@ async function sendScriptReply(
     } as messagingApi.TemplateMessage)
   }
 
-  if (!messages.length) return
-  await replyMessage(replyToken, messages, workspaceId)
-  saveOutgoingConversationMessagesByWorkspace(lineUserId, messages, workspaceId, { sender, senderName: scriptName })
-    .catch(e => console.error('[script] save outgoing error:', e))
+  const append = appendMessages ?? []
+  const fits = append.length > 0 && messages.length + append.length <= 5
+  if (append.length && !fits) console.warn(`[script] 系統訊息放不下（已經 ${messages.length} 則），這次不附上`)
+  if (!messages.length && !fits) return
+  await replyMessage(replyToken, fits ? [...messages, ...append] as messagingApi.Message[] : messages, workspaceId)
+  if (messages.length) {
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, messages, workspaceId, { sender, senderName: scriptName })
+      .catch(e => console.error('[script] save outgoing error:', e))
+  }
+  if (fits) {
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, append as any[], workspaceId, { sender: 'bot', senderName: '問生日' })
+      .catch(e => console.error('[script] save outgoing error:', e))
+  }
 }
 
 // HUMAN_REQUEST_TEXTS 已移到 shared/types/ai-script.ts(AI 層攔截、腳本逃生門、試跑面板共用同一份)
@@ -5115,6 +5226,12 @@ export async function handlePostbackEvent(
   bumpConversationPeerActivity(userId, postbackTs, workspaceId).catch(e =>
     console.error('[conv] bump lastPeerActivityAt (postback):', e),
   )
+
+  // `C-57`：「告訴我生日」選了日期。⚠️ 在靜音判斷之前處理：真人處理中也要存、也要回那句收據（理由見函式）
+  if (data === BIRTHDAY_POSTBACK_DATA) {
+    await handleBirthdayPostback({ event, lineUserId: userId, workspaceId, sessionId, postbackTs })
+    return
+  }
 
   // shouldSuppress is a near-instant cache hit after ensureConversationSession syncs sessionStatusById
   const suppressBotAutomationPostback = sessionId

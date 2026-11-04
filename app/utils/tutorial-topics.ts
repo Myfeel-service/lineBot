@@ -1589,6 +1589,28 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     ],
   },
   /**
+   * 客人生日（`C-57`，John 哥 2026-11-04「只要有人生日，我就會被逼著做動作」）。
+   * ⛔ 不設 `requires`：「生日」那顆人人看得到（看幾位留了生日），改設定的權限框裡自己擋。
+   */
+  {
+    id: 'birthday',
+    category: 'growth',
+    icon: Bell,
+    label: '問客人生日',
+    blurb: '加好友時順便問生日，每個月 1 號自動貼「本月壽星」，推播時選這個標籤就好。',
+    route: wid => `/admin/${wid}/users`,
+    steps: [
+      {
+        target: '[data-tour="usr-birthday"]',
+        title: '按這裡設定生日',
+        description:
+          '打開「<strong>加好友時問生日</strong>」，客人加好友時歡迎訊息後面會多一顆「告訴我生日」，按了是 LINE 內建的選日期、只記月和日。'
+          + '每個月 1 號，這個月生日的人會貼上「<strong>本月壽星</strong>」，推播時選這個標籤就只發給他們。',
+        placement: 'bottom-end',
+      },
+    ],
+  },
+  /**
    * 好友統計（2026-09-29 `D-109`）。
    *
    * 為什麼補：這一頁 09-23 才開，晚於 09-18 的逐頁盤點（`D-82`），頁首沒填 `help-topics`

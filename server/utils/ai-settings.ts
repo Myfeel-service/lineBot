@@ -7,6 +7,7 @@
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
 import { getDb } from './firebase'
+import { normalizeBirthdaySettings } from '../../shared/birthday'
 import {
   AI_SETTINGS_DOC_ID as _AI_SETTINGS_DOC_ID_UNUSED, // 既有常數但這裡採 workspaceId 作為 ID；保留 import 避免 dead import 警告
   buildDefaultAiSettings,
@@ -234,6 +235,8 @@ export function normalizeAiSettings(raw: any): AiSettingsDoc {
     },
     // 舊工作區沒有這個欄位 → 一律視為關閉（每場對話一次 LLM 費用，同 imageAnswer 口徑）
     autoTagSuggest: { enabled: raw?.autoTagSuggest?.enabled === true },
+    // `C-57`：舊工作區沒有這個欄位 → 關（會對客人多送一張卡，要店家自己開）
+    birthday: normalizeBirthdaySettings(raw?.birthday),
     updatedAt: raw?.updatedAt ?? FieldValue.serverTimestamp(),
   }
 }
@@ -283,6 +286,7 @@ export async function setAiSettings(
     serviceHours: { ...current.serviceHours, ...(partial.serviceHours ?? {}) },
     inactiveTag: { ...current.inactiveTag, ...(partial.inactiveTag ?? {}) },
     autoTagSuggest: { ...current.autoTagSuggest, ...(partial.autoTagSuggest ?? {}) },
+    birthday: { ...current.birthday, ...(partial.birthday ?? {}) },
   })
   const {
     lineUserIds: _ids,

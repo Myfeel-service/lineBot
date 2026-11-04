@@ -1,6 +1,7 @@
 import type { Timestamp, FieldValue } from 'firebase-admin/firestore'
 import type { KnowledgeRelearnState } from '../knowledge-relearn'
 import type { NotifyOptOut } from '../line-notify-list'
+import { DEFAULT_BIRTHDAY_SETTINGS, type BirthdaySettings } from '../birthday'
 
 /** Firestore Vector Search 的向量欄位型別（768 dim） */
 export type EmbeddingVector = FirebaseFirestore.VectorValue
@@ -531,6 +532,11 @@ export interface AiSettingsDoc {
   autoTagSuggest: {
     enabled: boolean
   }
+  /**
+   * 客人生日（`C-57`）：加好友時在歡迎訊息後面問生日、生日當月送什麼。規則與存法見 `shared/birthday.ts`。
+   * **預設關閉**：會對客人多送一張卡，要店家自己決定（同 imageAnswer 的漸進路徑）。
+   */
+  birthday: BirthdaySettings
   updatedAt: Timestamp | FieldValue
 }
 
@@ -1367,6 +1373,7 @@ export function buildDefaultAiSettings(): Omit<AiSettingsDoc, 'updatedAt'> {
     autoTagSuggest: {
       enabled: false, // 預設關閉:每場對話一次 LLM 費用,老闆看過建議品質才開(同 imageAnswer)
     },
+    birthday: { ...DEFAULT_BIRTHDAY_SETTINGS }, // 預設關閉:會對客人多送一張卡(`C-57`)
   }
 }
 

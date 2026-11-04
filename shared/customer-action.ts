@@ -33,6 +33,8 @@ export type CustomerActionType =
   | 'campaign_claim'
   /** 取消好友／封鎖官方帳號 */
   | 'unfollow'
+  /** 在「告訴我生日」選了日期（`C-57`；name＝「3 月 12 日」） */
+  | 'birthday_set'
 
 /** 名稱太長會把那一行撐開換行，超過就截斷（完整內容在訊息 payload 裡） */
 const NAME_MAX = 40
@@ -70,6 +72,8 @@ export function customerActionLabel(input: {
       return n ? `客人從活動「${n}」登記` : '客人從活動連結登記'
     case 'unfollow':
       return '客人取消好友或封鎖官方帳號'
+    case 'birthday_set':
+      return n ? `客人留了生日：${n}` : '客人留了生日'
   }
 }
 

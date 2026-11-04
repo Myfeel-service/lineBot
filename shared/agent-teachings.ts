@@ -52,6 +52,8 @@ export const AGENT_TEACHINGS = {
   'tour-ai-scripts-flow': { kind: 'tour', ref: 'ai-scripts-flow', hint: '多步驟的自動回應：問客人資料、答不出來的退路、依答案分流、試跑整條（預約、報名、退貨）', requires: 'scripts.write' },
   'tour-users': { kind: 'tour', ref: 'users', hint: '好友名單、依標籤篩選、批次貼標', requires: 'customers.write' },
   // `C-458`／`D-169`：⛔ 不填 requires——「邀請卡」那顆不鎖角色（打的端點只要 workspace.read）
+  // `C-57`：⛔ 不填 requires——「生日」那顆人人看得到，改設定的權限框裡自己擋
+  'tour-birthday': { kind: 'tour', ref: 'birthday', hint: '問客人生日：加好友時歡迎訊息後面多一張卡、LINE 內建選日期；每個月 1 號自動貼「本月壽星」標籤給推播用；生日當月送什麼' },
   'tour-invite-card': { kind: 'tour', ref: 'invite-card', hint: '做加好友邀請卡：A4 桌牌印出來擺櫃台、分享圖存下來傳給客人、貼 FB／IG，客人掃 QR 就加好友' },
   'tour-friend-stats': { kind: 'tour', ref: 'friend-stats', hint: '好友統計怎麼看：產生報告、行銷提案怎麼擬文案開推播、客人最近在想什麼' },
   'tour-tags': { kind: 'tour', ref: 'tags', hint: '建好友標籤、從範本建、英文代號怎麼取', requires: 'tags.write' },

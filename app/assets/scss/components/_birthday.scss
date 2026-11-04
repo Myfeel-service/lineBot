@@ -1,0 +1,115 @@
+/* ── 客人生日（`C-57`，`AdminBirthdayDialog.vue`）─────────────────────
+   「客人會看到」那一塊照 LINE 的樣子畫：淺藍聊天底、白卡、綠色按鈕；我們回的那句是對方那種泡泡。
+   ⛔ 字一律吃 shared/birthday.ts（元件裡算好），這裡只管長相。 */
+.birthday {
+  &__intro {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--el-text-color-regular);
+  }
+
+  &__switch-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+
+  &__switch-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+  }
+
+  &__hint {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__phone {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px;
+    background: #8cabd9;
+    border-radius: 10px;
+  }
+
+  &__card {
+    width: min(260px, 100%);
+    overflow: hidden;
+    color: #1f1f1f;
+    background: #fff;
+    border-radius: 12px;
+  }
+
+  &__card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px 10px;
+    font-size: 13px;
+    line-height: 1.6;
+
+    span {
+      font-size: 11.5px;
+      color: #8c8c8c;
+    }
+  }
+
+  &__card-btn {
+    margin: 0 10px 10px;
+    padding: 6px 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    background: #06c755;
+    border-radius: 6px;
+  }
+
+  &__phone-cap {
+    padding: 1px 8px;
+    font-size: 11px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 999px;
+  }
+
+  &__bubble {
+    max-width: min(260px, 100%);
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #1f1f1f;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #fff;
+    border-radius: 12px;
+    border-bottom-left-radius: 4px;
+  }
+
+  &__stats {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
+  }
+
+  &__notice {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+
+    &.is-error { color: var(--el-color-danger); }
+  }
+
+  &__foot-note {
+    display: inline-block;
+    margin: 0 12px 0 0;
+    vertical-align: middle;
+  }
+}

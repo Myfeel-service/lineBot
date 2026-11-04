@@ -10,7 +10,7 @@
         field-label="好友"
         title="好友"
         caption="查看好友、貼標籤、看 AI 建議"
-        :help-topics="['users', 'invite-card']"
+        :help-topics="['users', 'invite-card', 'birthday']"
       />
       <div class="flex gap-1 admin-header-actions">
         <el-button v-if="canTagCustomers" size="small" type="primary" data-tour="usr-sync" :loading="syncingLine" @click="syncFromLine">
@@ -47,9 +47,12 @@
         <span v-if="syncingLine" class="text-xs text-muted">{{ syncProgress }}</span>
         <!-- 加好友邀請卡（`C-458`／`D-169`）：⛔ 不鎖角色——做一張桌牌不改任何資料，打的那支只要 workspace.read -->
         <el-button size="small" data-tour="usr-invite" @click="inviteVisible = true">邀請卡</el-button>
+        <!-- 客人生日（`C-57`）：人人看得到（看幾位留了生日），改設定要 ai.settings.write（框裡自己擋） -->
+        <el-button size="small" data-tour="usr-birthday" @click="birthdayVisible = true">生日</el-button>
         <el-button size="small" @click="loadData">重新整理</el-button>
       </div>
       <AdminInviteCardDialog v-model="inviteVisible" />
+      <AdminBirthdayDialog v-model="birthdayVisible" />
     </template>
 
     <template #editor-body>
@@ -405,6 +408,8 @@ const canSelectForBatch = computed(() => canTagCustomers.value || can('broadcast
 
 /** 邀請卡那個框（`C-458`／`D-169`） */
 const inviteVisible = ref(false)
+/** 生日那個框（`C-57`） */
+const birthdayVisible = ref(false)
 
 /**
  * `C-352`①：「推播給這 N 位」帶過去的是**匯入名單**（挑出來的人）——方案發不了就在這裡先講、按鈕鎖住。

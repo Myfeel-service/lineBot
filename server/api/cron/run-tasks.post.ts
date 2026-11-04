@@ -20,6 +20,7 @@ import { advanceStaleStoreProfileJobs } from '~~/server/utils/store-profile-jobs
 import { scanKnowledgeGaps } from '~~/server/utils/ai-knowledge-suggest'
 import { runBillingReconcile } from '~~/server/utils/run-billing-reconcile'
 import { scanInactiveTag } from '~~/server/utils/inactive-tag'
+import { syncBirthdayMonthTag } from '~~/server/utils/birthday-tag'
 import { scanTagSuggestions } from '~~/server/utils/ai-tag-suggest'
 import { scanTagDiscovery } from '~~/server/utils/tag-discovery'
 import { rollupConversationStats } from '~~/server/utils/conversation-stats-rollup'
@@ -91,6 +92,9 @@ export default defineEventHandler(async (event) => {
     // 「N 天沒互動」自動標籤（CRM 分眾）：每工作區每天只真跑一次（內有 lastRunDay 閘），
     // 其餘輪次都是一次 cronState 空讀。窗口掃描＋修復輪掃都有上限，見 inactive-tag.ts
     { name: 'crm:inactive-tag', run: () => scanInactiveTag(db) },
+    // 「本月壽星」（`C-57`）：只對開了生日功能的工作區、每個月只真跑一次（cronState 記 doneMonth）；
+    // 沒開的工作區只讀一次（快取的）AI 設定，見 birthday-tag.ts
+    { name: 'crm:birthday-tag', run: () => syncBirthdayMonthTag(db) },
     // AI 讀對話貼標建議（D-24 建議式）：只掃 autoTagSuggest 開著的工作區、
     // 游標只往前走、每輪每工作區上限 8 場、每場最多一次 LLM，見 ai-tag-suggest.ts
     { name: 'crm:tag-suggest', run: () => scanTagSuggestions(db) },
