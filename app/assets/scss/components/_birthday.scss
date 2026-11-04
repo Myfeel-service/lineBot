@@ -99,6 +99,25 @@
     color: var(--el-text-color-regular);
   }
 
+  &__existing {
+    padding-top: 12px;
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+
+  &__module-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    align-items: baseline;
+    margin-top: 6px;
+    font-size: 13px;
+  }
+
+  &__module-btn {
+    align-self: flex-start;
+    margin-top: 6px;
+  }
+
   &__notice {
     margin: 4px 0 0;
     font-size: 13px;

@@ -55,6 +55,8 @@ function actionBytes(action: any): number {
   if (type === 'uri') return fixed + label + uriBytes(action?.uri)
   // 叫出模組＝postback data，LINE 上限 300 字
   if (type === 'module') return fixed + label + 300
+  // 問生日（`C-57`）＝選日期：data 很短，另有 mode／initial／min／max 四個固定欄位
+  if (type === 'birthday') return fixed + label + 160
   // 送一句話：開了貼標時同一句會出現兩次（data 與 displayText），data 另外帶標籤
   return fixed + label + jsonBytes(action?.text || action?.label) * 2 + 300
 }

@@ -538,7 +538,7 @@
                   <div v-for="(btn, bIdx) in msg.buttons" :key="bIdx">
                     <FlowActionEditor
                       :action="btn"
-                      :type-options="standardActionTypeOptions"
+                      :type-options="buttonActionTypeOptions"
                       :module-options="modulePickerOptions"
                       :tag-options="allTags"
                       :enable-tagging="true"
@@ -1316,7 +1316,7 @@
                         <div v-for="(act, ai) in col.actions" :key="ai">
                           <FlowActionEditor
                             :action="act"
-                            :type-options="standardActionTypeOptions"
+                            :type-options="buttonActionTypeOptions"
                             :module-options="modulePickerOptions"
                             :tag-options="allTags"
                             :enable-tagging="true"
@@ -1527,6 +1527,7 @@ import {
   measureLineText,
 } from '~~/shared/line-text-limits'
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
+import { BIRTHDAY_BUTTON_TYPE } from '~~/shared/birthday'
 import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
 import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
 import {
@@ -2380,6 +2381,16 @@ const standardActionTypeOptions = [
 const imageCarouselActionTypeOptions = [
   { value: 'none', label: '不觸發動作' },
   ...standardActionTypeOptions,
+]
+
+/**
+ * 文字＋按鈕、卡片訊息的**按鈕**多一種「問生日」（`C-57` 甲）：按了是 LINE 內建選日期。
+ * ⛔ 只給這兩處：它們送出都走同一支 Flex 按鈕組法（`buildFlexCarouselButtonAction`）；
+ *    輪播（舊）、圖片輪播、快速回覆、圖片動作各有自己的組法，沒接這種動作——給了選項卻送不出去＝按了沒反應。
+ */
+const buttonActionTypeOptions = [
+  ...standardActionTypeOptions,
+  { value: BIRTHDAY_BUTTON_TYPE, label: '問生日（LINE 選日期）' },
 ]
 
 function msgTypeLabel(type: string) {

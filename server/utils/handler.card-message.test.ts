@@ -187,3 +187,38 @@ describe('整組大小：估出來的一定 ≥ 真的送出去的（含貼標�
     expect(cardMessageSizeError(message(Array.from({ length: 10 }, () => card({ text: '內'.repeat(250) }))))).toBe('')
   })
 })
+
+describe('`C-57` 甲：按鈕選「問生日」＝LINE 內建選日期', () => {
+  const picker = (a: any) => {
+    expect(a).toMatchObject({ type: 'datetimepicker', data: 'birthday=set', mode: 'date', initial: '2000-01-01', min: '1900-01-01' })
+    expect(a.max).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  }
+
+  it('文字＋按鈕（一鍵建的「問生日」模組就是這個形狀）', async () => {
+    const out = await render({ type: 'text', text: '告訴我們你的生日 🎂', buttons: [{ type: 'birthday', label: '🎂 告訴我生日' }] })
+    expect(out.type).toBe('flex')
+    const btn = JSON.stringify(out).match(/"action":(\{[^}]*"datetimepicker"[^}]*\})/)
+    expect(btn).not.toBeNull()
+    const action = JSON.parse(btn![1]!)
+    picker(action)
+    expect(action.label).toBe('🎂 告訴我生日')
+  })
+
+  it('卡片訊息的按鈕', async () => {
+    const out = await render(message([card({ actions: [{ type: 'birthday', label: '留下生日', style: 'primary' }] })]))
+    const [b] = out.contents.contents[0].footer.contents
+    picker(b.action)
+    expect(b.action.label).toBe('留下生日')
+  })
+
+  it('有 X 的對照組：同一張卡換成開網址，送出去不是選日期', async () => {
+    const out = await render(message([card({ actions: [{ type: 'uri', label: '看更多', uri: 'https://a.example.com' }] })]))
+    expect(out.contents.contents[0].footer.contents[0].action.type).toBe('uri')
+  })
+
+  it('卡片大小估算認得「問生日」（不會被當成送一句話高估）', () => {
+    const b = estimateCardMessageBytes(message([card({ actions: [{ type: 'birthday', label: '留下生日' }] })]))
+    const m = estimateCardMessageBytes(message([card({ actions: [{ type: 'message', label: '留下生日', text: '留下生日' }] })]))
+    expect(b).toBeLessThan(m)
+  })
+})

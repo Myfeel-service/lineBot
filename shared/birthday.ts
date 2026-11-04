@@ -72,6 +72,40 @@ export function birthdayConfirmText(month: number, day: number, gift: string, ch
 }
 
 /**
+ * 機器人模組按鈕的動作類型「問生日」（`C-57` 甲，老闆 2026-11-04 選的做法）：
+ * 卡片訊息、文字＋按鈕的按鈕可以選它，按了就是 LINE 內建選日期，跟加好友那張卡同一個 postback。
+ * ⭐ 這樣推播選「觸發機器人模組」、圖文選單指向那個模組，就能問**已經是好友**的人（他們不會再收到歡迎訊息）。
+ */
+export const BIRTHDAY_BUTTON_TYPE = 'birthday'
+
+/** 選日期那個動作（加好友的卡、模組按鈕同一支）。@param today 台北今天 `YYYY-MM-DD`＝上限（生日不會在未來） */
+export function birthdayPickerAction(label: string, today: string): Record<string, unknown> {
+  return {
+    type: 'datetimepicker',
+    label: [...(label.trim() || BIRTHDAY_BUTTON_LABEL)].slice(0, 20).join(''),
+    data: BIRTHDAY_POSTBACK_DATA,
+    mode: 'date',
+    // 預設停在 2000 年：從今天往回捲幾十年太累；⛔ 不預設今天（按了確定就存成今天＝假生日）
+    initial: '2000-01-01',
+    min: '1900-01-01',
+    max: today,
+  }
+}
+
+/**
+ * 「好友」頁一鍵建的「問生日」模組（編輯器格式：一則文字＋一顆「問生日」按鈕）。
+ * 字建好之後就是店家的，可以自己改（⚠️ 之後改了禮物，模組裡那句不會跟著變）。
+ */
+export const BIRTHDAY_MODULE_NAME = '問生日'
+export function buildBirthdayModuleMessages(gift: string): Record<string, unknown>[] {
+  return [{
+    type: 'text',
+    text: `${birthdayAskText(gift)}\n${BIRTHDAY_ASK_NOTE}`,
+    buttons: [{ type: BIRTHDAY_BUTTON_TYPE, label: BIRTHDAY_BUTTON_LABEL }],
+  }]
+}
+
+/**
  * 那張卡（Flex）。⚠️ datetimepicker 要放在 Flex 的按鈕或 buttons template：Flex 沒有 160 字上限，
  * 禮物寫長一點也不會整則被 LINE 退回。
  * @param today 台北今天 `YYYY-MM-DD`：選日期的上限（生日不會在未來）
@@ -101,16 +135,7 @@ export function buildBirthdayAskMessage(gift: string, today: string): Record<str
           style: 'primary',
           color: '#06C755',
           height: 'sm',
-          action: {
-            type: 'datetimepicker',
-            label: BIRTHDAY_BUTTON_LABEL,
-            data: BIRTHDAY_POSTBACK_DATA,
-            mode: 'date',
-            // 預設停在 2000 年：從今天往回捲幾十年太累；⛔ 不預設今天（按了確定就存成今天＝假生日）
-            initial: '2000-01-01',
-            min: '1900-01-01',
-            max: today,
-          },
+          action: birthdayPickerAction(BIRTHDAY_BUTTON_LABEL, today),
         }],
       },
     },

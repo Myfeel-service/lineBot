@@ -58,7 +58,27 @@
           </template>
           <template v-else-if="statsError">{{ statsError }}</template>
         </div>
-        <p class="birthday__hint">已經是好友的人不會再收到歡迎訊息，所以這張卡只會給之後加好友的人。</p>
+        <!--
+          `C-57` 甲（老闆 2026-11-04 選的）：已經是好友的人不會再收到歡迎訊息——
+          建一個「問生日」機器人模組（一則字＋一顆「問生日」按鈕），推播選「觸發機器人模組」、圖文選單指向它就能問。
+        -->
+        <div class="admin-field-group birthday__existing" data-tour="bday-module">
+          <AdminFieldLabel text="問已經是好友的人" tight />
+          <p class="birthday__hint">
+            他們不會再收到歡迎訊息。建一個「問生日」機器人模組，推播選「觸發機器人模組 → 問生日」就能問；
+            圖文選單也能放一格指向它，讓客人隨時自己留。
+          </p>
+          <div v-if="moduleRow" class="birthday__module-row">
+            <span>已經有「{{ moduleRow.name }}」模組。</span>
+            <a class="ar-link" :href="moduleEditHref" target="_blank" rel="noopener">編輯這個模組 ↗</a>
+            <a class="ar-link" :href="broadcastHref" target="_blank" rel="noopener">去推播 ↗</a>
+          </div>
+          <div v-else-if="moduleLoadError" class="birthday__hint">{{ moduleLoadError }}</div>
+          <el-button v-else-if="canCreateModule" size="small" :loading="creatingModule" class="birthday__module-btn" @click="createModule">
+            建立「問生日」模組
+          </el-button>
+          <p v-else class="birthday__hint">建模組要能編輯機器人模組的人來按。</p>
+        </div>
       </div>
     </template>
 
@@ -75,8 +95,10 @@ import {
   BIRTHDAY_ASK_NOTE,
   BIRTHDAY_BUTTON_LABEL,
   BIRTHDAY_GIFT_MAX,
+  BIRTHDAY_MODULE_NAME,
   birthdayAskText,
   birthdayConfirmText,
+  buildBirthdayModuleMessages,
   normalizeBirthdaySettings,
   type BirthdaySettings,
 } from '~~/shared/birthday'
@@ -90,11 +112,20 @@ const visible = computed({
   set: v => emit('update:modelValue', v),
 })
 
-const { apiFetch } = useWorkspace()
+const { workspaceId, apiFetch } = useWorkspace()
 const { can } = useAdminOperateGuard()
 const { showToast } = useAdminToast()
 /** 存檔打的是 PUT /api/ai/settings（`ai.settings.write`），⛔ 用同一項能力決定能不能改 */
 const canEdit = computed(() => can('ai.settings.write'))
+/** 建模組打的是 `flow/create`（`marketing.write`，同 AdminFlowPicker 的「＋ 新模組」） */
+const canCreateModule = computed(() => can('marketing.write'))
+
+/** 已經有「問生日」模組了沒（照名字找自建模組；他改了名字＝找不到，會再給一次建立鈕） */
+const moduleRow = ref<{ id: string, name: string } | null>(null)
+const moduleLoadError = ref('')
+const creatingModule = ref(false)
+const moduleEditHref = computed(() => moduleRow.value ? `/admin/${workspaceId.value}/flow?id=${encodeURIComponent(moduleRow.value.id)}` : '')
+const broadcastHref = computed(() => `/admin/${workspaceId.value}/broadcasts`)
 
 const loading = ref(false)
 const loadError = ref('')
@@ -133,6 +164,33 @@ async function load() {
   apiFetch<BirthdayStats>('/api/ai/settings', { query: { part: 'birthday' } })
     .then((r) => { stats.value = r })
     .catch(() => { statsError.value = '幾位留了生日這次讀不到。' })
+  moduleLoadError.value = ''
+  apiFetch<Array<{ id: string, name?: string, isSystem?: boolean }>>('/api/flow/list', { query: { fields: 'picker' } })
+    .then((rows) => {
+      const hit = (rows ?? []).find(r => !r.isSystem && String(r.name ?? '').trim() === BIRTHDAY_MODULE_NAME)
+      moduleRow.value = hit ? { id: hit.id, name: String(hit.name) } : null
+    })
+    // ⛔ 讀不到不可以當成「沒有」再給建立鈕：會建出第二個「問生日」
+    .catch(() => { moduleLoadError.value = '讀不到機器人模組清單，等一下再打開一次試試。' })
+}
+
+async function createModule() {
+  creatingModule.value = true
+  try {
+    const created = await apiFetch<{ id: string, name?: string }>('/api/flow/create', {
+      method: 'POST',
+      body: { name: BIRTHDAY_MODULE_NAME, messages: buildBirthdayModuleMessages(form.gift), isActive: true },
+    })
+    moduleRow.value = { id: created.id, name: String(created.name || BIRTHDAY_MODULE_NAME) }
+    showToast('已建立「問生日」模組：推播選「觸發機器人模組」就能發給現有好友', 'success')
+  }
+  catch (e: unknown) {
+    const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+    showToast(msg || '沒有建成功，再按一次試試', 'error')
+  }
+  finally {
+    creatingModule.value = false
+  }
 }
 
 async function save() {

@@ -54,6 +54,33 @@ describe('加好友時附「告訴我生日」卡', () => {
   })
 })
 
+describe('機器人模組的「問生日」按鈕（`C-57` 甲）', () => {
+  const flow = read('app/pages/admin/[workspaceId]/flow.vue')
+  const editor = read('app/components/flow/FlowActionEditor.vue')
+  it('送出端：按鈕組法認得「問生日」，組成選日期', () => {
+    const fn = between(handler, 'function buildFlexCarouselButtonAction', '\n}\n')
+    expect(fn).toContain('if (type === BIRTHDAY_BUTTON_TYPE)')
+    expect(fn).toContain('birthdayPickerAction(')
+  })
+  it('⛔ 只有文字＋按鈕、卡片訊息的按鈕給這個選項（其他幾種組法沒接，給了按下去沒反應）', () => {
+    expect(flow.match(/:type-options="buttonActionTypeOptions"/g)?.length).toBe(2)
+    const textBtn = between(flow, 'v-for="(btn, bIdx) in msg.buttons"', '</FlowActionEditor>')
+    expect(textBtn).toContain('buttonActionTypeOptions')
+    const quick = between(flow, "v-else-if=\"msg.type === 'quickReply'\"", "v-else-if=\"msg.type === 'userInput'\"")
+    expect(quick).not.toContain('buttonActionTypeOptions')
+  })
+  it('編輯器：選了「問生日」講清楚按了會怎樣，沒寫字先填預設', () => {
+    expect(editor).toContain('action.type === BIRTHDAY_BUTTON_TYPE')
+    expect(editor).toContain('props.action.label = BIRTHDAY_BUTTON_LABEL')
+  })
+  it('好友頁「生日」：建「問生日」模組（讀不到清單⛔ 不給建立鈕，免得建出第二個）', () => {
+    expect(dialog).toContain('buildBirthdayModuleMessages(form.gift)')
+    expect(dialog).toContain("'/api/flow/create'")
+    expect(dialog).toContain("can('marketing.write')")
+    expect(dialog.indexOf('v-else-if="moduleLoadError"')).toBeLessThan(dialog.indexOf('v-else-if="canCreateModule"'))
+  })
+})
+
 describe('後台', () => {
   it('好友頁有「生日」、框裡的字吃 shared/birthday（跟送出端同一份）', () => {
     expect(users).toContain('data-tour="usr-birthday"')

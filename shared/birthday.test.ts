@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BIRTHDAY_ASK_NOTE,
+  BIRTHDAY_BUTTON_LABEL,
+  BIRTHDAY_BUTTON_TYPE,
   BIRTHDAY_GIFT_MAX,
   BIRTHDAY_POSTBACK_DATA,
   birthdayAskText,
   birthdayConfirmText,
+  birthdayPickerAction,
   buildBirthdayAskMessage,
+  buildBirthdayModuleMessages,
   normalizeBirthdaySettings,
   parseBirthdayDate,
   taipeiMonth,
@@ -60,6 +65,18 @@ describe('那張卡', () => {
     expect(action).toMatchObject({ type: 'datetimepicker', data: BIRTHDAY_POSTBACK_DATA, mode: 'date', initial: '2000-01-01', max: '2026-11-04' })
     expect([...action.label].length).toBeLessThanOrEqual(20)
     expect(JSON.stringify(m).length).toBeLessThan(30_000)
+  })
+})
+
+describe('模組的「問生日」按鈕（`C-57` 甲）', () => {
+  it('選日期動作跟加好友那張卡同一個 postback；沒寫字用預設、超過 20 字截掉', () => {
+    expect(birthdayPickerAction('', '2026-11-04')).toMatchObject({ type: 'datetimepicker', label: BIRTHDAY_BUTTON_LABEL, data: BIRTHDAY_POSTBACK_DATA, mode: 'date', max: '2026-11-04' })
+    expect([...(birthdayPickerAction('留下你的生日'.repeat(5), '2026-11-04').label as string)]).toHaveLength(20)
+  })
+  it('一鍵建的模組：一則文字＋一顆「問生日」按鈕；⛔ 沒寫禮物不提禮物', () => {
+    const [m] = buildBirthdayModuleMessages('') as any[]
+    expect(m).toEqual({ type: 'text', text: `告訴我們你的生日 🎂\n${BIRTHDAY_ASK_NOTE}`, buttons: [{ type: BIRTHDAY_BUTTON_TYPE, label: BIRTHDAY_BUTTON_LABEL }] })
+    expect((buildBirthdayModuleMessages('來店招待一杯飲料')[0] as any).text).toContain('生日當月來店招待一杯飲料')
   })
 })
 

@@ -1605,7 +1605,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: '按這裡設定生日',
         description:
           '打開「<strong>加好友時問生日</strong>」，客人加好友時歡迎訊息後面會多一顆「告訴我生日」，按了是 LINE 內建的選日期、只記月和日。'
-          + '每個月 1 號，這個月生日的人會貼上「<strong>本月壽星</strong>」，推播時選這個標籤就只發給他們。',
+          + '每個月 1 號，這個月生日的人會貼上「<strong>本月壽星</strong>」，推播時選這個標籤就只發給他們。'
+          + '已經是好友的人：在框裡按「<strong>建立「問生日」模組</strong>」，推播選「觸發機器人模組 → 問生日」就能問。',
         placement: 'bottom-end',
       },
     ],

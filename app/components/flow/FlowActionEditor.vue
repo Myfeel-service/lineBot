@@ -114,6 +114,12 @@
       </div>
     </template>
 
+    <p v-else-if="action.type === BIRTHDAY_BUTTON_TYPE" class="text-xs text-muted flow-action-birthday-note">
+      <!-- `C-57` 甲：「問生日」沒有別的欄位要填，講清楚按了會怎樣、存在哪 -->
+      客人按了會跳出 LINE 內建的選日期，只會記下月和日；選完會收到「收到，你的生日是…」。
+      這個月生日的人會貼上「本月壽星」。生日禮與數字在「好友」頁的「生日」。
+    </p>
+
     <template v-if="enableTagging && isActionEnabled">
       <div class="admin-field-group">
         <AdminFieldLabel text="啟用貼標" tight />
@@ -154,6 +160,7 @@ import { type CaretRange, insertTokenAtCaret } from '~/utils/insert-token-at-car
 import { FLOW_CURRENT_PRODUCT_KEY } from '~/utils/flow-sheet-picker'
 import { SHEET_CURRENT_ROW, sheetFieldToken, sheetFieldTokensIn, usesCurrentProduct } from '~~/shared/sheet-field'
 import { toDisplayText, toStoredText } from '~~/shared/variable-tokens'
+import { BIRTHDAY_BUTTON_LABEL, BIRTHDAY_BUTTON_TYPE } from '~~/shared/birthday'
 
 type ActionOption = {
   value: string
@@ -291,6 +298,11 @@ function ensureTaggingState() {
   }
   return props.action.tagging as { enabled: boolean; addTagIds: string[] }
 }
+
+/** 換成「問生日」而按鈕還沒寫字＝先填好預設那幾個字（⛔ 不蓋掉他自己寫的） */
+watch(() => props.action.type, (type) => {
+  if (type === BIRTHDAY_BUTTON_TYPE && !String(props.action.label ?? '').trim()) props.action.label = BIRTHDAY_BUTTON_LABEL
+})
 
 watch(isTaggableAction, (supported) => {
   if (!supported) {

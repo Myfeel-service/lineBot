@@ -106,7 +106,9 @@ import {
 } from '~~/shared/customer-action'
 import { messageSearchTokens } from '~~/shared/message-search'
 import {
+  BIRTHDAY_BUTTON_TYPE,
   BIRTHDAY_POSTBACK_DATA,
+  birthdayPickerAction,
   birthdayConfirmText,
   birthdayLabel,
   buildBirthdayAskMessage,
@@ -1383,6 +1385,10 @@ function buildFlexCarouselButtonAction(
 ): Record<string, unknown> | null {
   const type = String(action?.type || '').trim()
   if (!type || type === 'none') return null
+  // `C-57` 甲：「問生日」＝LINE 內建選日期，跟加好友那張卡同一個 postback（選完由 handleBirthdayPostback 存）
+  if (type === BIRTHDAY_BUTTON_TYPE) {
+    return birthdayPickerAction(renderWithAttributes(action.label || '', attributes), taipeiDate())
+  }
   if (type === 'uri') {
     return {
       type: 'uri',
