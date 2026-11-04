@@ -2613,21 +2613,41 @@ try {
     })
     if (text) await pg.type(sel, text, { delay: 20 })
   }
-  /** 問 AI：在 scope（欄或抽屜）裡打一句、送出、等「用了這 N 條」出來 */
+  /**
+   * 問 AI：在 scope（欄或抽屜）裡打一句、送出、等最新那一張（最上面那張）出現「用了這 N 條」。
+   * `D-168` 起輸入框在標題那一塊（`.kb-ask__bar`），新的一題在最上面
+   */
   const askOnce = async (pg, scope, text) => {
-    await typeInto(pg, `${scope} .kb-ask__foot input`, text)
-    await pg.evaluate(s => document.querySelector(`${s} .kb-ask__foot .el-button--primary`)?.click(), scope)
-    return waitFor(pg, s => document.querySelectorAll(`${s} .kb-ask__src`).length > 0, scope, 15_000)
+    await typeInto(pg, `${scope} .kb-ask__bar input`, text)
+    await pg.evaluate(s => document.querySelector(`${s} .kb-ask__bar .el-button--primary`)?.click(), scope)
+    return waitFor(pg, ({ s, t }) => {
+      const first = document.querySelector(`${s} .kb-ask__card`)
+      return first?.querySelector('.kb-ask__q')?.innerText === t && first.querySelectorAll('.kb-ask__src').length > 0
+    }, { s: scope, t: text }, 15_000)
   }
-  /** 「送出」那顆有沒有被右下角小幫手那顆蓋住（點它正中間，點到的是不是它自己那一行） */
+  /**
+   * 「送出」那顆和輸入框有沒有被蓋住（點它正中間，點到的是不是它自己那一行），而且輸入框夠寬。
+   * `D-168` 以前問過之後輸入列掉到最底下、右邊讓出小幫手那顆，340 寬的欄輸入框只剩約 170px；固定在上面之後不用讓
+   */
   const sendNotCovered = (pg, scope) => pg.evaluate((s) => {
-    const b = document.querySelector(`${s} .kb-ask__foot .el-button--primary`)?.getBoundingClientRect()
-    const i = document.querySelector(`${s} .kb-ask__foot input`)?.getBoundingClientRect()
+    const b = document.querySelector(`${s} .kb-ask__bar .el-button--primary`)?.getBoundingClientRect()
+    const i = document.querySelector(`${s} .kb-ask__bar input`)?.getBoundingClientRect()
     if (!b || !i) return false
     const hitB = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)
     const hitI = document.elementFromPoint(i.right - 4, i.top + i.height / 2)
-    return !!hitB?.closest(`${s} .kb-ask__foot`) && !!hitI?.closest(`${s} .kb-ask__foot`) && i.width >= 120
+    return !!hitB?.closest(`${s} .kb-ask__bar`) && !!hitI?.closest(`${s} .kb-ask__bar`) && i.width >= 200
   }, scope)
+  /** 輸入框離欄頂多遠（問之前、問之後要一樣：不跳位置） */
+  const askBarTop = (pg, scope) => pg.evaluate((s) => {
+    const panel = document.querySelector(`${s} [data-tour="kb-ask"]`)?.getBoundingClientRect()
+    const bar = document.querySelector(`${s} .kb-ask__bar`)?.getBoundingClientRect()
+    return panel && bar ? Math.round(bar.top - panel.top) : -1
+  }, scope)
+  /** 還沒問過時那幾句：上面那行字＋每一句 */
+  const askExamples = (pg, scope) => pg.evaluate(s => ({
+    label: document.querySelector(`${s} .kb-ask__try-label`)?.innerText.trim() ?? '',
+    qs: [...document.querySelectorAll(`${s} .kb-ask__try-q`)].map(b => b.innerText.trim()),
+  }), scope)
   const clickAskSource = (pg, scope, title) => pg.evaluate((s, t) => [...document.querySelectorAll(`${s} .kb-ask__src`)].find(b => b.querySelector('.kb-ask__src-title')?.innerText === t)?.click(), scope, title)
 
   // ── 第四十段（`C-315`，`D-126` 第 2 題）：三欄——電腦（內容寬 ≥ 1200）右邊常駐「問 AI」、整個高度；
@@ -2636,12 +2656,22 @@ try {
   if (CHECK_FROM <= 40) {
     const a = fakeSource({ id: 'c315-a', type: 'file', name: 'C315 保固說明.pdf', chunkCount: 8, refreshIntervalMinutes: 0, summary: ['保固一年', '怎麼退貨'] })
     const b = fakeSource({ id: 'c315-b', type: 'url', name: 'C315 官網運費', url: 'https://shop.example.tw/ship', chunkCount: 2, refreshIntervalMinutes: 1440, summary: ['運費怎麼算'] })
-    const aChunks = Array.from({ length: 8 }, (_, i) => fakeChunk({ id: `a${i + 1}`, title: `保固第 ${i + 1} 條`, content: `保固內容 ${i + 1}` }))
-    aChunks[6] = fakeChunk({ id: 'a7', title: '等你看過的一條', content: '還沒上線', status: 'draft' })
+    // 每條都存著客人問法（`D-168` 還沒問過時從這裡挑三句）；a7 是等你看過的、⛔ 不該被挑出來
+    const aChunks = Array.from({ length: 8 }, (_, i) => fakeChunk({ id: `a${i + 1}`, title: `保固第 ${i + 1} 條`, content: `保固內容 ${i + 1}`, questions: [`保固問法 ${i + 1}？`] }))
+    aChunks[6] = fakeChunk({ id: 'a7', title: '等你看過的一條', content: '還沒上線', status: 'draft', questions: ['等你看過的問法？'] })
     const pageFake = fakeSourcesPage([a, b], { 'c315-a': aChunks, 'c315-b': [fakeChunk({ id: 'b1', title: '運費' }), fakeChunk({ id: 'b2', title: '離島運費' })] })
+    // AI 建議補的知識（`D-168` 沒打開資料時從這裡挑客人原句）
+    const c315Suggestions = {
+      items: [
+        { id: 'sg1', topic: '產地', eventCount: 5, sampled: false, sampleQueries: ['小滑手咖啡機是哪一國做的？'], draft: null, blanksCount: 0, draftError: '', lastSeenAtMs: NOW },
+        { id: 'sg2', topic: '浴室', eventCount: 3, sampled: false, sampleQueries: ['乾淨方MAX 可以放在浴室嗎？'], draft: null, blanksCount: 0, draftError: '', lastSeenAtMs: NOW },
+      ],
+      scan: { lastScanAtMs: NOW - 86400_000, requested: false, lastError: '', lastScanGapEvents: 8 },
+    }
     const asks = []
     const c315Fake = async (req) => {
       const url = new URL(req.url())
+      if (url.pathname === '/api/ai/knowledge/suggestions' && req.method() === 'GET') return json(c315Suggestions)
       if (url.pathname === '/api/ai/playground' && req.method() === 'POST') {
         asks.push(JSON.parse(req.postData() || '{}').query)
         return json({ decision: 'answered', answer: '保固一年，離島運費另計。', answerKind: 'kb', confidence: 0.9,
@@ -2679,20 +2709,63 @@ try {
     if (Math.abs(lay.colW - 340) <= 2 && lay.colBottom >= lay.vh - 2 && Math.abs(lay.colTop - lay.splitTop) <= 1 && !lay.openBtn && !lay.hscroll) pass(`電腦（內容寬 ${lay.colsW}px）：右邊常駐「問 AI」${lay.colW}px、從上到底（${lay.colTop}→${lay.colBottom}），中間剩 ${lay.middle}px，不擺「問 AI」鈕、沒有橫向捲動`)
     else fail('電腦上右邊那一欄不對', JSON.stringify(lay))
 
+    // `D-168`：沒打開資料、還沒問過 → 列「AI 建議補的知識」那幾組客人原句（以前整欄空白）
+    const wbEx = await waitFor(pg, s => document.querySelectorAll(`${s} .kb-ask__try-q`).length > 0, COL, 15_000) ? await askExamples(pg, COL) : null
+    if (wbEx?.label === '客人問過、AI 還答不出來' && wbEx.qs.join('｜') === '小滑手咖啡機是哪一國做的？｜乾淨方MAX 可以放在浴室嗎？') pass(`沒打開資料、還沒問過：列 AI 答不出來的客人原句（${wbEx.qs.join('｜')}）`)
+    else fail('工作台時「問 AI」沒有列 AI 答不出來的那幾句', JSON.stringify(wbEx))
+
     // 先打開 A、用「在這份裡找」把 a8 篩掉：點「用了這幾條」那一下要清掉篩選，才捲得到
     await pickSource(pg, a.name)
     await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 8, null, 30_000)
+    // 打開一份 → 換成那一份的客人問法：7 條 AI 會用的（等你看過的 a7 不算）平均挑三句＝第 1、3、5 條
+    const srcEx = await waitFor(pg, s => [...document.querySelectorAll(`${s} .kb-ask__try-q`)].some(b => b.innerText.startsWith('保固問法')), COL, 10_000) ? await askExamples(pg, COL) : null
+    await shot(pg, 'desktop-examples.png', COL)
+    if (srcEx?.label === '試試這份資料的問題' && srcEx.qs.join('｜') === '保固問法 1？｜保固問法 3？｜保固問法 5？') pass(`打開一份：換成那一份的客人問法，平均挑三句、等你看過的不挑（${srcEx.qs.join('｜')}）`)
+    else fail('打開一份資料時「問 AI」列的範例不對', JSON.stringify(srcEx))
+    const barTop0 = await askBarTop(pg, COL)
+
     await typeInto(pg, '.src-chunk-search input', '第 1 條')
     await waitFor(pg, () => document.querySelectorAll('.src-chunk-row').length === 1, null, 5000)
     await pg.evaluate(() => document.querySelector('.split-editor-body')?.scrollTo(0, 0))
+    // 點一句範例 → 直接問（不用再按送出），那一句變成第一張的標題、範例收起來
+    await pg.evaluate(s => document.querySelector(`${s} .kb-ask__try-q`)?.click(), COL)
+    const exAsked = await waitFor(pg, s => document.querySelector(`${s} .kb-ask__card .kb-ask__q`)?.innerText === '保固問法 1？' && !!document.querySelector(`${s} .kb-ask__card .kb-ask__src`), COL, 15_000)
+    const exGone = await pg.evaluate(s => !document.querySelector(`${s} .kb-ask__try`), COL)
+    if (exAsked && asks[0] === '保固問法 1？' && exGone) pass('點範例「保固問法 1？」→ 直接問（送出的就是那一句），變成第一張的標題、範例收起來')
+    else fail('點範例沒有直接問', JSON.stringify({ exAsked, asks, exGone }))
+
     const asked = await askOnce(pg, COL, '保固多久')
     await sleep(300)
     await shot(pg, 'desktop-answer.png')
-    // 問過之後輸入那一行掉到最底下，正好在右下角小幫手那顆旁邊
-    if (await sendNotCovered(pg, COL)) pass('問過之後輸入那一行在最底下：右下角小幫手那顆沒有蓋住輸入框和「送出」（那一行讓出右邊）')
-    else fail('「問 AI」的送出鈕被右下角小幫手蓋住了')
+    await shot(pg, 'desktop-answer-col.png', COL)
+    // 問過之後輸入框不跳位置、不被右下角小幫手蓋住、也不用讓寬度
+    const barTop1 = await askBarTop(pg, COL)
+    const covered = !(await sendNotCovered(pg, COL))
+    if (barTop0 > 0 && barTop0 === barTop1 && !covered) pass(`問過之後輸入框還在原位（離欄頂 ${barTop0}px → ${barTop1}px）、沒被小幫手蓋住、寬度不用讓`)
+    else fail('問過之後輸入框跳位置或被蓋住', JSON.stringify({ barTop0, barTop1, covered }))
+    // 新的在上面、之前那題收成一行（題目＋結果小章），點開才看全文
+    const stack = await pg.evaluate((s) => {
+      const cards = [...document.querySelectorAll(`${s} .kb-ask__card`)]
+      return {
+        titles: cards.map(c => c.querySelector('.kb-ask__q')?.innerText ?? ''),
+        olderLabel: document.querySelector(`${s} .kb-ask__older-label`)?.innerText ?? '',
+        olderOpen: !!cards[1]?.querySelector('.kb-ask__card-body'),
+        olderTag: cards[1]?.querySelector('.kb-ask__verdict')?.innerText.trim() ?? '',
+        newestTag: cards[0]?.querySelector('.kb-ask__verdict')?.innerText.trim() ?? '',
+      }
+    }, COL)
+    if (stack.titles.join('｜') === '保固多久｜保固問法 1？' && stack.olderLabel === '剛剛問過' && !stack.olderOpen && stack.olderTag === '答得出來' && stack.newestTag === '答得出來') pass('第二題接在輸入框正下方、第一題收到「剛剛問過」底下成一行（題目＋「答得出來」），沒點開不攤全文')
+    else fail('問了兩題後的排法不對', JSON.stringify(stack))
+    await pg.evaluate(s => document.querySelectorAll(`${s} .kb-ask__card`)[1]?.querySelector('.kb-ask__card-head')?.click(), COL)
+    const olderOpened = await waitFor(pg, s => !!document.querySelectorAll(`${s} .kb-ask__card`)[1]?.querySelector('.kb-ask__card-body .kb-ask__src'), COL, 3000)
+    await sleep(200)
+    await shot(pg, 'desktop-older-open.png', COL)
+    await pg.evaluate(s => document.querySelectorAll(`${s} .kb-ask__card`)[1]?.querySelector('.kb-ask__card-head')?.click(), COL)
+    const olderClosed = await waitFor(pg, s => !document.querySelectorAll(`${s} .kb-ask__card`)[1]?.querySelector('.kb-ask__card-body'), COL, 3000)
+    if (olderOpened && olderClosed) pass('點「剛剛問過」那一行 → 展開看全文（含用了哪幾條），再點收回')
+    else fail('之前那題點不開或收不回', JSON.stringify({ olderOpened, olderClosed }))
     const labels = await pg.$$eval(`${COL} .kb-ask__src`, els => els.map(e => e.innerText.replace(/\s+/g, ' ').trim()))
-    if (asked && asks.length === 1 && labels.length === 4 && labels[0].includes('保固第 8 條') && labels[0].includes('這一份') && labels[3].includes('C315 官網運費')) pass(`問一句 → 答案底下「用了這 4 條」，開著的那一份標「這一份」、別份標名字（${labels.map(l => l.slice(0, 16)).join('｜')}）`)
+    if (asked && asks.length === 2 && asks[1] === '保固多久' && labels.length === 4 && labels[0].includes('保固第 8 條') && labels[0].includes('這一份') && labels[3].includes('C315 官網運費')) pass(`問一句 → 答案底下「用了這 4 條」，開著的那一份標「這一份」、別份標名字（${labels.map(l => l.slice(0, 16)).join('｜')}）`)
     else fail('問 AI 的答案／出處不對', JSON.stringify({ asked, asks, labels }))
 
     await clickAskSource(pg, COL, '保固第 8 條')
@@ -2727,7 +2800,8 @@ try {
     if (toB) pass('點別份的「離島運費」→ 中間換成那一份、那一條亮起來')
     else fail('點別份的出處沒有換過去')
 
-    await pg.evaluate(s => [...document.querySelectorAll(`${s} .kb-ask__fix`)].at(-1)?.click(), COL)
+    // 最新那一張（最上面）的「答得不對？」——之前那張收著，畫面上只有這一顆
+    await pg.evaluate(s => document.querySelector(`${s} .kb-ask__card .kb-ask__fix`)?.click(), COL)
     await waitFor(pg, () => [...document.querySelectorAll('.el-dialog')].some(d => d.offsetParent !== null && d.querySelector('.kb-addone')), null, 8000)
     const q = await pg.evaluate(() => [...document.querySelectorAll('.el-dialog')].find(d => d.offsetParent !== null && d.querySelector('.kb-addone'))?.querySelector('.kb-addone input')?.value ?? '')
     await shot(pg, 'desktop-add-one-from-ask.png')
@@ -2762,10 +2836,10 @@ try {
     const drawerSend = await sendNotCovered(pg, DRAWER)
     const sendDbg = drawerSend ? null : await pg.evaluate((s) => {
       const r = el => { const x = el?.getBoundingClientRect(); return x ? [Math.round(x.left), Math.round(x.top), Math.round(x.right), Math.round(x.bottom)] : null }
-      const b = document.querySelector(`${s} .kb-ask__foot .el-button--primary`)
+      const b = document.querySelector(`${s} .kb-ask__bar .el-button--primary`)
       const bb = b?.getBoundingClientRect()
       const hit = bb ? document.elementFromPoint(bb.left + bb.width / 2, bb.top + bb.height / 2) : null
-      return { btn: r(b), input: r(document.querySelector(`${s} .kb-ask__foot input`)), fab: r(document.querySelector('.ta-fab')), foot: r(document.querySelector(`${s} .kb-ask__foot`)), pad: getComputedStyle(document.querySelector(`${s} .kb-ask__foot`)).paddingRight, hit: hit ? `${hit.tagName}.${[...hit.classList].join('.')}` : null }
+      return { btn: r(b), input: r(document.querySelector(`${s} .kb-ask__bar input`)), fab: r(document.querySelector('.ta-fab')), bar: r(document.querySelector(`${s} .kb-ask__bar`)), close: r(document.querySelector(`${s} .el-drawer__close-btn`)), hit: hit ? `${hit.tagName}.${[...hit.classList].join('.')}` : null }
     }, DRAWER)
     await shot(pg, 'mid-drawer.png')
     await clickAskSource(pg, DRAWER, '保固第 8 條')

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ASK_FIRST_REASONS,
   askSourceLabel,
+  askVerdict,
   askView,
   keepRecentTurns,
   type AskResult,
@@ -107,6 +108,27 @@ describe('「· 哪一份資料」', () => {
     expect(askSourceLabel({ sourceId: 'gone', title: 'x' }, names)).toBe('')
     expect(askSourceLabel({ sourceId: null, title: 'x' }, names)).toBe('')
     expect(askSourceLabel({ sourceId: 's1', title: 'x' }, null)).toBe('')
+  })
+})
+
+describe('每一題旁邊的小章（`D-168`）', () => {
+  it('照實講客人會拿到什麼：先問要不要轉＝答不出來，⛔ 不說成轉真人；全用等你看過的＝還沒上線', () => {
+    const v = (r: Partial<AskResult>) => askVerdict(askView({ ...base, ...r }))
+    expect(v({ answer: 'x', sources: [{ chunkId: 'c', title: 't', similarity: 1 }] })).toEqual({ text: '答得出來', tone: 'success' })
+    expect(v({ answer: 'x', sources: [{ chunkId: 'c', title: 't', similarity: 1, draft: true }] })).toEqual({ text: '還沒上線', tone: 'warning' })
+    expect(v({ answer: '不客氣', answerKind: 'social' })).toEqual({ text: '答得出來', tone: 'success' })
+    expect(v({ decision: 'disambiguate', disambiguation: { clarification: '哪一台？', options: [{ chunkId: 'a', title: 'A' }] } })).toEqual({ text: '會先反問', tone: 'info' })
+    for (const reason of ASK_FIRST_REASONS) expect(v({ decision: 'handoff', handoffReason: reason })).toEqual({ text: '答不出來', tone: 'warning' })
+    expect(v({ decision: 'handoff', handoffReason: 'user_request' })).toEqual({ text: '會轉真人', tone: 'warning' })
+    expect(v({ decision: 'skipped', scriptTrigger: { name: '查訂單', mode: 'keyword' } })).toEqual({ text: '交給自動回應', tone: 'info' })
+    expect(v({ decision: 'handoff', handoffReason: 'llm_error' })).toEqual({ text: '沒問成', tone: 'danger' })
+    expect(v({ decision: 'skipped' })).toEqual({ text: '不回覆', tone: 'info' })
+  })
+
+  it('連不上＝沒問成；還在問（沒結果也沒錯）＝不標', () => {
+    expect(askVerdict(null, '連不上，請再試一次')).toEqual({ text: '沒問成', tone: 'danger' })
+    expect(askVerdict(null)).toBeNull()
+    expect(askVerdict(null, '')).toBeNull()
   })
 })
 

@@ -114,8 +114,31 @@ export function askView(r: AskResult): AskView {
 }
 
 /**
+ * 每一題標題旁邊那一個小章（`D-168`）：之前問過的收成一行時，只看這個就知道那題怎麼了。
+ * 照實講客人會拿到什麼，跟 askView 同一把尺：
+ * - 信心不足／知識庫沒有（先問要不要轉）＝「答不出來」，⛔ 不說成「轉真人」；客人要真人、查訂單那幾種才是「會轉真人」
+ * - 答出來但用的全是「等你看過」的＝「還沒上線」（客人現在問不會這樣答，⛔ 不標「答得出來」）
+ * - 還在問（沒有結果也沒有錯）＝不標
+ */
+export type AskVerdictTone = 'success' | 'warning' | 'info' | 'danger'
+
+export function askVerdict(view: AskView | null, error?: string): { text: string, tone: AskVerdictTone } | null {
+  if (error) return { text: '沒問成', tone: 'danger' }
+  if (!view) return null
+  switch (view.kind) {
+    case 'answer': return view.draftOnly ? { text: '還沒上線', tone: 'warning' } : { text: '答得出來', tone: 'success' }
+    case 'ask': return { text: '會先反問', tone: 'info' }
+    case 'handoff': return view.canAddOne ? { text: '答不出來', tone: 'warning' } : { text: '會轉真人', tone: 'warning' }
+    case 'script': return { text: '交給自動回應', tone: 'info' }
+    case 'retry': return { text: '沒問成', tone: 'danger' }
+    case 'silent': return { text: '不回覆', tone: 'info' }
+  }
+}
+
+/**
  * 面板只留最近幾題（`C-315`）：這裡是「確認一題」的地方，不是第二個測試對話頁；
  * 留太多的話右邊那一欄捲很長，最新那題反而要找。
+ * `D-168` 起一題一張（點反問選項那幾步跟在同一張裡），數的是「幾題」不是「幾步」。
  */
 export const ASK_PANEL_MAX_TURNS = 5
 

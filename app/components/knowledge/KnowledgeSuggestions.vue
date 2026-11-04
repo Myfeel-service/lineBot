@@ -116,6 +116,7 @@ import { aiBudgetMessage } from '~~/shared/ai-budget'
 import { apiErrorText } from '~/utils/api-error-text'
 import { suggestionTopicLabel } from '~/utils/kb-suggestion-label'
 import { defaultAnsweredQueries } from '~/utils/kb-suggestion-answered'
+import { exampleQuestionsFromSuggestions } from '~/utils/kb-ask-examples'
 import type { AddOneCreated, AddOneSuggestion } from '~/utils/kb-add-one'
 
 interface SuggestionRow {
@@ -143,6 +144,8 @@ const emit = defineEmits<{
   (e: 'accepted'): void
   /** 待處理建議數:父頁面側欄的「工作台入口」要顯示數字 */
   (e: 'count', n: number): void
+  /** 前幾組的客人原句（`D-168`）：「問 AI 一題」還沒問過、也沒打開資料時列出來，點一句就問 */
+  (e: 'samples', questions: string[]): void
 }>()
 
 const { apiFetch, can, workspaceId } = useWorkspace()
@@ -183,8 +186,11 @@ const budgetPausedText = computed(() => {
 /** 這一組全部的客人原句（`C-311`）：伺服器還沒給 queries（舊版）就退回樣本句 */
 const groupQueries = (s: SuggestionRow) => (s.queries?.length ? s.queries : s.sampleQueries)
 
-// 載入完成與採用/忽略後都會換新陣列 → 每次變動都把最新數字報給父頁面
-watch(items, v => emit('count', v.length))
+// 載入完成與採用/忽略後都會換新陣列 → 每次變動都把最新數字（和前幾組的客人原句）報給父頁面
+watch(items, (v) => {
+  emit('count', v.length)
+  emit('samples', exampleQuestionsFromSuggestions(v))
+})
 
 /*
  * `C-314`：底下那一行（「上次分析：N 天前」／「尚未分析」／「讀不到分析結果」）拿掉了——

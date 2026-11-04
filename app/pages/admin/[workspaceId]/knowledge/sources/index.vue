@@ -372,7 +372,7 @@
         </div>
 
         <!-- 建議收件匣（草稿要看內容，維持獨立區塊）;count 讓側欄的工作台入口有數字可顯示 -->
-        <KnowledgeSuggestions @accepted="loadSources(true)" @count="onSuggestCount" />
+        <KnowledgeSuggestions @accepted="loadSources(true)" @count="onSuggestCount" @samples="suggestSamples = $event" />
       </div>
     </template>
 
@@ -844,7 +844,7 @@
   <!-- 右邊「問 AI」（`C-315`）：內容寬夠（≥ 1200）才常駐；問的人要有測試對話的權限（`playground.use`，觀察者沒有）。
        ⚠️ 欄跟抽屜只會有一個在畫面上：寬度跨過門檻時換位置，那一份對話會重來（不會兩份同時在問） -->
   <aside v-if="askMode === 'column'" class="src-ask-col">
-    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
+    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" :examples="askExamples" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
   </aside>
   </div>
 
@@ -859,7 +859,7 @@
     append-to-body
     class="src-ask-drawer"
   >
-    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
+    <KnowledgeAskPanel :source-names="askSourceNames" :current-source-id="selectedId" :examples="askExamples" @open-chunk="onAskOpenChunk" @add-one="onAskAddOne" />
   </el-drawer>
 
   <!--
@@ -1603,6 +1603,7 @@ import { formatFileSize } from '~/utils/knowledge-upload'
 import { apiErrorStatus, apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
 import type { AddOneCreated } from '~/utils/kb-add-one'
+import { exampleQuestionsFromChunks, type AskExamples } from '~/utils/kb-ask-examples'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
 import { groupSyncNoteText, parseGroupSync } from '~~/shared/knowledge-import-group'
 import type { KbFolderRow, ProductAliasCandidate } from '~/utils/kb-product-groups'
@@ -5224,6 +5225,19 @@ const askMode = computed<'column' | 'drawer' | 'none'>(() => {
 const askDrawerOpen = ref(false)
 /** 「用了這 N 條 · 哪一份」的資料名：手上的清單就有，傳進去面板就不用再讀一次 /api/ai/sources/list */
 const askSourceNames = computed<Record<string, string>>(() => Object.fromEntries(sources.value.map(s => [s.id, s.name])))
+/**
+ * 「問 AI 一題」還沒問過時列的那幾句（`D-168`，規則見 utils/kb-ask-examples）：
+ * 打開一份資料＝那一份裡 AI 會用的知識存著的客人問法；沒打開＝「AI 建議補的知識」前幾組的客人原句。
+ * 都是手上現成的，⛔ 不另外叫 AI 想題目。換一份資料時明細還沒回來（chunks 先清空）＝先不列，回來了才列那一份的
+ */
+const suggestSamples = ref<string[]>([])
+const askExamples = computed<AskExamples | null>(() => {
+  if (selectedId.value) {
+    const questions = exampleQuestionsFromChunks(chunks.value)
+    return questions.length ? { label: '試試這份資料的問題', questions } : null
+  }
+  return suggestSamples.value.length ? { label: '客人問過、AI 還答不出來', questions: suggestSamples.value } : null
+})
 // 寬度變了、抽屜那一種不在了（拉寬成常駐、或縮成手機）：抽屜的開著狀態要收掉，下次回到中間寬度不會自己跳出來
 watch(askMode, (m) => { if (m !== 'drawer') askDrawerOpen.value = false })
 
