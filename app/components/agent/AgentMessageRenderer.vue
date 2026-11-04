@@ -192,15 +192,34 @@
     <div v-if="entry.msg.meta" class="agm-highlight__meta">{{ entry.msg.meta }}</div>
   </div>
 
-  <!-- 完成摘要卡 -->
+  <!-- 完成摘要卡。打造那一趟（`C-457`／`D-172`）：先講「接上 LINE 之後，我會幫你」，做好的那幾樣收成一排小標籤，
+       最後給他看客人會收到的那則；接 LINE 那一趟沒給這幾格＝照舊一列一列 -->
   <div v-else-if="entry.msg.kind === 'summary'" class="agm-card agm-summary">
     <div class="agm-card__label">{{ entry.msg.title || '開通結果' }}</div>
-    <ul>
+    <div v-if="entry.msg.promise?.lines.length" class="agm-summary__promise">
+      <div class="agm-summary__promise-title">{{ entry.msg.promise.title }}</div>
+      <div v-for="(line, i) in entry.msg.promise.lines" :key="i" class="agm-summary__promise-line">{{ line }}</div>
+    </div>
+    <template v-if="entry.msg.itemsLabel">
+      <div class="agm-summary__sub">{{ entry.msg.itemsLabel }}</div>
+      <div class="agm-summary__chips">
+        <span v-for="(it, i) in entry.msg.items" :key="i" :class="['agm-summary__chip', { 'is-skipped': !it.done }]">
+          <span class="agm-summary__mark">{{ it.done ? '✓' : '–' }}</span>
+          <span>{{ it.label }}<template v-if="it.note">（{{ it.note }}）</template></span>
+        </span>
+      </div>
+    </template>
+    <ul v-else>
       <li v-for="(it, i) in entry.msg.items" :key="i" :class="{ 'is-skipped': !it.done }">
         <span class="agm-summary__mark">{{ it.done ? '✓' : '–' }}</span>
         <span>{{ it.label }}<template v-if="it.note">（{{ it.note }}）</template></span>
       </li>
     </ul>
+    <div v-if="entry.msg.preview" class="agm-summary__preview">
+      <div class="agm-summary__sub">{{ entry.msg.preview.caption }}</div>
+      <div class="agm-summary__bubble">{{ entry.msg.preview.text }}</div>
+    </div>
+    <div v-if="entry.msg.footnote" class="agm-summary__foot">{{ entry.msg.footnote }}</div>
   </div>
 
   <!-- 店家輪廓卡・分組版（`D-93`／`D-91`，`C-250` 落地）：你告訴我的／我猜的 N 項／還學不到的 N 項，

@@ -123,7 +123,28 @@ describe('打造那一趟（`C-250`／`D-102`）', () => {
     expect(block).toContain("title: 'MiniMe 打造完成'")
     expect(block).toContain('draftSteps.map')
     // ⚠️ 「接上 LINE 之後」不能拿掉：每日摘要只送通知名單裡的手機（`D-100`）
-    expect(block).toContain('接上 LINE 之後，節日前會在早上的摘要提醒你')
+    expect(block).toContain("title: '接上 LINE 之後，我會幫你'")
+  })
+
+  it('`C-457`／`D-172`：先講「之後我會幫你做什麼」，每一行都要真的會做', () => {
+    const i = chat.indexOf('async function stepBuildFinish')
+    const block = chat.slice(i, chat.indexOf('// ── 入口', i))
+    const code = block.split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n')
+    // 主角在最上面：promise 在 items 前面，做好的那幾樣收成一排小標籤
+    expect(code.indexOf('promise:')).toBeGreaterThan(-1)
+    expect(code.indexOf('promise:')).toBeLessThan(code.indexOf('items:'))
+    expect(code).toContain("itemsLabel: '這一趟做好的'")
+    // 歡迎訊息那行與預覽：真的建了才講（⛔ 按了先不要還講＝假承諾）
+    expect(code).toContain("builtKeys.has('welcome') && !!builtWelcomeText")
+    expect(code).toMatch(/welcomeBuilt \? \['客人一加好友，就送出你的歡迎訊息'\]/)
+    expect(code).toMatch(/welcomeBuilt \? \{ preview:/)
+    // ⛔ 新帳號 AI 回覆預設是關的；⛔ 免費方案不能發推播——這兩句都不可以出現
+    expect(code).not.toMatch(/幫你回|AI 會回|回客人/)
+    expect(code).not.toMatch(/準備.{0,4}推播|幫你推播/)
+    // 月曆那行搬進 promise，⛔ 不要兩處都講
+    expect(code).not.toContain('行銷月曆：')
+    // 歡迎訊息的字只在真的建成功時記下來
+    expect(chat).toContain("if (r.status === 'done' && d.key === 'welcome') builtWelcomeText = finalBody")
   })
 
   it('⛔ 痛點回扣只講真的建了的東西（對不上就整句不講）', () => {

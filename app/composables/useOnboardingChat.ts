@@ -566,6 +566,11 @@ export function useOnboardingChat() {
 
   /** 這一趟真的建成了哪幾樣（成績單、痛點回扣句都要看它——⛔ 講「剛剛採用的」之前先確認真的有） */
   const builtKeys = new Set<StoreDraftKey>()
+  /**
+   * 真的建出去的那一則歡迎訊息（他改過、換過說法就是最後那一版）。成績單最下面給他看「客人會收到這則」（`C-457`）。
+   * ⛔ 只在建成功時寫：按了先不要、建失敗都是空的＝成績單不畫，不假裝有。
+   */
+  let builtWelcomeText = ''
 
   /**
    * 「換個說法」（`D-89` ②）每張卡的狀態。key＝那張卡的 entry id。
@@ -671,6 +676,7 @@ export function useOnboardingChat() {
 
   async function stepStoreDrafts(profile: StoreProfileDoc) {
     draftSteps = []
+    builtWelcomeText = ''
     if (!canBuildDrafts(profile)) return
     const shopName = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
     const drafts = buildStoreDrafts({
@@ -759,6 +765,7 @@ export function useOnboardingChat() {
       draftSteps.push(r)
       track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited, reworded })
       if (r.status === 'done') builtKeys.add(d.key)
+      if (r.status === 'done' && d.key === 'welcome') builtWelcomeText = finalBody
       // ⚠️ 決定完就把框收回唯讀（不帶 editable），內容換成**他最後決定的那一版**
       updateMsg(cardId, {
         ...base,
@@ -2407,8 +2414,9 @@ export function useOnboardingChat() {
    *    （`C-250`③；沒給網址、或整理不出卡＝指著一件不存在的東西）。
    */
   function painPayoff(pain: string): string {
+    // ⚠️ `C-457`：「接上 LINE 之後客人一加就會收到」那半句拿掉——緊接著的成績單第一行就講同一件事
     if (pain === '加好友後沒人理' && builtKeys.has('welcome'))
-      return '你說最想解決<b>加好友後沒人理</b>——剛剛採用的<b>歡迎訊息</b>就是在解決這件事，接上 LINE 之後客人一加就會收到。'
+      return '你說最想解決<b>加好友後沒人理</b>——剛剛採用的<b>歡迎訊息</b>就是在解決這件事。'
     if (pain === '不知道推播要推什麼') {
       const f = nextFestival()
       if (f) return `你說最想解決<b>不知道推播要推什麼</b>——月曆排好了，最近是 <b>${f.inDays} 天後的${escapeHtml(f.name)}</b>。`
@@ -2429,14 +2437,37 @@ export function useOnboardingChat() {
    * ⚠️ 仍然要他按一下才走，⛔ 不自動跳：成績單是這一趟的成果，要讓他看得到才離開。
    * ⚠️ 成績單只列「這一趟做成了什麼」——「知識卡等你看過」「接上 LINE：還沒」那兩行不放
    *    （進後台兩秒後的導覽第 1、2 步就講，同一件事隔兩秒講兩次）。
+   *
+   * ⭐ `C-457`（`D-172`，2026-11-04 John 哥會議、老闆照建議）**先講「之後我會幫你做什麼」**：
+   *    John 哥：「像是一個我 interview 一個客服主管，然後他就跟我講說我家公司我會做（什麼）」。
+   *    原本整張是「做好了什麼」的打勾清單，他看完不知道 MiniMe 之後會替他做哪些事。
+   *    ⛔ 每一行都要**現在真的會做、這一趟也真的建了**（`D-100` 同一條）：
+   *    - 歡迎訊息那行看 `builtKeys`——按了先不要就不講。
+   *    - ⛔ **不寫「AI 會幫你回客人」**：新帳號的 AI 回覆預設是關的（`buildDefaultAiSettings`），
+   *      寫了就是假承諾。之後決定新帳號要不要預設打開，再加這一行。
+   *    - ⛔ 節日那行**不寫「幫你準備推播」**：免費方案不能發推播（`broadcast: 'none'`），而新店家都是免費。
+   *      摘要裡的節日提醒對免費方案也只講「先準備好」（`festivalReminderText` 的 `canBroadcast`）。
+   *    ⚠️ 「接上 LINE 之後」不能拿掉：每日摘要只送通知名單裡的手機，名單要接上 LINE 才有（`D-100`）。
+   * ⚠️ 結尾那顆照舊叫「進入後台」（`D-102` 拍板）：示意時寫過「先從第一步開始」，那是歡迎訊息預覽的說明，⛔ 不是按鈕名。
    */
   async function stepBuildFinish(profileDone: boolean) {
     progress.value = BUILD_STEP.done
     const payoff = profileDone ? painPayoff(String(revealedProfile?.fields?.pain?.value ?? '').trim()) : ''
     if (payoff) await say(payoff)
+    const welcomeBuilt = builtKeys.has('welcome') && !!builtWelcomeText
     card({
       kind: 'summary',
       title: 'MiniMe 打造完成',
+      promise: {
+        title: '接上 LINE 之後，我會幫你',
+        lines: [
+          ...(welcomeBuilt ? ['客人一加好友，就送出你的歡迎訊息'] : []),
+          // 摘要講的是「新朋友 +N 位」（人數），⛔ 不寫「誰加入」——那則不點名新朋友
+          '每天早上報告：昨天幾位新朋友、誰還在等你',
+          '節日快到時先提醒你，給你這一檔的建議',
+        ],
+      },
+      itemsLabel: '這一趟做好的',
       items: [
         { label: 'MiniMe 認識你的店', done: profileDone, ...(profileDone ? {} : { note: '你先跳過了' }) },
         // ⭐ 列出「哪幾樣」，⛔ 不要退回只寫數字（他要知道的是哪三樣）
@@ -2445,10 +2476,10 @@ export function useOnboardingChat() {
           done: s.status === 'done',
           ...(s.status === 'done' ? {} : { note: s.status === 'declined' ? '你選了先不要' : s.status === 'failed' ? (s.error || '沒有成功') : '沒有執行' }),
         })),
-        // ⚠️ 「接上 LINE 之後」不能拿掉：每日摘要只送通知名單裡的手機，名單要接上 LINE 才有（`D-100`）
-        { label: '行銷月曆：接上 LINE 之後，節日前會在早上的摘要提醒你', done: true },
-        { label: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆`, done: true, note: '不需綁卡' },
       ],
+      ...(welcomeBuilt ? { preview: { caption: '接上 LINE 後，客人加你好友會收到這則', text: builtWelcomeText } } : {}),
+      // 方案／額度留在成績單（2026-09-02 搬來的理由見接 LINE 那一趟的成績單），收成最下面一行小字
+      footnote: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆，不需綁卡`,
     })
     // ⭐ `C-250`②：建成的那幾樣記下來——落地導覽第 1 步、小幫手「開帳那一趟建了什麼」、
     //    「看看你剛剛做的東西」三處都吃這一份（⛔ 沒建成的不記：列了就得解釋「它其實沒建」）

@@ -116,8 +116,22 @@ export type AgentMsg =
   /**
    * 完成摘要卡。`title` 不給＝預設「開通結果」（接 LINE 那一趟）；
    * 打造那一趟給「MiniMe 打造完成」（`C-250`，⛔ 不再叫「第 1 段完成」——老闆 09-25「第一段第二段不好理解」）。
+   *
+   * `C-457`（`D-172`，2026-11-04 John 哥會議、老闆照建議）打造那一趟多四格，接 LINE 那一趟不給＝照舊一列一列：
+   * - `promise`：最上面那塊「接上 LINE 之後，我會幫你」——先講之後會做什麼，再講這一趟做了什麼。
+   * - `itemsLabel`：有給就把 `items` 收成一排小標籤，這是那排的小標題（主角讓給 `promise`）。
+   * - `preview`：客人會收到的那則（歡迎訊息真的採用了才給）。
+   * - `footnote`：最下面一行小字（方案額度）。
    */
-  | { kind: 'summary'; title?: string; items: { label: string; done: boolean; note?: string }[] }
+  | {
+    kind: 'summary'
+    title?: string
+    items: { label: string; done: boolean; note?: string }[]
+    promise?: { title: string; lines: string[] }
+    itemsLabel?: string
+    preview?: { caption: string; text: string }
+    footnote?: string
+  }
   /**
    * 店家輪廓卡（`D-85` / `C-219`）——接線成功那一刻揭曉「我對你的店的認識」。
    *

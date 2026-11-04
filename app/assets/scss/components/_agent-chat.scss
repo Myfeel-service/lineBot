@@ -746,6 +746,87 @@
 
     .is-skipped & { color: var(--el-color-warning); }
   }
+
+  /* ── 打造完成（`C-457`／`D-172`）──────────────────────────────
+     ⭐ 主角是「接上 LINE 之後，我會幫你」那塊（John 哥：先講清楚會幫你做什麼）；
+        做好的那幾樣退成一排小標籤，⛔ 不要再長回一列一列——兩塊一樣重就又沒有主角了。 */
+  &__promise {
+    margin: 4px 0 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--el-color-success-light-9);
+  }
+
+  &__promise-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--el-color-success-dark-2);
+    margin-bottom: 2px;
+  }
+
+  &__promise-line {
+    position: relative;
+    padding-left: 12px;
+    line-height: 1.7;
+
+    &::before {
+      content: "·";
+      position: absolute;
+      left: 2px;
+      font-weight: 700;
+    }
+  }
+
+  &__sub {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  &__chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    padding: 2px 9px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 999px;
+
+    &.is-skipped { color: var(--el-text-color-secondary); }
+  }
+
+  &__preview { margin-top: 10px; }
+
+  /* 客人那一側看到的樣子＝對話裡「對方」那種泡泡（同 `.agm-msg--agent .agm-bubble`）。
+     ⚠️ 歡迎訊息可以被改得很長：最多露 8 行，⛔ 不讓一則訊息把成績單撐到看不到「進入後台」 */
+  &__bubble {
+    margin-top: 4px;
+    padding: 8px 12px;
+    background: var(--el-fill-color-light);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 12px;
+    border-bottom-left-radius: 4px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 8;
+    overflow: hidden;
+  }
+
+  &__foot {
+    margin-top: 10px;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
 }
 
 /* ── 店家輪廓卡（`D-85` / `C-219`）：揭曉「我對你的店的認識」 ──
