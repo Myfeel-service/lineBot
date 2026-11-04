@@ -1566,6 +1566,29 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     ],
   },
   /**
+   * 做一張邀請卡（`C-458`／`D-169`，John 哥 2026-11-04「第一杯冰沙」）。
+   * 接完 LINE 的「上線之後」最後一步的「帶我做這項」開的就是這支（`liveTourSteps`）。
+   * ⛔ 不設 `requires`：那顆按鈕不鎖角色（打的端點只要 workspace.read），設了反而讓看得到按鈕的人看不到教學。
+   */
+  {
+    id: 'invite-card',
+    category: 'growth',
+    icon: Postcard,
+    label: '做一張邀請卡',
+    blurb: '印一張桌牌擺櫃台、存一張分享圖傳出去，客人掃 QR 就加你好友。',
+    route: wid => `/admin/${wid}/users`,
+    steps: [
+      {
+        target: '[data-tour="usr-invite"]',
+        title: '按這裡做邀請卡',
+        description:
+          '有兩樣：<strong>A4 桌牌</strong>按「列印」，擺在櫃台或門口；<strong>分享圖</strong>按「下載圖片」，貼到 FB、IG 或傳給客人。'
+          + '客人掃上面的 QR，就會加入你的 LINE 好友。',
+        placement: 'bottom-end',
+      },
+    ],
+  },
+  /**
    * 好友統計（2026-09-29 `D-109`）。
    *
    * 為什麼補：這一頁 09-23 才開，晚於 09-18 的逐頁盤點（`D-82`），頁首沒填 `help-topics`

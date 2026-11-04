@@ -54,6 +54,8 @@
 @use "./components/knowledge-add-one";
 // 試發框：推播試發、機器人模組「傳給我自己看」（`C-426`）共用
 @use "./components/test-send-dialog";
+// 加好友邀請卡（`C-458`／`D-169`）：「好友」頁「邀請卡」那個框
+@use "./components/invite-card";
 
 /* ── Page Splitting ───────────────────────────────────────── */
 @use "./admin/shared";

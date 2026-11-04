@@ -1,11 +1,13 @@
 import QRCode from 'qrcode'
+import { fetchLineAvatarDataUrl } from '~~/server/utils/line-avatar-data-url'
 import { resolveLineOaProfile } from '~~/server/utils/line-oa-basic-id'
 import { requireCapability } from '~~/server/utils/workspace-auth'
 
 /**
  * GET /api/admin/onboarding/oa-invite?workspaceId=...
  *
- * 開通引導「等第一則訊息」那一步專用：回這個官方帳號的**加好友方式**。
+ * 開通引導「等第一則訊息」那一步：回這個官方帳號的**加好友方式**。
+ * 2026-11-04 起「好友」頁的邀請卡（`C-458`／`D-169`）也用這支，帶 `?avatar=1` 多拿頭像本體。
  *
  * 為什麼要有這支（2026-08-28 老闆拍板）：那一步只說「拿手機加你的官方帳號好友」，
  * **沒說去哪加**——剛開通的帳號零好友，新手根本不知道要在 LINE 搜什麼。
@@ -36,6 +38,12 @@ interface OaInviteResponse {
    */
   displayName: string
   pictureUrl: string
+  /**
+   * 頭像轉成的 data URL——只有帶 `?avatar=1` 才給（`C-458` 邀請卡：canvas 畫跨網域的圖會存不出來，
+   * 理由見 `line-avatar-data-url.ts`）。⛔ 開通引導那一頁不帶：多抓一張圖只會讓見證卡變慢。
+   * 抓不到為空字串（邀請卡改畫店名第一個字）。
+   */
+  pictureDataUrl?: string
 }
 
 /**
@@ -52,6 +60,25 @@ interface OaInviteResponse {
 const inviteCache = new Map<string, { addFriendUrl: string, qrDataUrl: string }>()
 const INVITE_CACHE_MAX = 500
 
+/**
+ * 頭像 data URL 也記著，鍵是頭像網址（換頭像＝LINE 給新網址，自然失效）。
+ * ⛔ 只存抓到的：抓不到（暫時性）存成空字串就變成永久沒頭像。上限壓小：一張頭像幾十 KB。
+ */
+const avatarCache = new Map<string, string>()
+const AVATAR_CACHE_MAX = 100
+
+async function avatarDataUrl(pictureUrl: string): Promise<string> {
+  if (!pictureUrl) return ''
+  const hit = avatarCache.get(pictureUrl)
+  if (hit) return hit
+  const dataUrl = await fetchLineAvatarDataUrl(pictureUrl)
+  if (dataUrl) {
+    if (avatarCache.size >= AVATAR_CACHE_MAX) avatarCache.clear()
+    avatarCache.set(pictureUrl, dataUrl)
+  }
+  return dataUrl
+}
+
 export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
   // 開通引導只有 owner/admin 走得到（agent/viewer 會落在 locked 版面），但這支只讀不寫，
   // 門檻與同資料夾的 first-message 一致
@@ -64,9 +91,14 @@ export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
   if (!basicId)
     return { basicId: '', addFriendUrl: '', qrDataUrl: '', displayName, pictureUrl }
 
+  // 邀請卡（`C-458`）才要頭像本體；開通引導不帶這個參數，照舊不多抓
+  const avatar = getQuery(event).avatar === '1'
+    ? { pictureDataUrl: await avatarDataUrl(pictureUrl) }
+    : {}
+
   const cached = inviteCache.get(basicId)
   if (cached)
-    return { basicId, ...cached, displayName, pictureUrl }
+    return { basicId, ...cached, displayName, pictureUrl, ...avatar }
 
   const addFriendUrl = `https://line.me/R/ti/p/${encodeURIComponent(basicId)}`
 
@@ -91,5 +123,5 @@ export default defineEventHandler(async (event): Promise<OaInviteResponse> => {
     inviteCache.set(basicId, { addFriendUrl, qrDataUrl })
   }
 
-  return { basicId, addFriendUrl, qrDataUrl, displayName, pictureUrl }
+  return { basicId, addFriendUrl, qrDataUrl, displayName, pictureUrl, ...avatar }
 })

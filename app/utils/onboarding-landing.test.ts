@@ -25,11 +25,13 @@ import {
   readOnboardingBuilt,
   saveOnboardingBuilt,
 } from './onboarding-landing'
+import { TUTORIAL_TOPICS } from './tutorial-topics'
 
 const APP_DIR = fileURLToPath(new URL('..', import.meta.url))
 const read = (p: string) => readFileSync(`${APP_DIR}${p}`, 'utf8')
 const agent = read('components/TutorialAgent.vue')
 const layout = read('layouts/default.vue')
+const usersPage = read('pages/admin/[workspaceId]/users.vue')
 const strip = read('components/admin/AdminPageAlertStrip.vue')
 const playground = read('pages/admin/[workspaceId]/ai-playground.vue')
 const convPanel = read('components/conversations/AdminPanel.vue')
@@ -125,9 +127,29 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
   it('最後一步照他真的還沒做的事講（⛔ 試過測試對話的人不再叫他去問一題）', () => {
     const tried = liveTourSteps({ received: true, triedPlayground: true }).at(-1)!
     const notTried = liveTourSteps({ received: true, triedPlayground: false }).at(-1)!
-    expect(tried.target).toBe('[data-tour="ta-fab"]')
     expect(tried.description).not.toContain('測試對話')
     expect(notTried.description).toContain('測試對話')
+    expect(notTried.description).toContain('右下角的小幫手會提醒你')
+  })
+
+  it('⭐ `C-458`／`D-169`：最後一步是「擺好你的邀請卡」，指側欄「好友」、帶我做這項＝開邀請卡教學', () => {
+    for (const received of [true, false]) {
+      const last = liveTourSteps({ received, triedPlayground: true }).at(-1)!
+      expect(last.title).toBe('擺好你的邀請卡')
+      expect(last.target).toBe('[data-tour="nav-users"]')
+      expect(last.actionTopicId).toBe('invite-card')
+      expect(last.description).toContain('邀請卡')
+    }
+    // 錨點要真的在：側欄那一列、好友頁那顆按鈕；教學真的存在、指的是那顆按鈕
+    expect(layout).toContain("label: '好友', tour: 'nav-users'")
+    expect(usersPage).toContain('data-tour="usr-invite"')
+    expect(usersPage).toContain('<AdminInviteCardDialog v-model="inviteVisible" />')
+    const topic = TUTORIAL_TOPICS.find(t => t.id === 'invite-card')
+    expect(topic?.steps.map(s => s.target)).toEqual(['[data-tour="usr-invite"]'])
+    expect(topic?.route?.('w1')).toBe('/admin/w1/users')
+    // ⛔ 那顆按鈕不鎖角色，教學也不可以鎖（看得到按鈕卻看不到教學）
+    expect(topic?.requires).toBeUndefined()
+    expect(usersPage).toContain("'invite-card'")
   })
 
   it('還有卡沒看過：最後一步把它列成待辦（跟測試對話那件一起算件數）', () => {
@@ -148,7 +170,8 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
   it('⭐ 按了「是我」、真的加進通知名單了（`C-250`③）：才講手機會收到通知與早上的摘要', () => {
     const steps = liveTourSteps({ received: true, triedPlayground: true, phoneNotified: true })
     expect(steps[1]!.description).toContain('你的手機也會同時收到通知')
-    expect(steps.at(-1)!.description).toContain('每天早上的摘要也會傳到你的手機')
+    // `C-458`：最後一步換成邀請卡，「早上的摘要」搬到講手機的那一步
+    expect(steps[1]!.description).toContain('每天早上的摘要也會傳到你的手機')
   })
 
   it('精靈結尾不再開 7 步地圖，改帶 ?from= 落在客服對話', () => {

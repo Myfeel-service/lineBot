@@ -51,6 +51,8 @@ export const AGENT_TEACHINGS = {
   'tour-ai-scripts': { kind: 'tour', ref: 'ai-scripts', hint: '建第一條自動回應：客人說什麼就自動回什麼、關鍵字怎麼比對、客人加好友時要回什麼', requires: 'scripts.write' },
   'tour-ai-scripts-flow': { kind: 'tour', ref: 'ai-scripts-flow', hint: '多步驟的自動回應：問客人資料、答不出來的退路、依答案分流、試跑整條（預約、報名、退貨）', requires: 'scripts.write' },
   'tour-users': { kind: 'tour', ref: 'users', hint: '好友名單、依標籤篩選、批次貼標', requires: 'customers.write' },
+  // `C-458`／`D-169`：⛔ 不填 requires——「邀請卡」那顆不鎖角色（打的端點只要 workspace.read）
+  'tour-invite-card': { kind: 'tour', ref: 'invite-card', hint: '做加好友邀請卡：A4 桌牌印出來擺櫃台、分享圖存下來傳給客人、貼 FB／IG，客人掃 QR 就加好友' },
   'tour-friend-stats': { kind: 'tour', ref: 'friend-stats', hint: '好友統計怎麼看：產生報告、行銷提案怎麼擬文案開推播、客人最近在想什麼' },
   'tour-tags': { kind: 'tour', ref: 'tags', hint: '建好友標籤、從範本建、英文代號怎麼取', requires: 'tags.write' },
   'tour-campaigns': { kind: 'tour', ref: 'campaigns', hint: '活動標籤：用一條連結收名單、加好友自動貼標', requires: 'marketing.write' },

@@ -1,0 +1,108 @@
+/* ── 加好友邀請卡（`C-458`／`D-169`，`AdminInviteCardDialog.vue`）─────────────
+   兩張預覽的比例不一樣（A4 0.71、分享圖 0.8），⛔ 不要硬撐成同寬：用同一個高度上限，
+   兩張的上緣、按鈕列各自對齊就好。 */
+.invite-card {
+  &__intro {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.75;
+    color: var(--el-text-color-regular);
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    align-items: start;
+
+    @media (max-width: 560px) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  &__item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  &__head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    b {
+      font-size: 14px;
+      color: var(--el-text-color-primary);
+    }
+
+    span {
+      font-size: 12px;
+      color: var(--el-text-color-secondary);
+    }
+  }
+
+  &__preview {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+    padding: 12px;
+    background: var(--el-fill-color-lighter);
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+
+    img {
+      display: block;
+      max-width: 100%;
+      max-height: 340px;
+      height: auto;
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.14);
+    }
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .el-button + .el-button { margin-left: 0; }
+  }
+
+  &__notice {
+    margin: 4px 0 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--el-text-color-secondary);
+
+    &.is-error { color: var(--el-color-danger); }
+  }
+
+  &__link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--el-border-color-lighter);
+  }
+
+  &__link-label {
+    flex: none;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
+
+  &__link-val {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding: 5px 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    background: var(--el-fill-color-light);
+    border-radius: 6px;
+  }
+}

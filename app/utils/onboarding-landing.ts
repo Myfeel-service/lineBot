@@ -182,29 +182,37 @@ export function liveTourSteps(opts: {
   steps.push({
     target: '[data-tour="conv-tabs"]',
     title: '先看「待真人」這一格',
+    // `C-458`：「每天早上的摘要」從最後一步搬來這裡（最後一步換成邀請卡）——同一件事：你的手機會收到什麼
     description: opts.phoneNotified
-      ? 'AI 答不出來、客人說要找真人的，會排在這裡——<strong>你的手機也會同時收到通知</strong>。'
+      ? 'AI 答不出來、客人說要找真人的，會排在這裡——<strong>你的手機也會同時收到通知</strong>，每天早上的摘要也會傳到你的手機。'
       : 'AI 答不出來、客人說要找真人的，會排在這裡。',
     placement: 'right',
   })
+  /**
+   * ⭐ `C-458`（`D-169`，John 哥 2026-11-04「一回來大家就期待第一杯冰沙」）：最後一步從「小幫手會提醒你」
+   *    換成**擺好邀請卡**——剛接上 LINE、零個好友，下一件真正會讓客人出現的事是讓人加你好友。
+   * ⚠️ 指側欄「好友」那一列（邀請卡住在那頁），「帶我做這項」直接開那支教學、把按鈕指給他。
+   * ⚠️ 原本那句「還差幾件」沒有丟：縮成一句接在後面，件數照舊算（⛔ 講他已經做過的事＝廢話）。
+   */
   steps.push({
-    target: '[data-tour="ta-fab"]',
-    title: '接下來，小幫手會提醒你',
-    // ⚠️ 照他**真的還沒做的事**講：打造完就進過測試對話的人，⛔ 不再叫他去問一題
-    description: liveTodoText(opts),
-    placement: 'top-end',
+    target: '[data-tour="nav-users"]',
+    title: '擺好你的邀請卡',
+    description: `客人要先加你好友，才找得到你。到「<strong>好友</strong>」頁按「<strong>邀請卡</strong>」：`
+      + `印一張擺在櫃台，或存成圖片傳給客人。${liveTodoText(opts)}`,
+    placement: 'right',
+    actionTopicId: 'invite-card',
   })
   return steps
 }
 
-/** 「上線之後」最後一步：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話） */
-function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number, phoneNotified?: boolean }): string {
+/** 「上線之後」最後一步的尾巴：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話；都做了就不講） */
+function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number }): string {
   const todo: string[] = []
   if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 條知識、按採用</strong>，客人問價格、細節它才答得出來`)
   if (!opts.triedPlayground) todo.push('去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人')
   return todo.length
-    ? `還差 ${todo.length} 件：${todo.join('；')}。`
-    : `哪裡怪怪的、下一步做什麼，它會<strong>主動說</strong>。${opts.phoneNotified ? '每天早上的摘要也會傳到你的手機。' : ''}`
+    ? `<br>另外還差 ${todo.length} 件，右下角的小幫手會提醒你：${todo.join('；')}。`
+    : ''
 }
 
 /** 「上線之後」會跑幾步（結尾那顆鈕寫的步數要跟導覽計數同一個數字） */
