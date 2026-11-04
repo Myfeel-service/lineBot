@@ -122,6 +122,10 @@ describe('⛔ 規矩', () => {
     expect(dialog).toContain('create(r.addFriendUrl')
     expect(dialog).not.toMatch(/\/api\/r\/|\/api\/t\//)
   })
+  it('code review 第 15 條：上次沒畫成（還沒接 LINE、畫失敗）＝再打開就重抓，⛔ 不要整頁重新整理才有', () => {
+    expect(dialog).toContain('madeFor === wid && invite.value?.basicId && urls.a4 && urls.share')
+  })
+
   it('第一版不做 Email 邀請', () => {
     expect(dialog).not.toMatch(/sendMail|\/api\/.*email/i)
   })

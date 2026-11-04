@@ -12,6 +12,8 @@
  * ⛔ 卡上的字**只有店家寫了禮物才提禮物**：沒寫就只問生日。承諾了就要真的送（客人會記得）。
  */
 
+import { taipeiDate } from './time'
+
 /** postback data：只有這一個值（不帶任何參數，日期在 LINE 給的 `params.date`） */
 export const BIRTHDAY_POSTBACK_DATA = 'birthday=set'
 
@@ -63,6 +65,9 @@ export function birthdayAskText(gift: string): string {
 /** 卡片上那句話底下的小字（⛔ 不寫成「我們會記得你」這種我們沒做的事） */
 export const BIRTHDAY_ASK_NOTE = '只會記下月和日。'
 export const BIRTHDAY_BUTTON_LABEL = '🎂 告訴我生日'
+
+/** 存生日失敗時回客人的那一句（重送會被當成重複略過，所以要請他自己再選一次） */
+export const BIRTHDAY_SAVE_FAILED_TEXT = '剛剛沒有記到你的生日，麻煩再按一次「告訴我生日」選一次 🙏'
 
 /** 客人選完日期，我們回的那一句 */
 export function birthdayConfirmText(month: number, day: number, gift: string, changed: boolean): string {
@@ -157,6 +162,25 @@ export function birthdayKeysForDay(dayKey: string): Array<{ month: number, day: 
 }
 
 /**
+ * `since` 到 `day`（含頭尾）的每一天（休假日回來那天把休假那幾天一起講，code review 第 4 條）。
+ * 格式不對、倒過來、超過 7 天＝null（⛔ 網址參數是人改得到的，不讓它一次撈一整年）。
+ */
+export const BIRTHDAY_RANGE_MAX_DAYS = 7
+export function birthdayDayRange(since: string, day: string): string[] | null {
+  const re = /^\d{4}-\d{2}-\d{2}$/
+  if (!re.test(since) || !re.test(day)) return null
+  const start = Date.parse(`${since}T00:00:00Z`)
+  const end = Date.parse(`${day}T00:00:00Z`)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return null
+  const out: string[] = []
+  for (let t = start; t <= end; t += 86_400_000) {
+    out.push(new Date(t).toISOString().slice(0, 10))
+    if (out.length > BIRTHDAY_RANGE_MAX_DAYS) return null
+  }
+  return out
+}
+
+/**
  * 生日祝福那則的預設字（`D-170`：早上報告按連結 → 推播頁已經寫好，店家看一眼再送）。
  * `{{displayName}}`＝一人一則換成他自己的名字（`D-118`）。⛔ 沒寫禮物就不提禮物；⛔ 不替店家編領取方式。
  */
@@ -175,7 +199,7 @@ export interface BirthdayDigestFacts {
   today: { count: number, names: string[] } | null
 }
 
-/** 台北這個月（1–12） */
+/** 台北這個月（1–12）。⚠️ 吃 `shared/time` 的 `taipeiDate`（code review 第 14 條：⛔ 不另寫一種台北時間算法） */
 export function taipeiMonth(now: Date = new Date()): number {
-  return Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', month: 'numeric' }).format(now))
+  return Number(taipeiDate(now).slice(5, 7))
 }

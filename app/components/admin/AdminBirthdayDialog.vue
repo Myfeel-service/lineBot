@@ -21,6 +21,11 @@
           <el-switch v-model="form.enabled" :disabled="!canEdit" data-tour="bday-switch" />
           <span class="birthday__switch-label">加好友時問生日</span>
         </div>
+        <!-- code review 第 1、6 條：講清楚哪些人會收到、什麼時候不附（⛔ 不可以默默不送） -->
+        <p class="birthday__hint birthday__switch-hint">
+          打開後，客人加好友時歡迎訊息後面多附這張卡（從活動連結加好友的人也會收到）。
+          歡迎訊息最後一則有快速回覆按鈕時不附——附了那排按鈕會不見。
+        </p>
 
         <div class="admin-field-group">
           <AdminFieldLabel text="生日當月送什麼（選填）" tight />
@@ -31,7 +36,9 @@
             placeholder="例：來店招待一杯飲料"
             :disabled="!canEdit"
           />
-          <p class="birthday__hint">沒寫就只問生日、不提禮物。寫了就要真的送——客人會記得。</p>
+          <p class="birthday__hint">
+            沒寫就只問生日、不提禮物。寫了就要真的送——加好友那張卡、「問生日」模組、選完日期的回覆、生日祝福都會講。
+          </p>
         </div>
 
         <div class="admin-field-group">
@@ -68,7 +75,9 @@
             他們不會再收到歡迎訊息。建一個「問生日」機器人模組，推播選「觸發機器人模組 → 問生日」就能問；
             圖文選單也能放一格指向它，讓客人隨時自己留。
           </p>
-          <div v-if="moduleRow" class="birthday__module-row">
+          <!-- code review 第 9 條：清單還沒讀回來不給建立鈕（手快一按就建出第二個「問生日」） -->
+          <div v-if="moduleLoading" class="birthday__hint">正在看有沒有建過…</div>
+          <div v-else-if="moduleRow" class="birthday__module-row">
             <span>已經有「{{ moduleRow.name }}」模組。</span>
             <a class="ar-link" :href="moduleEditHref" target="_blank" rel="noopener">編輯這個模組 ↗</a>
             <a class="ar-link" :href="broadcastHref" target="_blank" rel="noopener">去推播 ↗</a>
@@ -123,6 +132,7 @@ const canCreateModule = computed(() => can('marketing.write'))
 /** 已經有「問生日」模組了沒（照名字找自建模組；他改了名字＝找不到，會再給一次建立鈕） */
 const moduleRow = ref<{ id: string, name: string } | null>(null)
 const moduleLoadError = ref('')
+const moduleLoading = ref(false)
 const creatingModule = ref(false)
 const moduleEditHref = computed(() => moduleRow.value ? `/admin/${workspaceId.value}/flow?id=${encodeURIComponent(moduleRow.value.id)}` : '')
 const broadcastHref = computed(() => `/admin/${workspaceId.value}/broadcasts`)
@@ -165,6 +175,7 @@ async function load() {
     .then((r) => { stats.value = r })
     .catch(() => { statsError.value = '幾位留了生日這次讀不到。' })
   moduleLoadError.value = ''
+  moduleLoading.value = true
   apiFetch<Array<{ id: string, name?: string, isSystem?: boolean }>>('/api/flow/list', { query: { fields: 'picker' } })
     .then((rows) => {
       const hit = (rows ?? []).find(r => !r.isSystem && String(r.name ?? '').trim() === BIRTHDAY_MODULE_NAME)
@@ -172,14 +183,20 @@ async function load() {
     })
     // ⛔ 讀不到不可以當成「沒有」再給建立鈕：會建出第二個「問生日」
     .catch(() => { moduleLoadError.value = '讀不到機器人模組清單，等一下再打開一次試試。' })
+    .finally(() => { moduleLoading.value = false })
 }
 
+/**
+ * 建「問生日」模組。⚠️ 框裡改了還沒存就先存（code review 第 7 條）：模組那句話寫的是**存好的**生日禮，
+ * 跟選完日期的回覆、生日祝福講的同一份——⛔ 不可以模組卡寫了禮物、回覆卻不提。
+ */
 async function createModule() {
+  if (canEdit.value && dirty.value && !(await persist())) return
   creatingModule.value = true
   try {
     const created = await apiFetch<{ id: string, name?: string }>('/api/flow/create', {
       method: 'POST',
-      body: { name: BIRTHDAY_MODULE_NAME, messages: buildBirthdayModuleMessages(form.gift), isActive: true },
+      body: { name: BIRTHDAY_MODULE_NAME, messages: buildBirthdayModuleMessages(saved.value.gift), isActive: true },
     })
     moduleRow.value = { id: created.id, name: String(created.name || BIRTHDAY_MODULE_NAME) }
     showToast('已建立「問生日」模組：推播選「觸發機器人模組」就能發給現有好友', 'success')
@@ -193,7 +210,8 @@ async function createModule() {
   }
 }
 
-async function save() {
+/** 存設定；成功回 true（儲存鈕與「建立『問生日』模組」共用） */
+async function persist(): Promise<boolean> {
   saving.value = true
   try {
     const next = normalizeBirthdaySettings({ enabled: form.enabled, gift: form.gift })
@@ -203,15 +221,21 @@ async function save() {
     })
     saved.value = normalizeBirthdaySettings(r?.birthday ?? next)
     Object.assign(form, saved.value)
-    showToast(saved.value.enabled ? '已儲存：之後加好友的客人會被問生日' : '已儲存：加好友時不問生日', 'success')
-    visible.value = false
+    return true
   }
   catch (e: unknown) {
     const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
     showToast(msg || '沒有存成功，再按一次試試', 'error')
+    return false
   }
   finally {
     saving.value = false
   }
+}
+
+async function save() {
+  if (!(await persist())) return
+  showToast(saved.value.enabled ? '已儲存：之後加好友的客人會被問生日' : '已儲存：加好友時不問生日', 'success')
+  visible.value = false
 }
 </script>

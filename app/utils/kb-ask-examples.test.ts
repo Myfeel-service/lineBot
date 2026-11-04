@@ -65,4 +65,14 @@ describe('沒打開資料時：AI 建議補的那幾組客人原句', () => {
   it('沒有建議＝空的', () => {
     expect(exampleQuestionsFromSuggestions([])).toEqual([])
   })
+
+  it('code review 第 11 條：先挑全部原句（跟「AI 建議補的知識」那張卡同一個先後），沒有能用的才用樣本句', () => {
+    const long = '我'.repeat(ASK_EXAMPLE_MAX_CHARS + 1)
+    // 樣本句只有一句太長、全部原句裡有短的：以前整組被略過
+    expect(exampleQuestionsFromSuggestions([{ sampleQueries: [long], queries: [long, '可以分期嗎？'] }])).toEqual(['可以分期嗎？'])
+    // 兩邊都有能用的：拿全部原句那一句
+    expect(exampleQuestionsFromSuggestions([{ sampleQueries: ['樣本句？'], queries: ['原句？'] }])).toEqual(['原句？'])
+    // 全部原句都不能用：退回樣本句
+    expect(exampleQuestionsFromSuggestions([{ sampleQueries: ['樣本句？'], queries: [long] }])).toEqual(['樣本句？'])
+  })
 })

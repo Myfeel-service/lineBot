@@ -60,6 +60,7 @@ import {
 } from '~~/shared/taiwan-festivals'
 import { pickDigestFestival } from './festival-digest-pick'
 import { workspaceBroadcastTier } from './broadcast-plan-gate'
+import { broadcastEntryLockText } from '~~/shared/billing/plans'
 import { ALERT_LABELS, DIGEST_WARNING_ALERTS, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import type { WorkspaceAlertItem } from '~~/shared/types/alerts'
 import { collectWorkspaceAlerts, countRecentUnboundRenewals } from './workspace-alerts'
@@ -1482,12 +1483,17 @@ export async function dailyBacklogDigest(db: Firestore) {
 
     // ── 這裡開始才是真的要花錢的查詢（每個工作區一天只會走到一次）──────
     const unknownNotes: string[] = []
+    /**
+     * `D-170` 壽星講哪幾天（code review 第 4 條）：上一則報告之後到今天。coverDays 的第一天是上一則報告那天
+     * （那一則自己講過那天的壽星），之後是休假沒發報告的日子——⛔ 只講今天的話，週末生日的人永遠沒人提。
+     */
+    const birthdayDays = [...coverDays.slice(1), today]
     const [yesterday, waiting, counts, birthdayFacts] = await Promise.all([
       loadDigestYesterday(db, ws, coverDays),
       loadDigestWaiting(db, ws, nowMs, settings.serviceHours),
       loadDigestCounts(db, ws, nowMs, coverDays.length),
-      // `D-170`：幾位留了生日（那幾天）＋今天的壽星。兩個等號的 count／查詢，⛔ 不用開複合索引
-      loadBirthdayDigest(db, ws, coverDays, today),
+      // `D-170`：幾位留了生日（那幾天）＋壽星。等號的 count／查詢，⛔ 不用開複合索引
+      loadBirthdayDigest(db, ws, coverDays, birthdayDays),
     ])
     // 成績查不到不進這裡：開頭那句自己講、指去統計頁（括號那句的「明天會再看一次」對成績是假承諾，`C-362`）
     if (!waiting) unknownNotes.push('正在等真人的名單')
@@ -1614,11 +1620,14 @@ export async function dailyBacklogDigest(db: Firestore) {
      * 方案讀不到＝照舊給連結（fail-open，同節日那句；推播頁與送出端照擋）。
      */
     const birthdayToday = birthdayFacts.today?.count ?? 0
+    const birthdaySince = birthdayDays.length > 1 ? birthdayDays[0] : undefined
+    // ⚠️ 草稿的收件人是「挑出來的人」（匯入名單）：照推播頁同一支規則判斷（code review 第 2 條——
+    //    免費方案發不了、入門方案只能發給全部好友，兩種都不給連結）
     const birthdayCanSend = birthdayToday
-      ? await workspaceBroadcastTier(ws, db).then(t => t !== 'none').catch(() => true)
+      ? await workspaceBroadcastTier(ws, db).then(t => !broadcastEntryLockText(t, 'import')).catch(() => true)
       : true
     const birthdayLink = birthdayToday && birthdayCanSend
-      ? await createNotifyLink(ws, birthdayBroadcastPath(ws, today), db).catch(() => undefined)
+      ? await createNotifyLink(ws, birthdayBroadcastPath(ws, today, birthdaySince), db).catch(() => undefined)
       : undefined
     const lines = buildDigestLines({
       dateLabel: taipeiDateLabel(today),
@@ -1634,6 +1643,7 @@ export async function dailyBacklogDigest(db: Firestore) {
         newlySet: birthdayFacts.newlySet,
         todayCount: birthdayFacts.today?.count ?? null,
         todayNames: birthdayFacts.today?.names ?? [],
+        since: birthdaySince,
         canSend: birthdayCanSend,
         link: birthdayLink,
       },

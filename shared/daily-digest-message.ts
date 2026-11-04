@@ -36,6 +36,7 @@
  */
 import { HUMAN_STALE_HOURS } from './types/conversation-stats'
 import { coverPhrase } from './digest-window'
+import { mdw } from './time'
 
 /** 「2026-09-17」→「9/17（四）」：實作在 `time.ts` 的 `mdw`，這裡沿用舊名讓既有呼叫端不用改 */
 export { mdw as taipeiDateLabel } from './time'
@@ -128,7 +129,15 @@ export interface DigestBirthday {
   todayCount: number | null
   /** 點名用（最多 3 位） */
   todayNames: string[]
-  /** 這個方案能不能發推播（免費方案 `broadcast: 'none'`＝發不了，⛔ 不叫他去按一顆會被擋的鈕） */
+  /**
+   * 壽星從哪一天算起（`YYYY-MM-DD`）：休假日不發報告，回來那天把休假那幾天的壽星一起講（code review 第 4 條）。
+   * 沒帶＝只有今天。
+   */
+  since?: string
+  /**
+   * 這個方案能不能「只發給挑出來的人」（code review 第 2 條：免費方案發不了、入門方案只能發給全部好友，
+   * 兩種都不行；判斷照推播頁同一支 `broadcastEntryLockText(tier, 'import')`）。⛔ 不叫他去按一顆會被擋的鈕。
+   */
   canSend: boolean
   /** 打開推播頁（已帶好壽星與祝福）的短網址；沒有就只講去哪 */
   link?: string
@@ -280,8 +289,9 @@ export function buildDigestLines(input: DigestInput): string[] | null {
     if (bd && birthdayToday) {
       const more = birthdayToday > bd.todayNames.length ? `等 ${birthdayToday} 位` : ''
       const who = bd.todayNames.length ? `：${joinZh(bd.todayNames)}${more}` : ''
-      lines.push('', `🎂 今天 ${birthdayToday} 位壽星${who}`)
-      if (!bd.canSend) lines.push('目前的方案發不了推播，升級後就能從這裡發生日祝福。')
+      const when = bd.since ? `${mdw(bd.since)}到今天` : '今天'
+      lines.push('', `🎂 ${when} ${birthdayToday} 位壽星${who}`)
+      if (!bd.canSend) lines.push('目前的方案不能只發給挑出來的人，升級後就能從這裡發生日祝福。')
       else if (bd.link) lines.push('生日祝福寫好了，看一眼就能發', `👉 ${bd.link}`)
       else lines.push('生日祝福寫好了，在後台「推播」看一眼就能發。')
     }

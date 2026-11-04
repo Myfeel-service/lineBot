@@ -372,24 +372,25 @@ describe('dailyBacklogDigest 順利的一天也要發', () => {
  * 生日（`D-170`）：排程那一頭真的把查到的生日塞進那一則。NOW＝台北 8/7。
  * users 換成會照條件篩的假查詢（workspaceId＋月＋日、workspaceId＋birthdaySetDay）。
  */
-describe('dailyBacklogDigest 生日（D-170）', () => {
-  function withUsers(db: any, rows: Array<Record<string, unknown> & { id: string }>) {
-    const collection = db.collection.bind(db)
-    const q = (filters: Array<[string, unknown]>): any => {
-      const hits = () => rows.filter(r => filters.every(([f, v]) => r[f] === v))
-      return {
-        where: (f: string, _op: string, v: unknown) => q([...filters, [f, v]]),
-        select: () => q(filters),
-        limit: () => q(filters),
-        get: async () => ({ docs: hits().map(r => ({ id: r.id, data: () => r })) }),
-        count: () => ({ get: async () => ({ data: () => ({ count: hits().length }) }) }),
-      }
+/** users 換成會照條件篩的假查詢（生日那幾個等號查詢、count、doc 都接得住；`D-170`） */
+function withUsers(db: any, rows: Array<Record<string, unknown> & { id: string }>) {
+  const collection = db.collection.bind(db)
+  const q = (filters: Array<[string, unknown]>): any => {
+    const hits = () => rows.filter(r => filters.every(([f, v]) => r[f] === v))
+    return {
+      where: (f: string, _op: string, v: unknown) => q([...filters, [f, v]]),
+      select: () => q(filters),
+      limit: () => q(filters),
+      get: async () => ({ docs: hits().map(r => ({ id: r.id, data: () => r })) }),
+      count: () => ({ get: async () => ({ data: () => ({ count: hits().length }) }) }),
     }
-    db.collection = (name: string) => name === 'users'
-      ? { ...q([]), doc: (id: string) => ({ get: async () => ({ data: () => ({ displayName: `客人${id}` }) }) }) }
-      : collection(name)
   }
+  db.collection = (name: string) => name === 'users'
+    ? { ...q([]), doc: (id: string) => ({ get: async () => ({ data: () => ({ displayName: `客人${id}` }) }) }) }
+    : collection(name)
+}
 
+describe('dailyBacklogDigest 生日（D-170）', () => {
   it('今天有壽星、昨天有人留生日 → 點名＋「寫好了」那一句；不縮成順利的一天那一行', async () => {
     const { db } = makeDb([])
     withUsers(db, [
@@ -604,6 +605,21 @@ describe('dailyBacklogDigest 休假日之後的第一則', () => {
     expect(loadDayStats).toHaveBeenCalledWith(expect.anything(), WS, ['2026-10-16', '2026-10-17', '2026-10-18'])
     expect(sentText()).toContain('10/16（五）到 10/18（日）這 3 天共 24 場對話，AI 全部自己搞定')
     expect(sentText()).toContain('新朋友 +6 位。')
+  })
+
+  it('`D-170`（code review 第 4 條）：週一把週末的壽星一起講；週五的不再講（週五那一則講過了）', async () => {
+    vi.setSystemTime(MON)
+    getAiSettings.mockResolvedValue(myfeel())
+    const { db } = makeDb([])
+    withUsers(db, [
+      { id: 'WS_UF', workspaceId: WS, birthdayMonth: 10, birthdayDay: 16, displayName: '週五生日' },
+      { id: 'WS_US', workspaceId: WS, birthdayMonth: 10, birthdayDay: 17, displayName: '週六生日' },
+      { id: 'WS_UM', workspaceId: WS, birthdayMonth: 10, birthdayDay: 19, displayName: '週一生日' },
+    ])
+    await dailyBacklogDigest(db)
+    const t = sentText()
+    expect(t).toContain('🎂 10/17（六）到今天 2 位壽星：週六生日與週一生日')
+    expect(t).not.toContain('週五生日')
   })
 
   it('週一 → 到期下架的知識看 72 小時（週五這時候之後），不是 24 小時', async () => {

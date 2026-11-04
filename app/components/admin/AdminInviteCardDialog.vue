@@ -90,7 +90,7 @@ const loading = ref(false)
 const error = ref('')
 const drawError = ref('')
 const urls = reactive<Record<InviteCardKind, string>>({ a4: '', share: '' })
-/** 這兩張是哪個帳號的（換帳號要重做，同一個帳號開第二次不重抓） */
+/** 這兩張是哪個帳號的（換帳號要重做；同一個帳號、上次兩張都畫成功，開第二次才不重抓） */
 let madeFor = ''
 
 watch(visible, (v) => {
@@ -99,7 +99,9 @@ watch(visible, (v) => {
 
 async function load() {
   const wid = workspaceId.value
-  if (!wid || (madeFor === wid && invite.value)) return
+  // 只有上次**兩張都畫成功**才不重做（code review 第 15 條）：還沒接 LINE、畫失敗的那一次，
+  // 框裡講「接上之後回到這裡就有」——不重抓的話，接好 LINE 回來打開還是空的，要整頁重新整理才有
+  if (!wid || (madeFor === wid && invite.value?.basicId && urls.a4 && urls.share)) return
   loading.value = true
   error.value = ''
   drawError.value = ''

@@ -113,13 +113,31 @@ export interface StaleSheetModule {
  * 提醒中心：現在還寫著舊字的模組（記下來之後可能已經改掉了，再讀那幾個模組看一次）。
  * `C-455`：⛔ 客人走不到的不算（跟模組頁「客人走不到」同一把尺 `moduleReachable`）——MYFEEL 11-04 亮的那一顆，
  * 是換成試算表之後收進資料夾、沒有任何選單或按鈕指著的舊模組。引用索引查不完整＝照樣算（講不準就不藏）。
- * 有還寫著舊字的才掃引用索引（60 秒快取）；沒有就一次查詢都不多花。
+ * 有還寫著舊字的才掃引用索引；沒有就一次查詢都不多花。
+ * ⭐ 走不走得到的答案**記 10 分鐘**（2026-11-04 code review 第 13 條）：引用索引一掃是五種資料（模組、選單、腳本、活動、推播）
+ *    各讀到上限，自己只快取 60 秒，而提醒中心一直在重算——MYFEEL 有舊字紀錄，每次重算都整套再掃一遍、推播越多越貴。
+ *    「誰指著哪個模組」很少變，代價是選單／按鈕剛改完，這個提醒最多晚 10 分鐘跟上（提醒不是即時的事）。
+ *    只有還沒問過的模組才重掃；掃不完整（null）不記，下次照樣再試。
  */
+const REACH_TTL_MS = 10 * 60_000
+const reachCache = new Map<string, { at: number, reach: Map<string, boolean | null> }>()
+
+export function _clearStaleReachCacheForTest() {
+  reachCache.clear()
+}
+
 export async function findStaleSheetModules(db: Firestore, workspaceId: string): Promise<StaleSheetModule[]> {
   const stale = await findStaleSheetModulesAll(db, workspaceId)
   if (!stale.length) return stale
+  const cached = reachCache.get(workspaceId)
+  const fresh = cached && Date.now() - cached.at < REACH_TTL_MS ? cached : null
+  if (fresh && stale.every(m => fresh.reach.has(m.flowId)))
+    return stale.filter(m => fresh.reach.get(m.flowId) !== false)
   const index = await scanConfigReferences(db, workspaceId).catch(() => null)
-  return index ? stale.filter(m => moduleReachable(index, m.flowId) !== false) : stale
+  if (!index) return stale // 講不準就不藏
+  const reach = new Map(stale.map(m => [m.flowId, moduleReachable(index, m.flowId)]))
+  reachCache.set(workspaceId, { at: Date.now(), reach })
+  return stale.filter(m => reach.get(m.flowId) !== false)
 }
 
 async function findStaleSheetModulesAll(db: Firestore, workspaceId: string): Promise<StaleSheetModule[]> {

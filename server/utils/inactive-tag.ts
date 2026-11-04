@@ -28,8 +28,8 @@
  *    ——所以掃描照新到舊排；⛔ 改成由舊到新要另開一個 ASC 索引（兩個專案各部署一次）。
  */
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore'
-import { v4 as uuidv4 } from 'uuid'
 import { getAiSettings } from './ai-settings'
+import { findOrCreateSystemTag } from './system-tag'
 import { addTagsToUser, removeTagsFromUser } from './tagging'
 import { taipeiDate } from '~~/shared/time'
 import type { TagDoc } from '~~/shared/types/tag-broadcast'
@@ -79,35 +79,27 @@ export async function resolveInactiveTagId(
     return cached.tagId
   }
 
-  const snap = await db.collection('tags')
-    .where('workspaceId', '==', workspaceId)
-    .where('code', '==', INACTIVE_TAG_CODE)
-    .limit(1)
-    .get()
+  // 找與建共用 `system-tag.ts`（固定 id＋create，同時建也只會有一顆）
+  const days = opts.createWithDays
+  const { tagId, existing } = await findOrCreateSystemTag(db, workspaceId, INACTIVE_TAG_CODE, days
+    ? (): TagDoc => ({
+        workspaceId,
+        code: INACTIVE_TAG_CODE,
+        name: inactiveTagName(days),
+        category: 'behavior',
+        color: '#8a95a1',
+        description: INACTIVE_TAG_DESCRIPTION,
+        status: 'active',
+        createdBy: 'system',
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    : undefined)
 
-  let tagId: string | null = snap.docs[0]?.id ?? null
-
-  if (!tagId && opts.createWithDays) {
-    const id = uuidv4()
-    const doc: TagDoc = {
-      workspaceId,
-      code: INACTIVE_TAG_CODE,
-      name: inactiveTagName(opts.createWithDays),
-      category: 'behavior',
-      color: '#8a95a1',
-      description: INACTIVE_TAG_DESCRIPTION,
-      status: 'active',
-      createdBy: 'system',
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    }
-    await db.collection('tags').doc(id).set(doc)
-    tagId = id
-  }
-  else if (tagId && opts.createWithDays) {
+  if (tagId && existing && opts.createWithDays) {
     // 天數改了 → 名稱跟上（名稱是「60 天沒互動」這種含天數的字，不改會騙人）；
     // 說明還是 `D-154` 以前的舊句 → 換成新的。只在每日掃描時比對一次，平常路徑不讀不寫。
-    const current = snap.docs[0]!.data()
+    const current = existing
     const patch: Record<string, unknown> = {}
     const expected = inactiveTagName(opts.createWithDays)
     if (current?.name !== expected) patch.name = expected

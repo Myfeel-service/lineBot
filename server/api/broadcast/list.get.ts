@@ -1,5 +1,6 @@
 import { getDb, listDocs } from '~~/server/utils/firebase'
-import { birthdayPeopleOn } from '~~/server/utils/birthday-tag'
+import { birthdayPeopleOnDays } from '~~/server/utils/birthday-tag'
+import { birthdayDayRange } from '~~/shared/birthday'
 import { getAiSettings } from '~~/server/utils/ai-settings'
 import { paginateInMemoryList } from '~~/server/utils/paginated-collection-list'
 import { requireCapability } from '~~/server/utils/workspace-auth'
@@ -24,12 +25,15 @@ export default defineEventHandler(async (event) => {
    */
   if (query.part === 'birthday') {
     const day = String(query.day ?? '').trim()
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw createError({ statusCode: 400, statusMessage: '日期格式不對' })
+    const since = String(query.since ?? '').trim() || day
+    const days = birthdayDayRange(since, day)
+    if (!days) throw createError({ statusCode: 400, statusMessage: '日期格式不對' })
     const [people, settings] = await Promise.all([
-      birthdayPeopleOn(getDb(), workspaceId, day),
+      birthdayPeopleOnDays(getDb(), workspaceId, days),
       getAiSettings(workspaceId),
     ])
-    return { day, people, gift: settings.birthday?.enabled ? settings.birthday.gift : '' }
+    // 生日禮：有寫就帶（code review 第 7 條：「問生日」模組卡上寫了，祝福就要跟上，不看「加好友時問生日」開沒開）
+    return { day, since, people, gift: settings.birthday?.gift ?? '' }
   }
 
   /**

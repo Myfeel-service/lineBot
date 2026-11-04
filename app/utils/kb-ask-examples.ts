@@ -54,17 +54,16 @@ export function exampleQuestionsFromChunks(
 
 /**
  * 沒打開資料時：「AI 建議補的知識」每一組拿第一句客人原句，照清單順序（伺服器排好的，被問最多次的在前）。
- * `queries` 是這一組全部的原句（新版才有），沒有就用樣本句。
+ * `queries` 是這一組全部的原句（新版才有），先從它挑；裡面沒有一句能用（或舊資料沒有這欄）才用樣本句——
+ * 跟「AI 建議補的知識」那張卡同一個先後（`KnowledgeSuggestions.vue` 的 `groupQueries`；2026-11-04 code review 第 11 條：
+ * 以前這裡反過來先挑樣本句，樣本句太長整組就被略過，明明全部原句裡有一句短的能用）。
  */
 export function exampleQuestionsFromSuggestions(
   items: ReadonlyArray<{ sampleQueries?: readonly string[] | null, queries?: readonly string[] | null }>,
   n = ASK_EXAMPLE_COUNT,
 ): string[] {
   return dedupe(items
-    .map((s) => {
-      const qs = s.sampleQueries?.length ? s.sampleQueries : (s.queries ?? [])
-      return qs.map(usable).find(Boolean) ?? ''
-    })
+    .map(s => [...(s.queries ?? []), ...(s.sampleQueries ?? [])].map(usable).find(Boolean) ?? '')
     .filter(Boolean))
     .slice(0, n)
 }

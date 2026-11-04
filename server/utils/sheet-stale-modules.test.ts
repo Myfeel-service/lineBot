@@ -12,7 +12,7 @@ vi.mock('firebase-admin/firestore', () => ({
 const { scanConfigReferences } = vi.hoisted(() => ({ scanConfigReferences: vi.fn() }))
 vi.mock('./config-references', () => ({ scanConfigReferences }))
 
-const { recordStaleSheetModules, findStaleSheetModules, SHEET_STALE_COLLECTION } = await import('./sheet-stale-modules')
+const { recordStaleSheetModules, findStaleSheetModules, SHEET_STALE_COLLECTION, _clearStaleReachCacheForTest } = await import('./sheet-stale-modules')
 
 const OLD_A = '依原廠公告：商品將於 10 月底 依照訂單順序陸續出貨。'
 const OLD_B = '依原廠公告：第一批 10 月底，10/7 起第二批 11 月底。'
@@ -48,6 +48,7 @@ function makeDb(flows: Record<string, { workspaceId: string, name: string, messa
 
 let flows: Record<string, { workspaceId: string, name: string, messages: unknown[] }>
 beforeEach(() => {
+  _clearStaleReachCacheForTest()
   scanConfigReferences.mockReset()
   scanConfigReferences.mockResolvedValue({ modules: { ship: [{ kind: 'richmenu', id: 'rm', label: '主選單' }] }, tags: {}, failedKinds: [] })
   flows = {
@@ -117,8 +118,22 @@ describe('`C-455` 客人走不到的模組不提醒（跟模組頁「客人走�
     await record(db)
     scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: [] })
     expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
+    _clearStaleReachCacheForTest() // 走不走得到記 10 分鐘（code review 第 13 條）；換一種索引要先清
     scanConfigReferences.mockResolvedValue({ modules: { ship: [ref()] }, tags: {}, failedKinds: [] })
     expect((await findStaleSheetModules(db, 'ws1')).map(m => m.flowId)).toEqual(['ship'])
+  })
+
+  it('code review 第 13 條：走不走得到記 10 分鐘——提醒中心再算一次不重掃五種資料；掃不完整不記、下次照樣再試', async () => {
+    const { db } = makeDb(flows)
+    await record(db)
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    expect(scanConfigReferences).toHaveBeenCalledTimes(1)
+    _clearStaleReachCacheForTest()
+    scanConfigReferences.mockRejectedValue(new Error('firestore down'))
+    await findStaleSheetModules(db, 'ws1')
+    await findStaleSheetModules(db, 'ws1')
+    expect(scanConfigReferences).toHaveBeenCalledTimes(3)
   })
 
   it('指著它的都關掉了（關掉的自動回應）＝走不到，不提醒；停用的模組上的按鈕照樣按得到＝照提醒', async () => {
@@ -126,6 +141,7 @@ describe('`C-455` 客人走不到的模組不提醒（跟模組頁「客人走�
     await record(db)
     scanConfigReferences.mockResolvedValue({ modules: { ship: [ref({ kind: 'script', closed: true })] }, tags: {}, failedKinds: [] })
     expect(await findStaleSheetModules(db, 'ws1')).toEqual([])
+    _clearStaleReachCacheForTest()
     scanConfigReferences.mockResolvedValue({ modules: { ship: [ref({ inactive: true })] }, tags: {}, failedKinds: [] })
     expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
   })
@@ -135,8 +151,10 @@ describe('`C-455` 客人走不到的模組不提醒（跟模組頁「客人走�
     await record(db)
     scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: ['richmenu'] })
     expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    _clearStaleReachCacheForTest()
     scanConfigReferences.mockResolvedValue({ modules: {}, tags: {}, failedKinds: [], truncatedKinds: ['flow'] })
     expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
+    _clearStaleReachCacheForTest()
     scanConfigReferences.mockRejectedValue(new Error('firestore down'))
     expect(await findStaleSheetModules(db, 'ws1')).toHaveLength(1)
   })

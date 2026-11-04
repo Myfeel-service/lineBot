@@ -1899,30 +1899,40 @@ async function applyBirthdayHandoff() {
   const q = useRoute().query
   if (String(q.from ?? '') !== 'birthday') return
   const day = String(q.day ?? '').trim()
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+  // `since`：休假日回來那天，休假那幾天的壽星一起帶（code review 第 4 條）
+  const since = String(q.since ?? '').trim() || day
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^\d{4}-\d{2}-\d{2}$/.test(since)) {
     showToast('連結少了日期，請從早上的報告重新點一次', 'warning')
     return
   }
+  // ⛔ 這個方案不能「只發給挑出來的人」就講清楚、不開一張送不出去的草稿（code review 第 2 條；同好友頁「推播給這 N 位」）
+  // 方案讀不到（null）＝不擋（同推播頁其他地方：送出端照擋）
+  const lock = planBroadcastTier.value ? broadcastPlanBlockReason(planBroadcastTier.value, 'import') : null
+  if (lock) {
+    showToast(lock, 'error')
+    return
+  }
+  const when = since === day ? mdw(day) : `${mdw(since)}–${mdw(day)}`
   let r: { people?: Array<{ lineUserId: string, displayName: string }>, gift?: string } | null = null
   try {
-    r = await apiFetch<{ people?: Array<{ lineUserId: string, displayName: string }>, gift?: string }>('/api/broadcast/list', { query: { part: 'birthday', day } })
+    r = await apiFetch<{ people?: Array<{ lineUserId: string, displayName: string }>, gift?: string }>('/api/broadcast/list', { query: { part: 'birthday', day, since } })
   }
   catch {
-    showToast('讀不到這一天的壽星，請重新整理再試一次', 'error')
+    showToast('讀不到壽星名單，請重新整理再試一次', 'error')
     return
   }
   const ids = (r?.people ?? []).map(p => String(p.lineUserId ?? '').trim()).filter(Boolean)
   if (!ids.length) {
-    showToast(`${mdw(day)}現在沒有壽星（可能剛改了生日或封鎖了官方帳號）`, 'warning')
+    showToast(`${when}現在沒有壽星（可能剛改了生日或封鎖了官方帳號）`, 'warning')
     return
   }
   openCreate()
-  form.value.name = `生日祝福 ${mdw(day)}`
+  form.value.name = `生日祝福 ${when}`
   form.value.audienceType = 'import'
   form.value.importText = ids.join('\n')
   form.value.contentAction = normalizeUnifiedAction({ type: 'message', text: birthdayGreetingText(String(r?.gift ?? '')) }, 'A')
   markClean() // 系統幫他填的，還沒動到手
-  showToast(`已帶入${mdw(day)}的 ${ids.length} 位壽星，生日祝福也寫好了。這是草稿，看一眼再按送出。`, 'success')
+  showToast(`已帶入${when}的 ${ids.length} 位壽星，生日祝福也寫好了。這是草稿，看一眼再按送出。`, 'success')
 }
 
 /** 這一次帶過來的三版文案（空陣列＝不是從月曆進來的） */

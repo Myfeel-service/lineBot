@@ -7,6 +7,7 @@ import {
   BIRTHDAY_POSTBACK_DATA,
   birthdayAskText,
   birthdayConfirmText,
+  birthdayDayRange,
   birthdayGreetingText,
   birthdayKeysForDay,
   birthdayPickerAction,
@@ -95,6 +96,20 @@ describe('早上報告（`D-170`）', () => {
     expect(birthdayGreetingText('')).toMatch(/^\{\{displayName\}\}，生日快樂 🎂\n/)
     expect(birthdayGreetingText('')).not.toMatch(/送|招待|禮|領/)
     expect(birthdayGreetingText('來店招待一杯飲料')).toBe('{{displayName}}，生日快樂 🎂\n生日當月來店招待一杯飲料。')
+  })
+})
+
+describe('birthdayDayRange（推播頁 `since`～`day`，code review 第 4 條）', () => {
+  it('含頭尾的每一天；同一天＝一天', () => {
+    expect(birthdayDayRange('2026-10-17', '2026-10-19')).toEqual(['2026-10-17', '2026-10-18', '2026-10-19'])
+    expect(birthdayDayRange('2026-12-31', '2027-01-01')).toEqual(['2026-12-31', '2027-01-01'])
+    expect(birthdayDayRange('2026-11-05', '2026-11-05')).toEqual(['2026-11-05'])
+  })
+  it('⛔ 格式不對、倒過來、超過 7 天＝null（網址參數人改得到，不讓它一次撈一整年）', () => {
+    expect(birthdayDayRange('bad', '2026-11-05')).toBeNull()
+    expect(birthdayDayRange('2026-11-06', '2026-11-05')).toBeNull()
+    expect(birthdayDayRange('2026-11-01', '2026-11-08')).toBeNull()
+    expect(birthdayDayRange('2026-11-01', '2026-11-07')).toHaveLength(7)
   })
 })
 

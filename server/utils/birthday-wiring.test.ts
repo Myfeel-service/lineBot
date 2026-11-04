@@ -24,12 +24,20 @@ describe('收到「告訴我生日」選的日期', () => {
     expect(i).toBeGreaterThan(-1)
     expect(i).toBeLessThan(post.indexOf('shouldSuppressInboundBotAutomationForSession'))
   })
-  it('存生日、記一行客人動作、回一句；禮物只在功能開著時講', () => {
+  it('存生日、記一行客人動作、回一句；禮物有寫就講（code review 第 7 條：不看「加好友時問生日」開沒開）', () => {
     const fn = between(handler, 'async function handleBirthdayPostback', '\n}\n')
     expect(fn).toContain('saveCustomerBirthday(')
     expect(fn).toContain("actionType: 'birthday_set'")
-    expect(fn).toContain('settings?.birthday?.enabled ? settings.birthday.gift')
+    expect(fn).toContain("const gift = settings?.birthday?.gift ?? ''")
+    expect(fn).not.toContain('settings?.birthday?.enabled ? settings.birthday.gift')
     expect(fn).toContain('birthdayConfirmText(')
+  })
+  it('code review 第 10 條：存失敗＝當場回一句請他再選（重送會被當重複略過）', () => {
+    const fn = between(handler, 'async function handleBirthdayPostback', '\n}\n')
+    const tryAt = fn.indexOf('try {')
+    expect(tryAt).toBeGreaterThan(-1)
+    expect(tryAt).toBeLessThan(fn.indexOf('saveCustomerBirthday('))
+    expect(fn).toContain('BIRTHDAY_SAVE_FAILED_TEXT')
   })
 })
 
@@ -49,8 +57,14 @@ describe('加好友時附「告訴我生日」卡', () => {
     // 冷卻的 return 在任何送出之前
     expect(fn.indexOf('on cooldown → skip')).toBeLessThan(fn.indexOf('appendMessages: birthdayCard'))
   })
-  it('一次回覆最多 5 則：放不下就不附（⛔ 不切店家自己的訊息）', () => {
-    expect(handler.match(/\.length \+ append\.length <= 5/g)?.length).toBe(2)
+  it('附不附照同一支規則（最後一則有快速回覆不附、滿 5 則不附；規則與測試在 shared/line-reply-append）', () => {
+    expect(handler.match(/appendBlockedReason\(/g)?.length).toBe(2)
+  })
+  it('code review 第 6 條：從活動連結加好友的人也問（活動那則是 push，replyToken 還沒用掉）', () => {
+    const fn = between(handler, 'export async function handleFollowEvent', '\n}\n')
+    const branch = fn.slice(fn.indexOf('claimOutcome.pushed) {'))
+    expect(branch).toContain('followBirthdayCard(wid, userData)')
+    expect(branch).toContain('replyBirthdayCardAlone(')
   })
 })
 
@@ -73,11 +87,18 @@ describe('機器人模組的「問生日」按鈕（`C-57` 甲）', () => {
     expect(editor).toContain('action.type === BIRTHDAY_BUTTON_TYPE')
     expect(editor).toContain('props.action.label = BIRTHDAY_BUTTON_LABEL')
   })
-  it('好友頁「生日」：建「問生日」模組（讀不到清單⛔ 不給建立鈕，免得建出第二個）', () => {
-    expect(dialog).toContain('buildBirthdayModuleMessages(form.gift)')
+  it('好友頁「生日」：建「問生日」模組（讀不到清單、還在讀⛔ 不給建立鈕，免得建出第二個）', () => {
     expect(dialog).toContain("'/api/flow/create'")
     expect(dialog).toContain("can('marketing.write')")
     expect(dialog.indexOf('v-else-if="moduleLoadError"')).toBeLessThan(dialog.indexOf('v-else-if="canCreateModule"'))
+    // code review 第 9 條：清單還沒讀回來那一瞬間不給建立鈕
+    expect(dialog.indexOf('v-if="moduleLoading"')).toBeLessThan(dialog.indexOf('v-else-if="canCreateModule"'))
+  })
+  it('code review 第 7 條：建模組前先存，模組那句話寫的是存好的生日禮（⛔ 不用框裡還沒存的字）', () => {
+    const fn = between(dialog, 'async function createModule', '\n}\n')
+    expect(fn).toContain('await persist()')
+    expect(fn).toContain('buildBirthdayModuleMessages(saved.value.gift)')
+    expect(fn).not.toContain('buildBirthdayModuleMessages(form.gift)')
   })
 })
 
@@ -88,19 +109,31 @@ describe('早上報告的生日（`D-170`）', () => {
   const links = read('server/utils/notify-links.ts')
   it('摘要排程一起查生日、查不到要講、塞進 buildDigestLines', () => {
     const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
-    expect(fn).toContain('loadBirthdayDigest(db, ws, coverDays, today)')
     expect(fn).toContain("unknownNotes.push('生日的部分')")
     expect(fn).toContain('birthday: {')
   })
   it('今天有壽星才查方案、才產連結；連結帶日期（⛔ 不靠 sessionStorage：從 LINE 點開是新的瀏覽器）', () => {
     const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
     expect(fn).toMatch(/const birthdayLink = birthdayToday && birthdayCanSend/)
-    expect(fn).toContain('birthdayBroadcastPath(ws, today)')
+    expect(fn).toContain('birthdayBroadcastPath(ws, today, birthdaySince)')
     expect(links).toContain('/broadcasts?from=birthday&day=')
+  })
+  it('code review 第 2 條：能不能發照推播頁同一支規則（匯入名單）——入門方案也不給連結', () => {
+    const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
+    expect(fn).toContain("broadcastEntryLockText(t, 'import')")
+    const page = between(broadcasts, 'async function applyBirthdayHandoff', '\n}\n')
+    expect(page).toContain("broadcastPlanBlockReason(planBroadcastTier.value, 'import')")
+    expect(page.indexOf('if (lock)')).toBeLessThan(page.indexOf('openCreate()'))
+  })
+  it('code review 第 4 條：壽星講「上一則報告之後到今天」，推播頁也帶那幾天', () => {
+    const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')
+    expect(fn).toContain('const birthdayDays = [...coverDays.slice(1), today]')
+    expect(fn).toContain('loadBirthdayDigest(db, ws, coverDays, birthdayDays)')
+    expect(listGet).toContain('birthdayDayRange(since, day)')
+    expect(between(broadcasts, 'async function applyBirthdayHandoff', '\n}\n')).toContain("query: { part: 'birthday', day, since }")
   })
   it('推播頁接 ?from=birthday：自己撈那天的壽星、寫好祝福、⛔ 不存檔（markClean）', () => {
     const fn = between(broadcasts, 'async function applyBirthdayHandoff', '\n}\n')
-    expect(fn).toContain("query: { part: 'birthday', day }")
     expect(fn).toContain("form.value.audienceType = 'import'")
     expect(fn).toContain('birthdayGreetingText(')
     expect(fn).toContain('markClean()')

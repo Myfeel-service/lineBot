@@ -140,6 +140,19 @@ describe('reconcileSheetProducts', () => {
     expect(r.newChanges.map(c => c.kind)).toEqual(['catalogOn'])
   })
 
+  it('`C-455`：沒勾進目錄的那一列名字和網址一起改＝記「少了」＋新增，⛔ 不問「是改名嗎？」（畫面上沒有按鈕可以答）', () => {
+    const reg = build([['舊的沒勾', 'old-off', false], ['Giaretti', 'GL-5680', true]])
+    const oldId = byTitle(reg, '舊的沒勾')!.id
+    const r = reconcileSheetProducts(reg, input([['新名字沒勾', 'new-off', false], ['Giaretti', 'GL-5680', true]]), 2000, ids)
+    expect(r.registry.products[oldId]!.missingSince).toBe(2000)
+    expect(r.registry.products[oldId]!.renameCandidates).toBeUndefined()
+    expect(r.newChanges.map(c => c.kind).sort()).toEqual(['added', 'removed'])
+    // 有 X 的對照組：勾著的照舊問
+    const on = build([['舊的有勾', 'old-on', true]])
+    const r2 = reconcileSheetProducts(on, input([['新名字有勾', 'new-on', true]]), 2000, ids)
+    expect(r2.newChanges.map(c => c.kind).sort()).toEqual(['added', 'renameUnsure'])
+  })
+
   it('換了商品頁網址但名字一樣：還是同一個（名字接得上）', () => {
     const reg = build([['Giaretti 小滑手', 'GL-5680', true]])
     const id = Object.keys(reg.products)[0]!
@@ -171,9 +184,10 @@ describe('reconcileSheetProducts', () => {
   })
 
   it('② 店家說「不賣了」：不再問，那個商品維持找不到', () => {
-    const reg = build([['A', 'a'], ['B', 'b']])
+    // 勾在目錄上的才會問（`C-455`，code review 第 8 條）
+    const reg = build([['A', 'a', true], ['B', 'b', true]])
     const aId = byTitle(reg, 'A')!.id
-    const r = reconcileSheetProducts(reg, input([['C', 'c'], ['B', 'b']]), 2000, ids)
+    const r = reconcileSheetProducts(reg, input([['C', 'c', true], ['B', 'b', true]]), 2000, ids)
     const dismissed = dismissSheetProductRename(r.registry, aId)!
     expect(dismissed.products[aId]!.renameCandidates).toBeUndefined()
     expect(dismissed.products[aId]!.missingSince).toBe(2000)
@@ -220,12 +234,13 @@ describe('reconcileSheetProducts', () => {
   })
 
   it('`C-438` code review：⛔ 同一個網址的兩個商品一起改名——認不出誰是誰，⛔ 不猜（兩個都問「是改名嗎？」），也不對調', () => {
-    const reg = build([['W1 單入組', 'W1'], ['W1 雙入組', 'W1']])
+    // 勾在目錄上的才會問（`C-455`，code review 第 8 條）
+    const reg = build([['W1 單入組', 'W1', true], ['W1 雙入組', 'W1', true]])
     const one = byTitle(reg, 'W1 單入組')!.id
     const two = byTitle(reg, 'W1 雙入組')!.id
     const flipped: SheetProductRegistry = { ...reg, products: { [two]: reg.products[two]!, [one]: reg.products[one]! } }
     for (const prev of [reg, flipped]) {
-      const r = reconcileSheetProducts(prev, input([['W1 單入組 2026', 'W1'], ['W1 雙入組 2026', 'W1']]), 2000, ids)
+      const r = reconcileSheetProducts(prev, input([['W1 單入組 2026', 'W1', true], ['W1 雙入組 2026', 'W1', true]]), 2000, ids)
       expect(r.registry.products[one]).toMatchObject({ title: 'W1 單入組', missingSince: 2000 })
       expect(r.registry.products[two]).toMatchObject({ title: 'W1 雙入組', missingSince: 2000 })
       expect(r.newChanges.filter(c => c.kind === 'renameUnsure').map(c => c.title).sort()).toEqual(['W1 單入組', 'W1 雙入組'])

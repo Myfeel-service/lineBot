@@ -13,7 +13,7 @@ vi.mock('./tagging', () => ({ addTagsToUser: vi.fn(), removeTagsFromUser: vi.fn(
 
 import { getAiSettings } from './ai-settings'
 import { addTagsToUser, removeTagsFromUser } from './tagging'
-import { _clearBirthdayTagCacheForTest, birthdayPeopleOn, birthdayStats, loadBirthdayDigest, saveCustomerBirthday, syncBirthdayMonthTag } from './birthday-tag'
+import { _clearBirthdayTagCacheForTest, birthdayPeopleOn, birthdayPeopleOnDays, birthdayStats, loadBirthdayDigest, saveCustomerBirthday, syncBirthdayMonthTag } from './birthday-tag'
 
 const WS = 'ws1'
 const NOV = new Date('2026-11-04T04:00:00Z') // 台北 11 月
@@ -41,6 +41,12 @@ function fakeDb(init: Record<string, Array<{ id: string, data: Record<string, an
         set: async (data: any) => {
           writes.push({ col: name, id, data })
           store[name]!.set(id, { ...(store[name]!.get(id) ?? {}), ...data })
+        },
+        // 跟 Firestore 一樣：已經有這一筆就丟 ALREADY_EXISTS（code 6）
+        create: async (data: any) => {
+          if (store[name]!.has(id)) throw Object.assign(new Error('already exists'), { code: 6 })
+          writes.push({ col: name, id, data })
+          store[name]!.set(id, { ...data })
         },
       }),
     }
@@ -77,7 +83,18 @@ describe('saveCustomerBirthday', () => {
     expect(r.changed).toBe(false)
     const created = writes.find(x => x.col === 'tags')!
     expect(created.data).toMatchObject({ code: 'sys_birthday_month', name: '本月壽星', createdBy: 'system' })
+    // 固定 id（code review 第 5 條：同一秒好幾位客人一起留也只會有一顆）
+    expect(created.id).toBe('ws1__sys_birthday_month')
     expect(addTagsToUser).toHaveBeenCalledWith('ws1_U1', [created.id], 'system', 'birthday:set', WS)
+  })
+
+  it('code review 第 5 條：別台剛建好同一顆（ALREADY_EXISTS）＝直接用同一個 id，⛔ 不多建一顆', async () => {
+    // 查的時候還查不到（別台剛 create，查詢還沒看到），create 撞到已存在
+    const { db, store } = fakeDb({})
+    store.tags = new Map([['ws1__sys_birthday_month', { workspaceId: 'other-view' }]])
+    await saveCustomerBirthday(db, WS, 'U1', { month: 11, day: 20 }, NOV)
+    expect(addTagsToUser).toHaveBeenCalledWith('ws1_U1', ['ws1__sys_birthday_month'], 'system', 'birthday:set', WS)
+    expect([...store.tags!.keys()]).toEqual(['ws1__sys_birthday_month'])
   })
 
   it('從這個月改到別的月＝摘掉；回報 changed', async () => {
@@ -121,12 +138,23 @@ describe('syncBirthdayMonthTag（每月對齊）', () => {
     ],
   })
 
-  it('沒開功能的工作區連狀態都不讀', async () => {
+  it('沒開功能、也沒有「本月壽星」標籤＝沒東西可對齊，連狀態都不讀；同一台這個月不再看', async () => {
     vi.mocked(getAiSettings).mockResolvedValue({ birthday: { enabled: false, gift: '' } } as any)
-    const { db, reads } = fakeDb(base())
+    const { db, reads } = fakeDb({ ...base(), tags: [] })
     const s = await syncBirthdayMonthTag(db, NOV)
     expect(s.workspaces).toBe(0)
     expect(reads.some(r => r.startsWith('cronState'))).toBe(false)
+    const tagReads = reads.filter(r => r === 'tags').length
+    await syncBirthdayMonthTag(db, NOV)
+    expect(reads.filter(r => r === 'tags').length).toBe(tagReads)
+  })
+
+  it('code review 第 3 條：沒開「加好友時問生日」但有標籤（只用「問生日」模組的店）＝照樣對齊，⛔ 上個月的不可以一直掛著', async () => {
+    vi.mocked(getAiSettings).mockResolvedValue({ birthday: { enabled: false, gift: '' } } as any)
+    const { db } = fakeDb(base())
+    const s = await syncBirthdayMonthTag(db, NOV)
+    expect(vi.mocked(removeTagsFromUser).mock.calls.map(c => c[0])).toEqual(['ws1_C'])
+    expect(s.untagged).toBe(1)
   })
 
   it('貼這個月的（已貼的不重貼）、摘上個月的、別的工作區不碰，做完記這個月', async () => {
@@ -171,13 +199,20 @@ describe('早上報告（`D-170`）', () => {
 
   it('幾位留了生日＝那幾天加起來；今天的壽星點名最多 3 位', async () => {
     const { db } = people()
-    const f = await loadBirthdayDigest(db, WS, ['2027-02-26', '2027-02-27'], '2027-02-28')
+    const f = await loadBirthdayDigest(db, WS, ['2027-02-26', '2027-02-27'], ['2027-02-28'])
     expect(f).toEqual({ newlySet: 3, today: { count: 2, names: ['阿明', '小美'] } })
+  })
+
+  it('code review 第 4 條：好幾天的壽星一起講（休假回來那天），同一位只算一次', async () => {
+    const { db } = people()
+    // 2/27 沒有人、2/28（含 2/29）兩位；同一天重複給也只算一次
+    const p = await birthdayPeopleOnDays(db, WS, ['2027-02-27', '2027-02-28', '2027-02-28'])
+    expect(p.map(x => x.lineUserId)).toEqual(['UA', 'UB'])
   })
 
   it('⛔ 查不到不當成 0：哪一半壞了哪一半回 null', async () => {
     const broken: any = { collection: () => { throw new Error('boom') } }
-    expect(await loadBirthdayDigest(broken, WS, ['2027-02-27'], '2027-02-28')).toEqual({ newlySet: null, today: null })
+    expect(await loadBirthdayDigest(broken, WS, ['2027-02-27'], ['2027-02-28'])).toEqual({ newlySet: null, today: null })
   })
 })
 

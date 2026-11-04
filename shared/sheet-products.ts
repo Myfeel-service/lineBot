@@ -330,7 +330,10 @@ export function reconcileSheetProducts(
     if (claimed.has(p.id) || addedIds.includes(p.id)) continue
     if (p.missingSince !== null) continue
     p.missingSince = now
-    const candidates = addedIds.slice(0, RENAME_CANDIDATES_MAX)
+    // ⚠️ `C-455`：只有**勾在目錄上**的才問「是改名嗎？」（`goneFromCatalog`）。沒勾的那一列不見了＝記「少了」就好——
+    //    以前照樣記成 renameUnsure，商品目錄最上面那一行就問「是改名嗎？」三天，底下卻沒有是／不是可以按
+    //    （畫面照 `C-455` 把沒勾的濾掉了）。2026-11-04 code review 第 8 條。
+    const candidates = p.inCatalog ? addedIds.slice(0, RENAME_CANDIDATES_MAX) : []
     if (candidates.length) {
       p.renameCandidates = candidates
       newChanges.push({ at: now, kind: 'renameUnsure', productId: p.id, title: p.title, candidateIds: candidates })

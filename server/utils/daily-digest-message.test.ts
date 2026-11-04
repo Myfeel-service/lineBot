@@ -342,11 +342,16 @@ describe('生日那兩件', () => {
     expect(text({ birthday: bd({ todayCount: 2, todayNames: [] }) })).toContain('🎂 今天 2 位壽星\n')
   })
 
-  it('⛔ 免費方案發不了推播：不叫他按一顆會被擋的鈕', () => {
+  it('⛔ 方案不能只發給挑出來的人（免費、入門）：不叫他按一顆會被擋的鈕', () => {
     const out = text({ birthday: bd({ todayCount: 1, todayNames: ['王小美'], canSend: false, link: 'https://x.test/c/x' }) })
-    expect(out).toContain('目前的方案發不了推播')
+    expect(out).toContain('目前的方案不能只發給挑出來的人')
     expect(out).not.toContain('https://x.test/c/x')
     expect(out).not.toContain('看一眼就能發')
+  })
+
+  it('code review 第 4 條：休假回來那天把休假那幾天的壽星一起講（從哪天算起寫出來）', () => {
+    expect(text({ birthday: bd({ todayCount: 3, todayNames: ['王小美', '陳大文', '林阿明'], since: '2026-10-17' }) }))
+      .toContain('🎂 10/17（六）到今天 3 位壽星：王小美、陳大文與林阿明')
   })
 
   it('沒有連結（本機）→ 指去後台「推播」', () => {

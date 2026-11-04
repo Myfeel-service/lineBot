@@ -84,7 +84,7 @@ import { newAiTurnId, writeAiTurn } from './ai-turns'
 import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { syncNotifyRecipientFollowState } from './line-notify-delivery'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
-import { appendServiceHoursLine, isServiceHoursDnd, nextServiceStartMs, taipeiMdwHm } from '~~/shared/time'
+import { appendServiceHoursLine, isServiceHoursDnd, nextServiceStartMs, taipeiDate, taipeiMdwHm } from '~~/shared/time'
 import { HUMAN_REQUEST_TEXTS, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState } from '~~/shared/types/ai-script'
 import { pickScriptByKeyword, routeCandidates } from './script-match'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
@@ -108,6 +108,7 @@ import { messageSearchTokens } from '~~/shared/message-search'
 import {
   BIRTHDAY_BUTTON_TYPE,
   BIRTHDAY_POSTBACK_DATA,
+  BIRTHDAY_SAVE_FAILED_TEXT,
   birthdayPickerAction,
   birthdayConfirmText,
   birthdayLabel,
@@ -115,7 +116,7 @@ import {
   parseBirthdayDate,
 } from '~~/shared/birthday'
 import { saveCustomerBirthday } from './birthday-tag'
-import { taipeiDate } from '~~/shared/time'
+import { appendBlockedReason } from '~~/shared/line-reply-append'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -436,6 +437,14 @@ export async function handleFollowEvent(
         userData,
       })
     }
+    /**
+     * `C-57`（code review 第 6 條）：從活動連結加好友的人，歡迎讓給活動那則（push）——但他也要被問生日。
+     * 活動那則是 push、沒用掉 replyToken，生日卡用這個 replyToken 回（同樣不吃推播額度）。
+     */
+    else if (opts?.replyToken && claimOutcome.pushed) {
+      const card = await followBirthdayCard(wid, userData)
+      if (card.length) await replyBirthdayCardAlone(card, opts.replyToken, userId, wid, sessionId)
+    }
   }
   catch (e) {
     console.error('[webhook] handleFollowEvent error:', e)
@@ -561,7 +570,9 @@ async function replyBirthdayCardAlone(
 /**
  * 客人在「告訴我生日」選了日期（`C-57`）：存月日（⛔ 不存年）、貼／摘「本月壽星」、回一句收到。
  * ⚠️ 真人處理中也照回那一句：那是他剛按的按鈕的收據，不是機器人搶話——不回的話他會以為沒選成功、一直按。
- * 生日禮的那半句只在功能開著時講（關掉＝店家可能不送了）。
+ * 生日禮的那半句：**有寫就講**，不管「加好友時問生日」開沒開（code review 第 7 條：「問生日」模組卡上寫了禮物，
+ *   回覆卻不提＝說了沒兌現；那個開關只管加好友那張卡要不要附）。
+ * ⚠️ 存失敗（code review 第 10 條）：重送的那一次會被當成重複略過，所以**當場**回他一句請他再選一次，⛔ 不可以安靜地沒了。
  */
 async function handleBirthdayPostback(p: {
   event: webhook.PostbackEvent
@@ -576,7 +587,18 @@ async function handleBirthdayPostback(p: {
     console.warn('[birthday] postback 沒有帶日期或格式不對:', JSON.stringify((p.event.postback as any).params ?? null))
     return
   }
-  const { changed } = await saveCustomerBirthday(getDb(), workspaceId, lineUserId, parsed)
+  let changed = false
+  try {
+    ({ changed } = await saveCustomerBirthday(getDb(), workspaceId, lineUserId, parsed))
+  }
+  catch (e) {
+    console.error('[birthday] 存生日失敗:', workspaceId, lineUserId, e)
+    if (p.event.replyToken) {
+      await replyMessage(p.event.replyToken, [{ type: 'text', text: BIRTHDAY_SAVE_FAILED_TEXT }], workspaceId)
+        .catch(err => console.error('[birthday] 失敗回覆也沒送出去:', err))
+    }
+    return
+  }
   invalidateUserDocCache(lineUserFirestoreDocId(lineUserId, workspaceId))
   recordCustomerAction({
     workspaceId,
@@ -587,7 +609,7 @@ async function handleBirthdayPostback(p: {
   })
   if (!p.event.replyToken) return
   const settings = await getAiSettings(workspaceId).catch(() => null)
-  const gift = settings?.birthday?.enabled ? settings.birthday.gift : ''
+  const gift = settings?.birthday?.gift ?? ''
   const reply = [{ type: 'text' as const, text: birthdayConfirmText(parsed.month, parsed.day, gift, changed) }]
   await replyMessage(p.event.replyToken, reply, workspaceId)
   saveOutgoingConversationMessagesByWorkspace(lineUserId, reply, workspaceId, { sender: 'bot', senderName: '問生日' })
@@ -3668,8 +3690,9 @@ async function replyWithFlowModule(params: {
   if (outMessages.length === 0) return false
 
   const append = params.appendMessages ?? []
-  const fits = append.length > 0 && outMessages.length + append.length <= 5
-  if (append.length && !fits) console.warn(`[module] ${logContext} 系統訊息放不下（模組已經 ${outMessages.length} 則，一次最多 5 則），這次不附上`)
+  const why = appendBlockedReason(outMessages, append)
+  const fits = append.length > 0 && !why
+  if (why) console.warn(`[module] ${logContext} 系統訊息這次不附上：${why}`)
   await replyMessage(replyToken, fits ? [...outMessages, ...append] as any[] : outMessages, wid)
   if (liveAgent) markWaitingAckSent(wid, lineUserId)
   dispatchPostReplyActions(lineUserId, flow.messages, wid).catch(e => console.error('[postReply] dispatchPostReplyActions failed:', e))
@@ -3762,8 +3785,9 @@ async function sendScriptReply(
   }
 
   const append = appendMessages ?? []
-  const fits = append.length > 0 && messages.length + append.length <= 5
-  if (append.length && !fits) console.warn(`[script] 系統訊息放不下（已經 ${messages.length} 則），這次不附上`)
+  const why = appendBlockedReason(messages, append)
+  const fits = append.length > 0 && !why
+  if (why) console.warn(`[script] 系統訊息這次不附上：${why}`)
   if (!messages.length && !fits) return
   await replyMessage(replyToken, fits ? [...messages, ...append] as messagingApi.Message[] : messages, workspaceId)
   if (messages.length) {

@@ -1,15 +1,16 @@
 /**
- * 客人生日（`C-57`）：存生日、「本月壽星」系統標籤、後台那幾個數字。規則與存法見 `shared/birthday.ts`。
+ * 客人生日（`C-57`）：存生日、「本月壽星」系統標籤、後台那幾個數字、早上報告要的事實（`D-170`）。
+ * 規則與存法見 `shared/birthday.ts`。
  *
  * 為什麼做成標籤：推播挑人只有標籤一種會自己更新（同「N 天沒互動」，`inactive-tag.ts`）——
  * 每個月 1 號把這個月生日的人貼上、上個月的摘掉，推播頁選「本月壽星」就是這個月的壽星，推播端零改動。
  *
- * 查詢都只用**兩個等號**（`workspaceId`＋`birthdayMonth`）：Firestore 會合併單欄索引，⛔ 不需要另開複合索引
- * （開了要兩個專案各部署一次）。數幾位用 count()，一個月一次查詢、讀取費一筆。
+ * 查詢都只用**等號**（`workspaceId`＋`birthdayMonth`〔＋`birthdayDay`〕、`workspaceId`＋`birthdaySetDay`）：
+ * Firestore 會合併單欄索引，⛔ 不需要另開複合索引（開了要兩個專案各部署一次）。
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore'
-import { v4 as uuidv4 } from 'uuid'
 import { getAiSettings } from './ai-settings'
+import { findOrCreateSystemTag } from './system-tag'
 import { addTagsToUser, removeTagsFromUser } from './tagging'
 import {
   BIRTHDAY_TAG_CODE,
@@ -25,42 +26,43 @@ import type { TagDoc } from '~~/shared/types/tag-broadcast'
 
 /** 每輪每工作區最多貼／摘幾位（10 分鐘就有下一輪；超過的下一輪接著做，見 `syncBirthdayMonthTag`） */
 const SYNC_LIMIT = 400
+/** 每月對齊一次並行幾位（code review 第 12 條：以前一位一位 await，大店要跑好幾分鐘、把排程擠爆 `E-49`） */
+const SYNC_CONCURRENCY = 8
 
 const tagIdCache = new Map<string, { tagId: string | null, cachedAt: number }>()
 const TAG_ID_CACHE_TTL_MS = 5 * 60_000
+/**
+ * 這台伺服器上「這個工作區這個月已經對齊過」（code review 第 12 條）：10 分鐘一輪，做完的月份不必每輪再讀一次
+ * cronState。換一台（冷啟動）就清空、照樣先讀 cronState——只是省讀取，⛔ 不是正確性的依據。
+ */
+const syncedMonth = new Map<string, string>()
 
 export function _clearBirthdayTagCacheForTest() {
   tagIdCache.clear()
+  syncedMonth.clear()
 }
 
-/** 找「本月壽星」標籤；create=true 時沒有就建（客人留生日、每月貼標兩條路才建） */
+/**
+ * 找「本月壽星」標籤；create=true 時沒有就建（客人留生日、每月貼標兩條路才建）。
+ * 找與建共用 `system-tag.ts`：固定 id＋create，同一秒好幾位客人一起留生日也只會有一顆（code review 第 5 條）。
+ */
 export async function resolveBirthdayTagId(db: Firestore, workspaceId: string, opts: { create?: boolean } = {}): Promise<string | null> {
   const cached = tagIdCache.get(workspaceId)
   if (cached && Date.now() - cached.cachedAt < TAG_ID_CACHE_TTL_MS && (cached.tagId || !opts.create)) return cached.tagId
-
-  const snap = await db.collection('tags')
-    .where('workspaceId', '==', workspaceId)
-    .where('code', '==', BIRTHDAY_TAG_CODE)
-    .limit(1)
-    .get()
-  let tagId: string | null = snap.docs[0]?.id ?? null
-  if (!tagId && opts.create) {
-    const id = uuidv4()
-    const doc: TagDoc = {
-      workspaceId,
-      code: BIRTHDAY_TAG_CODE,
-      name: BIRTHDAY_TAG_NAME,
-      category: 'behavior',
-      color: '#E8A33D',
-      description: BIRTHDAY_TAG_DESCRIPTION,
-      status: 'active',
-      createdBy: 'system',
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    }
-    await db.collection('tags').doc(id).set(doc)
-    tagId = id
-  }
+  const { tagId } = await findOrCreateSystemTag(db, workspaceId, BIRTHDAY_TAG_CODE, opts.create
+    ? (): TagDoc => ({
+        workspaceId,
+        code: BIRTHDAY_TAG_CODE,
+        name: BIRTHDAY_TAG_NAME,
+        category: 'behavior',
+        color: '#E8A33D',
+        description: BIRTHDAY_TAG_DESCRIPTION,
+        status: 'active',
+        createdBy: 'system',
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    : undefined)
   tagIdCache.set(workspaceId, { tagId, cachedAt: Date.now() })
   return tagId
 }
@@ -109,78 +111,98 @@ export async function saveCustomerBirthday(
   return { changed }
 }
 
+/** 一次最多 `limit` 個一起跑（照順序取下一個），全部跑完才回 */
+async function eachLimited<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++]!
+      await fn(item)
+    }
+  }))
+}
+
 /**
  * 每月對齊「本月壽星」（掛 cron/run-tasks）：每工作區每個月只真跑一次（`cronState` 記哪個月做完）。
- * ⛔ 只對開了生日功能的工作區跑；關掉之後標籤停在最後一次的樣子（不清空：店家可能正要發）。
+ * ⭐ **有「本月壽星」這顆標籤就跑，不管「加好友時問生日」開沒開**（code review 第 3 條）：
+ *    只用「問生日」模組問現有好友的店，那個開關是關的，但客人留生日時一樣會被貼上——以前只跑開著的店，
+ *    11 月的壽星到 12 月還掛著標籤，12 月照標籤發祝福就發給 11 月的人。
+ *    開著的店沒有標籤就建（這個月還沒人留也要有一顆給推播選）；關著又沒有標籤＝沒東西可對齊，這個月不再看。
  * ⚠️ 一輪有上限：做不完不記「這個月做完了」，下一輪（10 分鐘後）接著做——貼、摘都是冪等的。
  */
 export async function syncBirthdayMonthTag(db: Firestore, now: Date = new Date()): Promise<{ workspaces: number, tagged: number, untagged: number }> {
   const stats = { workspaces: 0, tagged: 0, untagged: 0 }
   const month = taipeiMonth(now)
-  const monthKey = `${new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric' }).format(now)}-${String(month).padStart(2, '0')}`
+  const monthKey = taipeiDate(now).slice(0, 7)
   const wsSnap = await db.collection('workspaces').select().get()
 
   for (const wsDoc of wsSnap.docs) {
     const workspaceId = wsDoc.id
+    if (syncedMonth.get(workspaceId) === monthKey) continue
     try {
       const settings = await getAiSettings(workspaceId, db)
-      if (!settings.birthday?.enabled) continue
+      const tagId = await resolveBirthdayTagId(db, workspaceId, { create: settings.birthday?.enabled === true })
+      if (!tagId) {
+        syncedMonth.set(workspaceId, monthKey) // 沒開、也沒有人留過＝這個月沒東西要對齊
+        continue
+      }
       const stateRef = db.collection('cronState').doc(`birthday-tag-${workspaceId}`)
       const state = (await stateRef.get()).data() as { doneMonth?: string } | undefined
-      if (state?.doneMonth === monthKey) continue
+      if (state?.doneMonth === monthKey) {
+        syncedMonth.set(workspaceId, monthKey)
+        continue
+      }
 
       stats.workspaces += 1
-      const tagId = await resolveBirthdayTagId(db, workspaceId, { create: true })
-      if (!tagId) continue
 
-      // ── 這個月的壽星貼上 ──
+      // ── 這個月的壽星 ──
       const usersSnap = await db.collection('users')
         .where('workspaceId', '==', workspaceId)
         .where('birthdayMonth', '==', month)
         .select()
         .get()
       const current = new Set(usersSnap.docs.map(d => d.id))
-      let budget = SYNC_LIMIT
 
-      // ── 上個月（或改了生日）的摘掉 ──
+      // ── 現在掛著標籤的：不是這個月的摘掉、是的記下來不重貼 ──
       const taggedSnap = await db.collection('userTags')
         .where('workspaceId', '==', workspaceId)
         .where('tagId', '==', tagId)
         .get()
       const already = new Set<string>()
+      const toRemove: string[] = []
       for (const t of taggedSnap.docs) {
         const uid = String(t.data()?.userId ?? '')
         if (!uid) continue
-        if (current.has(uid)) {
-          already.add(uid)
-          continue
-        }
-        if (budget <= 0) break
-        budget -= 1
-        const { removed } = await removeTagsFromUser(uid, [tagId], 'system', `birthday:month-${monthKey}`, workspaceId)
+        if (current.has(uid)) already.add(uid)
+        else toRemove.push(uid)
+      }
+      const toAdd = [...current].filter(uid => !already.has(uid))
+
+      // 一輪有上限：先摘再貼（摘不掉的人會收到別人的生日祝福，比晚一輪貼到更糟）
+      const removeNow = toRemove.slice(0, SYNC_LIMIT)
+      const addNow = toAdd.slice(0, Math.max(0, SYNC_LIMIT - removeNow.length))
+      const source = `birthday:month-${monthKey}`
+      await eachLimited(removeNow, SYNC_CONCURRENCY, async (uid) => {
+        const { removed } = await removeTagsFromUser(uid, [tagId], 'system', source, workspaceId)
           .catch((e) => {
             console.warn('[birthday] untag failed:', uid, e)
             return { removed: [] as string[] }
           })
         stats.untagged += removed.length
-      }
-
-      for (const uid of current) {
-        if (already.has(uid)) continue
-        if (budget <= 0) break
-        budget -= 1
-        const { added } = await addTagsToUser(uid, [tagId], 'system', `birthday:month-${monthKey}`, workspaceId)
+      })
+      await eachLimited(addNow, SYNC_CONCURRENCY, async (uid) => {
+        const { added } = await addTagsToUser(uid, [tagId], 'system', source, workspaceId)
           .catch((e) => {
             console.warn('[birthday] tag failed:', uid, e)
             return { added: [] as string[] }
           })
         stats.tagged += added.length
-      }
+      })
 
       // 做不完就不記，下一輪接著做（⛔ 記了就會有一批壽星這個月都沒被貼到）
-      if (budget > 0) {
-        await stateRef.set({ doneMonth: monthKey, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
-      }
+      if (removeNow.length + addNow.length < toRemove.length + toAdd.length) continue
+      await stateRef.set({ doneMonth: monthKey, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
+      syncedMonth.set(workspaceId, monthKey)
     }
     catch (e) {
       console.warn('[birthday] workspace sync failed:', workspaceId, e)
@@ -218,8 +240,37 @@ export async function birthdayPeopleOn(
   return out.slice(0, limit)
 }
 
-/** 早上報告的生日那一段（`D-170`）：各查各的，查不到的那一半回 null（⛔ 不當成 0） */
-export async function loadBirthdayDigest(db: Firestore, workspaceId: string, coverDays: readonly string[], todayKey: string): Promise<BirthdayDigestFacts> {
+/**
+ * 好幾天的壽星（休假日回來那天把休假那幾天一起講，code review 第 4 條）：照日子順序、同一位只算一次。
+ */
+export async function birthdayPeopleOnDays(
+  db: Firestore,
+  workspaceId: string,
+  dayKeys: readonly string[],
+  limit = 500,
+): Promise<Array<{ lineUserId: string, displayName: string }>> {
+  const perDay = await Promise.all(dayKeys.map(day => birthdayPeopleOn(db, workspaceId, day, limit)))
+  const seen = new Set<string>()
+  const out: Array<{ lineUserId: string, displayName: string }> = []
+  for (const p of perDay.flat()) {
+    if (seen.has(p.lineUserId)) continue
+    seen.add(p.lineUserId)
+    out.push(p)
+  }
+  return out.slice(0, limit)
+}
+
+/**
+ * 早上報告的生日那一段（`D-170`）：各查各的，查不到的那一半回 null（⛔ 不當成 0）。
+ * @param coverDays 「幾位留了生日」算哪幾天（＝報告講成績的那幾天）
+ * @param birthdayDays 「壽星」算哪幾天：上一則報告之後到今天（上一則那天自己講過了）
+ */
+export async function loadBirthdayDigest(
+  db: Firestore,
+  workspaceId: string,
+  coverDays: readonly string[],
+  birthdayDays: readonly string[],
+): Promise<BirthdayDigestFacts> {
   // ⚠️ 包成 async：查詢在組的當下就丟錯（同步）的話也要落到 catch，⛔ 不可以把整則早上報告弄掛
   const [newlySet, today] = await Promise.all([
     (async () => {
@@ -236,7 +287,7 @@ export async function loadBirthdayDigest(db: Firestore, workspaceId: string, cov
       return null
     }),
     (async () => {
-      const p = await birthdayPeopleOn(db, workspaceId, todayKey, 200)
+      const p = await birthdayPeopleOnDays(db, workspaceId, birthdayDays, 200)
       return { count: p.length, names: p.map(x => x.displayName).filter(Boolean).slice(0, 3) }
     })().catch((e) => {
       console.warn('[birthday] digest today failed:', workspaceId, e)

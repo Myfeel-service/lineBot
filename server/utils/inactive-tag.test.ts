@@ -30,7 +30,10 @@ import {
 const DAY = 86_400_000
 const WS = 'ws1'
 
-/** tags 集合的迷你假 db：where 鏈固定回 docs，doc() 支援 set/update 記錄呼叫 */
+/**
+ * tags 集合的迷你假 db：where 鏈固定回 docs，doc() 支援 set/create/update 記錄呼叫。
+ * 2026-11-04 起建立走 `system-tag.ts` 的 create（固定 id），記在 setCalls 裡一起數（「建了幾顆」是同一件事）。
+ */
 function fakeTagsDb(docs: Array<{ id: string; data: Record<string, unknown> }>) {
   const setCalls: Array<{ id: string; data: any }> = []
   const updateCalls: Array<{ id: string; data: any }> = []
@@ -44,6 +47,7 @@ function fakeTagsDb(docs: Array<{ id: string; data: Record<string, unknown> }>) 
       ...q,
       doc: (id: string) => ({
         set: async (data: any) => { setCalls.push({ id, data }) },
+        create: async (data: any) => { setCalls.push({ id, data }) },
         update: async (data: any) => { updateCalls.push({ id, data }) },
       }),
       where: q.where,
@@ -117,8 +121,10 @@ describe('resolveInactiveTagId：系統標籤的建立與改名', () => {
   it('不存在＋createWithDays → 建立，名稱含天數', async () => {
     const { db, setCalls } = fakeTagsDb([])
     const id = await resolveInactiveTagId(db, WS, { createWithDays: 60 })
-    expect(id).toBeTruthy()
+    // 固定 id（`system-tag.ts`）：同時建也只會有一顆
+    expect(id).toBe(`${WS}__sys_inactive`)
     expect(setCalls).toHaveLength(1)
+    expect(setCalls[0]!.id).toBe(`${WS}__sys_inactive`)
     expect(setCalls[0]!.data.name).toBe('60 天沒互動')
     expect(setCalls[0]!.data.code).toBe('sys_inactive')
     expect(setCalls[0]!.data.workspaceId).toBe(WS)
