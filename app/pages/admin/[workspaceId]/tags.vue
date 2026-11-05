@@ -431,7 +431,8 @@
                     <th class="tags-table__th--swatch" />
                     <th>名稱</th>
                     <th>Code</th>
-                    <th>AI 判斷</th>
+                    <!-- `C-463`：以前叫「AI 判斷」，只有 AI 那兩種有章、其他都是「—」——系統每天自己貼的跟永遠沒人貼的長得一樣 -->
+                    <th>怎麼貼上去</th>
                     <th>分類</th>
                     <th>狀態</th>
                     <th class="tags-table__th--count">好友數</th>
@@ -459,7 +460,7 @@
                     <td class="td-code">{{ tag.code }}</td>
                     <!-- 一眼看出「這顆是誰在貼」：AI 有在動的才上色，off 給低調的「—」
                          （21 顆裡多數是 off，整欄都掛灰章只是噪音） -->
-                    <td>
+                    <td class="td-how">
                       <!-- ⛔ 顏色語意（`D-63` UI/UX 審查③）：**綠色不可以給「AI 直接貼」**。
                            全站綠＝正常、不用管，而直接貼是**風險最高**的一種（判錯的下游是
                            下次推播發錯人，見 shared/tag-admin.ts 的 TAG_AI_SUB_SEGMENTS 提示）。
@@ -467,7 +468,13 @@
                            現在：直接貼＝橘（要盯著）、先建議＝藍（正常在跑、有人把關）。 -->
                       <span v-if="tag.aiMode === 'auto'" class="badge badge-orange">AI 直接貼</span>
                       <span v-else-if="tag.aiMode === 'suggest'" class="badge badge-blue">AI 先建議</span>
-                      <span v-else class="text-muted">—</span>
+                      <!-- `C-463`：每一顆一句「怎麼貼上去」（規則見 shared/tag-how-applied.ts） -->
+                      <span
+                        v-for="(l, i) in howLines(tag)"
+                        :key="i"
+                        :class="['tags-how', `is-${l.tone}`]"
+                        data-testid="tag-how"
+                      >{{ l.text }}</span>
                       <!-- 「還有幾位等你決定」（D-42②）：只在真的有的時候出現。
                            ⛔ 0 位不顯示——每列都掛「0 位」是純噪音；
                            ⛔ 讀不到時也不顯示（不能拿 0 冒充「沒事」），改由表格上方那行說明。
@@ -800,6 +807,9 @@ import { bulkReviewOutcomeText, type BulkReviewResult } from '~~/shared/tag-pend
 import { ElMessageBox } from 'element-plus'
 import { TAG_AI_SEGMENTS, TAG_AI_SUB_SEGMENTS, isTagAiFilterValue } from '~~/shared/tag-admin'
 import type { TagAiMode } from '~~/shared/types/tag-broadcast'
+import { tagHowApplied, type TagHowLine } from '~~/shared/tag-how-applied'
+import { BIRTHDAY_TAG_CODE } from '~~/shared/birthday'
+import { readBirthdaySettings } from '~/utils/birthday-settings'
 
 /** 三段選擇的文案（D-27①）：信任程度由低到高，一次講完「讓不讓判＋判了怎麼處理」 */
 const AI_MODE_OPTIONS: Array<{ value: TagAiMode; title: string; desc: string }> = [
@@ -1117,6 +1127,28 @@ const discoveryHandledThisVisit = ref(false)
  * 長得一樣，那行說明會在載入中就先閃一下（也就是 08-09 拍板的「查不到≠沒問題」）。
  */
 const discoveryLoaded = ref(false)
+
+/**
+ * `C-463`（`D-171` 示意頁 v2 下面那張表，老闆 2026-11-05「ok 執行」）：每一顆旁邊「怎麼貼上去」。
+ * ⛔ 三態：「用在哪」還在讀、或有幾類查不到的時候，⛔ 不可以說「要你自己貼」（那可能是錯的），改講還在讀／查不到。
+ * 「AI 讀對話」總開關在 `/api/tag/discovery` 讀到才算數；「生日」開關有「本月壽星」那顆才去讀。
+ */
+const birthdayOn = ref<boolean | null>(null)
+function howLines(tag: { id: string, code?: string, aiMode?: string }): TagHowLine[] {
+  const lines = tagHowApplied(tag, refsFor(tag.id), {
+    aiReading: discoveryLoaded.value ? discoveryEnabled.value : null,
+    birthdayOn: birthdayOn.value,
+  })
+  if (lines.length === 1 && lines[0]!.tone === 'manual') {
+    if (configRefsLoading.value) return [{ text: '…', tone: 'manual' }]
+    if (configRefs.value.failedKinds.length) return [{ text: '有幾類這次查不到，點「用在哪」看是哪幾類', tone: 'manual' }]
+  }
+  return lines
+}
+watch(() => tags.value.some((t: { code?: string }) => t.code === BIRTHDAY_TAG_CODE), async (has) => {
+  if (!has || birthdayOn.value !== null) return
+  birthdayOn.value = (await readBirthdaySettings(apiFetch))?.enabled ?? null
+}, { immediate: true })
 
 /** 那行小字的內容：全部交給純函式決定（可測），模板只負責印 */
 /**

@@ -224,6 +224,24 @@
   color: var(--text-secondary);
 }
 
+/* `C-463`：「怎麼貼上去」——每一顆一兩句；欄寬有上限、字自己換行（表格外層本來就能橫捲，⛔ 不把別欄擠爛） */
+.td-how {
+  min-width: 11em;
+  max-width: 18em;
+
+  .badge { margin-bottom: 2px; }
+}
+
+.tags-how {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+
+  /* 要他自己貼＝唯一要他動手的那種，字色比「系統會自己貼」的再淡一階——⛔ 不用警告色：這不是錯，是貼法 */
+  &.is-manual { color: var(--text-muted); }
+}
+
 .td-time {
   font-size: 0.82rem;
   color: var(--text-muted);
