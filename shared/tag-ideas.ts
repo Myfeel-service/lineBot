@@ -65,20 +65,52 @@ function tidyName(raw: unknown): string {
 const keyOf = (name: string) => tidyName(name).toLowerCase()
 
 /**
- * 驗模型回來的那一包。`have`＝那一排現在已經有的名字（勾不勾都算）。
+ * 這顆跟他問的那句有沒有關係（2026-11-05 真模型實測抓到）：
+ * 問「我想分 VIP 跟常客」做不到，模型照樣塞「問過咖啡、問過鬆餅、問過夏天活動」湊數；
+ * 問「分台灣和海外」也順手多給「關注週年慶、關注母親節」——他問 A、拿到 B C D。
+ * ⛔ 散文規則擋不住（prompt 已經寫了還是會塞）→ 機制擋：名字（或模型標的 `from`）跟他那句話
+ * **至少要有兩個字連在一起是一樣的**（「想內用」↔「內用」、「國小家長」↔「國小」），不然丟掉並記原因。
+ * ⚠️ 「客人／問過／的人」這種每句都有的字不算數。
  */
-export function vetTagIdeas(raw: unknown, have: readonly string[]): TagIdeasVetted {
+const FILLER_BIGRAMS = new Set(['客人', '問過', '的人', '想分', '分成', '一下', '我想', '想要'])
+function bigrams(s: string): string[] {
+  const t = s.replace(/[\s、，,。．.！!？?「」『』（）()]/g, '').toLowerCase()
+  const out: string[] = []
+  for (let i = 0; i + 1 < t.length; i++) {
+    const b = t.slice(i, i + 2)
+    if (!FILLER_BIGRAMS.has(b)) out.push(b)
+  }
+  return out
+}
+export function relatesToAsk(name: string, from: string, ask: string): boolean {
+  const a = ask.replace(/\s+/g, '').toLowerCase()
+  if (!a) return true
+  return [...bigrams(name), ...bigrams(from)].some(b => a.includes(b))
+}
+
+/** 原因那句尾巴的句號拿掉（外面還會再補一個：實測出現過「…資料。。」） */
+const tidyReason = (s: string) => s.trim().replace(/[。．.！!]+$/, '')
+
+/**
+ * 驗模型回來的那一包。`have`＝那一排現在已經有的名字（勾不勾都算）；`ask`＝他打的那句（給了才檢查「有沒有關係」）。
+ */
+export function vetTagIdeas(raw: unknown, have: readonly string[], ask = ''): TagIdeasVetted {
   const out: TagIdeasVetted = { ideas: [], skipped: [], already: [], dropped: [] }
   const seen = new Set(have.map(keyOf))
   const data = (raw && typeof raw === 'object' ? raw : {}) as { tags?: unknown, skipped?: unknown }
   const list = Array.isArray(data.tags) ? data.tags : []
 
   for (const item of list) {
-    const o = (item && typeof item === 'object' ? item : {}) as { name?: unknown, criteria?: unknown, why?: unknown }
+    const o = (item && typeof item === 'object' ? item : {}) as { name?: unknown, criteria?: unknown, why?: unknown, from?: unknown }
     const name = tidyName(o.name)
     if (!name) { out.dropped.push({ text: '', reason: '沒有名字' }); continue }
     if (needsRecords(name)) {
       out.skipped.push({ name, reason: TAG_NEEDS_RECORDS_REASON })
+      continue
+    }
+    // ⛔ 跟他問的那句沒關係＝模型湊數（理由見 relatesToAsk）
+    if (ask && !relatesToAsk(name, String(o.from ?? ''), ask)) {
+      out.dropped.push({ text: name, reason: '跟店家問的那句沒關係（模型湊數）' })
       continue
     }
     if (seen.has(keyOf(name))) {
@@ -103,7 +135,9 @@ export function vetTagIdeas(raw: unknown, have: readonly string[]): TagIdeasVett
     const o = (s && typeof s === 'object' ? s : {}) as { name?: unknown, reason?: unknown }
     const name = tidyName(o.name).slice(0, 20)
     if (!name || out.skipped.some(x => x.name === name)) continue
-    out.skipped.push({ name, reason: String(o.reason ?? '').trim().slice(0, SKIP_REASON_MAX) || TAG_NEEDS_RECORDS_REASON })
+    // 要紀錄才分得出來的那種，一律講同一句（實測模型自己寫得又長又不一樣：「AI 無法從 LINE 對話判斷…」）
+    const reason = needsRecords(name) ? TAG_NEEDS_RECORDS_REASON : tidyReason(String(o.reason ?? '')).slice(0, SKIP_REASON_MAX)
+    out.skipped.push({ name, reason: reason || TAG_NEEDS_RECORDS_REASON })
   }
 
   if (!list.length) out.dropped.push({ text: '', reason: '模型沒有回任何一顆' })
@@ -118,7 +152,7 @@ export function tagIdeasNote(v: Pick<TagIdeasVetted, 'ideas' | 'skipped' | 'alre
   const parts: string[] = []
   if (v.skipped.length) {
     const names = v.skipped.slice(0, 3).map(s => `「${s.name}」`).join('')
-    parts.push(`${names}沒列：${v.skipped[0]!.reason}。`)
+    parts.push(`${names}沒列：${tidyReason(v.skipped[0]!.reason)}。`)
   }
   if (!v.ideas.length && v.already.length) {
     parts.push(`${v.already.slice(0, 3).map(n => `「${n}」`).join('')}上面已經有了。`)

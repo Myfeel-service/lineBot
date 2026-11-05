@@ -35,9 +35,11 @@ export function buildTagIdeasPrompt(ctx: TagIdeasCtx): string {
     `4. name：${TAG_IDEA_NAME_MAX} 個字以內，像店家自己會講的話（例：內用客、問過外送、想訂蛋糕）。`,
     '5. criteria：寫給 AI 看的判斷條件，一到兩句「什麼算＋什麼不算」，80 字以內。',
     '6. why：一句話講這群人之後拿來做什麼（例如發什麼推播時挑他們），25 字以內。',
-    '7. 繁體中文，不要 markdown。',
+    '7. ⛔ 只回店家這句話要的那幾種，不要自己多想別的分法湊數。做不到就 tags 回空陣列、只寫 skipped。',
+    '8. from：這一顆對應店家那句話裡的哪幾個字，原封不動抄過來（例：店家說「內用、外帶」→ 內用客的 from 是「內用」）。',
+    '9. 繁體中文，不要 markdown。',
     '',
-    '回傳純 JSON：{"tags": [{"name": "…", "criteria": "…", "why": "…"}], "skipped": [{"name": "…", "reason": "…"}]}',
+    '回傳純 JSON：{"tags": [{"name": "…", "from": "…", "criteria": "…", "why": "…"}], "skipped": [{"name": "…", "reason": "…"}]}',
   ].join('\n')
 }
 
@@ -55,7 +57,8 @@ export async function suggestStoreTagIdeas(workspaceId: string, ctx: TagIdeasCtx
       thinkingBudget: 0,
     }), 'knowledge')
   return {
-    ...vetTagIdeas(res.data, ctx.have),
+    // `ask` 帶進去：跟他問的那句沒關係的（模型湊數）丟掉並記原因（2026-11-05 真模型實測）
+    ...vetTagIdeas(res.data, ctx.have, ctx.ask),
     inputTokens: res.inputTokens,
     outputTokens: res.outputTokens,
     model: res.model,
