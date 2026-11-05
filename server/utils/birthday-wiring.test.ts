@@ -182,30 +182,85 @@ describe('開帳之後帶到生日（`C-468`）', () => {
   const invite = read('app/components/admin/AdminInviteCardDialog.vue')
   const renderer = read('app/components/agent/AgentMessageRenderer.vue')
   const landing = read('app/utils/onboarding-landing.ts')
+  const load = between(chat, 'async function loadBirthdayCurrent', '\n  async function stepBirthdayAsk')
   const ask = between(chat, 'async function stepBirthdayAsk', '\n  async function stepDone')
   const done = between(chat, 'async function stepDone', '\n  // ── 打造這一趟的結尾')
 
+  /**
+   * 「`first` 要排在 `second` 前面」。
+   * ⛔ **兩邊都要先確認真的找得到**：`indexOf` 找不到會回 -1，比任何位置都小，
+   *   於是「把要守的那句整個刪掉」反而讓測試永遠是綠的（code review 第 5 條抓到三條這種）。
+   */
+  function expectBefore(src: string, first: string, second: string) {
+    const a = src.indexOf(first)
+    const b = src.indexOf(second)
+    expect(a, `找不到「${first}」`).toBeGreaterThan(-1)
+    expect(b, `找不到「${second}」`).toBeGreaterThan(-1)
+    expect(a, `「${first}」要排在「${second}」前面`).toBeLessThan(b)
+  }
+
   it('接完 LINE：成績單之前問、只問一次（回去做傳話測試會再跑 stepDone）', () => {
-    expect(done.indexOf('await stepBirthdayAsk()')).toBeGreaterThan(-1)
-    expect(done.indexOf('await stepBirthdayAsk()')).toBeLessThan(done.indexOf("kind: 'summary'"))
+    expectBefore(done, 'await stepBirthdayAsk()', "kind: 'summary'")
     expect(ask).toContain('if (birthdayAsked) return birthdayOn')
   })
+  /**
+   * code review 第 1 條的回歸鎖：讀設定要在**進度跳到最後一格之前**。
+   * 跳格之後頁首的「之後再說」出口就收掉了，那時才去等後端，一卡住就是把人關在開通頁上
+   * （沒有按鈕、沒有轉圈圈、也沒有出口）——`stepDone` 開頭那段註解講的就是同一件事。
+   */
+  it('⛔ 讀生日設定要在進度跳到最後一格之前（跳格之後出口就沒了）', () => {
+    expectBefore(done, 'await loadBirthdayCurrent()', 'progress.value = LINE_STEP.done')
+  })
   it('已經開著、讀不到設定都不問（⛔ 不問一件不知道現況的事）', () => {
-    expect(ask.indexOf("apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')")).toBeLessThan(ask.indexOf('await say('))
-    expect(ask.indexOf('if (current.enabled)')).toBeLessThan(ask.indexOf('await say('))
+    expect(load).toContain("apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')")
+    expectBefore(ask, 'await loadBirthdayCurrent()', 'await say(')
+    expectBefore(ask, 'if (current.enabled)', 'await say(')
+  })
+  /**
+   * code review 第 2 條的回歸鎖：`birthdayAsked` 只能在**真的讀到現況之後**才打上去。
+   * 打早了的話，一次連線不順就永久吃掉這一題（回去做傳話測試再回來也會被記號擋掉），
+   * 連成績單那一行都跟著消失。
+   */
+  it('⛔ 讀不到設定時不可以記成「問過了」（否則一次連線不順就永久吃掉這一題）', () => {
+    expectBefore(ask, 'if (!current)', 'birthdayAsked = true')
+    expect(ask).toMatch(/why: 'read_failed'/)
   })
   it('卡上的字吃 shared/birthday（跟送出端、好友頁「生日」框同一份）；⛔ 不自動打開：要他按', () => {
     expect(ask).toContain("kind: 'birthday-card'")
     expect(ask).toContain('title: birthdayAskText(current.gift)')
     expect(ask).toContain('note: BIRTHDAY_ASK_NOTE')
     expect(ask).toContain('button: BIRTHDAY_BUTTON_LABEL')
-    expect(ask.indexOf("method: 'PUT'")).toBeGreaterThan(ask.indexOf("if (c !== 'yes')"))
+    expectBefore(ask, "if (c !== 'yes')", "method: 'PUT'")
     expect(renderer).toContain("entry.msg.kind === 'birthday-card'")
   })
-  it('打開時生日禮照原本的帶著；沒存成要講、成績單也不列', () => {
-    expect(ask).toContain('normalizeBirthdaySettings({ ...current, enabled: true })')
+  /**
+   * code review 第 3 條：伺服器對 `birthday` 是深合併，所以**只送 `enabled`**。
+   * 把讀到當下的生日禮一起送回去，會蓋掉他在別處剛寫好的禮物（而且不會有任何提示）。
+   */
+  it('⛔ 打開時只送 enabled，不可以把讀到的生日禮一起送回去（會蓋掉別處剛改的）', () => {
+    // ⚠️ 只看**送出去的那一包**：本地狀態要不要用展開更新是另一回事（第一版連那個也擋，誤判）
+    const askPut = between(ask, "method: 'PUT'", '\n')
+    const invitePut = between(invite, "method: 'PUT'", '\n')
+    expect(askPut, '⛔ 整包送回去＝舊的生日禮會蓋掉新的').toContain('birthday: { enabled: true }')
+    expect(invitePut, '⛔ 整包送回去＝舊的生日禮會蓋掉新的').toContain('birthday: { enabled: true }')
+    expect(askPut).not.toMatch(/\.\.\.current/)
+    expect(invitePut).not.toMatch(/\.\.\.bdCurrent/)
+  })
+  it('沒存成要講、成績單也不列', () => {
     expect(ask).toContain('這次沒打開成功')
-    expect(done).toContain("...(bdOn ? [{ label: '客人加好友時會被問生日', done: true }] : [])")
+    expect(done).toContain("...(bdOn ? [{ label: '客人加好友時會被問生日', done: true, note: BIRTHDAY_APPEND_CAVEAT }] : [])")
+  })
+  /**
+   * code review 第 4 條：講了「都會被問生日」就要跟著講什麼情況不附
+   * （歡迎訊息最後一則帶快速回覆按鈕、或已經滿 5 則）——否則是假承諾，
+   * 而且邀請卡那一行針對的老店最容易中。三個地方同一句，⛔ 分開寫會改一處漏兩處。
+   */
+  it('⛔ 「打開了」之後一定要跟著講什麼情況不附（三處同一句）', () => {
+    expect(read('shared/birthday.ts')).toContain('export const BIRTHDAY_APPEND_CAVEAT')
+    expect(dialog, '「生日」框本來就有講，這句要跟它同一個意思').toContain('歡迎訊息最後一則有快速回覆按鈕時不附')
+    expect(ask).toContain('${BIRTHDAY_APPEND_CAVEAT}')
+    expect(done).toContain('note: BIRTHDAY_APPEND_CAVEAT')
+    expect(invite).toContain('{{ BIRTHDAY_APPEND_CAVEAT }}')
   })
   it('⛔ 不承諾發生日祝福（新店家是免費方案、發不了推播）', () => {
     const says = [...ask.matchAll(/await say\(([\s\S]*?)\)\n/g)].map(m => m[1]).join('\n')
@@ -227,6 +282,6 @@ describe('開帳之後帶到生日（`C-468`）', () => {
     expect(w).toContain('void loadBirthday()')
     expect(between(invite, 'async function load()', '\n}\n')).not.toContain('loadBirthday')
     expect(invite).toMatch(/<el-button size="small" :loading="bdSaving" @click="turnOnBirthday">打開<\/el-button>/)
-    expect(invite).toContain('normalizeBirthdaySettings({ ...bdCurrent.value, enabled: true })')
+    // code review 第 3 條起改成只送 enabled（伺服器本來就深合併），所以這裡不再釘「整包送回去」那個寫法
   })
 })

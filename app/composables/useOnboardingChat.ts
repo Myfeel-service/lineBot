@@ -50,6 +50,7 @@ import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboard
 import { LANDING_FROM_BUILD, LANDING_FROM_LINE, liveTourStepCount, saveOnboardingBuilt } from '~/utils/onboarding-landing'
 import { lineFlowEntry } from '~~/shared/onboarding-events'
 import {
+  BIRTHDAY_APPEND_CAVEAT,
   BIRTHDAY_ASK_NOTE,
   BIRTHDAY_BUTTON_LABEL,
   birthdayAskText,
@@ -2392,19 +2393,45 @@ export function useOnboardingChat() {
    */
   let birthdayAsked = false
   let birthdayOn = false
-  async function stepBirthdayAsk(): Promise<boolean> {
-    if (birthdayAsked) return birthdayOn
-    birthdayAsked = true
-    let current: BirthdaySettings
+  let birthdayCurrent: BirthdaySettings | null = null
+  /**
+   * 先把生日現況讀起來。
+   *
+   * ⛔ **一定要在 `progress` 跳到最後一格之前呼叫**（code review 第 1 條）：跳格之後頁首那個
+   *   「之後再說」的出口就被藏起來了，而這支要等後端回答。那時卡住的話（伺服器剛醒、手機訊號不穩）
+   *   人就坐在開通頁上，沒有按鈕、沒有轉圈圈、也沒有離開的方法——`stepDone` 開頭那段註解
+   *   講的就是同一件事，這裡不可以再犯一次。
+   * ⚠️ 讀失敗**不留記號**：回去做傳話測試再回來時會重讀一次（第 2 條）。
+   */
+  async function loadBirthdayCurrent(): Promise<void> {
+    if (birthdayCurrent) return
+    busy.value = true
     try {
       const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
-      current = normalizeBirthdaySettings(s?.birthday)
+      birthdayCurrent = normalizeBirthdaySettings(s?.birthday)
     }
-    catch {
+    catch { /* 讀不到就不問，下次再來會重讀 */ }
+    finally {
+      busy.value = false
+    }
+  }
+
+  async function stepBirthdayAsk(): Promise<boolean> {
+    if (birthdayAsked) return birthdayOn
+    // 正常情況在跳格之前就讀好了；這裡是保險（⛔ 不要把它當成唯一的讀取時機，理由見上面）
+    await loadBirthdayCurrent()
+    const current = birthdayCurrent
+    if (!current) {
+      // ⛔ 讀不到就不問（不問一件不知道現況的事），但**不可以** `birthdayAsked = true`：
+      //    那會讓一次連線不順就永久吃掉這一題，連成績單那一行都跟著消失（第 2 條）。
+      track('birthday_ask', { asked: false, why: 'read_failed' })
       birthdayOn = false
       return false
     }
+    birthdayAsked = true
     if (current.enabled) {
+      // 跳過也要留下紀錄：⛔ 不記的話，之後看數據分不出「本來就開著」「讀不到」「根本沒跑到」（第 9 條）
+      track('birthday_ask', { asked: false, why: 'already_on' })
       birthdayOn = true
       return true
     }
@@ -2428,8 +2455,10 @@ export function useOnboardingChat() {
     }
     busy.value = true
     try {
-      // ⚠️ 生日禮照原本的帶著（他可能早就寫過、只是沒開）
-      await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: normalizeBirthdaySettings({ ...current, enabled: true }) } })
+      // ⛔ **只送 `enabled`，不要把讀到的生日禮一起送回去**（code review 第 3 條）：
+      //    伺服器本來就是深合併（`ai-settings.ts` 的 `birthday: { ...current.birthday, ...partial.birthday }`），
+      //    帶著一份開框當下的舊文字反而會蓋掉——他在別的分頁剛寫好的生日禮會被洗成空白。
+      await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: { enabled: true } } })
       birthdayOn = true
     }
     catch {
@@ -2440,8 +2469,9 @@ export function useOnboardingChat() {
     }
     track('birthday_ask', { on: true, saved: birthdayOn })
     // ⛔ 沒存成要講（不可以說「打開了」）；成績單那一行也照 birthdayOn 不列
+    // code review 第 4 條：⛔ 講了「會被問生日」就要跟著講什麼情況不附（`BIRTHDAY_APPEND_CAVEAT`，三處同一句）
     await say(birthdayOn
-      ? '打開了 ✓ 每個月 1 號，這個月生日的人會貼上「<b>本月壽星</b>」標籤。想在生日當月送點什麼，之後到「好友」頁按「生日」寫上去。'
+      ? `打開了 ✓ ${BIRTHDAY_APPEND_CAVEAT}每個月 1 號，這個月生日的人會貼上「<b>本月壽星</b>」標籤。想在生日當月送點什麼，之後到「好友」頁按「生日」寫上去。`
       : '這次沒打開成功——之後到「好友」頁按「生日」打開就好。')
     return birthdayOn
   }
@@ -2480,6 +2510,11 @@ export function useOnboardingChat() {
       }
     }
 
+    // `C-468` code review 第 1 條：生日那一題要讀一次設定——**在跳格之前讀**。
+    // 跳格之後出口就收掉了，那時才去等後端，卡住就等於把人關在頁面上（理由見 `loadBirthdayCurrent`）。
+    // ⛔ 不可以搬到下面 `stepBirthdayAsk()` 裡面當唯一的讀取時機。
+    await loadBirthdayCurrent()
+
     // 到這裡才是真的走到最後一格（成績單即將畫出來）：頁首的出口從這一刻才收掉，
     // 而這一刻畫面上馬上就有成績單與那排「接下來做什麼」的按鈕，不會出現沒出路的空窗。
     progress.value = LINE_STEP.done
@@ -2504,7 +2539,8 @@ export function useOnboardingChat() {
           note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友試試',
         },
         // `C-468`：開著才列（⛔ 按先不要的不列一行「沒打開」：剛剛才講過）
-        ...(bdOn ? [{ label: '客人加好友時會被問生日', done: true }] : []),
+        // code review 第 4 條：成績單是他會回頭看的那張，但書要跟著（⛔ 不要只在對話裡講一次就算）
+        ...(bdOn ? [{ label: '客人加好友時會被問生日', done: true, note: BIRTHDAY_APPEND_CAVEAT }] : []),
         // 方案／額度／綁卡從「剛取完名字」搬來這裡（2026-09-02）：那一刻他只想知道
         // 下一步，計費資訊會讓人停下來想「我是不是要付錢」；擺在成績單上才是他
         // 「做完了、接下來呢」會想知道的事

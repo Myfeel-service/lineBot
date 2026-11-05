@@ -25,7 +25,8 @@
           <span class="invite-card__bday-text">🎂 <b>掃 QR 加好友的人，要不要順便問生日？</b>打開之後加好友的，才會被問到。</span>
           <el-button size="small" :loading="bdSaving" @click="turnOnBirthday">打開</el-button>
         </template>
-        <span v-else class="invite-card__bday-text">✓ <b>打開了</b>：之後加好友的人都會被問生日。想在生日當月送點什麼，到「生日」寫上去。</span>
+        <!-- code review 第 4 條：⛔ 講「都會被問生日」就要跟著講什麼情況不附，否則是假承諾（這一行針對的老店最容易中） -->
+        <span v-else class="invite-card__bday-text">✓ <b>打開了</b>：之後加好友的人都會被問生日。{{ BIRTHDAY_APPEND_CAVEAT }}想在生日當月送點什麼，到「生日」寫上去。</span>
       </div>
       <div class="invite-card__grid">
         <section class="invite-card__item" data-invite="a4">
@@ -74,7 +75,8 @@ import {
   qrMatrixFrom,
   type InviteCardKind,
 } from '~/utils/invite-card'
-import { normalizeBirthdaySettings, type BirthdaySettings } from '~~/shared/birthday'
+import { BIRTHDAY_APPEND_CAVEAT, normalizeBirthdaySettings, type BirthdaySettings } from '~~/shared/birthday'
+import { apiErrorText } from '~/utils/api-error-text'
 
 interface OaInvite {
   basicId: string
@@ -116,12 +118,21 @@ const bdSaving = ref(false)
 const showBirthdayRow = computed(() => !!invite.value?.basicId
   && (bdJustOn.value || (bdCurrent.value !== null && !bdCurrent.value.enabled)))
 
+/**
+ * 開框、存檔各算一代（code review 第 10 條）：按了「打開」之後馬上關掉再打開，
+ * 舊的那一筆回來會把新開的框改成「✓ 打開了」——那是上一次點擊的結果，跑到這一次的畫面上。
+ * 兩次快速開關也會讓兩個讀取互相蓋。比對代號，被取代的那一筆就丟掉。
+ */
+let bdGen = 0
+
 async function loadBirthday() {
+  const gen = ++bdGen
   bdJustOn.value = false
   bdCurrent.value = null
   if (!can('ai.settings.write')) return
   try {
     const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
+    if (gen !== bdGen) return
     bdCurrent.value = normalizeBirthdaySettings(s?.birthday)
   }
   catch { /* 讀不到就不出現 */ }
@@ -130,16 +141,22 @@ async function loadBirthday() {
 async function turnOnBirthday() {
   if (!bdCurrent.value || bdSaving.value) return
   bdSaving.value = true
+  const gen = ++bdGen
   try {
-    // ⚠️ 生日禮照原本的帶著（他可能早就寫過、只是沒開）
-    const next = normalizeBirthdaySettings({ ...bdCurrent.value, enabled: true })
-    await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: next } })
-    bdCurrent.value = next
+    // ⛔ **只送 `enabled`**（code review 第 3 條）：伺服器本來就是深合併
+    //   （`ai-settings.ts` 的 `birthday: { ...current.birthday, ...partial.birthday }`），
+    //   把開框當下讀到的生日禮一起送回去反而會蓋掉——他在「生日」框或另一個分頁剛寫好的禮物
+    //   會被洗成空白，客人收到的卡片與回覆從此不再提那個禮物，而且沒有任何提示。
+    await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: { enabled: true } } })
+    // ⚠️ 存檔途中有人把框關掉又打開＝已經重讀過一次了，這一筆的結果不可以再蓋回去（第 10 條）
+    if (gen !== bdGen) return
+    bdCurrent.value = { ...bdCurrent.value, enabled: true }
     bdJustOn.value = true
   }
   catch (e: unknown) {
-    const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
-    showToast(msg || '沒有打開成功，再按一次試試', 'error')
+    // ⛔ 不要自己撈 statusMessage：`apiErrorText` 多做兩件事——補 `data.message`、把英文的
+    //   開發訊息濾掉改用中文（當初就是因為 23 個地方各寫一份才收斂成這支）。第 6 條。
+    showToast(apiErrorText(e, '沒有打開成功，再按一次試試'), 'error')
   }
   finally {
     bdSaving.value = false

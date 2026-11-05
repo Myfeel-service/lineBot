@@ -66,6 +66,18 @@ export function birthdayAskText(gift: string): string {
 export const BIRTHDAY_ASK_NOTE = '只會記下月和日。'
 export const BIRTHDAY_BUTTON_LABEL = '🎂 告訴我生日'
 
+/**
+ * 「打開了」之後一定要跟著講的但書（`C-468` code review 第 4 條）。
+ *
+ * 生日卡是附在歡迎訊息後面送的，而 `shared/line-reply-append.ts` 的 `appendBlockedReason`
+ * 有兩種情況不附：最後一則帶快速回覆按鈕（附了那排按鈕會不見）、歡迎訊息已經滿 5 則。
+ * 「生日」框一開始就講了這件事，但**邀請卡那一行與開帳精靈沒講**——而邀請卡針對的正是
+ * 已經有一套歡迎訊息的老店，最容易中。他們以為開好了，客人卻永遠收不到，
+ * 原因只留在伺服器日誌裡（⛔ 典型的假承諾）。
+ * ⛔ 三個地方要講同一句：分開寫就會改一處漏兩處。
+ */
+export const BIRTHDAY_APPEND_CAVEAT = '歡迎訊息最後一則有快速回覆按鈕時不附（附了那排按鈕會不見）。'
+
 /** 存生日失敗時回客人的那一句（重送會被當成重複略過，所以要請他自己再選一次） */
 export const BIRTHDAY_SAVE_FAILED_TEXT = '剛剛沒有記到你的生日，麻煩再按一次「告訴我生日」選一次 🙏'
 
