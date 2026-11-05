@@ -26,7 +26,7 @@ import type { VariableInsetOption } from '~/components/flow/FlowVariableInset.vu
 import { LINE_ALT_TEXT_MAX } from '~~/shared/line-alt-text'
 
 /**
- * 「提醒文字」這一格（`C-468`）：五種模組以前五種長相、五種說法，現在只有這一支。
+ * 「提醒文字」這一格（`C-469`）：五種模組以前五種長相、五種說法，現在只有這一支。
  *
  * ⛔ 文案寫在這裡、不要由呼叫端各傳一句——同一格在隔壁模組換個說法，就是這一輪要修掉的病。
  *   呼叫端只回答一件事：**沒填的話客人會看到什麼**（`empty-behavior`）。

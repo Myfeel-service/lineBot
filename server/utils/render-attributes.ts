@@ -38,7 +38,7 @@ export function attributeContextForUser(
 
 /**
  * LINE 對這幾格的上限：名字換進去之後才變長的，送出前再切一次（⛔ 超過的話 LINE 會整則退回）。
- * `C-468`：提醒文字的 400 以前這裡自己寫一份，改讀 `shared/line-alt-text.ts` 那支唯一來源。
+ * `C-469`：提醒文字的 400 以前這裡自己寫一份，改讀 `shared/line-alt-text.ts` 那支唯一來源。
  */
 const LINE_ACTION_LABEL_MAX = 20
 /** 按鈕範本帶了標題或縮圖時，文字上限從 160 降到 60（LINE 規格） */

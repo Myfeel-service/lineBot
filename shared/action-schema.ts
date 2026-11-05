@@ -347,7 +347,7 @@ export function richMessageSendsPostbacks(msg: { transparentBackground?: unknown
 }
 
 /**
- * 透明的圖文訊息「送出時會被丟掉什麼」（`C-468`，前後端同一支）。
+ * 透明的圖文訊息「送出時會被丟掉什麼」（`C-469`，前後端同一支）。
  *
  * 開了「保留 PNG 透明區域」且沒有「觸發機器人模組」的區塊時，整則改用 imagemap 送
  * （`handler.ts` 的 `buildRichMessageLineMessage`）。那種格式只有「開啟網址」「傳送文字」

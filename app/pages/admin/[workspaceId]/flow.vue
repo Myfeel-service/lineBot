@@ -579,7 +579,7 @@
                   ⊕ 新增按鈕（選填）
                 </el-button>
                 <!--
-                  `C-468`（老闆 11-05「提醒文字是否可以單獨拉出來」）：加了圖或按鈕就會送成一張卡，
+                  `C-469`（老闆 11-05「提醒文字是否可以單獨拉出來」）：加了圖或按鈕就會送成一張卡，
                   卡片才有通知列那行字可以設——以前這一格只有圖文訊息、卡片訊息有，文字這邊店家改不了。
                   ⛔ 什麼都沒加的純文字不給這一格：LINE 文字訊息的通知顯示的就是內文本身，給了也是假的。
                 -->
@@ -685,7 +685,7 @@
                 @remove="removeMessage(i)"
               >
                 <div class="card-section-stack">
-                  <!-- `C-468`：跟別的模組同一格、同一套說法（以前這裡是唯一不能插客人資料的） -->
+                  <!-- `C-469`：跟別的模組同一格、同一套說法（以前這裡是唯一不能插客人資料的） -->
                   <FlowAltTextField
                     v-model="msg.altText"
                     required
@@ -700,7 +700,7 @@
                       <span class="text-sm text-muted">開啟後，圖片透明的地方會維持透明、不會補上白底</span>
                     </div>
                     <!--
-                      `C-468`：這個開關不只是外觀，它會換一種送法（imagemap）。以前兩種失效都只有伺服器日誌知道：
+                      `C-469`：這個開關不只是外觀，它會換一種送法（imagemap）。以前兩種失效都只有伺服器日誌知道：
                         ① 有區塊設「觸發機器人模組」→ 整則退回原本的送法，透明當場沒作用
                         ② 「傳送文字」的貼標在那種格式裡沒有位置放 → 客人點了標籤不會貼（這條在存檔時擋，見 validate）
                       ⛔ 不要只寫「可能會失效」——要講是哪一塊、現在這則會怎樣。
@@ -2376,7 +2376,7 @@ const MSG_META: Record<string, { label: string; badge: string }> = {
 }
 
 /**
- * `C-468`：開著「保留 PNG 透明區域」但這一則其實不會透明的原因；會透明就回空字串。
+ * `C-469`：開著「保留 PNG 透明區域」但這一則其實不會透明的原因；會透明就回空字串。
  *
  * 透明是靠改用 imagemap 送（`handler.ts` 的 `buildRichMessageLineMessage`），而那種格式送不了
  * 「觸發機器人模組」——只要有一塊設了模組，整則就退回原本的送法，透明當場沒作用。
@@ -3692,7 +3692,7 @@ async function revealFlowRow(flow: any, scrollTop: number) {
 function normalizeMessages(messages: any[]) {
   return (messages ?? []).map((msg) => {
     // `C-422` ⑦：沒圖的文字不會送標題、畫面上也看不到標題格——藏著的舊標題拿掉，免得下次加圖時冒出來跟著送出去。
-    // `C-468`：同樣的道理，沒圖也沒按鈕的文字送的是 LINE 文字訊息，沒有「提醒文字」這回事——藏著的也拿掉。
+    // `C-469`：同樣的道理，沒圖也沒按鈕的文字送的是 LINE 文字訊息，沒有「提醒文字」這回事——藏著的也拿掉。
     // ⚠️ 圖片框開著（按了「更換圖片」還沒選）的不動：選了新圖，標題跟提醒文字要還在
     if (msg.type === 'text' && !textImageOpen.has(msg)) {
       const rest = { ...msg }
@@ -3892,11 +3892,11 @@ function validateMessages(messages: any[]): string | null {
     }
 
     if (msg?.type === 'richMessage') {
-      // `C-468`：⛔ 錯誤訊息不留「Alt Text」這種英文術語（後端 `flow-validator.ts` 同一句）
+      // `C-469`：⛔ 錯誤訊息不留「Alt Text」這種英文術語（後端 `flow-validator.ts` 同一句）
       if (!msg.altText?.trim()) return '圖文訊息：請填提醒文字（客人手機通知列會看到的那行字）'
       if (!msg.heroImageUrl) return '圖文訊息：請上傳背景圖片'
       if (!Array.isArray(msg.actions) || msg.actions.length < 1) return '圖文訊息：尚未設定任何動作區塊'
-      // `C-468`：開著透明時「傳送文字」的貼標會被送出端丟掉（前後端同一支）
+      // `C-469`：開著透明時「傳送文字」的貼標會被送出端丟掉（前後端同一支）
       const droppedTagging = richMessageDroppedTaggingError(msg)
       if (droppedTagging) return `圖文訊息：${droppedTagging}`
       if (msg.layoutId === 'custom') {

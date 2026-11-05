@@ -1,5 +1,5 @@
 /**
- * `C-468` 實機守門員（老闆 2026-11-05「提醒文字是否可以單獨拉出來」）：機器人模組
+ * `C-469` 實機守門員（老闆 2026-11-05「提醒文字是否可以單獨拉出來」）：機器人模組
  *
  *   BROADCAST_CRON_ENABLED=false npm run dev -- --port 3123     # 另一個終端先跑起來
  *   CHECK_BASE_URL=http://localhost:3123 node --env-file=.env_myfeel scripts/flow-alt-text-check.mjs

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { altTextFallbackFor, flowMessageHasAltText } from './line-alt-text'
 
 /**
- * `C-468`：「提醒文字」這一格該不該出現。
+ * `C-469`：「提醒文字」這一格該不該出現。
  * ⛔ LINE 沒有給每種訊息這一行字——純文字、圖片、影片那幾種給了格子也是假的（填了也送不出去）。
  */
 describe('哪幾種模組有「提醒文字」可以設', () => {
