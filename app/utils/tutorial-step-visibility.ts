@@ -54,3 +54,31 @@ export function shouldRunClickBefore(
     return false
   return !step.clickBeforeUnless || !has(step.clickBeforeUnless)
 }
+
+interface Span { top: number, bottom: number }
+
+/**
+ * 標亮的那幾列（`TutorialStep.mark`）要**全部看得到**：回傳捲動區還要往下捲多少（負＝往上，0＝不用動）。
+ *
+ * 為什麼需要（2026-11-05 實走量到）：打造完落地第 1 步說「亮起來的這幾頁：歡迎訊息、AI 口氣、分眾標籤」，
+ * 框的是整條側欄（`.sidebar-scroll`），但側欄自己會捲——**「AI 設定」那一列在 1440×900、1536×864、
+ * 甚至 1920×1080 都落在側欄看得到的範圍下面**。字說三頁亮了、畫面上只看得到兩頁。
+ *
+ * - `view`＝捲動區**看得到的那一段**（呼叫端先跟視窗取交集）；`marks`＝每一列的上下緣（同一套座標）。
+ * - 塞得下：捲最少的距離讓全部進來（上面露出來就不動上面）。
+ * - 塞不下：對齊最上面那一列（⛔ 不置中：上下各切一半＝兩頭都看不完整）。
+ * - `pad`：留一點邊，外框（2px）與圓角才不會貼著捲動區邊緣被切。
+ */
+export function marksScrollDelta(view: Span, marks: Span[], pad = 12): number {
+  if (!marks.length || view.bottom <= view.top)
+    return 0
+  const top = Math.min(...marks.map(m => m.top)) - pad
+  const bottom = Math.max(...marks.map(m => m.bottom)) + pad
+  if (bottom - top > view.bottom - view.top)
+    return top - view.top
+  if (top < view.top)
+    return top - view.top
+  if (bottom > view.bottom)
+    return bottom - view.bottom
+  return 0
+}

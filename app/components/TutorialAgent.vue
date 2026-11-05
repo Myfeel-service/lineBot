@@ -1671,14 +1671,39 @@ const targetMissing = ref(false)
  * 留 8px 餘裕：剛好等高時遮罩邊緣會壓在容器邊界上，看起來就是「超出去」。
  */
 function fitsInScrollParent(el: HTMLElement): boolean {
+  const p = scrollParentOf(el)
+  if (p)
+    return el.getBoundingClientRect().height <= p.clientHeight - 8
+  return el.getBoundingClientRect().height <= window.innerHeight - 8
+}
+
+/** 往上找第一個真的會捲動的祖先（側欄是 .sidebar-scroll）；沒有就回 null */
+function scrollParentOf(el: HTMLElement): HTMLElement | null {
   let p: HTMLElement | null = el.parentElement
   while (p) {
-    const style = getComputedStyle(p)
-    if (/(auto|scroll)/.test(style.overflowY) && p.clientHeight > 0)
-      return el.getBoundingClientRect().height <= p.clientHeight - 8
+    if (/(auto|scroll)/.test(getComputedStyle(p).overflowY) && p.clientHeight > 0)
+      return p
     p = p.parentElement
   }
-  return el.getBoundingClientRect().height <= window.innerHeight - 8
+  return null
+}
+
+/**
+ * 標亮的那幾列捲進看得到的範圍（2026-11-05 實走：落地第 1 步的「AI 設定」在 1440×900～1920×1080
+ * 都落在側欄下面，字說三頁亮了、畫面只看得到兩頁）。算法在 `marksScrollDelta`。
+ * ⚠️ 只捲**標亮所在的那個捲動區**（側欄自己），洞框的是整條側欄，位置不會跟著動。
+ */
+async function revealMarks(marks: HTMLElement[]) {
+  const box = marks[0] ? scrollParentOf(marks[0]) : null
+  if (!box)
+    return
+  const r = box.getBoundingClientRect()
+  const view = { top: Math.max(r.top, 0), bottom: Math.min(r.bottom, window.innerHeight) }
+  const delta = marksScrollDelta(view, marks.filter(m => box.contains(m)).map(m => m.getBoundingClientRect()))
+  if (!delta)
+    return
+  box.scrollTop += delta
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 }
 
 /** 導覽步驟順手標亮的那幾個元素（`TutorialStep.mark`）。換步、關掉、完成時一律收掉 */
@@ -1745,8 +1770,11 @@ async function focusActiveStep() {
   }
   await scrollAndSettle(el)
   // ⚠️ 標亮要在量位置之後、交給 el-tour 之前：標亮只改底色與外框，不動版面
-  if (step?.mark)
-    document.querySelectorAll(step.mark).forEach(n => n.classList.add(TOUR_MARK_CLASS))
+  if (step?.mark) {
+    const marks = Array.from(document.querySelectorAll<HTMLElement>(step.mark))
+    await revealMarks(marks)
+    marks.forEach(n => n.classList.add(TOUR_MARK_CLASS))
+  }
   // 同一個元素時，先清空再設定以確保觸發 el-tour 重算
   if (liveTarget.value === el) {
     liveTarget.value = null

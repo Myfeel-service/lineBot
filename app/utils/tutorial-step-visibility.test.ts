@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { can } from '~~/shared/permissions'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
-import { shouldRunClickBefore, stepAllowedForRole, stepPreconditionMet } from './tutorial-step-visibility'
+import { marksScrollDelta, shouldRunClickBefore, stepAllowedForRole, stepPreconditionMet } from './tutorial-step-visibility'
 
 /**
  * 步驟級的角色過濾（2026-08-28，客服對話導覽擴到右半邊時加的）。
@@ -82,5 +82,43 @@ describe('shouldRunClickBefore：不要把使用者手上的東西切掉', () =>
       { clickBefore: '.row', clickBeforeUnless: '.opened' },
       has(['.row', '.opened']),
     )).toBe(false)
+  })
+})
+
+/**
+ * 落地第 1 步標亮側欄三列（2026-11-05 實走：1440×900 的「AI 設定」在側欄看得到的範圍下面）。
+ * 數字照那次量的：側欄看得到 218～778，自動回應 490～530、標籤管理 655～695、AI 設定 950～990。
+ */
+describe('marksScrollDelta（標亮的那幾列要全部看得到）', () => {
+  const VIEW = { top: 218, bottom: 778 }
+  const AUTO = { top: 490, bottom: 530 }
+  const TAGS = { top: 655, bottom: 695 }
+  const AI = { top: 950, bottom: 990 }
+
+  it('最下面那列在範圍外：往下捲到剛好露出來（加邊），上面那列仍然看得到', () => {
+    const d = marksScrollDelta(VIEW, [AUTO, TAGS, AI])
+    expect(d).toBe(990 + 12 - 778)
+    // 捲完之後三列都在範圍內
+    for (const m of [AUTO, TAGS, AI]) {
+      expect(m.top - d).toBeGreaterThanOrEqual(VIEW.top)
+      expect(m.bottom - d).toBeLessThanOrEqual(VIEW.bottom)
+    }
+  })
+
+  it('都看得到就不動', () => {
+    expect(marksScrollDelta(VIEW, [AUTO, TAGS])).toBe(0)
+  })
+
+  it('最上面那列被捲上去了：往上捲', () => {
+    expect(marksScrollDelta(VIEW, [{ top: 150, bottom: 190 }, TAGS])).toBe(150 - 12 - 218)
+  })
+
+  it('塞不下：對齊最上面那列（⛔ 不置中，兩頭都切）', () => {
+    expect(marksScrollDelta({ top: 0, bottom: 300 }, [{ top: 100, bottom: 140 }, { top: 600, bottom: 640 }])).toBe(100 - 12)
+  })
+
+  it('沒有標亮、或看得到的範圍是空的：不動', () => {
+    expect(marksScrollDelta(VIEW, [])).toBe(0)
+    expect(marksScrollDelta({ top: 500, bottom: 500 }, [AI])).toBe(0)
   })
 })
