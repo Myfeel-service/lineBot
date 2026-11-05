@@ -250,23 +250,39 @@
 
             <!-- 匯入名單 -->
             <div v-if="form.audienceType === 'import'" class="admin-field-group">
-              <AdminFieldLabel text="LINE User IDs（每行一筆）" tight />
-              <!-- 這串東西從哪來，畫面上以前一個字都沒講（`D-39` 08-28 列出、`D-82` 補）：
-                   沒人天生知道 U 開頭那 33 碼要去哪拿，而這一格又是三個選項裡最像「進階功能」的。
-                   ⛔ 一併指出多數人其實不需要它——否則新手會以為要先湊出一份名單才能發推播。 -->
-              <p class="text-xs text-muted">
-                每位客人在 LINE 都有一串 <b>U 開頭</b>的專屬編號。要拿某位客人的編號，到「<b>好友</b>」頁點開他、
-                按「<b>複製 ID</b>」。<b>多數情況用不到這一格</b>——想發給某一群人，用上面的「依標籤篩選」比較快；
-                這裡是給「別人交給你一份名單」的情況用的。
-              </p>
-              <el-input
-                v-model="form.importText"
-                type="textarea"
-                :rows="5"
-                placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                :disabled="isLocked"
-              />
-              <span class="tags-hint">共 {{ importUserIds.length }} 筆</span>
+              <!-- `C-467`（2026-11-05 老闆「uid 對使用者是沒有意義的」）：查得到名字就講成名字，編號收起來 -->
+              <template v-if="importNameLine">
+                <AdminFieldLabel :text="`發給這 ${importUserIds.length} 位`" tight />
+                <p class="bc-import-names" data-testid="bc-import-names">{{ importNameLine }}</p>
+                <details class="bc-import-ids">
+                  <summary>看 LINE 編號（{{ importUserIds.length }} 筆）</summary>
+                  <el-input
+                    v-model="form.importText"
+                    type="textarea"
+                    :rows="5"
+                    :disabled="isLocked"
+                  />
+                </details>
+              </template>
+              <template v-else>
+                <AdminFieldLabel text="LINE User IDs（每行一筆）" tight />
+                <!-- 這串東西從哪來，畫面上以前一個字都沒講（`D-39` 08-28 列出、`D-82` 補）：
+                     沒人天生知道 U 開頭那 33 碼要去哪拿，而這一格又是三個選項裡最像「進階功能」的。
+                     ⛔ 一併指出多數人其實不需要它——否則新手會以為要先湊出一份名單才能發推播。 -->
+                <p class="text-xs text-muted">
+                  每位客人在 LINE 都有一串 <b>U 開頭</b>的專屬編號。要拿某位客人的編號，到「<b>好友</b>」頁點開他、
+                  按「<b>複製 ID</b>」。<b>多數情況用不到這一格</b>——想發給某一群人，用上面的「依標籤篩選」比較快；
+                  這裡是給「別人交給你一份名單」的情況用的。
+                </p>
+                <el-input
+                  v-model="form.importText"
+                  type="textarea"
+                  :rows="5"
+                  placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  :disabled="isLocked"
+                />
+                <span class="tags-hint">共 {{ importUserIds.length }} 筆</span>
+              </template>
             </div>
 
             <!-- 受眾快照（已發送） -->
@@ -662,6 +678,7 @@ import {
   handoffNoticeText,
   isFreshHandoff,
   parseHandoff,
+  recipientNamesLine,
 } from '~~/shared/broadcast-audience-handoff'
 import {
   BROADCAST_DRAFT_HANDOFF_KEY,
@@ -929,6 +946,34 @@ const isLocked = computed(() => isReadOnly.value || !can(saveCapability.value))
 const importUserIds = computed(() =>
   form.value.importText.split('\n').map((l) => l.trim()).filter(Boolean),
 )
+
+/**
+ * `C-467`（2026-11-05 老闆「uid 對使用者是沒有意義的，之後不用再問這題」）：「匯入名單」的收件人**講成名字**。
+ * 好友頁「推播給這 N 位」、早上報告的生日連結帶名字過來；已存的草稿重開、別人貼來的名單，照編號查（一次最多 100 位）。
+ * 有名字就列名字、編號收進「看 LINE 編號」；一個名字都查不到才照舊顯示編號那一格（那是「別人交給你一份名單」的情況）。
+ */
+const importNames = ref<Record<string, string>>({})
+/** 查過的編號（含查不到的）：⛔ 不要每打一個字就把查不到的那幾位再查一次 */
+const importNamesTried = new Set<string>()
+const importNameLine = computed(() => recipientNamesLine(importUserIds.value, importNames.value))
+let importNamesTimer: ReturnType<typeof setTimeout> | null = null
+watch([importUserIds, () => form.value.audienceType], ([ids, type]) => {
+  if (importNamesTimer) clearTimeout(importNamesTimer)
+  if (type !== 'import') return
+  const missing = ids.filter(id => /^U[0-9a-f]{32}$/i.test(id) && !importNames.value[id] && !importNamesTried.has(id)).slice(0, 100)
+  if (!missing.length) return
+  importNamesTimer = setTimeout(async () => {
+    for (const id of missing) importNamesTried.add(id)
+    try {
+      const r = await apiFetch<{ names?: Record<string, string> }>('/api/broadcast/list', { query: { part: 'names', ids: missing.join(',') } })
+      importNames.value = { ...importNames.value, ...(r?.names ?? {}) }
+    }
+    catch {
+      // 查不到名字＝照舊顯示編號那一格（不擋發送）；下次換一份名單再查
+      for (const id of missing) importNamesTried.delete(id)
+    }
+  }, 400)
+}, { immediate: true })
 
 /**
  * 失敗原因只認列表那份資料（列表 API 就有 failureReason，而且背景刷新會一直更新）。
@@ -1808,6 +1853,8 @@ function applyAudienceHandoff() {
   }
 
   openCreate()
+  // `C-467`：好友頁帶過來的名字（講成名字，⛔ 不讓他對著編號猜）
+  importNames.value = { ...importNames.value, ...(payload.names ?? {}) }
   form.value.audienceType = 'import'
   form.value.importText = payload.userIds.join('\n')
   markClean() // 這是系統幫他填的，還沒動到手——不要一進來就說「有未儲存的變更」
@@ -1931,6 +1978,8 @@ async function applyBirthdayHandoff() {
     return
   }
   openCreate()
+  // `C-467`：壽星的名字本來就拿到了（以前只用編號）
+  importNames.value = { ...importNames.value, ...Object.fromEntries((r?.people ?? []).filter(p => p.lineUserId && p.displayName).map(p => [p.lineUserId, p.displayName])) }
   form.value.name = `生日祝福 ${when}`
   form.value.audienceType = 'import'
   form.value.importText = ids.join('\n')

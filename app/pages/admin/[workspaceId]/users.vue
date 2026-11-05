@@ -673,12 +673,19 @@ function broadcastToSelected() {
     return
   }
 
-  const byId = new Map(users.value.map((u: any) => [String(u.id), String(u.lineUserId ?? '').trim()]))
+  const byId = new Map(users.value.map((u: any) => [String(u.id), u]))
   const lineUserIds: string[] = []
+  // `C-467`：名字一起帶過去，推播頁講成名字（⛔ 不讓店家對著 U 開頭編號猜）
+  const names: Record<string, string> = {}
   let dropped = 0
   for (const id of selectedIds.value) {
-    const lineUserId = byId.get(String(id))
-    if (lineUserId) lineUserIds.push(lineUserId)
+    const u = byId.get(String(id))
+    const lineUserId = String(u?.lineUserId ?? '').trim()
+    if (lineUserId) {
+      lineUserIds.push(lineUserId)
+      const name = String(u?.displayName ?? '').trim()
+      if (name) names[lineUserId] = name
+    }
     else dropped += 1 // 換頁之後舊的勾選可能已經不在這一頁的資料裡
   }
 
@@ -687,7 +694,7 @@ function broadcastToSelected() {
     return
   }
 
-  const payload: BroadcastAudienceHandoff = { userIds: lineUserIds, dropped, ts: Date.now() }
+  const payload: BroadcastAudienceHandoff = { userIds: lineUserIds, dropped, ts: Date.now(), names }
   try {
     sessionStorage.setItem(BROADCAST_AUDIENCE_HANDOFF_KEY, JSON.stringify(payload))
   }

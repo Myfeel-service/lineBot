@@ -7,6 +7,7 @@ import { requireCapability } from '~~/server/utils/workspace-auth'
 import { workspaceBroadcastTier } from '~~/server/utils/broadcast-plan-gate'
 import { getLineMessageQuota, readLineMessageQuotaCached } from '~~/server/utils/line'
 import type { BroadcastDoc } from '~~/shared/types/tag-broadcast'
+import { lineUserFirestoreDocId } from '~~/shared/line-workspace'
 
 /**
  * GET /api/broadcast/list
@@ -34,6 +35,25 @@ export default defineEventHandler(async (event) => {
     ])
     // 生日禮：有寫就帶（code review 第 7 條：「問生日」模組卡上寫了，祝福就要跟上，不看「加好友時問生日」開沒開）
     return { day, since, people, gift: settings.birthday?.gift ?? '' }
+  }
+
+  /**
+   * `part=names&ids=U…,U…`（`C-467`，2026-11-05 老闆「uid 對使用者是沒有意義的」）：「匯入名單」那一格的編號講成名字。
+   * 已存的草稿重開、別人貼來的名單，推播頁拿不到名字——這裡照編號查好友的 LINE 名稱。
+   * ⚠️ 一次最多 100 位（一位一筆讀取；畫面也只列前幾個名字）；⛔ 只查這個帳號的好友（文件 id 帶帳號前綴）。
+   * ⚠️ 借這支路由不另開一支（TS2589）。
+   */
+  if (query.part === 'names') {
+    const ids = [...new Set(String(query.ids ?? '').split(',').map(s => s.trim()).filter(s => /^U[0-9a-f]{32}$/i.test(s)))].slice(0, 100)
+    if (!ids.length) return { names: {} }
+    const db = getDb()
+    const snaps = await db.getAll(...ids.map(id => db.collection('users').doc(lineUserFirestoreDocId(id, workspaceId))))
+    const names: Record<string, string> = {}
+    snaps.forEach((s, i) => {
+      const n = String(s.exists ? (s.data()?.displayName ?? '') : '').trim()
+      if (n) names[ids[i]!] = n.slice(0, 40)
+    })
+    return { names }
   }
 
   /**

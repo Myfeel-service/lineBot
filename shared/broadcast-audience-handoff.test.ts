@@ -4,12 +4,18 @@ import {
   handoffNoticeText,
   isFreshHandoff,
   parseHandoff,
+  recipientNamesLine,
 } from './broadcast-audience-handoff'
 
 describe('parseHandoff', () => {
-  it('讀得回正常的交接單', () => {
+  it('讀得回正常的交接單（舊格式沒有名字＝空的）', () => {
     const raw = JSON.stringify({ userIds: ['U1', 'U2'], dropped: 1, ts: 123 })
-    expect(parseHandoff(raw)).toEqual({ userIds: ['U1', 'U2'], dropped: 1, ts: 123 })
+    expect(parseHandoff(raw)).toEqual({ userIds: ['U1', 'U2'], dropped: 1, ts: 123, names: {} })
+  })
+
+  it('`C-467`：名字跟著帶過來；只留名單裡的人、壞資料丟掉', () => {
+    const raw = JSON.stringify({ userIds: ['U1', 'U2'], ts: 1, names: { U1: ' 王小美 ', U2: 42, U9: '不在名單裡' } })
+    expect(parseHandoff(raw)?.names).toEqual({ U1: '王小美' })
   })
 
   it('⛔ 壞掉的內容一律當成「沒有」，不可以炸掉整個推播頁', () => {
@@ -65,5 +71,23 @@ describe('handoffNoticeText', () => {
     expect(text).toContain('1 位')
     expect(text).toContain('3 位沒有帶過來')
     expect(text).toContain('重新勾選')
+  })
+})
+
+/** `C-467`（2026-11-05 老闆「uid 對使用者是沒有意義的」）：收件人講成名字 */
+describe('recipientNamesLine', () => {
+  it('列名字；⛔ 不拿編號頂替', () => {
+    expect(recipientNamesLine(['U1', 'U2'], { U1: '王小美', U2: '陳大文' })).toBe('王小美、陳大文')
+  })
+  it('有幾位查不到名字要講出來', () => {
+    expect(recipientNamesLine(['U1', 'U2', 'U3'], { U1: '王小美' })).toBe('王小美；另外 2 位查不到名字')
+  })
+  it('太多只列前幾個＋等 N 位', () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `U${i}`)
+    const names = Object.fromEntries(ids.map((id, i) => [id, `客人${i}`]))
+    expect(recipientNamesLine(ids, names, 3)).toBe('客人0、客人1、客人2…等 12 位')
+  })
+  it('一個名字都沒有＝空字串（畫面照舊顯示編號那一格：那是別人交給他的名單）', () => {
+    expect(recipientNamesLine(['U1'], {})).toBe('')
   })
 })

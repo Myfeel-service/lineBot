@@ -307,6 +307,30 @@
   border-radius: var(--radius-sm);
 }
 
+/* `C-467`：匯入名單講成名字；編號收進「看 LINE 編號」 */
+.bc-import-names {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  word-break: break-word;
+}
+
+.bc-import-ids {
+  margin-top: 0.4rem;
+
+  summary {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .el-textarea { margin-top: 0.4rem; }
+}
+
 .bc-click-hint {
   font-size: 0.8125rem;
   line-height: 1.45;

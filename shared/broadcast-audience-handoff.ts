@@ -30,6 +30,26 @@ export interface BroadcastAudienceHandoff {
   dropped: number
   /** 建立時間，用來判斷過不過期 */
   ts: number
+  /**
+   * 編號 → LINE 名稱（`C-467`，2026-11-05 老闆「uid 對使用者是沒有意義的」）。
+   * 推播頁拿它把收件人講成名字，⛔ 不讓店家對著一排 U 開頭編號猜是不是對的人。選填：舊的交接單沒有這格。
+   */
+  names?: Record<string, string>
+}
+
+/** 名字最多幾個字（防壞資料撐爆畫面；LINE 名稱本身上限 20） */
+const NAME_MAX = 40
+
+/** 只留這份名單裡的人、字串、修掉空白（壞資料一律丟掉，⛔ 不讓它炸掉推播頁） */
+export function cleanHandoffNames(raw: unknown, userIds: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!raw || typeof raw !== 'object') return out
+  const ids = new Set(userIds)
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    const name = typeof v === 'string' ? v.trim().slice(0, NAME_MAX) : ''
+    if (ids.has(id) && name) out[id] = name
+  }
+  return out
 }
 
 export function isFreshHandoff(
@@ -55,11 +75,25 @@ export function parseHandoff(raw: string | null): BroadcastAudienceHandoff | nul
       userIds,
       dropped: Number.isFinite(parsed.dropped) ? Number(parsed.dropped) : 0,
       ts: Number.isFinite(parsed.ts) ? Number(parsed.ts) : 0,
+      names: cleanHandoffNames(parsed.names, userIds),
     }
   }
   catch {
     return null
   }
+}
+
+/**
+ * 收件人講成名字那一行（`C-467`）：「王小美、陳大文」；太多就「…等 N 位」；有幾位查不到名字也講出來。
+ * 回空字串＝一個名字都沒有（⛔ 不拿編號頂替）。
+ */
+export function recipientNamesLine(userIds: readonly string[], names: Readonly<Record<string, string>>, show = 10): string {
+  const known = userIds.map(id => names[id]).filter((n): n is string => !!n)
+  if (!known.length) return ''
+  const head = known.slice(0, show).join('、')
+  const more = known.length > show ? `…等 ${known.length} 位` : ''
+  const unknown = userIds.length - known.length
+  return `${head}${more}${unknown > 0 ? `；另外 ${unknown} 位查不到名字` : ''}`
 }
 
 /** 交接完成後要給使用者看的那句話（純函式，兩邊共用、可測） */
