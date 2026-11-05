@@ -14,9 +14,23 @@
  *    所以它要寫成「這則在講什麼」，⛔ 不要寫成像客人在問話的句子——AI 會把它當客人說的話
  *    （`C-398` code review 第 1 條就是為了這個，才不准拿卡片標題當預設）。
  *
- * **LINE 沒有給每種訊息這一行字**：純文字、快速回覆、用戶輸入卡片送的是文字訊息
- * （通知列顯示的就是那段文字本身）、圖片與影片訊息由 LINE 自己顯示「[圖片]」「[影片]」。
- * 這幾種做不出「提醒文字」這一格，不是我們沒做——`flowMessageHasAltText()` 就是這條線。
+ * **LINE 沒有給每種訊息這一行字**（2026-11-05 查證過兩次，老闆問「真的做不到嗎」）：
+ *   ① 官方 SDK `@line/bot-sdk` 的型別（LINE 自己的 OpenAPI 規格產生的）：共通屬性 `MessageBase`
+ *      只有 `type`／`quickReply`／`sender` 三個，**沒有 altText**；`altText` 只出現在
+ *      `flexMessage`／`imagemapMessage`／`templateMessage` 三種上，而且是必填。
+ *      text／image／video／audio／sticker／location 全都沒有。
+ *   ② 拿 LINE 的 `validate/push` 端點實測：`{type:'text', altText:'…'}` 這種**不會被退**——
+ *      ⛔ 但那是「未知屬性被忽略」，不是支援；Flex 少了 altText 才會當場退
+ *      （`messages[0].altText May not be empty`），可見它只認得那三種上的 altText。
+ *   ③ `sender`（name／iconUrl）能改的是通知列上「誰傳的」那半邊，不是內容。
+ *
+ * ⭐ **繞得過去，但要換一種訊息**：把那則改送成卡片（Flex）就有這行字了——
+ *   文字＋圖／文字＋按鈕正是這樣做的（`C-416`／`C-397`）；只有一張圖的 Flex 卡、Flex 裡放影片
+ *   格式上也都過得了 LINE 的檢查（同上實測）。代價是客人看到的東西會變
+ *   （圖片訊息點下去會開全螢幕大圖、可以存；Flex 卡裡的圖只會執行你設的動作），
+ *   ⚠️ 代價的細節沒在真手機上量過，要改之前先驗。
+ *
+ * `flowMessageHasAltText()` 就是這條線：**照現在的送法**有沒有這一行字可以設。
  */
 
 /** LINE altText 的上限（Flex／imagemap／按鈕範本都是這個數） */

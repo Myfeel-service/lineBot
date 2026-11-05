@@ -349,7 +349,7 @@ export function richMessageSendsPostbacks(msg: { transparentBackground?: unknown
 /**
  * 透明的圖文訊息「送出時會被丟掉什麼」（`C-469`，前後端同一支）。
  *
- * 開了「保留 PNG 透明區域」且沒有「觸發機器人模組」的區塊時，整則改用 imagemap 送
+ * 開了「圖片透明的地方不要補白底」（`C-470` 以前叫「保留 PNG 透明區域」）且沒有「觸發機器人模組」的區塊時，整則改用 imagemap 送
  * （`handler.ts` 的 `buildRichMessageLineMessage`）。那種格式只有「開啟網址」「傳送文字」
  * 兩種動作、**沒有 postback**，所以「傳送文字」上掛的標籤送出時會被默默丟掉——
  * 以前只有伺服器日誌寫一行 warn，店家設了貼標、客人點了，標籤卻永遠不會貼上去。
@@ -369,7 +369,9 @@ export function richMessageDroppedTaggingError(
   const index = actions.findIndex((a: any) => a?.type === 'message' && cleanTagIdList(a?.tagging?.enabled ? a?.tagging?.addTagIds : []).length > 0)
   if (index < 0) return ''
   const slot = String((actions[index] as any)?.slot || '').trim() || SLOT_LABELS[index] || String(index + 1)
-  return `區塊 ${slot} 的「傳送文字」貼不了標籤：開著「保留 PNG 透明區域」時，LINE 的格式沒有放標籤的位置，客人點了也不會貼上去。請關掉「保留 PNG 透明區域」，或把這一塊的貼標取消。`
+  // ⛔ 引號裡的字要跟畫面上那一格**一模一樣**（`C-470` 把它從「保留 PNG 透明區域」改名了）——
+  //    叫店家去關一個他在畫面上找不到的開關，等於沒講。
+  return `區塊 ${slot} 的「傳送文字」貼不了標籤：開著「圖片透明的地方不要補白底」時，LINE 的格式沒有放標籤的位置，客人點了也不會貼上去。請關掉那個開關，或把這一塊的貼標取消。`
 }
 
 /**

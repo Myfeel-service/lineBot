@@ -651,8 +651,15 @@
                     />
                   </el-select>
                 </div>
-                <div class="text-xs text-muted">
-                  圖文訊息需先在「圖文訊息管理」建立，這裡僅做引用。
+                <!--
+                  `C-470`：以前這裡寫「圖文訊息需先在『圖文訊息管理』建立」——**那個頁面已經不在後台了**
+                  （`app/pages/admin/[workspaceId]/` 底下沒有這一頁），工具列也早就不給新增這一型，
+                  只有舊資料會走到這裡。照著那句話做的店家會找不到頁面，卡在這裡。
+                -->
+                <div class="ui-note-text">
+                  這是舊的做法：以前要先在另一個頁面把圖文訊息建好，再回來這裡引用，而<b>那個頁面已經沒有了</b>，
+                  所以這一則的圖和每一塊的動作都不能在這裡改。
+                  要改內容請用上面工具列的「＋ 圖文訊息」重做一則，再把這一則刪掉。
                 </div>
                 <div v-if="richMessageRefPreview(msg)" class="carousel-action-row">
                   <div class="carousel-action-row-top">
@@ -684,33 +691,16 @@
                 @dragend="onDragEnd"
                 @remove="removeMessage(i)"
               >
+                <!--
+                  `C-470`：順序照店家實際的動作走——**挑圖 → 切幾塊 → 每塊點了做什麼 → 最後才是通知那句話**。
+                  以前是倒過來的：第一格就要他填一個客人在對話裡看不到的「提醒文字」（而且必填、不填存不起來），
+                  第二格問「圖片透明要不要保留」——那時圖都還沒上傳，上傳 JPG 的話那一格根本沒有作用。
+                -->
                 <div class="card-section-stack">
-                  <!-- `C-469`：跟別的模組同一格、同一套說法（以前這裡是唯一不能插客人資料的） -->
-                  <FlowAltTextField
-                    v-model="msg.altText"
-                    required
-                    :options="variableTokenOptions"
-                    :known-keys="variableKeys"
-                    @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
-                  />
-                  <div class="admin-field-group">
-                    <AdminFieldLabel text="保留 PNG 透明區域" tight />
-                    <div class="flow-rich-toggle-row">
-                      <el-switch v-model="msg.transparentBackground" />
-                      <span class="text-sm text-muted">開啟後，圖片透明的地方會維持透明、不會補上白底</span>
-                    </div>
-                    <!--
-                      `C-469`：這個開關不只是外觀，它會換一種送法（imagemap）。以前兩種失效都只有伺服器日誌知道：
-                        ① 有區塊設「觸發機器人模組」→ 整則退回原本的送法，透明當場沒作用
-                        ② 「傳送文字」的貼標在那種格式裡沒有位置放 → 客人點了標籤不會貼（這條在存檔時擋，見 validate）
-                      ⛔ 不要只寫「可能會失效」——要講是哪一塊、現在這則會怎樣。
-                    -->
-                    <p v-if="msg.transparentBackground && richMessageTransparentOffReason(msg)" class="ui-warning-text">
-                      {{ richMessageTransparentOffReason(msg) }}
-                    </p>
-                  </div>
                   <div class="admin-field-group" data-tour="rich-hero">
-                    <AdminFieldLabel text="背景圖片" tight />
+                    <!-- `C-470`：以前叫「背景圖片」，店家會以為是底圖、還要在上面放東西；這張圖就是整則訊息 -->
+                    <AdminFieldLabel text="圖片" tight />
+                    <p class="text-xs text-muted">這張圖就是客人收到的整則訊息。</p>
                     <FlowUploadZone
                       v-model="msg.heroImageUrl"
                       type="image"
@@ -719,6 +709,14 @@
                       @image-sized="(size) => applyRichMessageHeroSize(msg, size)"
                     />
                   </div>
+                  <AdminLayoutPresetPicker
+                    data-tour="rich-layout"
+                    flat
+                    title="圖文樣式"
+                    :layouts="RICH_LAYOUT_PRESETS"
+                    :selected-id="msg.layoutId"
+                    @select="(layoutId) => selectInlineRichMessageLayout(msg, String(layoutId))"
+                  />
                   <FlowRichMessageAreas
                     v-if="String(msg.heroImageUrl || '').trim()"
                     :msg="msg"
@@ -730,14 +728,37 @@
                     :show-header="false"
                     :flat="true"
                   />
-                  <AdminLayoutPresetPicker
-                    data-tour="rich-layout"
-                    flat
-                    title="圖文樣式"
-                    :layouts="RICH_LAYOUT_PRESETS"
-                    :selected-id="msg.layoutId"
-                    @select="(layoutId) => selectInlineRichMessageLayout(msg, String(layoutId))"
+                  <!-- `C-469`：跟別的模組同一格、同一套說法（以前這裡是唯一不能插客人資料的） -->
+                  <FlowAltTextField
+                    v-model="msg.altText"
+                    required
+                    :options="variableTokenOptions"
+                    :known-keys="variableKeys"
+                    @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
                   />
+                  <!--
+                    `C-470`：這一格搬到最後，而且**沒上傳圖之前不出現**——圖都還沒挑就問「透明要不要保留」，
+                    店家答不出來；上傳 JPG 的話它更是完全沒有作用。
+                  -->
+                  <div v-if="String(msg.heroImageUrl || '').trim()" class="admin-field-group">
+                    <!-- `C-470`：以前叫「保留 PNG 透明區域」＝術語（PNG、區域）。改講圖會長什麼樣 -->
+                    <AdminFieldLabel text="圖片透明的地方不要補白底" tight />
+                    <div class="flow-rich-toggle-row">
+                      <el-switch v-model="msg.transparentBackground" />
+                      <span class="text-sm text-muted">
+                        關著的話，透明的地方會變成白色。只有去背的 PNG 圖才有透明的地方，JPG 沒有、開了也不會變。
+                      </span>
+                    </div>
+                    <!--
+                      `C-469`：這個開關不只是外觀，它會換一種送法（imagemap）。以前兩種失效都只有伺服器日誌知道：
+                        ① 有區塊設「觸發機器人模組」→ 整則退回原本的送法，透明當場沒作用
+                        ② 「傳送文字」的貼標在那種格式裡沒有位置放 → 客人點了標籤不會貼（這條在存檔時擋，見 validate）
+                      ⛔ 不要只寫「可能會失效」——要講是哪一塊、現在這則會怎樣。
+                    -->
+                    <p v-if="msg.transparentBackground && richMessageTransparentOffReason(msg)" class="ui-warning-text">
+                      {{ richMessageTransparentOffReason(msg) }}
+                    </p>
+                  </div>
                 </div>
               </FlowMessageCardShell>
               <FlowRichMessageAreas
@@ -2376,7 +2397,7 @@ const MSG_META: Record<string, { label: string; badge: string }> = {
 }
 
 /**
- * `C-469`：開著「保留 PNG 透明區域」但這一則其實不會透明的原因；會透明就回空字串。
+ * `C-469`：開著「圖片透明的地方不要補白底」（`C-470` 以前叫「保留 PNG 透明區域」）但這一則其實不會透明的原因；會透明就回空字串。
  *
  * 透明是靠改用 imagemap 送（`handler.ts` 的 `buildRichMessageLineMessage`），而那種格式送不了
  * 「觸發機器人模組」——只要有一塊設了模組，整則就退回原本的送法，透明當場沒作用。
@@ -3894,7 +3915,7 @@ function validateMessages(messages: any[]): string | null {
     if (msg?.type === 'richMessage') {
       // `C-469`：⛔ 錯誤訊息不留「Alt Text」這種英文術語（後端 `flow-validator.ts` 同一句）
       if (!msg.altText?.trim()) return '圖文訊息：請填提醒文字（客人手機通知列會看到的那行字）'
-      if (!msg.heroImageUrl) return '圖文訊息：請上傳背景圖片'
+      if (!msg.heroImageUrl) return '圖文訊息：請上傳圖片'
       if (!Array.isArray(msg.actions) || msg.actions.length < 1) return '圖文訊息：尚未設定任何動作區塊'
       // `C-469`：開著透明時「傳送文字」的貼標會被送出端丟掉（前後端同一支）
       const droppedTagging = richMessageDroppedTaggingError(msg)
@@ -3928,14 +3949,17 @@ function validateMessages(messages: any[]): string | null {
     }
 
     if (msg?.type === 'richMessageRef') {
-      if (!msg.richMessageId) return '圖文訊息：請選擇已建立的圖文訊息'
+      // `C-470`：⛔ 這幾句以前都叫人「到圖文訊息管理」補資料，但那個頁面已經不在後台了＝死路。
+      //   這一型只剩舊資料會走到（工具列不給新增），所以出路一律改成「用『＋ 圖文訊息』重做一則」。
+      const REDO = '請用上面工具列的「＋ 圖文訊息」重做一則，再把這一則刪掉。'
+      if (!msg.richMessageId) return `圖文訊息（舊）：這一則沒有指到任何內容。${REDO}`
       const selected = richMessages.value.find((item) => item.id === msg.richMessageId)
-      if (!selected) return '圖文訊息：找不到引用內容，請重新選擇'
+      if (!selected) return `圖文訊息（舊）：指到的那一則已經不在了。${REDO}`
       if (!selected.altText) {
-        return '圖文訊息：引用內容不完整，請到圖文訊息管理補齊'
+        return `圖文訊息（舊）：這一則少了提醒文字（客人手機通知列會看到的那行字），而舊的編輯頁已經沒有了。${REDO}`
       }
-      if (!selected.transparentBackground && !selected.heroImageUrl) return '圖文訊息：缺少背景圖片'
-      if (!Array.isArray(selected.actions) || selected.actions.length < 1) return '圖文訊息：尚未定義任何動作'
+      if (!selected.transparentBackground && !selected.heroImageUrl) return `圖文訊息（舊）：這一則少了圖片。${REDO}`
+      if (!Array.isArray(selected.actions) || selected.actions.length < 1) return `圖文訊息（舊）：這一則沒有設定客人點了會怎樣。${REDO}`
       for (const action of selected.actions) {
         const error = validateUnifiedAction({
           slot: action.slot || '',
@@ -3948,7 +3972,7 @@ function validateMessages(messages: any[]): string | null {
             addTagIds: Array.isArray(action?.tagging?.addTagIds) ? action.tagging.addTagIds : [],
           },
         })
-        if (error) return `圖文訊息：區塊 ${action.slot} ${error}`
+        if (error) return `圖文訊息（舊）：區塊 ${action.slot} ${error}。${REDO}`
       }
     }
 

@@ -11,6 +11,8 @@
  *   C. 透明開關：打開 + 有區塊設「觸發機器人模組」→ 當場說「這一則透明不會生效」並點名是哪一塊；
  *      對照組：關掉開關，那句話要消失
  *   D. 「＋ 卡片訊息」：同一格、同一套說法（placeholder 說得出沒填客人會看到「卡片訊息」）
+ *   E.（`C-470`）圖文訊息那張卡的順序照店家的動作走：**圖片排在提醒文字前面**；
+ *      還沒上傳圖之前看不到透明開關（上傳後才出現）；名字不再是「背景圖片」「保留 PNG 透明區域」
  *
  * ⛔ 全程唯讀：不按「儲存」，所有非 GET 的 /api 一律攔下（上傳回一張假圖），最後列出攔了哪些。
  * ⚠️ 攔下的副作用：關掉的自動導覽存不進去、每次載入都會再跳——要點之前先關一次。
@@ -231,6 +233,16 @@ const richInsetOk = await page.evaluate(() => {
 })
 check('B2 提醒文字旁邊有「＋ 插入」（以前全站只有這一格不能插客人資料）', richInsetOk)
 check('B3 說明講客人看得到的東西，⛔ 不留「Alt Text」這種英文', rich.includes('客人手機跳出的通知') && !rich.includes('Alt Text'))
+
+// ── E（`C-470`）：順序與名字 ─────────────────────────────────
+check('E1 ⛔ 不再叫「背景圖片」「保留 PNG 透明區域」（術語＋會誤會成底圖）',
+  !rich.includes('背景圖片') && !rich.includes('保留 PNG 透明區域'),
+  rich.includes('背景圖片') ? '還寫著「背景圖片」' : (rich.includes('保留 PNG 透明區域') ? '還寫著「保留 PNG 透明區域」' : ''))
+check('E2 第一格是圖片，提醒文字排在它後面（照店家的動作：先挑圖，最後才想通知那句話）',
+  rich.indexOf('圖片') > -1 && rich.indexOf('圖片') < rich.indexOf('提醒文字'),
+  `圖片在第 ${rich.indexOf('圖片')} 字、提醒文字在第 ${rich.indexOf('提醒文字')} 字`)
+check('E3 還沒上傳圖之前看不到透明開關（圖都還沒挑，問他透明要不要保留答不出來）',
+  !rich.includes('透明'), rich.includes('透明') ? '沒圖就看到透明那一格了' : '')
 await shot('b-rich')
 
 // ── C. 透明開關：說得出這一則為什麼不會透明 ─────────────────────
@@ -246,6 +258,13 @@ const gotAreas = await waitFor(() => {
 check('C0 上傳底圖後出現區塊的動作設定（接下來才設得了觸發模組）', gotAreas, (await newBlock()).slice(0, 60).replace(/\n/g, ' '))
 
 if (gotAreas) {
+  // `C-470`：透明那一格現在只在有圖之後才出現——上傳完才看得到（對照組在 E3）
+  const switchAppeared = await waitFor(() => {
+    const el = [...document.querySelectorAll('.message-card')].find(c => !c.dataset.seen)
+    return (el?.innerText ?? '').includes('圖片透明的地方不要補白底')
+  }, null, 10_000)
+  check('E4 上傳圖之後，透明那一格才出現（而且用的是新名字）', switchAppeared)
+
   const picked = await pickInNewCard('動作類型', '觸發機器人模組')
   await sleep(500)
   const warnBefore = await page.evaluate(() => document.body.innerText.includes('透明不會生效'))
@@ -254,7 +273,7 @@ if (gotAreas) {
 
   const toggled = await page.evaluate(() => {
     const el = [...document.querySelectorAll('.message-card')].find(c => !c.dataset.seen)
-    const group = [...(el?.querySelectorAll('.admin-field-group') ?? [])].find(g => g.innerText.includes('保留 PNG 透明區域'))
+    const group = [...(el?.querySelectorAll('.admin-field-group') ?? [])].find(g => g.innerText.includes('圖片透明的地方不要補白底'))
     const sw = group?.querySelector('.el-switch')
     if (!sw) return false
     sw.click()
@@ -270,7 +289,7 @@ if (gotAreas) {
 
   await page.evaluate(() => {
     const el = [...document.querySelectorAll('.message-card')].find(c => !c.dataset.seen)
-    const group = [...(el?.querySelectorAll('.admin-field-group') ?? [])].find(g => g.innerText.includes('保留 PNG 透明區域'))
+    const group = [...(el?.querySelectorAll('.admin-field-group') ?? [])].find(g => g.innerText.includes('圖片透明的地方不要補白底'))
     group?.querySelector('.el-switch')?.click()
   })
   const warnGone = await waitFor(() => !document.body.innerText.includes('透明不會生效'), null, 10_000)

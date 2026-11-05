@@ -269,3 +269,39 @@ describe('教學文案的寫作規則', () => {
       .toEqual([])
   })
 })
+
+/**
+ * `C-470`：圖文訊息那張編輯卡重排了（圖 → 圖文樣式 → 區塊 → 提醒文字 → 透明開關），
+ * 導覽的**順序**與**用字**必須跟著畫面走。
+ *
+ * ⛔ 為什麼要有這條測試：改版之前導覽是「先選版型、再上傳底圖」，跟畫面相反，而且「版型」「底圖」
+ *   這兩個詞畫面上根本沒有——全套測試照樣全綠（舊測試只驗錨點存在）。
+ *   導覽的說明是**手寫的畫面副本**，沒有東西守著它就會跟畫面各走各的（`D-109` 查到 20 處教錯）。
+ */
+describe('`C-470` 圖文訊息導覽：順序與用字跟著畫面走', () => {
+  const src = readFileSync(TOPICS_FILE, 'utf8')
+  const flowPage = readFileSync(join(APP_DIR, 'pages/admin/[workspaceId]/flow.vue'), 'utf8')
+  const block = src.slice(src.indexOf('id: \'msg-rich\''), src.indexOf('id: \'msg-carousel\''))
+
+  it('先教「挑圖」再教「切成幾塊」——跟畫面上那兩格的先後一模一樣', () => {
+    const heroStep = block.indexOf('rich-hero')
+    const layoutStep = block.indexOf('rich-layout')
+    const heroField = flowPage.indexOf('data-tour="rich-hero"')
+    const layoutField = flowPage.indexOf('data-tour="rich-layout"')
+    expect(heroStep, '導覽裡找不到 rich-hero 那一步').toBeGreaterThan(-1)
+    expect(layoutStep, '導覽裡找不到 rich-layout 那一步').toBeGreaterThan(-1)
+    expect(heroField, '畫面上找不到 rich-hero 那一格').toBeGreaterThan(-1)
+    expect(layoutField, '畫面上找不到 rich-layout 那一格').toBeGreaterThan(-1)
+    expect(heroField < layoutField, '畫面上「圖片」要排在「圖文樣式」前面').toBe(true)
+    expect(heroStep < layoutStep, '畫面先給圖片、導覽卻先教樣式＝教學把人帶到還沒出現的東西').toBe(true)
+  })
+
+  it('⛔ 導覽不講畫面上沒有的字（「版型」「底圖」「背景圖片」「保留 PNG」）', () => {
+    // ⛔ 要先把註解剝掉再查：第一版沒剝，當場被**自己那句「以前是先選版型、再上傳底圖」的註解**判紅。
+    //    這個坑在這個 repo 犯過不只一次（宣告順序那支測試也追進註解裡的變數名）。
+    const visible = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    for (const word of ['版型', '底圖', '背景圖片', '保留 PNG']) {
+      expect(visible, `導覽寫了「${word}」，但畫面上那一格不叫這個名字——店家照著找會找不到`).not.toContain(word)
+    }
+  })
+})

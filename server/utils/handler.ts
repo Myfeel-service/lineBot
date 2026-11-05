@@ -2102,9 +2102,13 @@ function buildLineMessages(
 
     if (msg.type === 'text') {
       // ⛔ 走到這裡的是「沒圖也沒按鈕」的純文字（有圖、有按鈕的在上面就送成卡片了）。
-      //    LINE 的文字訊息沒有 altText 這個欄位——通知列顯示的就是這段字本身。
-      //    `C-469` 的提醒文字只有卡片用得到，原封不動送出去等於多塞一個 LINE 不認得的欄位。
-      //    存檔端已經把藏著的拿掉（`flow.vue` 的 `normalizeMessages`），這裡擋的是舊資料與直接打 API 的。
+      //    LINE 的文字訊息**沒有 altText 這個欄位**（官方 SDK 的 `MessageBase` 共通屬性只有
+      //    type／quickReply／sender，altText 只在 flex／imagemap／template 三種上）——通知列顯示的
+      //    就是這段字本身。
+      //    ⚠️ 2026-11-05 拿 LINE 的 `validate/push` 實測：帶著 altText 送**不會被退**，LINE 直接忽略它。
+      //    所以這裡剔掉不是為了避免被退，是為了別把一個「送出去完全沒作用」的欄位留在資料裡
+      //    假裝設定有效（`C-469`）。存檔端已經把藏著的拿掉（`flow.vue` 的 `normalizeMessages`），
+      //    這裡擋的是舊資料與直接打 API 的。
       const { altText: _cardOnlyAltText, ...textMsg } = msg
       return [{
         ...textMsg,

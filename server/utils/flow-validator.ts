@@ -90,7 +90,8 @@ function validateRichMessage(msg: any): void {
   // `C-469`：以前寫「請輸入提醒文字（Alt Text）」——店家看不懂 Alt Text 是什麼。
   // 整則只有一張圖、沒有文字可以自動拿去當通知列那行字，所以這格才是必填（別的模組都是選填）。
   if (!String(msg?.altText || '').trim()) fail('圖文訊息：請填提醒文字（客人手機通知列會看到的那行字）')
-  if (!String(msg?.heroImageUrl || '').trim()) fail('圖文訊息：請上傳背景圖片')
+  // `C-470`：畫面上那一格已經從「背景圖片」改叫「圖片」（它就是整則訊息，不是底圖）
+  if (!String(msg?.heroImageUrl || '').trim()) fail('圖文訊息：請上傳圖片')
   if (!Array.isArray(msg?.actions) || msg.actions.length < 1) {
     fail('圖文訊息：尚未設定任何動作區塊')
   }
@@ -194,7 +195,10 @@ function validateMessageByType(msg: any): void {
   if (type === 'userInput') return validateUserInput(msg)
   if (type === 'richMessage') return validateRichMessage(msg)
   if (type === 'richMessageRef') {
-    if (!String(msg?.richMessageId || '').trim()) fail('圖文訊息：請選擇已建立的圖文訊息')
+    // `C-470`：舊做法（先在已經下架的「圖文訊息管理」頁建好再引用）。錯誤句不再指向那個頁面（前端同一套字）
+    if (!String(msg?.richMessageId || '').trim()) {
+      fail('圖文訊息（舊）：這一則沒有指到任何內容。請用工具列的「＋ 圖文訊息」重做一則，再把這一則刪掉。')
+    }
     return
   }
   if (type === 'carousel') return validateCarousel(msg)

@@ -1113,20 +1113,24 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
           '點「<strong>＋ 圖文訊息</strong>」這顆就會加一張。我幫你開好了，往下教你填每個欄位 →',
         placement: 'bottom',
       },
-      {
-        target: '[data-tour="rich-layout"]',
-        demoType: 'richMessage',
-        title: '選版型',
-        description:
-          '圖文訊息是一張大圖、切成多個<strong>可點區塊</strong>。先選一個<strong>版型</strong>，決定要切成幾塊。',
-        placement: 'top',
-      },
+      /*
+       * `C-470`：這兩步以前是「先選版型、再上傳底圖」，跟畫面上的順序**相反**（畫面第一格是圖），
+       * 而且用的是畫面上沒有的字（「版型」「底圖」）。導覽的順序與用字一律跟著畫面走。
+       */
       {
         target: '[data-tour="rich-hero"]',
         demoType: 'richMessage',
-        title: '上傳大圖 + 綁動作',
+        title: '先挑一張圖',
         description:
-          '在這裡上傳底圖。<strong>上傳後</strong>，圖上每個區塊就能各自綁一個動作（開啟網址、傳送文字、觸發機器人模組）——這是圖文訊息最強的地方。',
+          '這張圖就是客人收到的<strong>整則訊息</strong>。先上傳，下面才看得到要切成幾塊、每塊點了做什麼。',
+        placement: 'top',
+      },
+      {
+        target: '[data-tour="rich-layout"]',
+        demoType: 'richMessage',
+        title: '要切成幾塊',
+        description:
+          '「<strong>圖文樣式</strong>」決定這張圖切成幾個<strong>可以點的區塊</strong>。每塊各自綁一個動作（開啟網址、傳送文字、觸發機器人模組）——這是圖文訊息最強的地方。',
         placement: 'top',
       },
     ],
