@@ -161,6 +161,19 @@ describe('接完 LINE 的「上線之後」（`D-101`）', () => {
     expect(none.description).not.toContain('還差')
   })
 
+  /** `C-472`（老闆 2026-11-05「新帳號 AI 回覆先不用預設打開，但要有提醒」） */
+  it('AI 自動回覆確定是關的：最後一步列成第一件待辦、講去哪打開；開著或不知道＝不講', () => {
+    const off = liveTourSteps({ received: true, triedPlayground: true, aiOff: true }).at(-1)!
+    expect(off.description).toContain('還差 1 件')
+    expect(off.description).toContain('到「<strong>AI 設定</strong>」<strong>打開 AI 自動回覆</strong>，客人問問題它才會回')
+    const all = liveTourSteps({ received: true, triedPlayground: false, draftCards: 3, aiOff: true }).at(-1)!
+    expect(all.description).toContain('還差 3 件')
+    expect(all.description.indexOf('AI 自動回覆')).toBeLessThan(all.description.indexOf('看過那 3 條知識'))
+    for (const aiOff of [false, undefined]) {
+      expect(liveTourSteps({ received: true, triedPlayground: true, aiOff }).at(-1)!.description).not.toContain('AI 自動回覆')
+    }
+  })
+
   it('⛔ 沒加進通知名單就不承諾手機會收到通知／早上的摘要', () => {
     const text = [true, false].flatMap(r => liveTourSteps({ received: r, triedPlayground: true })).map(s => s.description).join('\n')
     expect(text).not.toContain('手機也會')

@@ -352,3 +352,21 @@ describe('2026-09-11 那批「不知道現在該幹嘛」的修法不可以被�
     expect(drafts).toContain("const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)")
   })
 })
+
+/**
+ * `C-472`（老闆 2026-11-05「新帳號 AI 回覆先不用預設打開，但要有提醒」）：
+ * 接完 LINE 那一刻講「AI 還沒開、客人問問題它不會回」——成績單一列＋「上線之後」最後一步的待辦。
+ * ⛔ 只有確定是關的才講（unknown 不講）；⛔ 不打勾（這一列是提醒不是成果）。
+ */
+describe('接完 LINE 提醒 AI 自動回覆還沒開（`C-472`）', () => {
+  const agent = readFileSync(`${APP_DIR}components/TutorialAgent.vue`, 'utf8')
+  it('成績單：確定是關的才列一行、不打勾', () => {
+    const done = chat.slice(chat.indexOf('async function stepDone'), chat.indexOf('// ── 打造這一趟的結尾'))
+    expect(done).toContain("...(setup.aiEnabled === 'incomplete'")
+    expect(done).toContain("{ label: 'AI 自動回覆', done: false, note: '還沒打開，客人問問題它還不會回' }")
+  })
+  it('「上線之後」導覽：把能力表裡的 aiEnabled 傳進去（確定是 incomplete 才算關）', () => {
+    expect(agent).toContain("const aiOff = capabilities.value.find(c => c.id === 'aiEnabled')?.status === 'incomplete'")
+    expect(agent).toMatch(/liveTourSteps\(\{[^}]*aiOff \}\)/)
+  })
+})

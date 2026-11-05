@@ -1501,7 +1501,9 @@ async function startLandingTour(kind: string) {
   //    從 `capabilities` 找永遠是 undefined＝第 1 步永遠被拿掉（實走抓到的）
   const received = onboardingSteps.value.find(s => s.id === 'firstMessageReceived')?.done === true
   const hasRow = received && !!(await waitForElement('.conv-list-row .split-list-item', 4000))
-  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value, phoneNotified: landingNotify })
+  // `C-472`：AI 自動回覆確定是關的才講（讀不到＝unknown＝不講）
+  const aiOff = capabilities.value.find(c => c.id === 'aiEnabled')?.status === 'incomplete'
+  const steps = liveTourSteps({ received: hasRow, triedPlayground: hasTriedPlayground(wid), draftCards: draftCards.value, phoneNotified: landingNotify, aiOff })
   landingTrack = { kind: 'line', steps }
   await startAdHocTour(steps)
 }

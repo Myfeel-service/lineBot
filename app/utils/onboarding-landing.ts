@@ -165,6 +165,11 @@ export function liveTourSteps(opts: {
   draftCards?: number
   /** 這支手機真的加進通知名單了（按了「是我」、名單沒滿）——⛔ 只有這個是真的才講「手機會收到通知」 */
   phoneNotified?: boolean
+  /**
+   * AI 自動回覆還沒打開（`C-472`，老闆 2026-11-05「先不用（預設打開）但要有提醒」）。
+   * ⚠️ 只有「確定是關的」才給 true（讀不到＝不講，⛔ 不拿不知道的事去催他）。
+   */
+  aiOff?: boolean
 }): TutorialStep[] {
   const steps: TutorialStep[] = []
   if (opts.received) {
@@ -208,8 +213,11 @@ export function liveTourSteps(opts: {
 }
 
 /** 「上線之後」最後一步的尾巴：還差哪幾件（兩條路不一樣，⛔ 講他已經做過的事＝廢話；都做了就不講） */
-function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number }): string {
+function liveTodoText(opts: { triedPlayground: boolean, draftCards?: number, aiOff?: boolean }): string {
   const todo: string[] = []
+  // `C-472`：排第一——剛接上 LINE、客人開始傳訊息的這一刻，AI 卻是關的（新帳號預設關）：
+  //   他在測試對話看過 AI 會回，很可能以為客人問了 MiniMe 也會回
+  if (opts.aiOff) todo.push('到「<strong>AI 設定</strong>」<strong>打開 AI 自動回覆</strong>，客人問問題它才會回')
   if ((opts.draftCards ?? 0) > 0) todo.push(`<strong>看過那 ${opts.draftCards} 條知識、按採用</strong>，客人問價格、細節它才答得出來`)
   if (!opts.triedPlayground) todo.push('去「<strong>測試對話</strong>」問它一題，看它怎麼回你的客人')
   return todo.length
