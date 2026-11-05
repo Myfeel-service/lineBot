@@ -157,7 +157,11 @@ describe('後台', () => {
     expect(dialog).toContain("can('ai.settings.write')")
   })
   it('數字借 GET /api/ai/settings?part=birthday（⛔ 不多開路由：TS2589）', () => {
-    expect(settingsGet).toContain("getQuery(event).part === 'birthday'")
+    expect(settingsGet).toContain('const part = getQuery(event).part')
+    expect(settingsGet).toContain("if (part === 'birthday') return birthdayStats(")
+    // `C-468` 後續：附不附得上也借這一支（⛔ 不多開路由）；算不出來＝不警告
+    expect(settingsGet).toContain("if (part === 'birthday-append')")
+    expect(settingsGet).toContain('followWelcomeAppendBlock(workspaceId)')
     expect(dialog).toContain("query: { part: 'birthday' }")
   })
   it('每月貼標掛在排程上', () => {
@@ -212,7 +216,7 @@ describe('開帳之後帶到生日（`C-468`）', () => {
     expectBefore(done, 'await loadBirthdayCurrent()', 'progress.value = LINE_STEP.done')
   })
   it('已經開著、讀不到設定都不問（⛔ 不問一件不知道現況的事）', () => {
-    expect(load).toContain('await readBirthdaySettings(apiFetch)')
+    expect(load).toContain('readBirthdaySettings(apiFetch)')
     expectBefore(ask, 'await loadBirthdayCurrent()', 'await say(')
     expectBefore(ask, 'if (current.enabled)', 'await say(')
   })
@@ -256,19 +260,36 @@ describe('開帳之後帶到生日（`C-468`）', () => {
   })
   it('沒存成要講、成績單也不列', () => {
     expect(ask).toContain('這次沒打開成功')
-    expect(done).toContain("...(bdOn ? [{ label: '客人加好友時會被問生日', done: true, note: BIRTHDAY_APPEND_CAVEAT }] : [])")
+    expect(done).toMatch(/\.\.\.\(bdOn\s*\?/)
   })
   /**
-   * code review 第 4 條：講了「都會被問生日」就要跟著講什麼情況不附
-   * （歡迎訊息最後一則帶快速回覆按鈕、或已經滿 5 則）——否則是假承諾，
-   * 而且邀請卡那一行針對的老店最容易中。三個地方同一句，⛔ 分開寫會改一處漏兩處。
+   * code review 第 4 條：講了「都會被問生日」就要跟著講什麼情況不附——否則是假承諾。
+   * `C-468` 後續（老闆 2026-11-05「按你的建議執行」）：**只有他的歡迎訊息真的附不上才講**、講他的狀況與去哪改。
+   * 原本三個畫面對每個人都念一遍規則：大部分店家的歡迎訊息根本沒有快速回覆，成績單那行還括號裡套括號。
+   * 附不附得上由伺服器照真的送出那一條路算（`followWelcomeAppendBlock`，行為測試在 handler.birthday-append.test.ts）。
    */
-  it('⛔ 「打開了」之後一定要跟著講什麼情況不附（三處同一句）', () => {
-    expect(read('shared/birthday.ts')).toContain('export const BIRTHDAY_APPEND_CAVEAT')
-    expect(dialog, '「生日」框本來就有講，這句要跟它同一個意思').toContain('歡迎訊息最後一則有快速回覆按鈕時不附')
-    expect(ask).toContain('${BIRTHDAY_APPEND_CAVEAT}')
-    expect(done).toContain('note: BIRTHDAY_APPEND_CAVEAT')
-    expect(invite).toContain('{{ BIRTHDAY_APPEND_CAVEAT }}')
+  it('⛔ 不再對每個人念規則：附不上才講、三處同一句（birthdayAppendWarning）', () => {
+    const shared = read('shared/birthday.ts')
+    expect(shared).not.toContain('BIRTHDAY_APPEND_CAVEAT')
+    expect(shared).toContain('export function birthdayAppendWarning')
+    for (const [name, src] of [['精靈', chat], ['邀請卡框', invite], ['生日框', dialog]] as const) {
+      expect(src, `${name}：⛔ 規則句不再寫死`).not.toContain('歡迎訊息最後一則有快速回覆按鈕時不附')
+      expect(src, `${name}：講的那句吃同一支`).toContain('birthdayAppendWarning(')
+      expect(src, `${name}：附不附得上走同一支讀取`).toContain('readBirthdayAppendBlock(apiFetch)')
+    }
+  })
+  it('精靈：附不附得上跟設定一起在跳格之前讀；附不上才在「打開了」後面講、成績單不打勾', () => {
+    expect(load).toContain('readBirthdayAppendBlock(apiFetch)')
+    const yes = between(ask, 'track(\'birthday_ask\', { on: true', 'return birthdayOn\n')
+    expect(yes).toMatch(/birthdayBlock \? `<br>\$\{escapeHtml\(birthdayAppendWarning\(birthdayBlock\)\)\}` : ''/)
+    // 「打開了」那句本身 ⛔ 不帶規則（只看那一行字，註解裡講到不算）
+    const line = yes.split('\n').find(l => l.includes('打開了 ✓')) ?? ''
+    expect(line, '找不到「打開了 ✓」那一行').not.toBe('')
+    expect(line).not.toMatch(/快速回覆/)
+    // 本來就開著卻附不上：講一次
+    expect(between(ask, 'if (current.enabled)', 'return true')).toContain('if (birthdayBlock) await say(')
+    expect(done).toContain("{ label: '客人加好友時會被問生日', done: false, note: '你的歡迎訊息現在附不上，見上面' }")
+    expect(done).toContain("{ label: '客人加好友時會被問生日', done: true }")
   })
   it('⛔ 不承諾發生日祝福（新店家是免費方案、發不了推播）', () => {
     const says = [...ask.matchAll(/await say\(([\s\S]*?)\)\n/g)].map(m => m[1]).join('\n')
@@ -288,10 +309,12 @@ describe('開帳之後帶到生日（`C-468`）', () => {
      * 連那個永遠成立的 `!!invite.value?.basicId` 都釘死了——想簡化就會讓這條無關的測試變紅
      * （測試掛在「原始碼長什麼樣」上，不是掛在行為上）。改成只釘兩件真正要守的事。
      */
-    // ⚠️ 到空行為止＝整個 computed（它折成兩行，只抓到換行就只拿到前半段）
-    const row = between(invite, 'const showBirthdayRow = computed', '\n\n')
-    expect(row, '剛按完要看得到那句確認').toContain('bdJustOn.value')
-    expect(row, '⛔ 讀不到（null）時不可以出現——那會變成問一件不知道現況的事').toContain('bdCurrent.value !== null && !bdCurrent.value.enabled')
+    // `C-468` 後續：三種樣子（ask／done／warn）收在 bdMode，照行為釘
+    const mode = between(invite, 'const bdMode = computed', '\n})')
+    expect(mode, '剛按完要看得到那句確認').toContain("if (bdJustOn.value) return 'done'")
+    expect(mode, '⛔ 讀不到（null）時不可以出現——那會變成問一件不知道現況的事').toContain('if (!cur) return null')
+    expect(mode, '沒開：附得上才問；⛔ 附不上不問（按了也沒用）').toContain("if (!cur.enabled) return bdBlock.value ? null : 'ask'")
+    expect(mode, '開著卻附不上＝警告；附得上就什麼都不出現').toContain("return bdBlock.value ? 'warn' : null")
   })
   it('邀請卡框：每次開框都重看（⛔ 不跟著「畫過就不重抓」）；鈕 ⛔ 不用主色（框的主要動作是列印）', () => {
     const w = between(invite, 'watch(visible', '}, { immediate: true })')

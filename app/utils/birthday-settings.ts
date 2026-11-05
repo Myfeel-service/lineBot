@@ -1,4 +1,4 @@
-import { normalizeBirthdaySettings, type BirthdaySettings } from '~~/shared/birthday'
+import { normalizeBirthdaySettings, type BirthdayAppendBlock, type BirthdaySettings } from '~~/shared/birthday'
 
 /**
  * 生日設定的讀寫（`C-468` code review 第 7 條）：**三個畫面同一條路**。
@@ -26,6 +26,21 @@ export async function readBirthdaySettings(apiFetch: BirthdayApiFetch): Promise<
   try {
     const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>(SETTINGS_URL)
     return normalizeBirthdaySettings(s?.birthday)
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * 他的歡迎訊息**現在**附不附得上生日卡（`C-468` 後續，`GET /api/ai/settings?part=birthday-append`）。
+ * 回 null＝附得上、或不知道（⛔ 讀不到就不警告：拿不到的事不講成有問題）；回 {kind, where}＝附不上。
+ * 三個畫面（生日框、邀請卡框、開帳精靈）都走這一支，講的那句一律 `birthdayAppendWarning()`。
+ */
+export async function readBirthdayAppendBlock(apiFetch: BirthdayApiFetch): Promise<BirthdayAppendBlock | null> {
+  try {
+    const r = await apiFetch<{ blocked?: BirthdayAppendBlock | null }>(SETTINGS_URL, { query: { part: 'birthday-append' } })
+    return r?.blocked ?? null
   }
   catch {
     return null

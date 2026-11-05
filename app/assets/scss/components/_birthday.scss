@@ -124,6 +124,16 @@
     color: var(--el-text-color-secondary);
 
     &.is-error { color: var(--el-color-danger); }
+
+    /* `C-468` 後續：他的歡迎訊息附不上生日卡才出現（淡橘底，講他的狀況與去哪改） */
+    &.is-warn {
+      padding: 8px 12px;
+      line-height: 1.65;
+      color: var(--el-text-color-regular);
+      background: var(--el-color-warning-light-9);
+      border: 1px solid var(--el-color-warning-light-7);
+      border-radius: 8px;
+    }
   }
 
   &__foot-note {

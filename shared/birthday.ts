@@ -13,6 +13,7 @@
  */
 
 import { taipeiDate } from './time'
+import { type AppendBlockKind, LINE_REPLY_MAX_MESSAGES } from './line-reply-append'
 
 /** postback data：只有這一個值（不帶任何參數，日期在 LINE 給的 `params.date`） */
 export const BIRTHDAY_POSTBACK_DATA = 'birthday=set'
@@ -67,16 +68,26 @@ export const BIRTHDAY_ASK_NOTE = '只會記下月和日。'
 export const BIRTHDAY_BUTTON_LABEL = '🎂 告訴我生日'
 
 /**
- * 「打開了」之後一定要跟著講的但書（`C-468` code review 第 4 條）。
- *
- * 生日卡是附在歡迎訊息後面送的，而 `shared/line-reply-append.ts` 的 `appendBlockedReason`
- * 有兩種情況不附：最後一則帶快速回覆按鈕（附了那排按鈕會不見）、歡迎訊息已經滿 5 則。
- * 「生日」框一開始就講了這件事，但**邀請卡那一行與開帳精靈沒講**——而邀請卡針對的正是
- * 已經有一套歡迎訊息的老店，最容易中。他們以為開好了，客人卻永遠收不到，
- * 原因只留在伺服器日誌裡（⛔ 典型的假承諾）。
- * ⛔ 三個地方要講同一句：分開寫就會改一處漏兩處。
+ * 他的歡迎訊息**這時候附不上**生日卡（`C-468` 後續，老闆 2026-11-05「按你的建議執行」）。
+ * `where`＝歡迎訊息住哪：腳本自己回的字（「自動回應」）或腳本送的機器人模組（「機器人模組」）——要叫他去改的那一頁。
+ * 由伺服器照真的送出那一條路算（`followWelcomeAppendBlock`），⛔ 前端不自己猜。
  */
-export const BIRTHDAY_APPEND_CAVEAT = '歡迎訊息最後一則有快速回覆按鈕時不附（附了那排按鈕會不見）。'
+export interface BirthdayAppendBlock { kind: AppendBlockKind; where: 'script' | 'module' }
+
+/**
+ * 附不上時講的那一句（`C-468` code review 第 4 條的後續）。
+ *
+ * 生日卡是附在歡迎訊息後面送的，`shared/line-reply-append.ts` 有兩種情況不附：最後一則帶快速回覆按鈕、已經滿 5 則。
+ * code review 第 4 條原本在三個畫面對**每個人**都念一遍這條規則——大部分店家的歡迎訊息根本沒有快速回覆，
+ * 多讀一句跟自己無關的話；成績單那行還變成括號裡又有括號。
+ * ⭐ 改成**只有他的歡迎訊息真的附不上才講**，而且講他的狀況、講去哪裡改（同一句三處共用，⛔ 不各寫一份）。
+ */
+export function birthdayAppendWarning(block: BirthdayAppendBlock): string {
+  const page = block.where === 'module' ? '機器人模組' : '自動回應'
+  return block.kind === 'quickReply'
+    ? `⚠️ 你的歡迎訊息最後一則有快速回覆按鈕，生日卡附上去那排按鈕會不見，所以不會附——到「${page}」把那排按鈕拿掉才會附。`
+    : `⚠️ 你的歡迎訊息已經 ${LINE_REPLY_MAX_MESSAGES} 則，生日卡放不下、不會附——到「${page}」減到 ${LINE_REPLY_MAX_MESSAGES - 1} 則以內才會附。`
+}
 
 /** 存生日失敗時回客人的那一句（重送會被當成重複略過，所以要請他自己再選一次） */
 export const BIRTHDAY_SAVE_FAILED_TEXT = '剛剛沒有記到你的生日，麻煩再按一次「告訴我生日」選一次 🙏'

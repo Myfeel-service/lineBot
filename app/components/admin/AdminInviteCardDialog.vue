@@ -19,14 +19,15 @@
       還沒接上 LINE 官方帳號，所以還沒有你的加好友 QR。接上之後回到這裡就有。
     </p>
     <template v-else-if="invite">
-      <!-- `C-468`：生日還沒打開才出現（理由見 script 的 showBirthdayRow）。⛔ 鈕不用主色：這個框的主要動作是「列印」 -->
-      <div v-if="showBirthdayRow" class="invite-card__bday" data-invite="birthday">
-        <template v-if="!bdJustOn">
+      <!-- `C-468`：生日這一行三種樣子（理由見 script 的 bdMode）。⛔ 鈕不用主色：這個框的主要動作是「列印」 -->
+      <div v-if="bdMode" :class="['invite-card__bday', { 'is-warn': bdMode === 'warn' }]" data-invite="birthday" :data-mode="bdMode">
+        <template v-if="bdMode === 'ask'">
           <span class="invite-card__bday-text">🎂 <b>掃 QR 加好友的人，要不要順便問生日？</b>打開之後加好友的，才會被問到。</span>
           <el-button size="small" :loading="bdSaving" @click="turnOnBirthday">打開</el-button>
         </template>
-        <!-- code review 第 4 條：⛔ 講「都會被問生日」就要跟著講什麼情況不附，否則是假承諾（這一行針對的老店最容易中） -->
-        <span v-else class="invite-card__bday-text">✓ <b>打開了</b>：之後加好友的人都會被問生日。{{ BIRTHDAY_APPEND_CAVEAT }}想在生日當月送點什麼，到「生日」寫上去。</span>
+        <span v-else-if="bdMode === 'done'" class="invite-card__bday-text">✓ <b>打開了</b>：之後加好友的人都會被問生日。想在生日當月送點什麼，到「生日」寫上去。</span>
+        <!-- 開著卻附不上：他以為客人會被問、其實不會——正要讓一批人加好友的這一刻講他的狀況與去哪改 -->
+        <span v-else-if="bdBlock" class="invite-card__bday-text">{{ birthdayAppendWarning(bdBlock) }}</span>
       </div>
       <div class="invite-card__grid">
         <section class="invite-card__item" data-invite="a4">
@@ -75,9 +76,9 @@ import {
   qrMatrixFrom,
   type InviteCardKind,
 } from '~/utils/invite-card'
-import { BIRTHDAY_APPEND_CAVEAT, type BirthdaySettings } from '~~/shared/birthday'
+import { birthdayAppendWarning, type BirthdayAppendBlock, type BirthdaySettings } from '~~/shared/birthday'
 import { apiErrorText } from '~/utils/api-error-text'
-import { enableBirthday, readBirthdaySettings } from '~/utils/birthday-settings'
+import { enableBirthday, readBirthdayAppendBlock, readBirthdaySettings } from '~/utils/birthday-settings'
 
 interface OaInvite {
   basicId: string
@@ -114,6 +115,8 @@ let madeFor = ''
  * ⛔ 打開了就不再出現；剛按的那一次當場改成一句確認（他要看得到「打開了」跟「生日禮在哪補」），下次開框就沒有了。
  */
 const bdCurrent = ref<BirthdaySettings | null>(null)
+/** 他的歡迎訊息現在附不附得上生日卡（null＝附得上或不知道） */
+const bdBlock = ref<BirthdayAppendBlock | null>(null)
 const bdJustOn = ref(false)
 const bdSaving = ref(false)
 /*
@@ -121,9 +124,20 @@ const bdSaving = ref(false)
  * （這一行長在 `v-else-if="invite"` 裡面，上面那條 `v-else-if="invite && !invite.basicId"`
  * 已經把沒有 basicId 的情況接走了），而測試又把這個寫法當字串釘死，
  * 於是「多餘的條件」反過來變成不能動的東西。拿掉，測試改釘行為。
+ *
+ * `C-468` 後續（老闆 2026-11-05「按你的建議執行」）：**只有他的歡迎訊息真的附不上才講**——
+ * - `ask`：沒開、附得上 → 問要不要打開
+ * - `done`：剛按了打開 → 一句確認（⛔ 不再對每個人念「什麼情況不附」）
+ * - `warn`：開著、但附不上 → 講他的狀況與去哪改（他以為客人會被問，其實不會）
+ * - 沒開、附不上 → ⛔ 不出現：不問一件按了也沒用的事
  */
-const showBirthdayRow = computed(() => bdJustOn.value
-  || (bdCurrent.value !== null && !bdCurrent.value.enabled))
+const bdMode = computed<'ask' | 'done' | 'warn' | null>(() => {
+  if (bdJustOn.value) return 'done'
+  const cur = bdCurrent.value
+  if (!cur) return null
+  if (!cur.enabled) return bdBlock.value ? null : 'ask'
+  return bdBlock.value ? 'warn' : null
+})
 
 /**
  * 開框、存檔各算一代（code review 第 10 條）：按了「打開」之後馬上關掉再打開，
@@ -136,10 +150,12 @@ async function loadBirthday() {
   const gen = ++bdGen
   bdJustOn.value = false
   bdCurrent.value = null
+  bdBlock.value = null
   if (!can('ai.settings.write')) return
-  // 讀不到回 null＝這一行不出現（⛔ 不問一件不知道現況的事）
-  const current = await readBirthdaySettings(apiFetch)
+  // 讀不到回 null＝這一行不出現（⛔ 不問一件不知道現況的事）；附不附得上讀不到＝當作附得上（⛔ 不知道就不警告）
+  const [current, block] = await Promise.all([readBirthdaySettings(apiFetch), readBirthdayAppendBlock(apiFetch)])
   if (gen !== bdGen) return
+  bdBlock.value = block
   bdCurrent.value = current
 }
 

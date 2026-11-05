@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendBlockedReason } from './line-reply-append'
+import { appendBlockedKind, appendBlockedReason } from './line-reply-append'
 
 const card = { type: 'flex', altText: '告訴我們你的生日 🎂', contents: {} }
 
@@ -19,5 +19,19 @@ describe('接在回覆後面的系統訊息（`C-57` 生日卡）', () => {
   })
   it('沒有要附的＝空字串（不記 log）', () => {
     expect(appendBlockedReason([{ type: 'text', text: 'hi', quickReply: {} }], [])).toBe('')
+  })
+})
+
+/** `C-468` 後續：後台要照他的歡迎訊息講是哪一種，所以分得出「快速回覆」與「放不下」 */
+describe('appendBlockedKind（後台講是哪一種）', () => {
+  const qr = { type: 'text', text: '想了解什麼？', quickReply: { items: [] } }
+  it('跟 appendBlockedReason 同一套判斷', () => {
+    expect(appendBlockedKind([qr], [card])).toBe('quickReply')
+    expect(appendBlockedKind(Array.from({ length: 5 }, () => ({ type: 'text', text: 'x' })), [card])).toBe('full')
+    expect(appendBlockedKind([{ type: 'text', text: 'hi' }], [card])).toBeNull()
+    expect(appendBlockedKind([qr], [])).toBeNull()
+  })
+  it('兩種都中＝講快速回覆（先修那個才附得上）', () => {
+    expect(appendBlockedKind([1, 2, 3, 4, qr], [card])).toBe('quickReply')
   })
 })

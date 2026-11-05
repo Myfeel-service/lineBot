@@ -7,10 +7,20 @@
  */
 export const LINE_REPLY_MAX_MESSAGES = 5
 
-export function appendBlockedReason(out: readonly unknown[], append: readonly unknown[]): string {
-  if (!append.length) return ''
+/** 附不上的兩種情況（`C-468`：後台要照**他的**歡迎訊息講是哪一種，不是對每個人念一遍規則） */
+export type AppendBlockKind = 'quickReply' | 'full'
+
+export function appendBlockedKind(out: readonly unknown[], append: readonly unknown[]): AppendBlockKind | null {
+  if (!append.length) return null
   const last = out[out.length - 1] as { quickReply?: unknown } | undefined
-  if (last?.quickReply) return '最後一則帶快速回覆按鈕（附在後面那排按鈕會消失）'
-  if (out.length + append.length > LINE_REPLY_MAX_MESSAGES) return `放不下（已經 ${out.length} 則，一次最多 ${LINE_REPLY_MAX_MESSAGES} 則）`
+  if (last?.quickReply) return 'quickReply'
+  if (out.length + append.length > LINE_REPLY_MAX_MESSAGES) return 'full'
+  return null
+}
+
+export function appendBlockedReason(out: readonly unknown[], append: readonly unknown[]): string {
+  const kind = appendBlockedKind(out, append)
+  if (kind === 'quickReply') return '最後一則帶快速回覆按鈕（附在後面那排按鈕會消失）'
+  if (kind === 'full') return `放不下（已經 ${out.length} 則，一次最多 ${LINE_REPLY_MAX_MESSAGES} 則）`
   return ''
 }

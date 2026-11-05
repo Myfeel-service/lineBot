@@ -467,6 +467,19 @@ function runNonInteractiveSteps(
  * @param triggerText 觸發流程的那句話（加好友觸發的沒有）。裡面已經有的訂單編號／電話／Email
  *   先撿起來，走到那一題就不再問（`C-343`）。
  */
+/**
+ * 腳本**一開始那一步會回什麼**——⛔ 什麼都不寫（不記狀態、不記紀錄、不跑貼標那些動作）。
+ * `C-468` 後續：要知道加好友時生日卡附不附得上，得先知道歡迎腳本第一步送出去長什麼樣。
+ * 跟 `startScript` 走同一條路（`runNonInteractiveSteps`），⛔ 不另寫一份「猜它會回什麼」。
+ * ⚠️ 下班時間那一句不併（照上班時間看）：那句只會改最後一則的字，不會改則數或快速回覆。
+ */
+export function previewScriptStart(script: ScriptDoc & { id: string }, attributes: Record<string, string> = {}): ScriptStepResult {
+  const trigger = script.nodes.find(n => n.id === script.rootNodeId) as ScriptTriggerNode | undefined
+  if (!trigger) return EMPTY_RESULT
+  const state: ActiveScriptState = { scriptId: script.id, currentNodeId: script.rootNodeId, collected: {}, startedAt: 0, expiresAt: 0 }
+  return runNonInteractiveSteps(script, trigger.next, state, attributes).result
+}
+
 export async function startScript(
   script: ScriptDoc & { id: string },
   userDocId: string,

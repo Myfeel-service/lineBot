@@ -50,13 +50,14 @@ import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboard
 import { LANDING_FROM_BUILD, LANDING_FROM_LINE, liveTourStepCount, saveOnboardingBuilt } from '~/utils/onboarding-landing'
 import { lineFlowEntry } from '~~/shared/onboarding-events'
 import {
-  BIRTHDAY_APPEND_CAVEAT,
   BIRTHDAY_ASK_NOTE,
   BIRTHDAY_BUTTON_LABEL,
+  birthdayAppendWarning,
   birthdayAskText,
+  type BirthdayAppendBlock,
   type BirthdaySettings,
 } from '~~/shared/birthday'
-import { enableBirthday, readBirthdaySettings } from '~/utils/birthday-settings'
+import { enableBirthday, readBirthdayAppendBlock, readBirthdaySettings } from '~/utils/birthday-settings'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 /**
@@ -2394,6 +2395,8 @@ export function useOnboardingChat() {
   let birthdayAsked = false
   let birthdayOn = false
   let birthdayCurrent: BirthdaySettings | null = null
+  /** 他的歡迎訊息現在附不附得上生日卡（null＝附得上或不知道；`C-468` 後續：附不上才講、講他的狀況） */
+  let birthdayBlock: BirthdayAppendBlock | null = null
   /**
    * 先把生日現況讀起來。
    *
@@ -2409,7 +2412,10 @@ export function useOnboardingChat() {
     try {
       // 讀寫都走 `utils/birthday-settings`（三個畫面同一條路，code review 第 7 條）；
       // 讀不到回 null＝不問，下次再來會重讀
-      birthdayCurrent = await readBirthdaySettings(apiFetch)
+      // 附不附得上同一刻一起問（同樣要在跳格之前：理由同上）
+      const [current, block] = await Promise.all([readBirthdaySettings(apiFetch), readBirthdayAppendBlock(apiFetch)])
+      birthdayCurrent = current
+      birthdayBlock = block
     }
     finally {
       busy.value = false
@@ -2431,7 +2437,9 @@ export function useOnboardingChat() {
     birthdayAsked = true
     if (current.enabled) {
       // 跳過也要留下紀錄：⛔ 不記的話，之後看數據分不出「本來就開著」「讀不到」「根本沒跑到」（第 9 條）
-      track('birthday_ask', { asked: false, why: 'already_on' })
+      track('birthday_ask', { asked: false, why: 'already_on', blocked: birthdayBlock?.kind ?? 'none' })
+      // 開著卻附不上＝他以為客人會被問、其實不會：這一刻講（⛔ 附得上就什麼都不講）
+      if (birthdayBlock) await say(escapeHtml(birthdayAppendWarning(birthdayBlock)))
       birthdayOn = true
       return true
     }
@@ -2465,11 +2473,13 @@ export function useOnboardingChat() {
     finally {
       busy.value = false
     }
-    track('birthday_ask', { on: true, saved: birthdayOn })
+    track('birthday_ask', { on: true, saved: birthdayOn, blocked: birthdayBlock?.kind ?? 'none' })
     // ⛔ 沒存成要講（不可以說「打開了」）；成績單那一行也照 birthdayOn 不列
-    // code review 第 4 條：⛔ 講了「會被問生日」就要跟著講什麼情況不附（`BIRTHDAY_APPEND_CAVEAT`，三處同一句）
+    // `C-468` 後續（老闆 2026-11-05）：**只有他的歡迎訊息真的附不上才講**，講他的狀況與去哪改
+    //   （code review 第 4 條原本對每個人念一遍規則：大部分店家的歡迎訊息根本沒有快速回覆）
     await say(birthdayOn
-      ? `打開了 ✓ ${BIRTHDAY_APPEND_CAVEAT}每個月 1 號，這個月生日的人會貼上「<b>本月壽星</b>」標籤。想在生日當月送點什麼，之後到「好友」頁按「生日」寫上去。`
+      ? '打開了 ✓ 每個月 1 號，這個月生日的人會貼上「<b>本月壽星</b>」標籤。想在生日當月送點什麼，之後到「好友」頁按「生日」寫上去。'
+        + (birthdayBlock ? `<br>${escapeHtml(birthdayAppendWarning(birthdayBlock))}` : '')
       : '這次沒打開成功——之後到「好友」頁按「生日」打開就好。')
     return birthdayOn
   }
@@ -2537,8 +2547,13 @@ export function useOnboardingChat() {
           note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友試試',
         },
         // `C-468`：開著才列（⛔ 按先不要的不列一行「沒打開」：剛剛才講過）
-        // code review 第 4 條：成績單是他會回頭看的那張，但書要跟著（⛔ 不要只在對話裡講一次就算）
-        ...(bdOn ? [{ label: '客人加好友時會被問生日', done: true, note: BIRTHDAY_APPEND_CAVEAT }] : []),
+        // code review 第 4 條：成績單是他會回頭看的那張——附不上就**不打勾**、指回上面那句（⛔ 不寫成做好了）；
+        //   `C-468` 後續：附得上就什麼但書都不帶（⛔ 不對每個人念規則，也不再括號裡套括號）
+        ...(bdOn
+          ? [birthdayBlock
+              ? { label: '客人加好友時會被問生日', done: false, note: '你的歡迎訊息現在附不上，見上面' }
+              : { label: '客人加好友時會被問生日', done: true }]
+          : []),
         // 方案／額度／綁卡從「剛取完名字」搬來這裡（2026-09-02）：那一刻他只想知道
         // 下一步，計費資訊會讓人停下來想「我是不是要付錢」；擺在成績單上才是他
         // 「做完了、接下來呢」會想知道的事

@@ -5,6 +5,7 @@ import {
   BIRTHDAY_BUTTON_TYPE,
   BIRTHDAY_GIFT_MAX,
   BIRTHDAY_POSTBACK_DATA,
+  birthdayAppendWarning,
   birthdayAskText,
   birthdayConfirmText,
   birthdayDayRange,
@@ -117,5 +118,26 @@ describe('taipeiMonth', () => {
   it('照台北時間算（UTC 10/31 17:00＝台北 11/1 01:00）', () => {
     expect(taipeiMonth(new Date('2026-10-31T17:00:00Z'))).toBe(11)
     expect(taipeiMonth(new Date('2026-10-31T15:00:00Z'))).toBe(10)
+  })
+})
+
+/** `C-468` 後續：附不上才講、講他的狀況與去哪改（三個畫面同一句） */
+describe('birthdayAppendWarning', () => {
+  it('快速回覆：講他的歡迎訊息怎麼了、為什麼不附、去哪一頁改', () => {
+    expect(birthdayAppendWarning({ kind: 'quickReply', where: 'script' }))
+      .toBe('⚠️ 你的歡迎訊息最後一則有快速回覆按鈕，生日卡附上去那排按鈕會不見，所以不會附——到「自動回應」把那排按鈕拿掉才會附。')
+    expect(birthdayAppendWarning({ kind: 'quickReply', where: 'module' })).toContain('到「機器人模組」')
+  })
+  it('放不下：講幾則、減到幾則', () => {
+    expect(birthdayAppendWarning({ kind: 'full', where: 'module' }))
+      .toBe('⚠️ 你的歡迎訊息已經 5 則，生日卡放不下、不會附——到「機器人模組」減到 4 則以內才會附。')
+  })
+  it('⛔ 不再括號裡套括號（成績單那一行的老毛病）', () => {
+    for (const kind of ['quickReply', 'full'] as const) {
+      for (const where of ['script', 'module'] as const) {
+        const s = birthdayAppendWarning({ kind, where })
+        expect(s.match(/（/g)?.length ?? 0, s).toBeLessThanOrEqual(0)
+      }
+    }
   })
 })

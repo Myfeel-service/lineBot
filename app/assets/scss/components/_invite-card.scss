@@ -83,6 +83,12 @@
     border-radius: 8px;
 
     .el-button { flex: none; }
+
+    /* `C-468` 後續：開著卻附不上＝警告（淡橘底），跟上面「建議」的淡綠分開 */
+    &.is-warn {
+      background: var(--el-color-warning-light-9);
+      border-color: var(--el-color-warning-light-7);
+    }
   }
 
   &__bday-text {

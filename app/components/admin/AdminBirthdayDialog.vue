@@ -21,11 +21,13 @@
           <el-switch v-model="form.enabled" :disabled="!canEdit" data-tour="bday-switch" />
           <span class="birthday__switch-label">加好友時問生日</span>
         </div>
-        <!-- code review 第 1、6 條：講清楚哪些人會收到、什麼時候不附（⛔ 不可以默默不送） -->
+        <!-- code review 第 1、6 條：講清楚哪些人會收到、什麼時候不附（⛔ 不可以默默不送）。
+             `C-468` 後續（老闆 2026-11-05）：「什麼時候不附」**只有他的歡迎訊息真的附不上才講**、講他的狀況與去哪改——
+             ⛔ 不再對每個人念一遍規則（大部分店家的歡迎訊息根本沒有快速回覆） -->
         <p class="birthday__hint birthday__switch-hint">
           打開後，客人加好友時歡迎訊息後面多附這張卡（從活動連結加好友的人也會收到）。
-          歡迎訊息最後一則有快速回覆按鈕時不附——附了那排按鈕會不見。
         </p>
+        <p v-if="appendBlock" class="birthday__notice is-warn" data-bd="append-block">{{ birthdayAppendWarning(appendBlock) }}</p>
 
         <div class="admin-field-group">
           <AdminFieldLabel text="生日當月送什麼（選填）" tight />
@@ -109,10 +111,12 @@ import {
   birthdayConfirmText,
   buildBirthdayModuleMessages,
   normalizeBirthdaySettings,
+  birthdayAppendWarning,
+  type BirthdayAppendBlock,
   type BirthdaySettings,
 } from '~~/shared/birthday'
 import { apiErrorText } from '~/utils/api-error-text'
-import { readBirthdaySettings, saveBirthdaySettings } from '~/utils/birthday-settings'
+import { readBirthdayAppendBlock, readBirthdaySettings, saveBirthdaySettings } from '~/utils/birthday-settings'
 
 interface BirthdayStats { byMonth: number[], total: number, month: number, thisMonth: number }
 
@@ -146,6 +150,8 @@ const saved = ref<BirthdaySettings>({ enabled: false, gift: '' })
 const form = reactive<BirthdaySettings>({ enabled: false, gift: '' })
 const stats = ref<BirthdayStats | null>(null)
 const statsError = ref('')
+/** 他的歡迎訊息現在附不附得上生日卡（`C-468` 後續；null＝附得上或不知道＝不講） */
+const appendBlock = ref<BirthdayAppendBlock | null>(null)
 
 const dirty = computed(() => form.enabled !== saved.value.enabled || form.gift.trim() !== saved.value.gift)
 const askText = computed(() => birthdayAskText(form.gift))
@@ -171,6 +177,8 @@ async function load() {
     loadError.value = '讀不到設定，等一下再打開一次試試。'
   }
   loading.value = false
+  appendBlock.value = null
+  void readBirthdayAppendBlock(apiFetch).then((b) => { appendBlock.value = b })
   // 數字讀不到不擋設定（⛔ 也不顯示成 0：那是「沒有」的另一個意思）
   apiFetch<BirthdayStats>('/api/ai/settings', { query: { part: 'birthday' } })
     .then((r) => { stats.value = r })

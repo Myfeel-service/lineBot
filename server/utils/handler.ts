@@ -89,7 +89,7 @@ import { appendServiceHoursLine, isServiceHoursDnd, nextServiceStartMs, taipeiDa
 import { HUMAN_REQUEST_TEXTS, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState } from '~~/shared/types/ai-script'
 import { pickScriptByKeyword, routeCandidates } from './script-match'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
-import { advanceScript, loadActiveScripts, startScript, type ScriptOffHours } from './ai-scripts'
+import { advanceScript, loadActiveScripts, previewScriptStart, startScript, type ScriptOffHours } from './ai-scripts'
 import { attributeContextForUser, renderWithAttributes } from './render-attributes'
 import {
   lineUserFirestoreDocId,
@@ -115,9 +115,10 @@ import {
   birthdayLabel,
   buildBirthdayAskMessage,
   parseBirthdayDate,
+  type BirthdayAppendBlock,
 } from '~~/shared/birthday'
 import { saveCustomerBirthday } from './birthday-tag'
-import { appendBlockedReason } from '~~/shared/line-reply-append'
+import { appendBlockedKind, appendBlockedReason } from '~~/shared/line-reply-append'
 
 // ── In-Memory Caching to Reduce DB Latency ──────────────────────────
 
@@ -3769,6 +3770,33 @@ async function sendScriptReply(
 ): Promise<void> {
   // 只有連結沒有文字也要送得出去（＝自動回覆的「開啟網址」動作那種形狀）；只有附上的系統訊息也要送（腳本只有貼標步驟時）
   if ((!text && !link?.url && !appendMessages?.length) || !replyToken) return
+  const messages = buildScriptReplyMessages(text, quickReplies, link)
+
+  const append = appendMessages ?? []
+  const why = appendBlockedReason(messages, append)
+  const fits = append.length > 0 && !why
+  if (why) console.warn(`[script] 系統訊息這次不附上：${why}`)
+  if (!messages.length && !fits) return
+  await replyMessage(replyToken, fits ? [...messages, ...append] as messagingApi.Message[] : messages, workspaceId)
+  if (messages.length) {
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, messages, workspaceId, { sender, senderName: scriptName })
+      .catch(e => console.error('[script] save outgoing error:', e))
+  }
+  if (fits) {
+    saveOutgoingConversationMessagesByWorkspace(lineUserId, append as any[], workspaceId, { sender: 'bot', senderName: '問生日' })
+      .catch(e => console.error('[script] save outgoing error:', e))
+  }
+}
+
+/**
+ * 腳本那一步要送出去的訊息（文字＋快速回覆、連結按鈕）。
+ * 抽出來給 `followWelcomeAppendBlock` 用（`C-468`）：⛔ 「生日卡附不附得上」要照**真的送出去的樣子**判斷，不另寫一份。
+ */
+function buildScriptReplyMessages(
+  text: string,
+  quickReplies?: string[],
+  link?: { url: string; label: string },
+): messagingApi.Message[] {
   const messages: messagingApi.Message[] = []
 
   if (text) {
@@ -3805,20 +3833,36 @@ async function sendScriptReply(
     } as messagingApi.TemplateMessage)
   }
 
-  const append = appendMessages ?? []
-  const why = appendBlockedReason(messages, append)
-  const fits = append.length > 0 && !why
-  if (why) console.warn(`[script] 系統訊息這次不附上：${why}`)
-  if (!messages.length && !fits) return
-  await replyMessage(replyToken, fits ? [...messages, ...append] as messagingApi.Message[] : messages, workspaceId)
-  if (messages.length) {
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, messages, workspaceId, { sender, senderName: scriptName })
-      .catch(e => console.error('[script] save outgoing error:', e))
+  return messages
+}
+
+/**
+ * 這個帳號**現在**加好友時，生日卡附不附得上（`C-468` 後續，老闆 2026-11-05「按你的建議執行」）。
+ * 回 null＝附得上（或根本沒有歡迎訊息＝卡自己送）；回 {kind, where}＝附不上、為什麼、要去哪一頁改。
+ *
+ * ⛔ **照 `runFollowWelcomeScript` 真的送出去那一條路算**，不另寫一份猜測：
+ *   同一個「找加好友那一支腳本」、同一個第一步（`previewScriptStart`＝`startScript` 走的那條、但什麼都不寫）、
+ *   送模組就照 `replyWithFlowModule` 的組法（`hydrateRichMessageRefs`＋`buildLineMessages`）、
+ *   送字就照 `sendScriptReply` 的組法（`buildScriptReplyMessages`），最後用同一支 `appendBlockedKind` 判斷。
+ * ⚠️ 沒照到的：「真人客服模組」會換掉訊息（`resolveLiveAgentModuleReply`，要看當下有沒有人在線）——當歡迎訊息的極少，略過。
+ * ⚠️ 只讀：腳本清單、那一個模組、模組引用的圖文訊息。
+ */
+export async function followWelcomeAppendBlock(workspaceId: string): Promise<BirthdayAppendBlock | null> {
+  const scripts = await loadActiveScripts(workspaceId)
+  const matched = scripts.find(s => scriptTriggerEvent(s) === 'follow') ?? null
+  if (!matched) return null
+  const card = [buildBirthdayAskMessage('', taipeiDate())]
+  const result = previewScriptStart(matched)
+  if (result.moduleId) {
+    const flow = await getFlowByModuleId(result.moduleId, workspaceId)
+    // 模組被刪＝什麼都沒送、生日卡自己送（同 runFollowWelcomeScript）
+    if (!flow) return null
+    const hydrated = await hydrateRichMessageRefs(flow.messages as any[], workspaceId)
+    const kind = appendBlockedKind(buildLineMessages(hydrated, {}, '', '', ''), card)
+    return kind ? { kind, where: 'module' } : null
   }
-  if (fits) {
-    saveOutgoingConversationMessagesByWorkspace(lineUserId, append as any[], workspaceId, { sender: 'bot', senderName: '問生日' })
-      .catch(e => console.error('[script] save outgoing error:', e))
-  }
+  const kind = appendBlockedKind(buildScriptReplyMessages(result.replyText, result.quickReplies, result.link), card)
+  return kind ? { kind, where: 'script' } : null
 }
 
 // HUMAN_REQUEST_TEXTS 已移到 shared/types/ai-script.ts(AI 層攔截、腳本逃生門、試跑面板共用同一份)
