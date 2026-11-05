@@ -729,6 +729,21 @@
   width: min(300px, 100%);
   box-sizing: border-box;
   align-self: flex-start;
+
+  /*
+   * 說明那一行（code review 第 12 條）：⛔ 不共用 `.birthday__phone-cap`。
+   * 那個 class 在「生日」框裡是**夾在卡片與回覆泡泡之間**的標籤（它說的是下面那句泡泡），
+   * 這裡是整張卡的標題、放在卡片上面。共用的話，哪天為了框裡那個位置調間距，聊天這張就歪了。
+   * 長相刻意跟框裡那顆膠囊一致（同一個深色底的小圓角），只有定位是自己的。
+   */
+  /* 靠左不撐滿是父層 `.birthday__phone` 的 `align-items: flex-start` 給的，這裡不用再寫一次 */
+  &__cap {
+    padding: 1px 8px;
+    font-size: 11px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 999px;
+  }
 }
 
 .agm-summary {

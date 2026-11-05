@@ -111,6 +111,8 @@ import {
   normalizeBirthdaySettings,
   type BirthdaySettings,
 } from '~~/shared/birthday'
+import { apiErrorText } from '~/utils/api-error-text'
+import { readBirthdaySettings, saveBirthdaySettings } from '~/utils/birthday-settings'
 
 interface BirthdayStats { byMonth: number[], total: number, month: number, thisMonth: number }
 
@@ -159,17 +161,16 @@ async function load() {
   loadError.value = ''
   statsError.value = ''
   stats.value = null
-  try {
-    const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
-    saved.value = normalizeBirthdaySettings(s?.birthday)
-    Object.assign(form, saved.value)
+  // 讀寫都走 `utils/birthday-settings`（三個畫面同一條路，code review 第 7 條）
+  const current = await readBirthdaySettings(apiFetch)
+  if (current) {
+    saved.value = current
+    Object.assign(form, current)
   }
-  catch {
+  else {
     loadError.value = '讀不到設定，等一下再打開一次試試。'
   }
-  finally {
-    loading.value = false
-  }
+  loading.value = false
   // 數字讀不到不擋設定（⛔ 也不顯示成 0：那是「沒有」的另一個意思）
   apiFetch<BirthdayStats>('/api/ai/settings', { query: { part: 'birthday' } })
     .then((r) => { stats.value = r })
@@ -214,18 +215,15 @@ async function createModule() {
 async function persist(): Promise<boolean> {
   saving.value = true
   try {
-    const next = normalizeBirthdaySettings({ enabled: form.enabled, gift: form.gift })
-    const r = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings', {
-      method: 'PUT',
-      body: { birthday: next },
-    })
-    saved.value = normalizeBirthdaySettings(r?.birthday ?? next)
+    // 這個框是**兩格都在這裡編的**，所以整包送（別處要打開開關一律走 `enableBirthday()`，
+    // 整包送會蓋掉生日禮——code review 第 3 條）
+    saved.value = await saveBirthdaySettings(apiFetch, { enabled: form.enabled, gift: form.gift })
     Object.assign(form, saved.value)
     return true
   }
   catch (e: unknown) {
-    const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
-    showToast(msg || '沒有存成功，再按一次試試', 'error')
+    // ⛔ 不自己撈 statusMessage（第 6 條：`apiErrorText` 會補 data.message、濾掉英文的開發訊息）
+    showToast(apiErrorText(e, '沒有存成功，再按一次試試'), 'error')
     return false
   }
   finally {

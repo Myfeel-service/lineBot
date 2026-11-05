@@ -75,8 +75,9 @@ import {
   qrMatrixFrom,
   type InviteCardKind,
 } from '~/utils/invite-card'
-import { BIRTHDAY_APPEND_CAVEAT, normalizeBirthdaySettings, type BirthdaySettings } from '~~/shared/birthday'
+import { BIRTHDAY_APPEND_CAVEAT, type BirthdaySettings } from '~~/shared/birthday'
 import { apiErrorText } from '~/utils/api-error-text'
+import { enableBirthday, readBirthdaySettings } from '~/utils/birthday-settings'
 
 interface OaInvite {
   basicId: string
@@ -115,8 +116,14 @@ let madeFor = ''
 const bdCurrent = ref<BirthdaySettings | null>(null)
 const bdJustOn = ref(false)
 const bdSaving = ref(false)
-const showBirthdayRow = computed(() => !!invite.value?.basicId
-  && (bdJustOn.value || (bdCurrent.value !== null && !bdCurrent.value.enabled)))
+/*
+ * code review 第 11 條：以前第一個條件是 `!!invite.value?.basicId`——那一段永遠成立
+ * （這一行長在 `v-else-if="invite"` 裡面，上面那條 `v-else-if="invite && !invite.basicId"`
+ * 已經把沒有 basicId 的情況接走了），而測試又把這個寫法當字串釘死，
+ * 於是「多餘的條件」反過來變成不能動的東西。拿掉，測試改釘行為。
+ */
+const showBirthdayRow = computed(() => bdJustOn.value
+  || (bdCurrent.value !== null && !bdCurrent.value.enabled))
 
 /**
  * 開框、存檔各算一代（code review 第 10 條）：按了「打開」之後馬上關掉再打開，
@@ -130,12 +137,10 @@ async function loadBirthday() {
   bdJustOn.value = false
   bdCurrent.value = null
   if (!can('ai.settings.write')) return
-  try {
-    const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
-    if (gen !== bdGen) return
-    bdCurrent.value = normalizeBirthdaySettings(s?.birthday)
-  }
-  catch { /* 讀不到就不出現 */ }
+  // 讀不到回 null＝這一行不出現（⛔ 不問一件不知道現況的事）
+  const current = await readBirthdaySettings(apiFetch)
+  if (gen !== bdGen) return
+  bdCurrent.value = current
 }
 
 async function turnOnBirthday() {
@@ -147,7 +152,7 @@ async function turnOnBirthday() {
     //   （`ai-settings.ts` 的 `birthday: { ...current.birthday, ...partial.birthday }`），
     //   把開框當下讀到的生日禮一起送回去反而會蓋掉——他在「生日」框或另一個分頁剛寫好的禮物
     //   會被洗成空白，客人收到的卡片與回覆從此不再提那個禮物，而且沒有任何提示。
-    await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: { enabled: true } } })
+    await enableBirthday(apiFetch)
     // ⚠️ 存檔途中有人把框關掉又打開＝已經重讀過一次了，這一筆的結果不可以再蓋回去（第 10 條）
     if (gen !== bdGen) return
     bdCurrent.value = { ...bdCurrent.value, enabled: true }

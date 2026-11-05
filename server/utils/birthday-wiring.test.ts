@@ -212,7 +212,7 @@ describe('開帳之後帶到生日（`C-468`）', () => {
     expectBefore(done, 'await loadBirthdayCurrent()', 'progress.value = LINE_STEP.done')
   })
   it('已經開著、讀不到設定都不問（⛔ 不問一件不知道現況的事）', () => {
-    expect(load).toContain("apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')")
+    expect(load).toContain('await readBirthdaySettings(apiFetch)')
     expectBefore(ask, 'await loadBirthdayCurrent()', 'await say(')
     expectBefore(ask, 'if (current.enabled)', 'await say(')
   })
@@ -230,21 +230,29 @@ describe('開帳之後帶到生日（`C-468`）', () => {
     expect(ask).toContain('title: birthdayAskText(current.gift)')
     expect(ask).toContain('note: BIRTHDAY_ASK_NOTE')
     expect(ask).toContain('button: BIRTHDAY_BUTTON_LABEL')
-    expectBefore(ask, "if (c !== 'yes')", "method: 'PUT'")
+    expectBefore(ask, "if (c !== 'yes')", 'await enableBirthday(apiFetch)')
     expect(renderer).toContain("entry.msg.kind === 'birthday-card'")
   })
   /**
    * code review 第 3 條：伺服器對 `birthday` 是深合併，所以**只送 `enabled`**。
    * 把讀到當下的生日禮一起送回去，會蓋掉他在別處剛寫好的禮物（而且不會有任何提示）。
    */
+  /**
+   * code review 第 7 條之後，讀寫都收在 `app/utils/birthday-settings.ts` 一支裡，
+   * 所以「只送 enabled」只要在那支釘一次；三個畫面則釘「有走那支、⛔ 沒有自己打 PUT」。
+   */
   it('⛔ 打開時只送 enabled，不可以把讀到的生日禮一起送回去（會蓋掉別處剛改的）', () => {
-    // ⚠️ 只看**送出去的那一包**：本地狀態要不要用展開更新是另一回事（第一版連那個也擋，誤判）
-    const askPut = between(ask, "method: 'PUT'", '\n')
-    const invitePut = between(invite, "method: 'PUT'", '\n')
-    expect(askPut, '⛔ 整包送回去＝舊的生日禮會蓋掉新的').toContain('birthday: { enabled: true }')
-    expect(invitePut, '⛔ 整包送回去＝舊的生日禮會蓋掉新的').toContain('birthday: { enabled: true }')
-    expect(askPut).not.toMatch(/\.\.\.current/)
-    expect(invitePut).not.toMatch(/\.\.\.bdCurrent/)
+    const helper = read('app/utils/birthday-settings.ts')
+    const enable = between(helper, 'export async function enableBirthday', '\n}')
+    expect(enable, '⛔ 整包送回去＝舊的生日禮會蓋掉新的').toContain('body: { birthday: { enabled: true } }')
+    expect(enable).not.toMatch(/gift/)
+    // 三個畫面都走同一支（⛔ 自己打 PUT 就會繞過上面那條守門）
+    expect(ask).toContain('await enableBirthday(apiFetch)')
+    expect(invite).toContain('await enableBirthday(apiFetch)')
+    expect(between(invite, 'async function turnOnBirthday', '\n}')).not.toMatch(/method: 'PUT'/)
+    expect(between(chat, 'async function stepBirthdayAsk', '\n  async function stepDone')).not.toMatch(/method: 'PUT'/)
+    // 「生日」框是兩格都在那裡編的，整包送才對——但也要走同一支
+    expect(dialog).toContain('await saveBirthdaySettings(apiFetch, { enabled: form.enabled, gift: form.gift })')
   })
   it('沒存成要講、成績單也不列', () => {
     expect(ask).toContain('這次沒打開成功')
@@ -275,7 +283,15 @@ describe('開帳之後帶到生日（`C-468`）', () => {
   it('邀請卡框：生日還沒打開、而且接上 LINE 了才多一行；能改設定的人才看得到', () => {
     expect(invite).toContain('data-invite="birthday"')
     expect(invite).toContain("if (!can('ai.settings.write')) return")
-    expect(invite).toMatch(/showBirthdayRow = computed\(\(\) => !!invite\.value\?\.basicId\s*&& \(bdJustOn\.value \|\| \(bdCurrent\.value !== null && !bdCurrent\.value\.enabled\)\)\)/)
+    /*
+     * code review 第 11 條：以前這裡是一整行 `showBirthdayRow = computed(...)` 的正則，
+     * 連那個永遠成立的 `!!invite.value?.basicId` 都釘死了——想簡化就會讓這條無關的測試變紅
+     * （測試掛在「原始碼長什麼樣」上，不是掛在行為上）。改成只釘兩件真正要守的事。
+     */
+    // ⚠️ 到空行為止＝整個 computed（它折成兩行，只抓到換行就只拿到前半段）
+    const row = between(invite, 'const showBirthdayRow = computed', '\n\n')
+    expect(row, '剛按完要看得到那句確認').toContain('bdJustOn.value')
+    expect(row, '⛔ 讀不到（null）時不可以出現——那會變成問一件不知道現況的事').toContain('bdCurrent.value !== null && !bdCurrent.value.enabled')
   })
   it('邀請卡框：每次開框都重看（⛔ 不跟著「畫過就不重抓」）；鈕 ⛔ 不用主色（框的主要動作是列印）', () => {
     const w = between(invite, 'watch(visible', '}, { immediate: true })')

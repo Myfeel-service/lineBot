@@ -54,9 +54,9 @@ import {
   BIRTHDAY_ASK_NOTE,
   BIRTHDAY_BUTTON_LABEL,
   birthdayAskText,
-  normalizeBirthdaySettings,
   type BirthdaySettings,
 } from '~~/shared/birthday'
+import { enableBirthday, readBirthdaySettings } from '~/utils/birthday-settings'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 /**
@@ -2407,10 +2407,10 @@ export function useOnboardingChat() {
     if (birthdayCurrent) return
     busy.value = true
     try {
-      const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
-      birthdayCurrent = normalizeBirthdaySettings(s?.birthday)
+      // 讀寫都走 `utils/birthday-settings`（三個畫面同一條路，code review 第 7 條）；
+      // 讀不到回 null＝不問，下次再來會重讀
+      birthdayCurrent = await readBirthdaySettings(apiFetch)
     }
-    catch { /* 讀不到就不問，下次再來會重讀 */ }
     finally {
       busy.value = false
     }
@@ -2455,10 +2455,8 @@ export function useOnboardingChat() {
     }
     busy.value = true
     try {
-      // ⛔ **只送 `enabled`，不要把讀到的生日禮一起送回去**（code review 第 3 條）：
-      //    伺服器本來就是深合併（`ai-settings.ts` 的 `birthday: { ...current.birthday, ...partial.birthday }`），
-      //    帶著一份開框當下的舊文字反而會蓋掉——他在別的分頁剛寫好的生日禮會被洗成空白。
-      await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: { enabled: true } } })
+      // 只打開開關、不碰生日禮（理由在 `enableBirthday()` 的註解：整包送會蓋掉別處剛改的）
+      await enableBirthday(apiFetch)
       birthdayOn = true
     }
     catch {

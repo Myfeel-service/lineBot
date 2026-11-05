@@ -192,9 +192,14 @@
     <div v-if="entry.msg.meta" class="agm-highlight__meta">{{ entry.msg.meta }}</div>
   </div>
 
-  <!-- 客人會收到的「告訴我生日」卡（`C-468`）：跟好友頁「生日」框的「客人會看到」同一套長相（`_birthday.scss`） -->
+  <!--
+    客人會收到的「告訴我生日」卡（`C-468`）：卡片本身跟好友頁「生日」框同一套長相（`_birthday.scss`）。
+    ⚠️ code review 第 12 條：說明那一行**不共用** `birthday__phone-cap`——那個 class 是為了夾在
+    「卡片與回覆泡泡之間」調的（在框裡它是下面那句泡泡的標籤），這裡的說明是整張卡的標題、放在上面。
+    共用的話，哪天為了框裡那個位置改間距，聊天這張就會跟著歪。
+  -->
   <div v-else-if="entry.msg.kind === 'birthday-card'" class="birthday__phone agm-bday-card">
-    <span class="birthday__phone-cap">{{ entry.msg.caption }}</span>
+    <span class="agm-bday-card__cap">{{ entry.msg.caption }}</span>
     <div class="birthday__card">
       <div class="birthday__card-body">
         <b>{{ entry.msg.title }}</b>
