@@ -578,6 +578,19 @@
                 <el-button v-if="!msg.buttons || msg.buttons.length < 4" plain size="small" class="control-dashed-add" @click="addButton(msg)">
                   ⊕ 新增按鈕（選填）
                 </el-button>
+                <!--
+                  `C-468`（老闆 11-05「提醒文字是否可以單獨拉出來」）：加了圖或按鈕就會送成一張卡，
+                  卡片才有通知列那行字可以設——以前這一格只有圖文訊息、卡片訊息有，文字這邊店家改不了。
+                  ⛔ 什麼都沒加的純文字不給這一格：LINE 文字訊息的通知顯示的就是內文本身，給了也是假的。
+                -->
+                <FlowAltTextField
+                  v-if="flowMessageHasAltText(msg)"
+                  v-model="msg.altText"
+                  empty-behavior="你寫的回覆文字"
+                  :options="variableTokenOptions"
+                  :known-keys="variableKeys"
+                  @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
+                />
               </div>
 
               <!-- Image -->
@@ -672,22 +685,29 @@
                 @remove="removeMessage(i)"
               >
                 <div class="card-section-stack">
-                  <div class="admin-field-group">
-                    <AdminFieldLabel tight>
-                      提醒文字 <span class="text-muted">(必填，最多 400 字)</span>
-                    </AdminFieldLabel>
-                    <el-input
-                      v-model="msg.altText"
-                      placeholder="客人的通知和聊天列表會顯示這行字"
-                      maxlength="400"
-                    />
-                  </div>
+                  <!-- `C-468`：跟別的模組同一格、同一套說法（以前這裡是唯一不能插客人資料的） -->
+                  <FlowAltTextField
+                    v-model="msg.altText"
+                    required
+                    :options="variableTokenOptions"
+                    :known-keys="variableKeys"
+                    @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
+                  />
                   <div class="admin-field-group">
                     <AdminFieldLabel text="保留 PNG 透明區域" tight />
                     <div class="flow-rich-toggle-row">
                       <el-switch v-model="msg.transparentBackground" />
                       <span class="text-sm text-muted">開啟後，圖片透明的地方會維持透明、不會補上白底</span>
                     </div>
+                    <!--
+                      `C-468`：這個開關不只是外觀，它會換一種送法（imagemap）。以前兩種失效都只有伺服器日誌知道：
+                        ① 有區塊設「觸發機器人模組」→ 整則退回原本的送法，透明當場沒作用
+                        ② 「傳送文字」的貼標在那種格式裡沒有位置放 → 客人點了標籤不會貼（這條在存檔時擋，見 validate）
+                      ⛔ 不要只寫「可能會失效」——要講是哪一塊、現在這則會怎樣。
+                    -->
+                    <p v-if="msg.transparentBackground && richMessageTransparentOffReason(msg)" class="ui-warning-text">
+                      {{ richMessageTransparentOffReason(msg) }}
+                    </p>
                   </div>
                   <div class="admin-field-group" data-tour="rich-hero">
                     <AdminFieldLabel text="背景圖片" tight />
@@ -955,23 +975,13 @@
               >
                 <!-- Alt Text body (reusing standard padding) -->
                 <div class="carousel-alt-wrap card-section-stack">
-                  <div class="admin-field-group">
-                    <AdminFieldLabel tight>
-                      提醒文字 <span class="text-muted">(選填，最多 400 字)</span>
-                    </AdminFieldLabel>
-                    <div class="flow-input-inset-wrap control-full">
-                      <VariableTextField
-                        v-model="msg.altText"
-                        :known-keys="variableKeys"
-                        :placeholder="`沒填的話，客人的通知會顯示「${ALT_TEXT_FALLBACK[msg.type]}」`"
-                        maxlength="400"
-                      />
-                      <FlowVariableInset
-                        :options="variableTokenOptions"
-                        @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
-                      />
-                    </div>
-                  </div>
+                  <FlowAltTextField
+                    v-model="msg.altText"
+                    :empty-behavior="`「${altTextFallbackFor(msg.type)}」`"
+                    :options="variableTokenOptions"
+                    :known-keys="variableKeys"
+                    @pick="(token, range) => insertVariableToken(msg, 'altText', String(token), range)"
+                  />
                   <div v-if="msg.type === 'carousel'" class="admin-field-group">
                     <AdminFieldLabel text="縮圖比例" tight />
                     <el-select v-model="msg.imageAspectRatio" size="small" class="control-full">
@@ -1506,6 +1516,7 @@ import { moduleDeleteConfirmCopy } from '~~/shared/delete-impact'
 import {
   SLOT_LABELS as ACTION_SLOT_LABELS,
   flowTaggedPostbackError,
+  richMessageDroppedTaggingError,
   validateUnifiedAction,
 } from '~~/shared/action-schema'
 import {
@@ -1527,6 +1538,7 @@ import {
   measureLineText,
 } from '~~/shared/line-text-limits'
 import { CARD_BODY_MAX, CARD_TITLE_MAX, cardButtonStyle, cardMessageError } from '~~/shared/card-message'
+import { altTextFallbackFor, flowMessageHasAltText } from '~~/shared/line-alt-text'
 import { BIRTHDAY_BUTTON_TYPE } from '~~/shared/birthday'
 import { TEXT_IMAGE_TITLE_MAX, textImageButtonStyle, textImageError, textMessageImageUrl } from '~~/shared/text-image-card'
 import { QUICK_REPLY_NOT_LAST_MESSAGE } from '~~/shared/flow-message-order'
@@ -2363,11 +2375,18 @@ const MSG_META: Record<string, { label: string; badge: string }> = {
   userInput:     { label: '用戶輸入卡片', badge: 'badge-red' },
 }
 
-/** 卡片類沒填提醒文字時送出端補的字（跟 `server/utils/handler.ts` 各處 `lineAltText` 的預設字一致） */
-const ALT_TEXT_FALLBACK: Record<string, string> = {
-  carousel: '輪播訊息',
-  imageCarousel: '圖片輪播',
-  flexImageCarousel: '卡片訊息',
+/**
+ * `C-468`：開著「保留 PNG 透明區域」但這一則其實不會透明的原因；會透明就回空字串。
+ *
+ * 透明是靠改用 imagemap 送（`handler.ts` 的 `buildRichMessageLineMessage`），而那種格式送不了
+ * 「觸發機器人模組」——只要有一塊設了模組，整則就退回原本的送法，透明當場沒作用。
+ * 以前後台一個字都沒講，店家開了開關就以為有效。
+ */
+function richMessageTransparentOffReason(msg: any): string {
+  const actions = Array.isArray(msg?.actions) ? msg.actions : []
+  const slots = actions.filter((a: any) => a?.type === 'module').map((a: any) => String(a?.slot || '').trim()).filter(Boolean)
+  if (!slots.length) return ''
+  return `區塊 ${slots.join('、')} 設了「觸發機器人模組」，這一則送出時透明不會生效（LINE 能保留透明的格式叫不出模組，會自動退回一般卡片、透明處補白底）。要保留透明，把這幾塊改成「開啟網址」或「傳送文字」。`
 }
 
 // `C-417`：按鈕、快速回覆、圖片動作同一套名字與順序，跟圖文選單（`AdminAreaActionEditor`）、活動、客服預存一致。
@@ -3673,10 +3692,13 @@ async function revealFlowRow(flow: any, scrollTop: number) {
 function normalizeMessages(messages: any[]) {
   return (messages ?? []).map((msg) => {
     // `C-422` ⑦：沒圖的文字不會送標題、畫面上也看不到標題格——藏著的舊標題拿掉，免得下次加圖時冒出來跟著送出去。
-    // ⚠️ 圖片框開著（按了「更換圖片」還沒選）的不動：選了新圖，標題要還在
-    if (msg.type === 'text' && msg.title !== undefined && !textMessageImageUrl(msg) && !textImageOpen.has(msg)) {
-      const { title: _hiddenTitle, ...rest } = msg
-      return rest
+    // `C-468`：同樣的道理，沒圖也沒按鈕的文字送的是 LINE 文字訊息，沒有「提醒文字」這回事——藏著的也拿掉。
+    // ⚠️ 圖片框開著（按了「更換圖片」還沒選）的不動：選了新圖，標題跟提醒文字要還在
+    if (msg.type === 'text' && !textImageOpen.has(msg)) {
+      const rest = { ...msg }
+      if (rest.title !== undefined && !textMessageImageUrl(rest)) delete rest.title
+      if (rest.altText !== undefined && !flowMessageHasAltText(rest)) delete rest.altText
+      if (Object.keys(rest).length !== Object.keys(msg).length) return rest
     }
 
     if (msg.type === 'quickReply') {
@@ -3870,9 +3892,13 @@ function validateMessages(messages: any[]): string | null {
     }
 
     if (msg?.type === 'richMessage') {
-      if (!msg.altText?.trim()) return '圖文訊息：請輸入提醒文字（Alt Text）'
+      // `C-468`：⛔ 錯誤訊息不留「Alt Text」這種英文術語（後端 `flow-validator.ts` 同一句）
+      if (!msg.altText?.trim()) return '圖文訊息：請填提醒文字（客人手機通知列會看到的那行字）'
       if (!msg.heroImageUrl) return '圖文訊息：請上傳背景圖片'
       if (!Array.isArray(msg.actions) || msg.actions.length < 1) return '圖文訊息：尚未設定任何動作區塊'
+      // `C-468`：開著透明時「傳送文字」的貼標會被送出端丟掉（前後端同一支）
+      const droppedTagging = richMessageDroppedTaggingError(msg)
+      if (droppedTagging) return `圖文訊息：${droppedTagging}`
       if (msg.layoutId === 'custom') {
         if (richMessageEditorActionsOverlap(msg.actions)) {
           return '圖文訊息：自訂區域有重疊，請調整後再儲存'

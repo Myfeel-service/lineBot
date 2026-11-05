@@ -1,5 +1,5 @@
 import { createError } from 'h3'
-import { flowTaggedPostbackError, validateUnifiedAction } from '~~/shared/action-schema'
+import { flowTaggedPostbackError, richMessageDroppedTaggingError, validateUnifiedAction } from '~~/shared/action-schema'
 import { lineTextOverflowMessage, measureLineText } from '~~/shared/line-text-limits'
 import { cardMessageError } from '~~/shared/card-message'
 import { textImageError } from '~~/shared/text-image-card'
@@ -87,11 +87,16 @@ function validateUserInput(msg: any): void {
 }
 
 function validateRichMessage(msg: any): void {
-  if (!String(msg?.altText || '').trim()) fail('圖文訊息：請輸入提醒文字（Alt Text）')
+  // `C-468`：以前寫「請輸入提醒文字（Alt Text）」——店家看不懂 Alt Text 是什麼。
+  // 整則只有一張圖、沒有文字可以自動拿去當通知列那行字，所以這格才是必填（別的模組都是選填）。
+  if (!String(msg?.altText || '').trim()) fail('圖文訊息：請填提醒文字（客人手機通知列會看到的那行字）')
   if (!String(msg?.heroImageUrl || '').trim()) fail('圖文訊息：請上傳背景圖片')
   if (!Array.isArray(msg?.actions) || msg.actions.length < 1) {
     fail('圖文訊息：尚未設定任何動作區塊')
   }
+  // `C-468`：開著透明時「傳送文字」的貼標送出端會丟掉，以前只有日誌 warn、店家不知道
+  const droppedTagging = richMessageDroppedTaggingError(msg)
+  if (droppedTagging) fail(`圖文訊息：${droppedTagging}`)
   for (const action of msg.actions) {
     const error = validateUnifiedAction({
       slot: String(action?.slot || ''),

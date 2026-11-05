@@ -134,3 +134,65 @@ describe('`C-424` 快速回覆一定要在最後一則', () => {
     expect(save([QR])).not.toThrow()
   })
 })
+
+/**
+ * `C-468`：開著「保留 PNG 透明區域」的圖文訊息會改用 imagemap 送，那種格式沒有 postback——
+ * 「傳送文字」上掛的標籤送出時會被丟掉（以前只有伺服器日誌寫一行 warn，店家設了以為有效）。
+ * ⛔ 擋的只有「傳送文字」：「開啟網址」的貼標走我們自己的轉址網址，imagemap 底下照樣有效。
+ */
+describe('`C-468` 透明的圖文訊息：貼不了標籤的那一塊要擋下來', () => {
+  const rich = (over: Record<string, unknown> = {}) => ({
+    type: 'richMessage',
+    altText: '新品開賣',
+    heroImageUrl: 'https://storage.googleapis.com/b/uploads/w/hero.png',
+    layoutId: 'single',
+    actions: [{ slot: 'A', type: 'uri', uri: 'https://shop.example.com', tagging: { enabled: false, addTagIds: [] } }],
+    ...over,
+  })
+  const taggedMessage = { slot: 'B', type: 'message', text: '我要報名', tagging: { enabled: true, addTagIds: ['t-1'] } }
+
+  it('開著透明＋「傳送文字」掛標籤：擋下來，並說得出是哪一塊、兩條出路', () => {
+    expect(save([rich({ transparentBackground: true, actions: [taggedMessage] })]))
+      .toThrowError(/區塊 B.*傳送文字.*貼不了標籤.*關掉「保留 PNG 透明區域」，或把這一塊的貼標取消/)
+  })
+
+  it('對照組①：沒開透明＝走原本的格式，貼標有效，照樣存得起來', () => {
+    expect(save([rich({ transparentBackground: false, actions: [taggedMessage] })])).not.toThrow()
+  })
+
+  it('對照組②：開著透明，但有一塊設了「觸發機器人模組」＝整則退回原本的格式，貼標有效', () => {
+    expect(save([rich({
+      transparentBackground: true,
+      actions: [taggedMessage, { slot: 'C', type: 'module', moduleId: 'm-1', tagging: { enabled: false, addTagIds: [] } }],
+    })])).not.toThrow()
+  })
+
+  it('對照組③：開著透明，貼標掛在「開啟網址」上＝走轉址網址，照樣有效', () => {
+    expect(save([rich({
+      transparentBackground: true,
+      actions: [{ slot: 'A', type: 'uri', uri: 'https://shop.example.com', tagging: { enabled: true, addTagIds: ['t-1'] } }],
+    })])).not.toThrow()
+  })
+
+  it('對照組④：開著透明、「傳送文字」沒掛標籤，照樣存得起來', () => {
+    expect(save([rich({
+      transparentBackground: true,
+      actions: [{ slot: 'B', type: 'message', text: '我要報名', tagging: { enabled: false, addTagIds: [] } }],
+    })])).not.toThrow()
+  })
+})
+
+/** `C-468`：提醒文字的錯誤句不留英文術語（店家看不懂「Alt Text」） */
+describe('`C-468` 提醒文字的錯誤句講人話', () => {
+  it('圖文訊息沒填提醒文字：擋下來，句子裡不出現 Alt Text', () => {
+    const fn = save([{
+      type: 'richMessage',
+      altText: '  ',
+      heroImageUrl: 'https://storage.googleapis.com/b/uploads/w/hero.png',
+      layoutId: 'single',
+      actions: [{ slot: 'A', type: 'uri', uri: 'https://shop.example.com', tagging: { enabled: false, addTagIds: [] } }],
+    }])
+    expect(fn).toThrowError(/請填提醒文字（客人手機通知列會看到的那行字）/)
+    expect(fn).not.toThrowError(/Alt Text/)
+  })
+})

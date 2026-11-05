@@ -27,6 +27,7 @@ import { RICH_LAYOUT_PRESETS } from '~~/shared/rich-layout-presets'
 import { normalizeRichMessageActions } from '~~/shared/rich-message-editor-helpers'
 import { resolveRichMessageFromImageSize, resolveFlexImageCarouselAspectRatio } from '~~/shared/line-image-spec'
 import { LINE_TEXT_MESSAGE_MAX, truncateLineText } from '~~/shared/line-text-limits'
+import { LINE_ALT_TEXT_MAX, altTextFallbackFor } from '~~/shared/line-alt-text'
 import { buildTextButtonsCard } from '~~/shared/text-buttons-card'
 import { CARD_BODY_MAX, CARD_BUTTON_PRIMARY_COLOR, CARD_TITLE_MAX, cardButtonStyle, type CardButtonStyle } from '~~/shared/card-message'
 import { textImageAspect, textImageButtonStyle, textMessageImageUrl } from '~~/shared/text-image-card'
@@ -1365,7 +1366,7 @@ function buildRichMessageLineMessage(input: {
         return {
           type: 'imagemap',
           baseUrl,
-          altText: lineAltText(input.altText, input.attributes, '圖文訊息'),
+          altText: lineAltText(input.altText, input.attributes, altTextFallbackFor('richMessage')),
           baseSize: { width: aspect.canvasWidth, height: aspect.canvasHeight },
           actions,
         } as messagingApi.Message
@@ -1395,7 +1396,7 @@ function buildRichMessageLineMessage(input: {
  *    LINE 不收沒有 altText 的訊息、整次回覆一起失敗（code review 第 2 條）——空的就用 fallback。
  */
 function lineAltText(raw: unknown, attributes: Record<string, string>, fallback: string): string {
-  return truncateLineText(renderWithAttributes(String(raw || ''), attributes).trim(), 400) || fallback
+  return truncateLineText(renderWithAttributes(String(raw || ''), attributes).trim(), LINE_ALT_TEXT_MAX) || fallback
 }
 
 function buildFlexCarouselButtonAction(
@@ -1563,8 +1564,11 @@ function buildTextImageCard(
     styleOf: textImageButtonStyle,
   })
   if (footer) bubble.footer = footer
-  // 通知列＝內文本身（跟純文字一樣；對話紀錄存的也是這句），內文空白才用標題
-  const altText = lineAltText(msg.text, attributes, '') || lineAltText(msg.title, attributes, '卡片訊息')
+  // 通知列：`C-468` 起店家自己填的優先（後台「提醒文字」那格）；沒填照舊＝內文本身
+  // （跟純文字一樣；對話紀錄存的也是這句），內文空白才用標題。
+  const altText = lineAltText(msg.altText, attributes, '')
+    || lineAltText(msg.text, attributes, '')
+    || lineAltText(msg.title, attributes, altTextFallbackFor('text'))
   return {
     type: 'flex',
     altText,
@@ -1685,7 +1689,7 @@ function buildRichMessageFlexMessage(input: {
 
   return {
     type: 'flex',
-    altText: lineAltText(input.altText, input.attributes, '圖文訊息'),
+    altText: lineAltText(input.altText, input.attributes, altTextFallbackFor('richMessage')),
     contents: {
       type: 'bubble',
       ...(transparent
@@ -1720,7 +1724,9 @@ function buildLineMessages(
     if (msg.type === 'text' && msg.buttons && msg.buttons.length > 0) {
       const renderedText = renderWithAttributes(msg.text || '', attributes)
       return [buildTextButtonsCard({
-        altText: truncateLineText(renderedText || '無內容', 400),
+        // `C-468`：店家在「提醒文字」填了就用他填的；沒填照舊拿內文（`lineAltText` 會換變數、空的不算填）
+        altText: lineAltText(msg.altText, attributes, '')
+          || truncateLineText(renderedText || '無內容', LINE_ALT_TEXT_MAX),
         // ⛔ 這裡的截斷法必須與後台預覽同一份（`shared/line-text-limits`）——兩邊切在
         // 不同格，預覽就又開始說謊。存檔端已擋下超長文字（`H-27`），這裡只是最後一道
         // 保險：變數展開後才變長的情況仍可能走到。
@@ -1807,7 +1813,7 @@ function buildLineMessages(
       const carouselAspect = String(msg.imageAspectRatio || '').trim() === 'square' ? 'square' : 'rectangle'
       return [{
         type: 'template',
-        altText: lineAltText(msg.altText, attributes, '輪播訊息'),
+        altText: lineAltText(msg.altText, attributes, altTextFallbackFor('carousel')),
         template: {
           type: 'carousel',
           columns,
@@ -1870,7 +1876,7 @@ function buildLineMessages(
       if (!columns.length) return []
       return [{
         type: 'template',
-        altText: lineAltText(msg.altText, attributes, '圖片輪播'),
+        altText: lineAltText(msg.altText, attributes, altTextFallbackFor('imageCarousel')),
         template: { type: 'image_carousel', columns },
       } as messagingApi.TemplateMessage]
     }
@@ -1955,7 +1961,7 @@ function buildLineMessages(
       // ⛔ 不可以拿第一張的標題：這行字也會存成對話紀錄，AI 判斷「客人在問哪個商品」會讀它——
       //    一整排商品目錄會被當成在談第一張那台，客人接著問「我的什麼時候出貨」就答成那台（code review 第 1 條）。
       // ⛔ 判空要看**換完變數之後**：只寫了 {{displayName}} 的、取不到名字就是空字串，LINE 不收沒有 altText 的卡、整次回覆失敗（第 2 條）
-      const altText = lineAltText(msg.altText, attributes, '卡片訊息')
+      const altText = lineAltText(msg.altText, attributes, altTextFallbackFor('flexImageCarousel'))
       return [{
         type: 'flex',
         altText,
@@ -1965,7 +1971,13 @@ function buildLineMessages(
 
     // ── Rich Message Inline（底圖 + 疊在圖上的點擊區，類似圖文選單）──
     if (msg.type === 'richMessage') {
-      if (!msg.altText) return []
+      /*
+       * `C-468`：以前這裡還有一條 `if (!msg.altText) return []`——**沒填提醒文字就整則靜默不送**，
+       * 客人什麼都收不到、後台也看不出來（舊資料、直接打 API 進來的都中）。
+       * 提醒文字沒填是「通知列那行字沒填」，不是「這則訊息壞掉」：下游 `lineAltText` 本來就會補
+       * 預設字（`altTextFallbackFor('richMessage')`＝「圖文訊息」），照送才對。
+       * ⛔ 沒有底圖是真的送不出去（imagemap 與 Flex 都要那張圖），那條留著。
+       */
       if (!msg.heroImageUrl) return []
       const actions = Array.isArray(msg.actions) ? msg.actions : []
       return [
@@ -1988,7 +2000,7 @@ function buildLineMessages(
     // ── Rich Message Reference（同上）──
     if (msg.type === 'richMessageRef') {
       const payload = msg.payload
-      if (!payload?.altText) return []
+      // `C-468`：同上——提醒文字沒填不該讓整則消失（下游會補預設字），沒底圖才送不出去
       if (!payload?.heroImageUrl) return []
       const actions = Array.isArray(payload?.actions)
         ? payload.actions
@@ -2089,8 +2101,13 @@ function buildLineMessages(
     }
 
     if (msg.type === 'text') {
+      // ⛔ 走到這裡的是「沒圖也沒按鈕」的純文字（有圖、有按鈕的在上面就送成卡片了）。
+      //    LINE 的文字訊息沒有 altText 這個欄位——通知列顯示的就是這段字本身。
+      //    `C-468` 的提醒文字只有卡片用得到，原封不動送出去等於多塞一個 LINE 不認得的欄位。
+      //    存檔端已經把藏著的拿掉（`flow.vue` 的 `normalizeMessages`），這裡擋的是舊資料與直接打 API 的。
+      const { altText: _cardOnlyAltText, ...textMsg } = msg
       return [{
-        ...msg,
+        ...textMsg,
         text: truncateLineText(renderWithAttributes(msg.text || '', attributes), LINE_TEXT_MESSAGE_MAX)
       } as messagingApi.TextMessage]
     }

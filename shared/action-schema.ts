@@ -347,6 +347,32 @@ export function richMessageSendsPostbacks(msg: { transparentBackground?: unknown
 }
 
 /**
+ * 透明的圖文訊息「送出時會被丟掉什麼」（`C-468`，前後端同一支）。
+ *
+ * 開了「保留 PNG 透明區域」且沒有「觸發機器人模組」的區塊時，整則改用 imagemap 送
+ * （`handler.ts` 的 `buildRichMessageLineMessage`）。那種格式只有「開啟網址」「傳送文字」
+ * 兩種動作、**沒有 postback**，所以「傳送文字」上掛的標籤送出時會被默默丟掉——
+ * 以前只有伺服器日誌寫一行 warn，店家設了貼標、客人點了，標籤卻永遠不會貼上去。
+ *
+ * ⛔ 只擋「傳送文字」：「開啟網址」的貼標是走我們自己的轉址網址（`resolveUriWithTagging`），
+ *    imagemap 底下照樣有效，一起擋就是把好的也擋掉。
+ * ⛔ 有「觸發機器人模組」的區塊時整則會退回 Flex（imagemap 送不了模組），貼標照常，也不擋。
+ *
+ * 回第一個會被丟掉的區塊的錯誤句；沒有要丟的回空字串。
+ */
+export function richMessageDroppedTaggingError(
+  msg: { transparentBackground?: unknown, actions?: unknown } | null | undefined,
+): string {
+  if (msg?.transparentBackground !== true) return ''
+  const actions = Array.isArray(msg?.actions) ? msg.actions : []
+  if (actions.some((a: any) => a?.type === 'module')) return ''
+  const index = actions.findIndex((a: any) => a?.type === 'message' && cleanTagIdList(a?.tagging?.enabled ? a?.tagging?.addTagIds : []).length > 0)
+  if (index < 0) return ''
+  const slot = String((actions[index] as any)?.slot || '').trim() || SLOT_LABELS[index] || String(index + 1)
+  return `區塊 ${slot} 的「傳送文字」貼不了標籤：開著「保留 PNG 透明區域」時，LINE 的格式沒有放標籤的位置，客人點了也不會貼上去。請關掉「保留 PNG 透明區域」，或把這一塊的貼標取消。`
+}
+
+/**
  * 模組存檔時：找第一顆放不進 LINE 的開貼標按鈕（前後端同一支：`flow-validator.ts`／`flow.vue`）。
  * 只看**真的會送出去的**：卡片訊息關了圖片時「圖片動作」不送、透明背景的圖文訊息走 imagemap、
  * 引用的圖文訊息（richMessageRef）在它自己存檔時檢查。

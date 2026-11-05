@@ -1,4 +1,5 @@
 import { LINE_BUTTONS_TEMPLATE_TEXT_MAX, truncateLineText } from '~~/shared/line-text-limits'
+import { LINE_ALT_TEXT_MAX } from '~~/shared/line-alt-text'
 
 /**
  * {{變數}} 換成值——送出端唯一的一條規則（客服回覆、模組、推播都走這裡）。
@@ -35,8 +36,10 @@ export function attributeContextForUser(
   return context
 }
 
-/** LINE 對這幾格的上限：名字換進去之後才變長的，送出前再切一次（⛔ 超過的話 LINE 會整則退回） */
-const LINE_ALT_TEXT_MAX = 400
+/**
+ * LINE 對這幾格的上限：名字換進去之後才變長的，送出前再切一次（⛔ 超過的話 LINE 會整則退回）。
+ * `C-468`：提醒文字的 400 以前這裡自己寫一份，改讀 `shared/line-alt-text.ts` 那支唯一來源。
+ */
 const LINE_ACTION_LABEL_MAX = 20
 /** 按鈕範本帶了標題或縮圖時，文字上限從 160 降到 60（LINE 規格） */
 const LINE_BUTTONS_TEMPLATE_TEXT_MAX_WITH_HEADER = 60
