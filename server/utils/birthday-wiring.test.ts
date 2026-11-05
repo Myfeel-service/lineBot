@@ -124,6 +124,10 @@ describe('早上報告的生日（`D-170`）', () => {
     const page = between(broadcasts, 'async function applyBirthdayHandoff', '\n}\n')
     expect(page).toContain("broadcastPlanBlockReason(planBroadcastTier.value, 'import')")
     expect(page.indexOf('if (lock)')).toBeLessThan(page.indexOf('openCreate()'))
+    // 🔴 `C-466`（2026-11-05 實走）：方案是「清單載完」那個 watch 裡 ⛔ 沒被等的 loadDraftTotal 問的——
+    //    只檢查上面那行字是假綠燈：走到這裡方案一定還是 null，那道檢查從來沒擋過。要先問到方案再判斷。
+    expect(page).toContain('await loadDraftTotal()')
+    expect(page.indexOf('await loadDraftTotal()')).toBeLessThan(page.indexOf("broadcastPlanBlockReason(planBroadcastTier.value, 'import')"))
   })
   it('code review 第 4 條：壽星講「上一則報告之後到今天」，推播頁也帶那幾天', () => {
     const fn = between(cronSrc, 'export async function dailyBacklogDigest', '\n}\n')

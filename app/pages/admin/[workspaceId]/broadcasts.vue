@@ -1907,6 +1907,10 @@ async function applyBirthdayHandoff() {
   }
   // ⛔ 這個方案不能「只發給挑出來的人」就講清楚、不開一張送不出去的草稿（code review 第 2 條；同好友頁「推播給這 N 位」）
   // 方案讀不到（null）＝不擋（同推播頁其他地方：送出端照擋）
+  // 🔴 2026-11-05 實走抓到（`C-466`）：方案是 `loadDraftTotal` 問的，而它掛在「清單載完」那個 watch 上、⛔ 沒被等——
+  //    走到這裡時方案一定還是 null，上面那道檢查**從來沒擋過**（免費方案點連結照樣開出一張草稿）。先問到再判斷。
+  if (!planBroadcastTier.value)
+    await loadDraftTotal()
   const lock = planBroadcastTier.value ? broadcastPlanBlockReason(planBroadcastTier.value, 'import') : null
   if (lock) {
     showToast(lock, 'error')
