@@ -70,6 +70,31 @@
     .el-button + .el-button { margin-left: 0; }
   }
 
+  /* `C-468`：生日還沒打開才出現的那一行（淡綠底：是建議不是警告） */
+  &__bday {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 14px;
+    padding: 8px 12px;
+    background: var(--el-color-success-light-9);
+    border: 1px solid var(--el-color-success-light-7);
+    border-radius: 8px;
+
+    .el-button { flex: none; }
+  }
+
+  &__bday-text {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--el-text-color-regular);
+
+    b { margin-right: 4px; color: var(--el-text-color-primary); }
+  }
+
   &__notice {
     margin: 4px 0 0;
     font-size: 13px;

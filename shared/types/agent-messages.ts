@@ -90,6 +90,11 @@ export type AgentMsg =
   /** 強調卡：回顯收到的第一則訊息（見證時刻） */
   | { kind: 'highlight'; label: string; title: string; meta?: string }
   /**
+   * 客人會收到的「告訴我生日」卡（`C-468`：接完 LINE 問要不要順便問生日）。
+   * ⛔ 字由呼叫端從 `shared/birthday.ts` 帶進來（跟送出端、好友頁「生日」框同一份），這裡只管長相。
+   */
+  | { kind: 'birthday-card'; caption: string; title: string; note: string; button: string }
+  /**
    * 見證時刻的**兩步驟卡**（2026-09-11 取代舊的 `oaInvite` ＋ 另一張獨立的等待狀態卡）。
    *
    * ⭐ 為什麼要併：原本 ①② 寫在泡泡裡、①要用的 QR 在下一張卡、②的狀態（還在等）在

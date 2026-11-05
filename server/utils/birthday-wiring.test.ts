@@ -171,3 +171,62 @@ describe('後台', () => {
     expect(Object.values(AGENT_TEACHINGS).some(t => t.ref === 'birthday')).toBe(true)
   })
 })
+
+/**
+ * `C-468`（示意頁 v87／v88，老闆 2026-11-05「好 執行」）：問生日只發生在加好友那一刻，
+ * 所以在「還沒有任何客人加好友」的時候讓他一鍵打開——①接完 LINE 成績單之前問一句 ②做邀請卡時生日還沒開就多一行。
+ * ⛔ 兩支導覽都不加步（導覽只能指、不能做）。
+ */
+describe('開帳之後帶到生日（`C-468`）', () => {
+  const chat = read('app/composables/useOnboardingChat.ts')
+  const invite = read('app/components/admin/AdminInviteCardDialog.vue')
+  const renderer = read('app/components/agent/AgentMessageRenderer.vue')
+  const landing = read('app/utils/onboarding-landing.ts')
+  const ask = between(chat, 'async function stepBirthdayAsk', '\n  async function stepDone')
+  const done = between(chat, 'async function stepDone', '\n  // ── 打造這一趟的結尾')
+
+  it('接完 LINE：成績單之前問、只問一次（回去做傳話測試會再跑 stepDone）', () => {
+    expect(done.indexOf('await stepBirthdayAsk()')).toBeGreaterThan(-1)
+    expect(done.indexOf('await stepBirthdayAsk()')).toBeLessThan(done.indexOf("kind: 'summary'"))
+    expect(ask).toContain('if (birthdayAsked) return birthdayOn')
+  })
+  it('已經開著、讀不到設定都不問（⛔ 不問一件不知道現況的事）', () => {
+    expect(ask.indexOf("apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')")).toBeLessThan(ask.indexOf('await say('))
+    expect(ask.indexOf('if (current.enabled)')).toBeLessThan(ask.indexOf('await say('))
+  })
+  it('卡上的字吃 shared/birthday（跟送出端、好友頁「生日」框同一份）；⛔ 不自動打開：要他按', () => {
+    expect(ask).toContain("kind: 'birthday-card'")
+    expect(ask).toContain('title: birthdayAskText(current.gift)')
+    expect(ask).toContain('note: BIRTHDAY_ASK_NOTE')
+    expect(ask).toContain('button: BIRTHDAY_BUTTON_LABEL')
+    expect(ask.indexOf("method: 'PUT'")).toBeGreaterThan(ask.indexOf("if (c !== 'yes')"))
+    expect(renderer).toContain("entry.msg.kind === 'birthday-card'")
+  })
+  it('打開時生日禮照原本的帶著；沒存成要講、成績單也不列', () => {
+    expect(ask).toContain('normalizeBirthdaySettings({ ...current, enabled: true })')
+    expect(ask).toContain('這次沒打開成功')
+    expect(done).toContain("...(bdOn ? [{ label: '客人加好友時會被問生日', done: true }] : [])")
+  })
+  it('⛔ 不承諾發生日祝福（新店家是免費方案、發不了推播）', () => {
+    const says = [...ask.matchAll(/await say\(([\s\S]*?)\)\n/g)].map(m => m[1]).join('\n')
+    // 先確認真的抓到那幾句（⛔ 抓到空字串＝下面那條永遠綠）
+    expect(says).toContain('要不要順便問生日')
+    expect(says).toContain('打開了 ✓')
+    expect(says).not.toMatch(/祝福|推播/)
+  })
+  it('⛔ 兩支導覽都不加生日那一步', () => {
+    expect(landing).not.toMatch(/生日|usr-birthday/)
+  })
+  it('邀請卡框：生日還沒打開、而且接上 LINE 了才多一行；能改設定的人才看得到', () => {
+    expect(invite).toContain('data-invite="birthday"')
+    expect(invite).toContain("if (!can('ai.settings.write')) return")
+    expect(invite).toMatch(/showBirthdayRow = computed\(\(\) => !!invite\.value\?\.basicId\s*&& \(bdJustOn\.value \|\| \(bdCurrent\.value !== null && !bdCurrent\.value\.enabled\)\)\)/)
+  })
+  it('邀請卡框：每次開框都重看（⛔ 不跟著「畫過就不重抓」）；鈕 ⛔ 不用主色（框的主要動作是列印）', () => {
+    const w = between(invite, 'watch(visible', '}, { immediate: true })')
+    expect(w).toContain('void loadBirthday()')
+    expect(between(invite, 'async function load()', '\n}\n')).not.toContain('loadBirthday')
+    expect(invite).toMatch(/<el-button size="small" :loading="bdSaving" @click="turnOnBirthday">打開<\/el-button>/)
+    expect(invite).toContain('normalizeBirthdaySettings({ ...bdCurrent.value, enabled: true })')
+  })
+})

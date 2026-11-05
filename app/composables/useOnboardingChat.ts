@@ -49,6 +49,13 @@ import { TAIWAN_FESTIVALS } from '~~/shared/taiwan-festivals'
 import { clearLineFlowInProgress, markLineFlowInProgress } from '~/utils/onboarding-line-flag'
 import { LANDING_FROM_BUILD, LANDING_FROM_LINE, liveTourStepCount, saveOnboardingBuilt } from '~/utils/onboarding-landing'
 import { lineFlowEntry } from '~~/shared/onboarding-events'
+import {
+  BIRTHDAY_ASK_NOTE,
+  BIRTHDAY_BUTTON_LABEL,
+  birthdayAskText,
+  normalizeBirthdaySettings,
+  type BirthdaySettings,
+} from '~~/shared/birthday'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 /**
@@ -2371,6 +2378,74 @@ export function useOnboardingChat() {
     }, POLL_INTERVAL_MS)
   }
 
+  // ── 接完 LINE：要不要順便問生日（`C-468`，示意頁 v87／v88，老闆 2026-11-05「好 執行」）─────
+  /**
+   * 問生日只發生在**加好友那一刻**（歡迎訊息後面附卡）——打開之前加好友的人永遠不會被問到，
+   * 只能另外推「問生日」模組（免費方案發不了推播，只剩圖文選單）。剛接上 LINE、還沒有任何客人加好友，是最該打開的時候。
+   * ⛔ 不放進「上線之後」導覽當一步：導覽只能指，他還要點開框、開開關、存檔；這裡一鍵就生效。
+   * ⛔ 不自動打開：那張卡是客人會收到的東西，要他按。只問開不開，生日禮之後到好友頁「生日」補。
+   * ⛔ 不講「發生日祝福給他們」：新店家是免費方案、發不了推播（同成績單 `C-457` 那條）。
+   * ⚠️ 只問一次：「回去做傳話測試」會再跑一次 `stepDone`。
+   * ⚠️ 已經開著就不問（續走回來、或早就在好友頁打開的）；讀不到設定也不問（⛔ 不問一件不知道現況的事）。
+   * 按了先不要的人，做邀請卡時框裡還會看到一行（`AdminInviteCardDialog.vue`）。
+   * @returns 生日現在是不是開著（成績單照它列那一行）
+   */
+  let birthdayAsked = false
+  let birthdayOn = false
+  async function stepBirthdayAsk(): Promise<boolean> {
+    if (birthdayAsked) return birthdayOn
+    birthdayAsked = true
+    let current: BirthdaySettings
+    try {
+      const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
+      current = normalizeBirthdaySettings(s?.birthday)
+    }
+    catch {
+      birthdayOn = false
+      return false
+    }
+    if (current.enabled) {
+      birthdayOn = true
+      return true
+    }
+    await say('最後一件，按一下就好：<b>客人加好友時，要不要順便問生日？</b><br>現在打開最好——只有打開之後加好友的人，才會被問到。')
+    card({
+      kind: 'birthday-card',
+      caption: '客人加好友時，歡迎訊息後面多這一張',
+      title: birthdayAskText(current.gift),
+      note: BIRTHDAY_ASK_NOTE,
+      button: BIRTHDAY_BUTTON_LABEL,
+    })
+    const c = await askChoices([
+      { label: '先不要', value: 'no', escape: true },
+      { label: '好，幫我打開', value: 'yes', primary: true },
+    ])
+    if (c !== 'yes') {
+      track('birthday_ask', { on: false })
+      await say('好。之後想問，到「好友」頁按「生日」打開。')
+      birthdayOn = false
+      return false
+    }
+    busy.value = true
+    try {
+      // ⚠️ 生日禮照原本的帶著（他可能早就寫過、只是沒開）
+      await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: normalizeBirthdaySettings({ ...current, enabled: true }) } })
+      birthdayOn = true
+    }
+    catch {
+      birthdayOn = false
+    }
+    finally {
+      busy.value = false
+    }
+    track('birthday_ask', { on: true, saved: birthdayOn })
+    // ⛔ 沒存成要講（不可以說「打開了」）；成績單那一行也照 birthdayOn 不列
+    await say(birthdayOn
+      ? '打開了 ✓ 每個月 1 號，這個月生日的人會貼上「<b>本月壽星</b>」標籤。想在生日當月送點什麼，之後到「好友」頁按「生日」寫上去。'
+      : '這次沒打開成功——之後到「好友」頁按「生日」打開就好。')
+    return birthdayOn
+  }
+
   async function stepDone(line: LineStatus) {
     // ⛔進度不可以在「確認完成」之前就跳到最後一格（2026-08-28 code review 抓到）：
     // 頁首那個「之後再說」的出口在最後一格會被藏起來，而下面這段要去問後端「真的完成了嗎」。
@@ -2414,6 +2489,9 @@ export function useOnboardingChat() {
     // ⛔ 2026-09-26（`C-250`／`D-88`）**這裡不再揭曉輪廓、不再給草稿**：那兩樣已經搬到打造那一趟。
     //    留在這裡的話，走完兩趟的人會看到同一張卡兩次、同幾樣草稿被問兩次（重複採用會多出重複的腳本與標籤）。
 
+    // `C-468`：成績單之前問要不要順便問生日（只問一次、開著就不問）
+    const bdOn = await stepBirthdayAsk()
+
     card({
       kind: 'summary',
       items: [
@@ -2425,6 +2503,8 @@ export function useOnboardingChat() {
           done: setup.firstMessageReceived === 'done',
           note: setup.firstMessageReceived === 'done' ? undefined : '已跳過，之後加好友試試',
         },
+        // `C-468`：開著才列（⛔ 按先不要的不列一行「沒打開」：剛剛才講過）
+        ...(bdOn ? [{ label: '客人加好友時會被問生日', done: true }] : []),
         // 方案／額度／綁卡從「剛取完名字」搬來這裡（2026-09-02）：那一刻他只想知道
         // 下一步，計費資訊會讓人停下來想「我是不是要付錢」；擺在成績單上才是他
         // 「做完了、接下來呢」會想知道的事

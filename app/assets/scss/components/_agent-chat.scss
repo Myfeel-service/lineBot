@@ -724,6 +724,13 @@
   }
 }
 
+/* 客人會收到的「告訴我生日」卡（`C-468`）：長相吃 `_birthday.scss` 的 `.birthday__phone`，這裡只管它在對話裡多寬 */
+.agm-bday-card {
+  width: min(300px, 100%);
+  box-sizing: border-box;
+  align-self: flex-start;
+}
+
 .agm-summary {
   ul {
     list-style: none;

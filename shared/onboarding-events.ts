@@ -41,6 +41,7 @@ export const ONBOARDING_EVENTS = {
   key_saved: '貼了一組連線資訊（存好了，或 LINE 不認得）',
   webhook_check: '檢查 Webhook 的結果',
   phone_wait: '用手機測試的結果（等了多久、按過幾次不是我）',
+  birthday_ask: '成績單之前問「要不要順便問生日」（打開／先不要、存成了沒；`C-468`）',
   line_done: '走到接 LINE 的成績單',
   // ── 兩趟都有 ──
   wizard_leave: '中途按頁首的「之後再說」（停在第幾格）',

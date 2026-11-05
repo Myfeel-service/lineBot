@@ -192,6 +192,18 @@
     <div v-if="entry.msg.meta" class="agm-highlight__meta">{{ entry.msg.meta }}</div>
   </div>
 
+  <!-- 客人會收到的「告訴我生日」卡（`C-468`）：跟好友頁「生日」框的「客人會看到」同一套長相（`_birthday.scss`） -->
+  <div v-else-if="entry.msg.kind === 'birthday-card'" class="birthday__phone agm-bday-card">
+    <span class="birthday__phone-cap">{{ entry.msg.caption }}</span>
+    <div class="birthday__card">
+      <div class="birthday__card-body">
+        <b>{{ entry.msg.title }}</b>
+        <span>{{ entry.msg.note }}</span>
+      </div>
+      <div class="birthday__card-btn">{{ entry.msg.button }}</div>
+    </div>
+  </div>
+
   <!-- 完成摘要卡。打造那一趟（`C-457`／`D-172`）：先講「接上 LINE 之後，我會幫你」，做好的那幾樣收成一排小標籤，
        最後給他看客人會收到的那則；接 LINE 那一趟沒給這幾格＝照舊一列一列 -->
   <div v-else-if="entry.msg.kind === 'summary'" class="agm-card agm-summary">

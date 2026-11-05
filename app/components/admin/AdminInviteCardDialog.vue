@@ -19,6 +19,14 @@
       還沒接上 LINE 官方帳號，所以還沒有你的加好友 QR。接上之後回到這裡就有。
     </p>
     <template v-else-if="invite">
+      <!-- `C-468`：生日還沒打開才出現（理由見 script 的 showBirthdayRow）。⛔ 鈕不用主色：這個框的主要動作是「列印」 -->
+      <div v-if="showBirthdayRow" class="invite-card__bday" data-invite="birthday">
+        <template v-if="!bdJustOn">
+          <span class="invite-card__bday-text">🎂 <b>掃 QR 加好友的人，要不要順便問生日？</b>打開之後加好友的，才會被問到。</span>
+          <el-button size="small" :loading="bdSaving" @click="turnOnBirthday">打開</el-button>
+        </template>
+        <span v-else class="invite-card__bday-text">✓ <b>打開了</b>：之後加好友的人都會被問生日。想在生日當月送點什麼，到「生日」寫上去。</span>
+      </div>
       <div class="invite-card__grid">
         <section class="invite-card__item" data-invite="a4">
           <div class="invite-card__head">
@@ -66,6 +74,7 @@ import {
   qrMatrixFrom,
   type InviteCardKind,
 } from '~/utils/invite-card'
+import { normalizeBirthdaySettings, type BirthdaySettings } from '~~/shared/birthday'
 
 interface OaInvite {
   basicId: string
@@ -84,6 +93,7 @@ const visible = computed({
 
 const { workspaceId, apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
+const { can } = useAdminOperateGuard()
 
 const invite = ref<OaInvite | null>(null)
 const loading = ref(false)
@@ -93,8 +103,54 @@ const urls = reactive<Record<InviteCardKind, string>>({ a4: '', share: '' })
 /** 這兩張是哪個帳號的（換帳號要重做；同一個帳號、上次兩張都畫成功，開第二次才不重抓） */
 let madeFor = ''
 
+/**
+ * `C-468`（示意頁 v88，老闆 2026-11-05「好 執行」）：**生日還沒打開**才在說明下面多一行「要不要順便問生日」。
+ * 為什麼在這裡：做邀請卡＝正要讓一批人加好友，而問生日只發生在加好友那一刻——錯過了就問不回來
+ *   （免費方案不能推播，「問生日」模組只剩圖文選單一條路）。接 LINE 那一趟按了「先不要」的、沒走過那一趟的老店都會經過這裡。
+ * ⛔ 讀不到設定、不能改設定（存檔打的是 `ai.settings.write`，同「生日」框）就不出現：⛔ 不問一件不知道現況、或按了會被擋的事。
+ * ⛔ 打開了就不再出現；剛按的那一次當場改成一句確認（他要看得到「打開了」跟「生日禮在哪補」），下次開框就沒有了。
+ */
+const bdCurrent = ref<BirthdaySettings | null>(null)
+const bdJustOn = ref(false)
+const bdSaving = ref(false)
+const showBirthdayRow = computed(() => !!invite.value?.basicId
+  && (bdJustOn.value || (bdCurrent.value !== null && !bdCurrent.value.enabled)))
+
+async function loadBirthday() {
+  bdJustOn.value = false
+  bdCurrent.value = null
+  if (!can('ai.settings.write')) return
+  try {
+    const s = await apiFetch<{ birthday?: Partial<BirthdaySettings> }>('/api/ai/settings')
+    bdCurrent.value = normalizeBirthdaySettings(s?.birthday)
+  }
+  catch { /* 讀不到就不出現 */ }
+}
+
+async function turnOnBirthday() {
+  if (!bdCurrent.value || bdSaving.value) return
+  bdSaving.value = true
+  try {
+    // ⚠️ 生日禮照原本的帶著（他可能早就寫過、只是沒開）
+    const next = normalizeBirthdaySettings({ ...bdCurrent.value, enabled: true })
+    await apiFetch('/api/ai/settings', { method: 'PUT', body: { birthday: next } })
+    bdCurrent.value = next
+    bdJustOn.value = true
+  }
+  catch (e: unknown) {
+    const msg = (e as { data?: { statusMessage?: string } })?.data?.statusMessage
+    showToast(msg || '沒有打開成功，再按一次試試', 'error')
+  }
+  finally {
+    bdSaving.value = false
+  }
+}
+
 watch(visible, (v) => {
-  if (v) void load()
+  if (!v) return
+  void load()
+  // ⚠️ 不跟著 load() 的「畫過就不重抓」：生日可能剛在「生日」框或別的地方改過，每次開框都重看
+  void loadBirthday()
 }, { immediate: true })
 
 async function load() {
