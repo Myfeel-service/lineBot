@@ -125,6 +125,22 @@
   margin-right: 2px;
 }
 
+// 像誰說話（`D-175`）：選了哪一個，下面一行就示範它怎麼回同一題
+.ai-tone-roles { margin-bottom: 8px; }
+
+.ai-tone-roles .ai-tone-row { margin-bottom: 6px; }
+
+.ai-tone-sample {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--el-text-color-secondary);
+}
+
+.ai-tone-sample__a { color: var(--el-text-color-primary); }
+
+.ai-tone-sample__note { margin-left: 2px; }
+
 // 服務時段:開始～結束時間選擇器
 .ai-hours-row {
   display: flex;

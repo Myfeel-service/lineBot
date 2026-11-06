@@ -25,6 +25,15 @@ import { TAIWAN_FESTIVALS, type TaiwanFestival } from './taiwan-festivals'
 import { daysBetween } from './time'
 import { storeBizTypeOf, storeBizWording, welcomeAskFor } from './store-profile-biz'
 import { TAG_TEMPLATES } from './tag-templates'
+import {
+  TONE_ROLES,
+  TONE_ROLES_BY_BIZ,
+  TONE_SAMPLE_NOTE,
+  TONE_SAMPLE_QUESTION,
+  pickDefaultToneRole,
+  toneSampleAnswer,
+  type ToneRoleId,
+} from './ai-tone-roles'
 
 // ── 哪幾樣 ─────────────────────────────────────────────────────
 
@@ -232,6 +241,18 @@ export interface TagDraft {
 
 /** 標籤卡上面那一句（`D-171` 示意頁 v2） */
 export const TAG_DRAFT_LEAD = '勾起來，之後發推播就能只發給他們。'
+
+/**
+ * 每張草稿卡最上面、MiniMe 頭像旁邊講的那一句（`D-174`，John 哥 11-04：「這個看不懂，這一張是什麼東西？」
+ * 「M 尼的頭像，然後講話——我幫你整理好了，下面就是內容」）。
+ * ⭐ 一句話講「這是什麼」，下面的框就是內容；⛔ 不再是「標題＋→ 放在哪＋框＋小字」四塊分不出誰是誰。
+ * 「存在哪」改由採用後那一句講（`已採用 ✓ 存在「…」`）——那一刻才是他需要知道的時候。
+ */
+export const STORE_DRAFT_SPEECH: Record<'welcome' | 'tone' | 'tags', string> = {
+  welcome: '客人加你好友時，我會先傳這則 👇',
+  tone: '客人問問題時，你要我像誰一樣回？',
+  tags: `以後想分哪幾種客人？${TAG_DRAFT_LEAD.replace(/。$/, '')} 👇`,
+}
 /**
  * 標籤卡下面那一句：怎麼貼上去。
  * ⚠️ 前提是採用時會順手打開「AI 建議貼標」（`D-171` 甲，2026-11-05 老闆「好 執行」）——
@@ -432,21 +453,52 @@ export function buildCalendarDraft(ctx: DraftContext, windowDays = 90): Calendar
 
 // ── 一整包 ─────────────────────────────────────────────────────
 
+/**
+ * 語氣卡（`D-175`）：四個「像誰」、每個附同一題的示範回答。
+ * ⚠️ 採用時寫出去的是 `buildToneDraft(ctx, { voice: TONE_ROLES[他選的].voice })`，不是 `body` 原文。
+ */
+export interface ToneDraft {
+  /** 示範那一題（「有推薦的嗎？」） */
+  question: string
+  /** 一開始先選的那一個（照網站猜的口氣挑，`pickDefaultToneRole`） */
+  picked: ToneRoleId
+  roles: Array<{ id: ToneRoleId, label: string, trait: string, sample: string }>
+}
+
 export interface StoreDraft {
   key: StoreDraftKey
   title: string
   where: string
   kind: 'adopt' | 'info'
-  /** 給人看的內容（歡迎訊息＝那段話；標籤＝先勾的那幾個名字；月曆＝節日清單） */
+  /** MiniMe 頭像旁邊那一句（`D-174`，`STORE_DRAFT_SPEECH`） */
+  speech: string
+  /** 給人看的內容（歡迎訊息＝那段話；標籤＝先勾的那幾個名字；語氣＝寫進 AI 設定的那一段） */
   body: string
-  /** 卡片上面那一句（標籤卡：「勾起來，之後發推播就能只發給他們。」） */
-  lead?: string
   /** 卡片下面的補充（例如去 LINE 後台關掉內建歡迎；標籤卡＝怎麼貼上去） */
   note?: string
   /** 標籤那一樣的結構化內容（套用時要用） */
   tags?: TagDraft[]
+  /** 語氣那一樣的四個角色（`D-175`） */
+  tone?: ToneDraft
   /** 月曆那一樣的結構化內容 */
   calendar?: CalendarEntry[]
+}
+
+/** 語氣卡的四個角色（照店的類型），一開始先選照網站口氣猜的那一個 */
+export function buildToneRoleDraft(ctx: DraftContext): ToneDraft {
+  const industry = fieldValue(ctx.profile, 'industry')
+  const biz = storeBizTypeOf(industry)
+  const first = splitProducts(fieldValue(ctx.profile, 'products'))[0] ?? ''
+  return {
+    question: TONE_SAMPLE_QUESTION[biz],
+    picked: pickDefaultToneRole(industry, fieldValue(ctx.profile, 'tone')),
+    roles: TONE_ROLES_BY_BIZ[biz].map(id => ({
+      id,
+      label: TONE_ROLES[id].label,
+      trait: TONE_ROLES[id].trait,
+      sample: toneSampleAnswer(id, biz, first),
+    })),
+  }
 }
 
 /**
@@ -463,6 +515,7 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     title: STORE_DRAFT_TITLE.welcome,
     where: STORE_DRAFT_WHERE.welcome,
     kind: 'adopt',
+    speech: STORE_DRAFT_SPEECH.welcome,
     body: buildWelcomeDraft(ctx),
     // ⚠️ LINE 沒有開放介面讓我們讀那個開關，所以只能講、⛔ 不可以寫成「已為你關閉」。
     // 🔴 2026-09-26（`C-250`／`D-100`）：原本叫他「採用之後記得去 LINE 後台把內建那則關掉」，
@@ -471,13 +524,21 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     note: '接上 LINE 那一步會提醒你關掉 LINE 內建的那則，客人才不會收到兩則。',
   })
 
+  /**
+   * ⭐ `D-175`：口氣用「像誰」來選（四個角色、每個附同一題的示範回答），⛔ 不再給一大段給模型看的指示叫他改。
+   * 他選哪一個只換「說話的口氣：」那一行；開頭、事實行與安全規則照範本（`buildToneDraft`）。
+   * 「換個說法」跟著拿掉：四個角色就是四種說法，選完要細調到「AI 設定」改那一段。
+   */
+  const tone = buildToneRoleDraft(ctx)
   drafts.push({
     key: 'tone',
     title: STORE_DRAFT_TITLE.tone,
     where: STORE_DRAFT_WHERE.tone,
     kind: 'adopt',
-    body: buildToneDraft(ctx),
-    note: '這會取代原本那段通用的設定。裡面的安全規則都留著。',
+    speech: STORE_DRAFT_SPEECH.tone,
+    body: buildToneDraft(ctx, { voice: TONE_ROLES[tone.picked].voice }),
+    note: TONE_SAMPLE_NOTE,
+    tone,
   })
 
   /**
@@ -490,8 +551,9 @@ export function buildStoreDrafts(ctx: DraftContext): StoreDraft[] {
     title: STORE_DRAFT_TITLE.tags,
     where: STORE_DRAFT_WHERE.tags,
     kind: 'adopt',
+    // ⚠️ `D-174`：「以後想分哪幾種客人？」＋「勾起來…」原本一句在對話泡泡、一句在卡片裡，現在併成頭像旁那一句
+    speech: STORE_DRAFT_SPEECH.tags,
     body: tags.filter(t => t.picked).map(t => t.name).join('、'),
-    lead: TAG_DRAFT_LEAD,
     note: TAG_DRAFT_AI_LINE,
     tags,
   })

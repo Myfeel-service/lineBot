@@ -182,10 +182,30 @@ export type AgentMsg =
    */
   | {
     kind: 'store-draft'
+    /** 這一樣叫什麼（⚠️ `D-174` 之後不畫在卡上，給讀屏的 aria-label 用；頭像旁那一句才是給人看的） */
     title: string
-    /** 採用後東西會出現在後台哪裡（指路一律用側欄的名字） */
+    /** 採用後東西會出現在後台哪裡（指路一律用側欄的名字；採用後那一句 `stateText` 講） */
     where: string
+    /**
+     * MiniMe 頭像旁邊講的那一句（`D-174`，John 哥：「M 尼的頭像，然後講話——我幫你整理好了，下面就是內容」）。
+     * ⭐ 一句話講「這是什麼」，下面的框才是內容。
+     */
+    speech: string
     body: string
+    /**
+     * 知識庫那張（`D-174`）：直接排兩三條他自己網站整理出來的樣子（客人問／回答），⛔ 不再是一段灰框裡的字。
+     * 有它就不畫 `body`。
+     */
+    samples?: Array<{ q: string, a: string }>
+    /**
+     * 語氣卡（`D-175`）：「像誰」四選一，每個附同一題的示範回答；`editable: 'tone'` 時可以換選。
+     * 換選由頁面把 `draft-input`（`role`）交給劇本，按採用時寫出去的是**他選的那一個**。
+     */
+    tone?: {
+      question: string
+      picked: string
+      roles: Array<{ id: string, label: string, trait: string, sample: string }>
+    }
     note?: string
     /** 這一樣要不要按採用；`info`＝沒有東西要寫，只是告訴他已經有了 */
     variant: 'adopt' | 'info'
@@ -198,14 +218,12 @@ export type AgentMsg =
      * ⚠️ 決定完（有 `state`）就收回唯讀——留著可編輯的框會讓人以為還沒定案。
      * 改的內容由頁面把 `draft-input` 事件交給劇本，按「採用」時用的是**他改過的那一版**。
      */
-    editable?: 'text' | 'tags'
+    editable?: 'text' | 'tags' | 'tone'
     /**
      * `editable === 'tags'` 時那一排（`D-171`：六顆、先勾三顆；`on`＝要不要建這一顆）。
      * `criteria`／`code` 跟著走到建立那一刻（AI 判斷條件、固定代號），畫面上不顯示。
      */
     tags?: DraftTagChip[]
-    /** 卡片上面那一句（標籤卡：「勾起來，之後發推播就能只發給他們。」） */
-    lead?: string
     /**
      * 標籤卡的「還想怎麼分？問 AI」（`D-171`）。有這個欄位才長那一行。
      * - `rev`＝問成一次加一；畫面看 rev 換了才把新的 `ideas` 攤出來（按過「加進上面」就收起來）

@@ -59,7 +59,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   'agent-op/ai-settings-enabled': '打開或關掉 AI 自動回覆',
   'agent-op/ai-settings-handback-idle': '改了「客服忘了交還時自動交還」的時間',
   'agent-op/ai-settings-auto-close': '改了「真人接手太久沒動靜就自動結束」',
-  'agent-op/ai-settings-tone-template': '把 AI 的語氣換成現成範本',
+  'agent-op/ai-settings-tone-template': '換了 AI 說話的口氣（像誰）',
   'agent-op/tag-create': '建了一個標籤',
   'agent-op/knowledge-draft-create': '補了一條知識（放在「等你看過」，還沒上線）',
   'agent-op/script-update-keyword': '增減了一條自動回應的關鍵字',

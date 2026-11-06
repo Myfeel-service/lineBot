@@ -10,9 +10,11 @@ import {
   STORE_DRAFT_KIND,
   stripPriceBand,
   summarizeDraftApply,
+  TONE_SAFETY_RULES,
   type DraftApplyStep,
   type DraftContext,
 } from './store-profile-drafts'
+import { TONE_ROLES } from './ai-tone-roles'
 import { emptyStoreProfile, setStoreProfileField, type StoreProfileDoc } from './types/store-profile'
 import { needsRecords } from './tag-ideas'
 import { TAG_TEMPLATES } from './tag-templates'
@@ -391,14 +393,44 @@ describe('buildStoreDrafts', () => {
     }
   })
 
-  it('標籤卡：上面一句、下面講怎麼貼上去；標題不帶顆數（勾的數量會變，顆數寫在「建立 N 顆」）', () => {
+  it('標籤卡：頭像講「以後想分哪幾種客人？勾起來…」、下面講怎麼貼上去；標題不帶顆數（勾的數量會變，顆數寫在「建立 N 顆」）', () => {
     const t = buildStoreDrafts(ctxOf()).find(d => d.key === 'tags')!
     expect(t.title).toBe('分眾標籤')
-    expect(t.lead).toBe('勾起來，之後發推播就能只發給他們。')
+    // `D-174`：原本「以後想分哪幾種客人？」是前一個泡泡、「勾起來…」在卡片裡，併成頭像旁那一句
+    expect(t.speech).toBe('以後想分哪幾種客人？勾起來，之後發推播就能只發給他們 👇')
     expect(t.note).toBe('客人在對話裡聊到，AI 會提醒你貼上。')
     expect(t.tags).toHaveLength(6)
     // body＝先勾好的那三個名字（決定前的唯讀樣子）
     expect(t.body.split('、')).toEqual(t.tags!.filter(x => x.picked).map(x => x.name))
+  })
+
+  it('`D-174`：每一張都有頭像旁那一句（講「這是什麼」）', () => {
+    for (const d of buildStoreDrafts(ctxOf({ pagesRead: 3 }))) {
+      expect(d.speech.length, d.key).toBeGreaterThan(0)
+    }
+    expect(buildStoreDrafts(ctxOf()).find(d => d.key === 'welcome')!.speech).toBe('客人加你好友時，我會先傳這則 👇')
+  })
+
+  it('`D-175`：語氣卡給四個「像誰」，每個附同一題的示範；寫出去的只換口氣那一行、安全規則都在', () => {
+    const t = buildStoreDrafts(ctxOf()).find(d => d.key === 'tone')!
+    expect(t.speech).toBe('客人問問題時，你要我像誰一樣回？')
+    expect(t.tone!.roles).toHaveLength(4)
+    expect(t.tone!.roles.map(r => r.id)).toContain(t.tone!.picked)
+    for (const r of t.tone!.roles) expect(r.sample.length, r.id).toBeGreaterThan(0)
+    expect(t.body).toContain(`說話的口氣：${TONE_ROLES[t.tone!.picked].voice}。`)
+    expect(t.body).toContain(TONE_SAFETY_RULES)
+    // 示範只示範口氣（卡片下面要講這一句）
+    expect(t.note).toBe('只是示範口氣；實際內容照你的知識庫回答。')
+  })
+
+  it('`D-175`：網站猜到的口氣決定先選哪一個（只在那一型的四個裡面挑）', () => {
+    const lively = setStoreProfileField(profileOf(), 'tone', '活潑、熱情', 'ai', 1)
+    expect(buildStoreDrafts(ctxOf({ profile: lively })).find(d => d.key === 'tone')!.tone!.picked).toBe('host')
+    // 診所（做服務）沒有「綜藝主持」：活潑的網站也不會被預選它
+    const clinic = setStoreProfileField(setStoreProfileField(profileOf(), 'industry', '醫療／健康', 'owner', 1), 'tone', '活潑、熱情', 'ai', 1)
+    const picked = buildStoreDrafts(ctxOf({ profile: clinic })).find(d => d.key === 'tone')!.tone!
+    expect(picked.roles.map(r => r.id)).not.toContain('host')
+    expect(picked.roles.map(r => r.id)).toContain(picked.picked)
   })
 })
 

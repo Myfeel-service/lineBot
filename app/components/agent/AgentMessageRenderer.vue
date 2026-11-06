@@ -324,11 +324,31 @@
     <p v-if="entry.msg.siteNote" class="agm-profile__note">{{ entry.msg.siteNote }}</p>
   </div>
 
-  <!-- 一樣草稿（`D-85`）：按採用才寫出去 -->
-  <div v-else-if="entry.msg.kind === 'store-draft'" class="agm-card agm-draft">
+  <!-- 一樣草稿（`D-85`）：按採用才寫出去。
+       `D-174`（John 哥 11-04「這一張是什麼東西？」）：資訊卡＝MiniMe 頭像＋講一句「這是什麼」，下面的框才是內容；
+       ⛔ 不再畫「標題＋→ 放在哪」——四塊分不出誰是誰。頭像先用 MiniMe 標誌（Q 版形象等 `D-176`）。 -->
+  <div v-else-if="entry.msg.kind === 'store-draft'" class="agm-card agm-draft" :aria-label="entry.msg.title">
     <div class="agm-draft__head">
-      <span class="agm-draft__title">{{ entry.msg.title }}</span>
-      <span class="agm-draft__where">→ {{ entry.msg.where }}</span>
+      <span class="agm-draft__avatar"><BrandLogo mark alt="" /></span>
+      <p class="agm-draft__speech">{{ entry.msg.speech }}</p>
+    </div>
+    <!-- 語氣（`D-175`）：「像誰」四選一，每個附同一題的示範回答（同一題才比得出口氣的差別） -->
+    <div v-if="entry.msg.tone && entry.msg.editable === 'tone' && !entry.msg.state" class="agm-draft__tone">
+      <p class="agm-draft__tone-q">客人問：「{{ entry.msg.tone.question }}」</p>
+      <el-radio-group v-model="draftRole" class="agm-draft__roles" @change="emitDraftRole">
+        <el-radio
+          v-for="r in entry.msg.tone.roles"
+          :key="r.id"
+          :value="r.id"
+          border
+          class="agm-draft__role"
+          :data-role="r.id"
+        >
+          <span class="agm-draft__role-name">{{ r.label }}</span>
+          <span class="agm-draft__role-trait">{{ r.trait }}</span>
+          <span class="agm-draft__role-sample">{{ r.sample }}</span>
+        </el-radio>
+      </el-radio-group>
     </div>
     <!-- ⭐ `D-94`：一開始就可以改（輸入框自己就是說明）。決定完（有 state）收回唯讀。 -->
     <el-input
@@ -358,7 +378,6 @@
          要改名到「標籤管理」（那裡看得到判斷條件）。
     -->
     <div v-else-if="entry.msg.editable === 'tags' && !entry.msg.state" class="agm-draft__tags">
-      <p v-if="entry.msg.lead" class="agm-draft__lead">{{ entry.msg.lead }}</p>
       <div class="agm-draft__chips">
         <el-checkbox
           v-for="t in draftTags"
@@ -372,7 +391,16 @@
         >{{ t.name }}</el-checkbox>
       </div>
     </div>
-    <pre v-else class="agm-draft__body">{{ entry.msg.body }}</pre>
+    <!-- 知識庫那張（`D-174`）：直接排兩三條他自己網站整理出來的樣子 -->
+    <ul v-else-if="entry.msg.samples?.length" class="agm-draft__samples">
+      <li v-for="(s, i) in entry.msg.samples" :key="i" class="agm-draft__sample">
+        <span class="agm-draft__sample-k">客人問</span>
+        <span class="agm-draft__sample-q">{{ s.q }}</span>
+        <span class="agm-draft__sample-k">回答</span>
+        <span class="agm-draft__sample-a">{{ s.a }}</span>
+      </li>
+    </ul>
+    <pre v-else-if="entry.msg.body && !(entry.msg.tone && entry.msg.editable === 'tone' && !entry.msg.state)" class="agm-draft__body">{{ entry.msg.body }}</pre>
     <p v-if="entry.msg.note" class="agm-draft__note">{{ entry.msg.note }}</p>
     <!-- 還想怎麼分？用講的（`D-171`）：問回來的先列在這裡，按「加進上面」才進那一排 -->
     <div v-if="entry.msg.editable === 'tags' && entry.msg.tagAsk && !entry.msg.state" class="agm-draft__ask">
@@ -424,8 +452,8 @@ const props = defineProps<{ entry: AgentChatEntry }>()
 const emit = defineEmits<{
   /** 輪廓卡某一格存起來（值可以是空字串＝清空） */
   (e: 'profile-edit', p: { entryId: number, fieldId: string, value: string }): void
-  /** 草稿框的內容變了（按「採用」時劇本用的是這一份） */
-  (e: 'draft-input', p: { entryId: number, body?: string, tags?: DraftTagChip[] }): void
+  /** 草稿框的內容變了（按「採用」時劇本用的是這一份；語氣卡＝換選了哪一個角色） */
+  (e: 'draft-input', p: { entryId: number, body?: string, tags?: DraftTagChip[], role?: string }): void
   /** 按了「換個說法」（帶著框裡現在那一版：新的要跟它不一樣） */
   (e: 'draft-reword', p: { entryId: number, body: string }): void
   /** 標籤卡按了「問 AI」（`D-171`；帶著那一排現在有的名字，回來的不要重複） */
@@ -479,6 +507,12 @@ function emitDraft() {
 function emitReword() {
   if (props.entry.msg.kind !== 'store-draft') return
   emit('draft-reword', { entryId: props.entry.id, body: draftBody.value })
+}
+/** 語氣卡（`D-175`）選的是哪一個角色；初值＝劇本先選好的那一個 */
+const draftRole = ref(props.entry.msg.kind === 'store-draft' ? props.entry.msg.tone?.picked ?? '' : '')
+function emitDraftRole() {
+  if (props.entry.msg.kind !== 'store-draft') return
+  emit('draft-input', { entryId: props.entry.id, role: draftRole.value })
 }
 
 // ── 標籤卡・還想怎麼分？（`D-171`）────────────────────────────────

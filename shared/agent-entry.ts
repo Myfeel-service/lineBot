@@ -178,7 +178,7 @@ export const AGENT_PAGE_PROMPTS: Record<AgentPromptPage, AgentPagePrompts> = {
   },
   'ai-settings': {
     label: 'AI 設定',
-    placeholder: '例：AI 的語氣換成親切一點的範本',
+    placeholder: '例：AI 說話換成像隔壁店長那樣',
     dos: [
       { op: 'ai-settings-service-hours', say: AGENT_NUMBERLESS_SAY['ai-settings-service-hours'] },
       { op: 'ai-settings-sensitive-topic', say: '客人提到「退款」就轉真人' },
@@ -257,7 +257,7 @@ export const AGENT_OP_EXAMPLES: Record<AdminOpId, string> = {
   'ai-settings-enabled': '先把 AI 自動回覆關掉',
   'ai-settings-handback-idle': AGENT_NUMBERLESS_SAY['ai-settings-handback-idle'],
   'ai-settings-auto-close': AGENT_NUMBERLESS_SAY['ai-settings-auto-close'],
-  'ai-settings-tone-template': 'AI 的語氣換成親切一點的範本',
+  'ai-settings-tone-template': 'AI 說話換成像隔壁店長那樣',
   'ai-settings-handoff-sla': AGENT_NUMBERLESS_SAY['ai-settings-handoff-sla'],
 }
 

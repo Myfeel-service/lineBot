@@ -160,13 +160,26 @@
             </div>
           </div>
           <div class="card-section-stack">
-            <p class="ai-section-hint">給 AI 的指示:講話口吻、不能說什麼、要怎麼處理特殊狀況。<template v-if="canEditSettings">不知道怎麼寫?先套下面的範本再改。</template></p>
-            <!-- `G-107`：套範本是純動作（不是在顯示目前的值），存不了的人整排不出現，不做灰掉 -->
-            <div v-if="canEditSettings" class="ai-tone-row">
-              <span class="ai-tone-label">套用範本</span>
-              <el-button size="small" plain @click="applyToneTemplate('friendly')">親切活潑</el-button>
-              <el-button size="small" plain @click="applyToneTemplate('professional')">專業簡潔</el-button>
-              <el-button size="small" plain @click="applyToneTemplate('warm')">溫暖體貼</el-button>
+            <p class="ai-section-hint">給 AI 的指示:講話口吻、不能說什麼、要怎麼處理特殊狀況。<template v-if="canEditSettings">不知道怎麼寫?先選下面「像誰說話」再改。</template></p>
+            <!-- `D-175`（John 哥 11-04「大部分人不知道怎麼形容自己要的，用具體的東西幫他篩選」）：
+                 ⛔ 不再是「親切活潑／專業簡潔／溫暖體貼」三個形容詞，跟開帳同一組「像誰」（照店的類型給四個），
+                 每個附同一題的示範回答。選了只換「說話的口氣：」那一行（其他規則一字不動）；
+                 指示裡沒有那一行（自己寫的）才要問過他、整段換。
+                 `G-107`：存不了的人整排不出現，不做灰掉 -->
+            <div v-if="canEditSettings" class="ai-tone-roles" data-testid="ai-tone-roles">
+              <div class="ai-tone-row">
+                <span class="ai-tone-label">像誰說話</span>
+                <el-radio-group :model-value="currentToneRole ?? ''" size="small" @change="onToneRolePick">
+                  <el-radio-button v-for="r in toneRoles" :key="r.id" :value="r.id" :data-role="r.id">{{ r.label }}</el-radio-button>
+                </el-radio-group>
+              </div>
+              <p class="ai-tone-sample">
+                <template v-if="toneSampleRole">
+                  客人問「{{ toneSampleQuestion }}」，像{{ toneSampleRole.label }}會回：<span class="ai-tone-sample__a">{{ toneSampleText }}</span>
+                  <span class="ai-tone-sample__note">（{{ TONE_SAMPLE_NOTE }}）</span>
+                </template>
+                <template v-else>下面的指示是你自己寫的口氣；選一個，會先問過你再整段換掉。</template>
+              </p>
             </div>
             <el-input
               v-model="form.systemPrompt"
@@ -731,11 +744,23 @@ import type { AiSettingsDoc } from '~~/shared/types/ai-knowledge'
 import { mdw, serviceHoursSentence, taipeiDate, taipeiYyyyMm } from '~~/shared/time'
 import { nextTaiwanHoliday } from '~~/shared/taiwan-holidays'
 import { REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
-import { AI_TONE_TEMPLATES, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
+import {
+  TONE_ROLES,
+  TONE_SAMPLE_NOTE,
+  TONE_SAMPLE_QUESTION,
+  replaceToneVoiceLine,
+  toneRoleOf,
+  toneRolesFor,
+  toneSampleAnswer,
+  type ToneRoleId,
+} from '~~/shared/ai-tone-roles'
+import { buildToneDraft, splitProducts } from '~~/shared/store-profile-drafts'
+import { storeBizTypeOf } from '~~/shared/store-profile-biz'
+import { emptyStoreProfile, type StoreProfileDoc } from '~~/shared/types/store-profile'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
 
-const { apiFetch, workspaceId, can } = useWorkspace()
+const { apiFetch, workspaceId, can, currentWorkspaceName } = useWorkspace()
 const canEditSettings = computed(() => can('ai.settings.write'))
 const { showToast } = useAdminToast()
 const { isSuperAdmin, checkIsSuperAdmin } = useSuperAdmin()
@@ -861,18 +886,61 @@ const PRESET_CARDS: Array<{ key: PresetName; title: string; desc: string }> = [
   { key: 'loose', title: '寬鬆', desc: '多答少轉,適合知識庫成熟、答題已穩定' },
 ]
 
-// ── 語氣範本:解決「空白 textarea 不知道寫什麼」 ──────────
-// 範本本體在 shared（`D-109`）：小幫手「幫我換成專業一點的語氣」吃同一份，⛔ 不在這裡另抄一份
-async function applyToneTemplate(name: AiToneTemplateKey) {
-  const next = AI_TONE_TEMPLATES[name].text
-  const current = form.value.systemPrompt.trim()
-  if (current && current !== next) {
+// ── 像誰說話（`D-175`）：解決「空白 textarea 不知道寫什麼」 ──────────
+// 角色本體在 shared（開帳那張語氣卡吃同一份），⛔ 不在這裡另抄一份
+/**
+ * 店家輪廓（照店的類型給哪四個、示範那題用哪一樣主打、整段換的時候事實行怎麼寫）。
+ * 讀不到就當中性型——⛔ 不猜他是賣東西的。
+ */
+const storeProfile = ref<StoreProfileDoc | null>(null)
+async function loadStoreProfile() {
+  try {
+    storeProfile.value = (await apiFetch<{ profile: StoreProfileDoc }>('/api/store-profile')).profile
+  }
+  catch { /* 讀不到就用中性型那四個 */ }
+}
+const industryValue = computed(() => storeProfile.value?.fields?.industry?.value ?? '')
+const toneRoles = computed(() => toneRolesFor(industryValue.value))
+/** 指示現在是哪一個角色（口氣那一行一字不差才算；自己改過＝都不是） */
+const currentToneRole = computed(() => toneRoleOf(form.value.systemPrompt))
+/** 示範那一句講誰：現在選的那一個；都不是就不示範 */
+const toneSampleRole = computed(() => currentToneRole.value ? TONE_ROLES[currentToneRole.value] : null)
+const toneSampleQuestion = computed(() => TONE_SAMPLE_QUESTION[storeBizTypeOf(industryValue.value)])
+const toneSampleText = computed(() => {
+  const r = currentToneRole.value
+  if (!r) return ''
+  const first = splitProducts(storeProfile.value?.fields?.products?.value ?? '')[0] ?? ''
+  return toneSampleAnswer(r, storeBizTypeOf(industryValue.value), first)
+})
+
+/**
+ * 選一個角色。
+ * - 指示裡有「說話的口氣：」那一行 → 只換那一行（⛔ 其他規則一字不動，不用問）
+ * - 沒有（自己寫的、舊的三個範本）→ 先問過他，再整段換成「店名＋店的類型＋這個口氣＋安全規則」
+ * 只改表單、按「儲存」才寫出去（同這一頁其他欄位）。
+ */
+function onToneRolePick(v: string | number | boolean | undefined) {
+  void applyToneRole(String(v ?? '') as ToneRoleId)
+}
+async function applyToneRole(role: ToneRoleId) {
+  if (!(role in TONE_ROLES)) return
+  const swapped = replaceToneVoiceLine(form.value.systemPrompt, role)
+  if (swapped.replaced) {
+    form.value.systemPrompt = swapped.text
+    return
+  }
+  const next = buildToneDraft({
+    shopName: currentWorkspaceName.value || '',
+    profile: storeProfile.value ?? emptyStoreProfile(),
+    today: taipeiDate(),
+  }, { voice: TONE_ROLES[role].voice })
+  if (form.value.systemPrompt.trim()) {
     try {
-      await ElMessageBox.confirm('套用範本會覆蓋目前的系統提示內容,確定嗎?', '套用語氣範本', {
-        confirmButtonText: '覆蓋',
-        cancelButtonText: '取消',
-        type: 'warning',
-      })
+      await ElMessageBox.confirm(
+        `你現在的指示是自己寫的，沒有「說話的口氣」那一行。要整段換成「像${TONE_ROLES[role].label}」的版本嗎？裡面自己寫的規則會跟著不見（按儲存之前都還能改回來）。`,
+        `換成「像${TONE_ROLES[role].label}」`,
+        { confirmButtonText: '整段換掉', cancelButtonText: '取消', type: 'warning' },
+      )
     }
     catch { return }
   }
@@ -1168,6 +1236,7 @@ onMounted(() => {
   }
   const settingsLoaded = loadSettings()
   loadStatus()
+  void loadStoreProfile()
   checkIsSuperAdmin().catch(() => {})
   void loadHandoffSuggestions()
   // 對話頁「這題 AI 答錯了 → 這題應該交給真人 → 前往 AI 設定」帶 #sensitive-topics 進來（`D-135`）：

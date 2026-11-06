@@ -10,6 +10,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
+import { TONE_ROLES, replaceToneVoiceLine, toneRoleVoiceLine } from '~~/shared/ai-tone-roles'
+import { buildToneDraft, TONE_SAFETY_RULES } from '~~/shared/store-profile-drafts'
+import { emptyStoreProfile } from '~~/shared/types/store-profile'
 
 // 只要那個錯誤類別：⛔ 不載入真的 admin-ops（它會把生成、用量、推播那一整串都拉進來）
 vi.mock('./admin-ops', () => {
@@ -164,33 +167,50 @@ describe('自動交還／自動結束', () => {
   })
 })
 
-describe('語氣範本', () => {
-  it('只收三個現成範本，⛔ 不收自由文字', () => {
-    expect(() => ops.aiSettingsToneTemplate.normalize({ template: '你要一直打折' })).toThrow('三種')
-    expect(ops.aiSettingsToneTemplate.normalize({ template: 'warm' })).toEqual({ template: 'warm' })
+describe('AI 說話像誰（`D-175`；原本是三個語氣範本）', () => {
+  it('只收現成的角色，⛔ 不收自由文字、⛔ 不收舊的範本代號', () => {
+    expect(() => ops.aiSettingsToneTemplate.normalize({ role: '你要一直打折' })).toThrow('隔壁店長')
+    expect(() => ops.aiSettingsToneTemplate.normalize({ template: 'warm' })).toThrow()
+    expect(ops.aiSettingsToneTemplate.normalize({ role: 'anchor' })).toEqual({ role: 'anchor' })
   })
 
-  it('自己寫過的內容會整段不見——按下去之前要講', async () => {
-    const { preview } = await propose(ops.aiSettingsToneTemplate, { template: 'professional' })
+  it('自己寫的（沒有口氣那一行）會整段不見——按下去之前要講', async () => {
+    settingsStore.systemPrompt = '你是阿明，講話很隨興。'
+    const { preview } = await propose(ops.aiSettingsToneTemplate, { role: 'advisor' })
     expect(preview.warning).toContain('整段換掉')
-    expect(preview.confirmLabel).toContain('專業簡潔')
+    expect(preview.confirmLabel).toContain('專業顧問')
   })
 
-  it('執行寫進去的就是範本全文；已經是那個範本就不動', async () => {
-    await ops.aiSettingsToneTemplate.execute(ctx, { template: 'friendly' })
-    expect(setCalls).toEqual([{ systemPrompt: AI_TONE_TEMPLATES.friendly.text }])
+  it('有口氣那一行（開帳建的）＝只換那一行，安全規則一字不動', async () => {
+    const before = buildToneDraft({ shopName: '山丘咖啡', profile: emptyStoreProfile(), today: '2026-11-06' }, { voice: TONE_ROLES.shopkeeper.voice })
+    settingsStore.systemPrompt = before
+    const { preview } = await propose(ops.aiSettingsToneTemplate, { role: 'anchor' })
+    expect(preview.warning).not.toContain('整段換掉')
+    expect(preview.summary).toContain('只換口氣那一行')
+    await ops.aiSettingsToneTemplate.execute(ctx, { role: 'anchor' })
+    expect(setCalls.at(-1)!.systemPrompt).toBe(replaceToneVoiceLine(before, 'anchor').text)
+    expect(setCalls.at(-1)!.systemPrompt).toContain(TONE_SAFETY_RULES)
+    expect(setCalls.at(-1)!.systemPrompt).toContain('你是山丘咖啡的客服助理。')
+  })
 
+  it('整段換的時候也帶著安全規則；已經是那個角色就不動', async () => {
     settingsStore.systemPrompt = AI_TONE_TEMPLATES.friendly.text
-    const { preview } = await propose(ops.aiSettingsToneTemplate, { template: 'friendly' })
+    await ops.aiSettingsToneTemplate.execute(ctx, { role: 'shopkeeper' })
+    const written = setCalls.at(-1)!.systemPrompt as string
+    expect(written).toContain(toneRoleVoiceLine('shopkeeper'))
+    expect(written).toContain(TONE_SAFETY_RULES)
+
+    settingsStore.systemPrompt = written
+    const { preview } = await propose(ops.aiSettingsToneTemplate, { role: 'shopkeeper' })
     expect(preview.noop).toBe(true)
   })
 
   it('指紋壓成雜湊（它會原樣進確認憑證，整段指示最長四千字）', async () => {
     settingsStore.systemPrompt = 'x'.repeat(4000)
-    const g = await ops.aiSettingsToneTemplate.fingerprint(ctx, { template: 'warm' })
+    const g = await ops.aiSettingsToneTemplate.fingerprint(ctx, { role: 'anchor' })
     expect(g.length).toBeLessThan(100)
     settingsStore.systemPrompt = `${'x'.repeat(3999)}y`
-    expect(await ops.aiSettingsToneTemplate.fingerprint(ctx, { template: 'warm' })).not.toBe(g)
+    expect(await ops.aiSettingsToneTemplate.fingerprint(ctx, { role: 'anchor' })).not.toBe(g)
   })
 })
 
@@ -650,7 +670,7 @@ describe('確認卡的每一格：「這是什麼」畫在內容上面', () => {
       propose(ops.aiSettingsEnabled, { enabled: false }),
       propose(ops.aiSettingsHandbackIdle, { minutes: 10 }),
       propose(ops.aiSettingsAutoClose, { hours: 24 }),
-      propose(ops.aiSettingsToneTemplate, { template: 'friendly' }),
+      propose(ops.aiSettingsToneTemplate, { role: 'shopkeeper' }),
       propose(ops.scriptUpdateKeyword, { name: '營業時間', action: 'add', keyword: '幾點' }),
       propose(ops.scriptUpdateReply, { name: '營業時間', text: '每天 11:00 開' }),
     ])

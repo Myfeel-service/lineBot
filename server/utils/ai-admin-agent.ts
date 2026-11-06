@@ -54,6 +54,7 @@ import { numbersWithoutSource } from '~~/shared/agent-reply-numbers'
 import { answerGroundingIssue, groundingToolToRun } from '~~/shared/agent-answer-grounding'
 import { ADMIN_OP_TOKEN_TTL_MS, issueAdminOpToken } from './admin-op-token'
 import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
+import { TONE_ROLES, toneRoleOf } from '~~/shared/ai-tone-roles'
 import { DEFAULT_SYSTEM_PROMPT, HANDOFF_REASON_LABELS } from '~~/shared/types/ai-knowledge'
 import { KNOWLEDGE_SUGGESTIONS_COLLECTION } from './ai-knowledge-suggest'
 
@@ -146,9 +147,13 @@ interface ToolDef {
 export function toneOf(systemPrompt: string): string {
   const cur = systemPrompt.trim()
   if (!cur) return '還沒有寫給 AI 的指示'
-  if (cur === DEFAULT_SYSTEM_PROMPT.trim()) return '系統預設的指示(還沒改過,也不是三個語氣範本之一)'
+  if (cur === DEFAULT_SYSTEM_PROMPT.trim()) return '系統預設的指示(還沒改過,也還沒選像誰說話)'
+  // `D-175`:口氣那一行跟某個角色一字不差＝像那個角色(⛔ 口氣那一行自己改過就不算)
+  const role = toneRoleOf(cur)
+  if (role) return `像${TONE_ROLES[role].label}(${TONE_ROLES[role].trait})`
+  // 舊的三個範本(`D-175` 以前套的帳號還會是這幾段)
   const hit = Object.values(AI_TONE_TEMPLATES).find(t => t.text.trim() === cur)
-  return hit ? `「${hit.label}」範本` : `自己寫的指示(不是範本,開頭是「${cur.split('\n')[0]!.slice(0, 30)}」)`
+  return hit ? `「${hit.label}」範本` : `自己寫的指示(不是現成的角色,開頭是「${cur.split('\n')[0]!.slice(0, 30)}」)`
 }
 
 /**
@@ -251,7 +256,7 @@ export const TOOLS: Record<AdminAgentToolId, ToolDef> = {
       //    照泡泡理解,店家會以為週末 AI 不回。
       + '⛔ 服務時間**只管「客人要找真人時會不會通知你們」**:勿擾時段內客人先收到一句稍後回覆、你們不會被吵;'
       + 'AI 全天照常回答。⛔ 不可以說成「AI 自動回覆的服務時間」或「勿擾時段 AI 不回」。'
-      + 'tone＝AI 現在用哪一種語氣:三個現成範本之一,或「自己寫的指示」(⛔ 不是範本就不要講成範本)。'
+      + 'tone＝AI 現在說話像誰(隔壁店長、新聞主播…這類現成角色之一)、舊的範本,或「自己寫的指示」(⛔ 不是現成角色就不要講成某個角色)。'
       + 'handbackIdleMinutes＝客服接手後幾分鐘沒回就自動交還機器人(0＝不交還);'
       + 'autoCloseHours＝真人接手的對話幾小時沒動靜就自動結束(0＝不自動結束)。',
     requires: 'ai.read',
@@ -1166,7 +1171,7 @@ const stripMarksOutsideQuotes = (s: string) => mapOutsideQuotes(s, stripMarks)
 let internalIdRe: RegExp | null = null
 function internalIds(): RegExp {
   if (internalIdRe) return internalIdRe
-  const ids = [...Object.keys(AI_TONE_TEMPLATES), ...Object.keys(ADMIN_OP_LABELS), ...Object.keys(TOOLS)]
+  const ids = [...Object.keys(AI_TONE_TEMPLATES), ...Object.keys(TONE_ROLES), ...Object.keys(ADMIN_OP_LABELS), ...Object.keys(TOOLS)]
     .sort((a, b) => b.length - a.length)
     .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
   internalIdRe = new RegExp(`[ \\t]*[（(]\\s*(?:${ids.join('|')})\\s*[)）]`, 'g')

@@ -998,27 +998,134 @@
   .agm-profile__grid > .k { grid-column: 1 / -1; }
 }
 
-/* ── 一樣草稿（`D-85` / `C-221`）：按採用才寫出去 ── */
+/* ── 一樣草稿（`D-85` / `C-221`）：按採用才寫出去 ──
+   `D-174` 資訊卡：MiniMe 頭像＋講一句「這是什麼」在上，下面的框才是內容（John 哥：「layout 分開，會幫助你看懂訊息的範圍」） */
 .agm-draft {
   &__head {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     gap: 8px;
-    flex-wrap: wrap;
   }
 
-  &__title {
-    font-weight: 700;
-    font-size: 13.5px;
+  /* 頭像：圓框裡放標誌（Q 版形象等 `D-176`） */
+  &__avatar {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--el-color-primary-light-9);
+    border: 1px solid var(--el-color-primary-light-7);
+    /* 標誌是橫的（約 3:2）：高 12px＝寬 18px，圓框 28px 留得出邊 */
+    --brand-logo-h: 12px;
+  }
+
+  /* 它講的那一句＝這張卡在講什麼：字比內文大一階、比內文黑 */
+  &__speech {
+    margin: 3px 0 0;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.6;
     color: var(--el-text-color-primary);
   }
 
-  /* 「它會跑到哪裡去」是人最常問的事，不要縮成看不見 */
-  &__where {
-    margin-left: auto;
-    font-size: 11.5px;
+  /* 知識庫那張：直接排兩三條（客人問／回答兩欄） */
+  &__samples {
+    list-style: none;
+    margin: 8px 0 6px;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+
+  &__sample {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 8px;
+    padding: 8px 10px;
+    background: var(--el-fill-color-light);
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.65;
+  }
+
+  &__sample-k {
     color: var(--el-text-color-secondary);
     white-space: nowrap;
+  }
+
+  &__sample-q {
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+    word-break: break-word;
+  }
+
+  &__sample-a {
+    color: var(--el-text-color-regular);
+    word-break: break-word;
+  }
+
+  /* 語氣（`D-175`）：「像誰」四選一，每個附同一題的示範回答 */
+  &__tone { margin: 8px 0 6px; }
+
+  &__tone-q {
+    margin: 0 0 8px;
+    font-size: 12.5px;
+    color: var(--el-text-color-regular);
+  }
+
+  /* ⚠️ Element 的 .el-radio-group 自己是 inline-flex：要多一層選擇器才壓得過（不然四格各自照內容寬、對不齊） */
+  & &__roles.el-radio-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 6px;
+    width: 100%;
+  }
+
+  /* Element 帶框單選鈕預設一行高 32px、有右邊距：這裡一顆是三行（名字、口氣、示範），要撐開 */
+  & &__roles .el-radio.is-bordered.agm-draft__role {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 8px 10px;
+    align-items: flex-start;
+    white-space: normal;
+
+    .el-radio__input { margin-top: 3px; }
+
+    .el-radio__label {
+      display: grid;
+      gap: 2px;
+      padding-left: 8px;
+      min-width: 0;
+    }
+  }
+
+  &__role-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--el-text-color-primary);
+  }
+
+  &__role-trait {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+  }
+
+  /* 示範回答：像對方的對話泡泡（灰底），一眼看得出是「它會這樣講」 */
+  &__role-sample {
+    margin-top: 4px;
+    padding: 6px 8px;
+    background: var(--el-fill-color-light);
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-regular);
+    word-break: break-word;
   }
 
   /* 草稿內容照原樣換行（歡迎訊息有換行、標籤是一行一顆）——
@@ -1072,15 +1179,8 @@
     color: var(--el-text-color-secondary);
   }
 
-  /* 標籤（`D-171` 示意頁 v2）：上面一句＋一排可以勾的標籤 */
+  /* 標籤（`D-171` 示意頁 v2）：一排可以勾的標籤（上面那句「勾起來…」併進頭像那一句，`D-174`） */
   &__tags { margin: 8px 0 6px; }
-
-  &__lead {
-    margin: 0 0 8px;
-    font-size: 12.5px;
-    line-height: 1.7;
-    color: var(--el-text-color-regular);
-  }
 
   &__chips {
     display: flex;
@@ -1144,6 +1244,11 @@
 
 /* 草稿卡要撐開到對話欄的寬度，不然文字框會縮成內容寬 */
 .agm-card.agm-draft { width: 100%; max-width: 88%; }
+
+/* 手機的對話欄約 290px：四個角色兩欄會擠成一字一行，改一欄 */
+@media (max-width: 480px) {
+  .agm-draft .agm-draft__roles.el-radio-group { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ── 輸入區（AgentAskDock） ── */
 .agd {

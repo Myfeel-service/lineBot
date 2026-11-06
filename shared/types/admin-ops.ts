@@ -32,7 +32,7 @@ export const ADMIN_OP_LABELS = {
   'ai-settings-enabled': '打開或關掉 AI 自動回覆',
   'ai-settings-handback-idle': '調整「客服忘了交還時自動交還」的時間',
   'ai-settings-auto-close': '調整「真人接手太久沒動靜就自動結束」',
-  'ai-settings-tone-template': '把 AI 的語氣換成現成範本',
+  'ai-settings-tone-template': '換 AI 說話像誰（隔壁店長、新聞主播…）',
   'tag-create': '建一個標籤',
   'knowledge-draft-create': '補一條知識（放進「等你看過」，不直接上線）',
   'script-update-keyword': '增減一條自動回應的關鍵字',

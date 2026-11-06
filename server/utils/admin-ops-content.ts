@@ -17,7 +17,19 @@
  */
 import { createHash } from 'node:crypto'
 import { adminOpAuditAction } from '~~/shared/types/admin-ops'
-import { AI_TONE_TEMPLATES, isAiToneTemplateKey, type AiToneTemplateKey } from '~~/shared/ai-tone-templates'
+import { AI_TONE_TEMPLATES } from '~~/shared/ai-tone-templates'
+import {
+  TONE_ROLES,
+  TONE_VOICE_PREFIX,
+  replaceToneVoiceLine,
+  toneRoleOf,
+  toneRoleVoiceLine,
+  type ToneRoleId,
+} from '~~/shared/ai-tone-roles'
+import { buildToneDraft } from '~~/shared/store-profile-drafts'
+import { emptyStoreProfile } from '~~/shared/types/store-profile'
+import { taipeiDate } from '~~/shared/time'
+import { getStoreProfile } from './store-profile'
 import { suggestTagCode, isValidTagCode } from '~~/shared/tag-code-suggest'
 import { userAuthoredTextIssue } from '~~/shared/agent-user-signal'
 import { planAllowsScripting } from '~~/shared/billing/plans'
@@ -320,12 +332,15 @@ export const aiSettingsAutoClose: AdminOpDef = {
   },
 }
 
-// ── ① AI 設定：語氣範本（整段換掉「給 AI 的指示」）──────────────────
+// ── ① AI 設定：AI 說話像誰（`D-175`；原本是三個形容詞範本）──────────────────
 //
-// ⛔ 只能換成三個現成範本之一，不收自由文字：「給 AI 的指示」是整個 AI 的行為規則，
+// ⛔ 只能挑現成的角色，不收自由文字：「給 AI 的指示」是整個 AI 的行為規則，
 //    讓模型自己寫一段塞進去＝它可以把「不要承諾退費」這種禁則悄悄拿掉。
+// ⭐ 跟 AI 設定頁、開帳那張語氣卡同一組角色（`shared/ai-tone-roles.ts`）：
+//    指示裡有「說話的口氣：」那一行＝**只換那一行**（其他規則一字不動）；沒有那一行（自己寫的、舊範本）才整段換，要先講。
+// ⚠️ 操作代號照舊叫 `ai-settings-tone-template`：操作紀錄裡以前的那幾筆用的是這個名字。
 
-interface ToneArgs { template: AiToneTemplateKey }
+interface ToneArgs { role: ToneRoleId }
 
 /** 目前那段指示的開頭（確認卡用；太長只給看一行） */
 function promptHead(text: string): string {
@@ -333,20 +348,41 @@ function promptHead(text: string): string {
   return first.length > 40 ? `${first.slice(0, 40)}…` : (first || '（目前是空的）')
 }
 
+/** 現在的口氣怎麼講（確認卡「現在」那一格） */
+function currentToneLabel(prompt: string): { label: string, verbatim: boolean } {
+  const role = toneRoleOf(prompt)
+  if (role) return { label: `像${TONE_ROLES[role].label}`, verbatim: false }
+  const legacy = Object.values(AI_TONE_TEMPLATES).find(v => v.text.trim() === prompt.trim())
+  if (legacy) return { label: `「${legacy.label}」範本`, verbatim: false }
+  const voice = prompt.split('\n').map(l => l.trim()).find(l => l.startsWith(TONE_VOICE_PREFIX))
+  return { label: voice ?? promptHead(prompt), verbatim: true }
+}
+
+/** 換成這個角色之後的整段指示；`whole`＝原本沒有口氣那一行，要整段換 */
+async function nextTonePrompt(ctx: AdminOpCtx, current: string, role: ToneRoleId): Promise<{ text: string, whole: boolean }> {
+  const swapped = replaceToneVoiceLine(current, role)
+  if (swapped.replaced) return { text: swapped.text, whole: false }
+  // 整段換：照開帳那一套組（店的類型、主打、客群＋這個口氣＋安全規則）；輪廓讀不到就只有口氣與安全規則
+  const profile = await getStoreProfile(ctx.workspaceId, ctx.db).catch(() => emptyStoreProfile())
+  return { text: buildToneDraft({ shopName: '', profile, today: taipeiDate() }, { voice: TONE_ROLES[role].voice }), whole: true }
+}
+
+const TONE_ROLE_LIST = (Object.values(TONE_ROLES) as Array<{ id: ToneRoleId, label: string, trait: string }>)
+
 export const aiSettingsToneTemplate: AdminOpDef = {
   capability: 'ai.settings.write',
-  argsHint: '參數：{"template":"friendly"|"professional"|"warm"}＝把「給 AI 的指示」整段換成現成範本：'
-    + 'friendly＝親切活潑、professional＝專業簡潔、warm＝溫暖體貼。'
-    + '⛔ 只能挑這三個，不能自己寫一段；他要的語氣對不上任何一個就請他到 AI 設定頁自己改。',
+  argsHint: `參數：{"role":"<角色代號>"}＝AI 回客人時說話像誰。可以挑的：${TONE_ROLE_LIST.map(r => `${r.id}＝${r.label}（${r.trait}）`).join('、')}。`
+    + '他講形容詞就對到最接近的那一個（例：「專業一點」→advisor、「活潑一點」→host、「溫柔一點」→receptionist）。'
+    + '⛔ 只能挑這幾個，不能自己寫一段；他要的口氣對不上任何一個就請他到 AI 設定頁自己改那段指示。',
 
   normalize(raw) {
-    const t = String(raw?.template ?? '').trim()
-    if (!isAiToneTemplateKey(t)) {
+    const r = String(raw?.role ?? '').trim()
+    if (!(r in TONE_ROLES)) {
       throw new AdminOpUserError(
-        `語氣範本只有三種：${Object.values(AI_TONE_TEMPLATES).map(v => `「${v.label}」`).join('、')}。要問他挑哪一種；三種都不像的話，請他到 AI 設定頁自己改那段指示。`,
+        `AI 說話可以選像：${TONE_ROLE_LIST.map(v => `「${v.label}」`).join('、')}。要問他想要哪一種；都不像的話，請他到 AI 設定頁自己改那段指示。`,
       )
     }
-    return { template: t } satisfies ToneArgs as unknown as Record<string, unknown>
+    return { role: r as ToneRoleId } satisfies ToneArgs as unknown as Record<string, unknown>
   },
 
   async fingerprint(ctx) {
@@ -359,25 +395,28 @@ export const aiSettingsToneTemplate: AdminOpDef = {
     const args = raw as unknown as ToneArgs
     const s = await getAiSettings(ctx.workspaceId, ctx.db)
     const current = String(s.systemPrompt ?? '').trim()
-    const tpl = AI_TONE_TEMPLATES[args.template]
+    const role = TONE_ROLES[args.role]
     const base = { opId: 'ai-settings-tone-template' as const }
 
-    if (current === tpl.text.trim())
-      return { ...base, summary: `現在用的就是「${tpl.label}」範本，不用改。`, items: [], confirmLabel: '知道了', noop: true }
+    if (toneRoleOf(current) === args.role)
+      return { ...base, summary: `現在 AI 說話就是像${role.label}，不用改。`, items: [], confirmLabel: '知道了', noop: true }
 
-    const currentIsTemplate = Object.values(AI_TONE_TEMPLATES).find(v => v.text.trim() === current)
+    const now = currentToneLabel(current)
+    const next = await nextTonePrompt(ctx, current, args.role)
     return {
       ...base,
-      summary: `我會把「給 AI 的指示」換成「${tpl.label}」範本。`,
+      summary: next.whole
+        ? `我會把「給 AI 的指示」整段換成「像${role.label}」的版本。`
+        : `我會把 AI 說話的口氣換成像${role.label}（${role.trait}）。只換口氣那一行，其他規則都不動。`,
       items: [
-        { heading: '現在', label: currentIsTemplate ? `「${currentIsTemplate.label}」範本` : promptHead(current), tone: 'before', ...(currentIsTemplate ? {} : { verbatim: true }) },
-        { heading: `改成「${tpl.label}」`, label: promptHead(tpl.text), tone: 'after' },
+        { heading: '現在', label: now.label, tone: 'before', ...(now.verbatim ? { verbatim: true } : {}) },
+        { heading: `改成像${role.label}`, label: toneRoleVoiceLine(args.role), tone: 'after' },
       ],
       // 自己寫過的內容會整段不見——這件事要在按下去之前講
-      warning: currentIsTemplate
-        ? 'AI 之後回客人的口吻會照新的範本。隨時可以到 AI 設定頁再改。'
-        : '⚠️ 會把你現在寫的指示**整段換掉**（不是加在後面），裡面自己寫的規則會跟著不見。之後可以到 AI 設定頁再改。',
-      confirmLabel: `確定換成「${tpl.label}」`,
+      warning: next.whole
+        ? '⚠️ 會把你現在寫的指示**整段換掉**（不是加在後面），裡面自己寫的規則會跟著不見。之後可以到 AI 設定頁再改。'
+        : 'AI 之後回客人的口氣會照新的這個。隨時可以到 AI 設定頁再改。',
+      confirmLabel: `確定換成像${role.label}`,
     }
   },
 
@@ -385,22 +424,23 @@ export const aiSettingsToneTemplate: AdminOpDef = {
     const args = raw as unknown as ToneArgs
     const s = await getAiSettings(ctx.workspaceId, ctx.db)
     const before = String(s.systemPrompt ?? '')
-    const tpl = AI_TONE_TEMPLATES[args.template]
-    if (before.trim() === tpl.text.trim())
-      return { ok: true, message: `本來就是「${tpl.label}」範本，沒有動任何設定。` }
+    const role = TONE_ROLES[args.role]
+    if (toneRoleOf(before) === args.role)
+      return { ok: true, message: `本來就是像${role.label}，沒有動任何設定。` }
 
-    await setAiSettings(ctx.workspaceId, { systemPrompt: tpl.text } as never, ctx.db)
+    const next = await nextTonePrompt(ctx, before, args.role)
+    await setAiSettings(ctx.workspaceId, { systemPrompt: next.text } as never, ctx.db)
     await writeAuditLog({
       workspaceId: ctx.workspaceId,
       uid: ctx.uid,
       actor: 'agent',
       action: adminOpAuditAction('ai-settings-tone-template'),
       before: { systemPrompt: before },
-      after: { systemPrompt: tpl.text },
-      note: `換成「${tpl.label}」範本`,
+      after: { systemPrompt: next.text },
+      note: next.whole ? `整段換成「像${role.label}」` : `口氣換成像${role.label}`,
     }, ctx.db)
 
-    return { ok: true, message: `換好了：「給 AI 的指示」現在是「${tpl.label}」範本。` }
+    return { ok: true, message: `換好了：AI 說話現在像${role.label}（${role.trait}）。` }
   },
 }
 

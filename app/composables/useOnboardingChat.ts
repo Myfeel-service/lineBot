@@ -30,15 +30,18 @@ import {
 import {
   buildStoreDrafts,
   canBuildDrafts,
+  buildToneDraft,
   REWORD_MAX_PER_CARD,
   REWORDABLE_DRAFTS,
   STORE_DRAFT_WHERE,
   summarizeDraftApply,
   type DraftApplyStep,
+  type DraftContext,
   type StoreDraft,
   type StoreDraftKey,
   type TagDraft,
 } from '~~/shared/store-profile-drafts'
+import { TONE_ROLES, type ToneRoleId } from '~~/shared/ai-tone-roles'
 import { TAG_IDEA_ASKS_PER_CARD, tagIdeasNote, type TagIdeaSkip } from '~~/shared/tag-ideas'
 import { buildFollowWelcomeScript, followWelcomeRow } from '~~/shared/follow-welcome'
 import { type ScriptNode, scriptTriggerEvent } from '~~/shared/types/ai-script'
@@ -564,15 +567,17 @@ export function useOnboardingChat() {
    * 草稿卡上他改過的內容（`D-94`：草稿一開始就是可以改的框）。key＝那張卡的 entry id。
    * ⚠️ 按「採用」時用的是**這一份**，不是範本原文——他改了卻寫出去原文，是最糟的那種假按鈕。
    */
-  const draftEdits = new Map<number, { body?: string, tags?: DraftTagChip[] }>()
+  const draftEdits = new Map<number, { body?: string, tags?: DraftTagChip[], role?: ToneRoleId }>()
 
-  /** 頁面轉交的「草稿框內容變了」 */
-  function onDraftInput(p: { entryId: number, body?: string, tags?: DraftTagChip[] }) {
+  /** 頁面轉交的「草稿框內容變了」（語氣卡＝換選了哪一個角色，`D-175`） */
+  function onDraftInput(p: { entryId: number, body?: string, tags?: DraftTagChip[], role?: string }) {
     const prev = draftEdits.get(p.entryId) ?? {}
     draftEdits.set(p.entryId, {
       ...prev,
       ...(p.body != null ? { body: p.body } : {}),
       ...(p.tags ? { tags: p.tags } : {}),
+      // ⛔ 只收真的有的角色代號（事件內容來自畫面）
+      ...(p.role && p.role in TONE_ROLES ? { role: p.role as ToneRoleId } : {}),
     })
     if (p.tags && p.entryId === tagChoiceCardId) refreshTagChoices(p.tags)
   }
@@ -800,12 +805,13 @@ export function useOnboardingChat() {
     builtWelcomeText = ''
     if (!canBuildDrafts(profile)) return
     const shopName = workspaceList.value.find(w => w.workspaceId === wid.value)?.name || ''
-    const drafts = buildStoreDrafts({
+    const ctx: DraftContext = {
       shopName,
       profile,
       today: taipeiDate(),
       pagesRead: profile.siteRead?.pagesRead ?? 0,
-    })
+    }
+    const drafts = buildStoreDrafts(ctx)
     if (!drafts.length) return
 
     const adoptable = drafts.filter(d => d.kind === 'adopt').length
@@ -819,20 +825,25 @@ export function useOnboardingChat() {
        * ⭐ `D-94`：**一開始就是可以改的**（輸入框自己就是說明；少按一次「改一下」）。
        * ⛔ 標籤不給大文字框：它是一排名字（結構），開 textarea 等於請他把格式改壞。
        */
-      const editable = d.kind !== 'adopt' ? undefined : d.key === 'tags' ? 'tags' as const : 'text' as const
+      // ⭐ `D-175`：語氣是「像誰」四選一（⛔ 不給一大段指示的文字框）
+      const editable = d.kind !== 'adopt' ? undefined
+        : d.key === 'tags' ? 'tags' as const
+          : d.key === 'tone' && d.tone ? 'tone' as const
+            : 'text' as const
       const base = {
         kind: 'store-draft' as const,
         title: d.title,
         where: d.where,
+        // ⭐ `D-174`：頭像旁那一句。`D-171` 那句「以後想分哪幾種客人？」原本是卡片前面另一個泡泡，現在就是這一句
+        //    （它是最後一樣就講「最後一樣」）
+        speech: `${d.key === 'tags' && d === lastAdopt ? '最後一樣：' : ''}${d.speech}`,
         body: d.body,
-        ...(d.lead ? { lead: d.lead } : {}),
         ...(d.note ? { note: d.note } : {}),
         variant: d.kind,
         // ⚠️ 那一排放在 base：「問 AI」重畫卡片時要帶著（元件自己手上那一份才是他勾過的，這裡只是初值）
         ...(d.key === 'tags' && d.tags ? { tags: d.tags.map(t => ({ ...t, on: t.picked })) } : {}),
+        ...(d.tone ? { tone: d.tone } : {}),
       }
-      // ⭐ `D-171` 示意頁 v2：標籤卡前面先問一句「以後想分哪幾種客人？」（它是最後一樣就講「最後一樣」）
-      if (d.key === 'tags') await say(`${d === lastAdopt ? '最後一樣：' : ''}<b>以後想分哪幾種客人？</b>`)
       // ⭐ `D-89`：只有歡迎訊息與語氣給「換個說法」（⛔ 標籤不給，理由見 `REWORDABLE_DRAFTS`）
       const canReword = editable === 'text' && REWORDABLE_DRAFTS.includes(d.key)
       const canAskTags = editable === 'tags'
@@ -863,7 +874,12 @@ export function useOnboardingChat() {
 
       // 他最後決定的那一版（沒動過就是範本原文）
       const edit = draftEdits.get(cardId)
-      const finalBody = (edit?.body ?? d.body).trim()
+      // 語氣卡：他選的那個角色（沒換＝先選好的那一個）→ 只換「說話的口氣：」那一行（`D-175`）
+      const role: ToneRoleId | null = d.tone ? (edit?.role ?? d.tone.picked) : null
+      const finalBody = role
+        ? buildToneDraft(ctx, { voice: TONE_ROLES[role].voice }).trim()
+        : (edit?.body ?? d.body).trim()
+      const pickedRole = role ? d.tone?.roles.find(r => r.id === role) : undefined
       const finalTags: TagDraft[] | undefined = d.key === 'tags'
         ? (edit?.tags ?? (d.tags ?? []).map(t => ({ ...t, on: t.picked })))
             .filter(t => t.on && t.name.trim())
@@ -875,7 +891,10 @@ export function useOnboardingChat() {
               picked: true,
             }))
         : undefined
-      const shownBody = finalTags ? finalTags.map(t => t.name).join('、') : finalBody
+      // 語氣卡決定完：講他選了誰＋那句示範（⛔ 不攤開那一大段給模型看的指示）
+      const shownBody = finalTags ? finalTags.map(t => t.name).join('、')
+        : pickedRole ? `像${pickedRole.label}：${pickedRole.trait}\n「${pickedRole.sample}」`
+          : finalBody
       /**
        * 他有沒有親手動過（`D-94` 要驗「一開始就能改」到底有沒有人改）。
        * ⚠️ 比的是**機器給的最後一版**（換過說法就是換出來那一版）：換說法不算他改的，那個另記 `reworded`
@@ -883,12 +902,14 @@ export function useOnboardingChat() {
        */
       const edited = finalTags
         ? finalTags.map(t => t.name).join('|') !== (d.tags ?? []).filter(t => t.picked).map(t => t.name).join('|')
-        : finalBody !== (rc?.body ?? d.body).trim()
+        : role
+          ? role !== d.tone?.picked
+          : finalBody !== (rc?.body ?? d.body).trim()
 
       // 改到空的（字刪光、標籤全取消勾）＝這一樣不建，⛔ 不可以照樣送一個空的出去
       const emptied = c === 'yes' && (finalTags ? finalTags.length === 0 : !finalBody)
       if (c !== 'yes' || emptied) {
-        track('draft_decision', { key: d.key, decision: emptied ? 'emptied' : 'declined', edited, reworded })
+        track('draft_decision', { key: d.key, decision: emptied ? 'emptied' : 'declined', edited, reworded, ...(role ? { role } : {}) })
         draftSteps.push({ key: d.key, label: d.title, status: 'declined' })
         updateMsg(cardId, {
           ...base,
@@ -908,7 +929,8 @@ export function useOnboardingChat() {
       const r = await applyOneDraft({ ...d, body: finalBody, ...(finalTags ? { tags: finalTags } : {}) })
       busy.value = false
       draftSteps.push(r)
-      track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited, reworded })
+      // ⭐ `role`＝他最後選了誰（`D-175`：哪個角色最常被選、預選的常不常被換掉）
+      track('draft_decision', { key: d.key, decision: r.status === 'done' ? 'adopted' : 'failed', edited, reworded, ...(role ? { role } : {}) })
       if (r.status === 'done') builtKeys.add(d.key)
       if (r.status === 'done' && d.key === 'welcome') builtWelcomeText = finalBody
       // ⚠️ 決定完就把框收回唯讀（不帶 editable），內容換成**他最後決定的那一版**
@@ -1025,11 +1047,20 @@ export function useOnboardingChat() {
   // ⛔ 不在精靈裡讓他等（`D-90` 已嫌太長）：揭曉那一刻開始在背景推，他看輪廓、採用草稿的同時整理。
   //    一步最多 2 頁、一步約 20 秒；推不完的由知識庫頁與排程接手（伺服器有租約，不會重複整理）。
 
+  /** 知識庫那張排幾條給他看（`D-174`：John 哥「直接排兩三張卡片的樣子」） */
+  const SITE_CARD_SAMPLES = 3
+  /** 一條的回答太長就截掉（對話欄只有手機寬；整條在知識庫頁看得到） */
+  const clipSample = (s: string) => {
+    const t = String(s ?? '').replace(/\s+/g, ' ').trim()
+    return t.length > 70 ? `${t.slice(0, 70)}…` : t
+  }
+
   /** 目前整理到哪（每推一步就重抓一次） */
   const siteCards = {
     total: 0,
     stillWorking: false,
-    sample: null as null | { q: string, a: string },
+    /** 拿來給他看的兩三條（`D-174`：直接排出來，⛔ 不是一段灰框裡的字） */
+    samples: [] as Array<{ q: string, a: string }>,
   }
   let siteCardsRun: Promise<void> | null = null
   /** 第一步做完（或確定沒東西可做）的那一刻；成績單前等它，最多等 20 秒 */
@@ -1048,8 +1079,15 @@ export function useOnboardingChat() {
     siteCards.total = r.total
     siteCards.stillWorking = r.generating?.status === 'queued' || r.generating?.status === 'running'
     if (withSample) {
-      const c = r.pages?.[0]?.cards[0]
-      siteCards.sample = c ? { q: c.questions[0] || c.title, a: c.content } : null
+      // 每一頁輪流拿一條（讀了「運費」「營業時間」兩頁，就各給一條，⛔ 不要三條都是同一頁）
+      const pages = (r.pages ?? []).map(p => p.cards)
+      const picked: Array<{ title: string, content: string, questions: string[] }> = []
+      for (let i = 0; picked.length < SITE_CARD_SAMPLES && pages.some(cs => cs[i]); i++) {
+        for (const cs of pages) {
+          if (cs[i] && picked.length < SITE_CARD_SAMPLES) picked.push(cs[i]!)
+        }
+      }
+      siteCards.samples = picked.map(c => ({ q: c.questions[0] || c.title, a: clipSample(c.content) }))
     }
   }
 
@@ -1095,11 +1133,15 @@ export function useOnboardingChat() {
       shown: siteCards.total > 0 || siteCards.stillWorking,
     })
     const base = { kind: 'store-draft' as const, title: '知識庫：幫你整理好了', where: '知識庫', variant: 'info' as const }
-    if (siteCards.total > 0 && siteCards.sample) {
+    if (siteCards.total > 0 && siteCards.samples.length) {
+      // ⭐ `D-174`（John 哥看到這張說「這個看不懂，這一張是什麼東西？」）：頭像講一句、下面直接排兩三條。
+      //    `C-309`：量詞跟知識庫頁一樣講「條」，範例的兩段跟「等你看過」那一區同一組字（客人問／回答）
+      const shown = siteCards.samples.length
       card({
         ...base,
-        // `C-309`：量詞跟知識庫頁一樣講「條」，範例的兩段跟「等你看過」那一區同一組字（客人問／回答）
-        body: `我讀了你網站 ${pagesRead} 頁，整理成 ${siteCards.total} 條${siteCards.stillWorking ? '（剩下的頁還在整理）' : ''}。一條長這樣：\n　客人問：${siteCards.sample.q}\n　回答：${siteCards.sample.a}`,
+        speech: `我讀了你網站 ${pagesRead} 頁，幫你整理好 ${siteCards.total} 條${siteCards.stillWorking ? '（剩下的頁還在整理）' : ''}${siteCards.total > shown ? `，先給你看 ${shown} 條` : ''} 👇`,
+        body: '',
+        samples: siteCards.samples,
         note: '還沒進知識庫——在「知識庫」那一頁一條條看過才算數。',
       })
     }
@@ -1107,7 +1149,8 @@ export function useOnboardingChat() {
       card({
         ...base,
         title: '知識庫：正在幫你整理',
-        body: `我讀了你網站 ${pagesRead} 頁，正在整理成一條條知識。`,
+        speech: `我讀了你網站 ${pagesRead} 頁，正在整理成一條條知識。`,
+        body: '',
         note: '好了會在「知識庫」那一頁等你一條條看過才算數。',
       })
     }

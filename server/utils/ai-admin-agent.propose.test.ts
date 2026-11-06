@@ -979,8 +979,13 @@ describe('畫面上的字（D-116）', () => {
     const { AI_TONE_TEMPLATES } = await import('~~/shared/ai-tone-templates')
     expect(toneOf(DEFAULT_SYSTEM_PROMPT)).toContain('系統預設')
     expect(toneOf(DEFAULT_SYSTEM_PROMPT)).not.toContain('自己寫')
+    // 舊的三個範本（`D-175` 以前套的帳號）照舊認得
     expect(toneOf(AI_TONE_TEMPLATES.professional.text)).toBe('「專業簡潔」範本')
     expect(toneOf('你是阿明，講話很隨興')).toContain('自己寫的指示')
+    // `D-175`：口氣那一行是某個角色＝講「像誰」；自己改過那一行＝自己寫的
+    const { toneRoleVoiceLine } = await import('~~/shared/ai-tone-roles')
+    expect(toneOf(`你是山丘咖啡的客服助理。\n${toneRoleVoiceLine('anchor')}`)).toBe('像新聞主播(沉穩，先講重點)')
+    expect(toneOf(`你是山丘咖啡的客服助理。\n說話的口氣：像我自己。`)).toContain('自己寫的指示')
   })
 
   it('⛔ 本月 AI 用量到上限（429）→ 照原樣往外丟，⛔ 不可以變成「稍等一下再問」（會讓人重試到下個月）', async () => {
