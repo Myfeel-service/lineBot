@@ -1,10 +1,11 @@
 <template>
   <AdminSplitLayout solo>
     <template #editor-header>
+      <!-- `D-173`：側欄那一段的名字跟著搬（「AI 客服」→「改完來這試」）；說明講它現在試得到的三樣 -->
       <AdminSoloPageHeading
-        field-label="AI 客服"
+        field-label="改完來這試"
         title="測試對話"
-        caption="試答模式：以「真實 LINE 對話」方式測試 AI，不會影響正式對話"
+        caption="問一句看 AI 或自動回應怎麼回，也看得到客人加好友時收到什麼；這裡的回答不會送給客人"
         :help-topics="['ai-playground']"
       />
     </template>
@@ -61,8 +62,47 @@
           </div>
 
           <template v-for="(turn, idx) in history" :key="idx">
+            <!-- 模擬「客人加你好友」（`D-173`）：歡迎訊息＋生日卡，照加好友那條路組 -->
+            <div v-if="turn.role === 'follow'" class="pg-follow" data-testid="pg-follow">
+              <p class="pg-follow__event">（模擬：客人加你好友）</p>
+              <div class="pg-msg pg-msg--ai">
+                <div class="pg-bubble pg-bubble--ai">
+                  <div class="pg-bubble-head">
+                    <span class="badge badge-purple">加好友</span>
+                  </div>
+                  <template v-if="turn.follow.reply">
+                    <p class="pg-script-name">客人會先收到自動回應「<strong>{{ turn.follow.scriptName }}</strong>」：</p>
+                    <PlaygroundReplyPreview :reply="turn.follow.reply" />
+                  </template>
+                  <p v-else class="pg-script-name">
+                    你還沒有設「客人加好友時」的自動回應，<b>客人加好友時收不到我們送的歡迎訊息</b>。
+                    <NuxtLink :to="`/admin/${workspaceId}/ai-scripts`">去自動回應設定 →</NuxtLink>
+                  </p>
+                  <!-- 生日卡（`C-57`）：附在後面／自己送／附不上（同生日設定框那一句） -->
+                  <template v-if="turn.follow.birthday === 'appended' || turn.follow.birthday === 'alone'">
+                    <p class="pg-script-name">{{ turn.follow.birthday === 'appended' ? '接著附上這張：' : '會收到這張：' }}</p>
+                    <div class="birthday__phone pg-follow__bday">
+                      <div class="birthday__card">
+                        <div class="birthday__card-body">
+                          <b>{{ followBirthdayText(turn.follow) }}</b>
+                          <span>{{ BIRTHDAY_ASK_NOTE }}</span>
+                        </div>
+                        <div class="birthday__card-btn">{{ BIRTHDAY_BUTTON_LABEL }}</div>
+                      </div>
+                    </div>
+                  </template>
+                  <p v-else-if="turn.follow.birthday === 'blocked' && turn.follow.birthdayBlock" class="pg-follow__warn">
+                    {{ birthdayAppendWarning(turn.follow.birthdayBlock) }}
+                  </p>
+                  <p class="pg-follow__note">
+                    <template v-if="turn.follow.birthday !== 'off'">已經留過生日的客人不會再收到生日卡。</template>
+                    LINE 官方帳號後台如果還開著它內建的歡迎訊息，客人也會收到那一則（我們這邊看不到）。
+                  </p>
+                </div>
+              </div>
+            </div>
             <!-- 客人訊息 -->
-            <div v-if="turn.role === 'user'" class="pg-msg pg-msg--user">
+            <div v-else-if="turn.role === 'user'" class="pg-msg pg-msg--user">
               <div class="pg-bubble pg-bubble--user">
                 {{ turn.text }}
               </div>
@@ -77,8 +117,15 @@
                     <span class="badge badge-purple">觸發流程</span>
                     <span class="text-xs text-muted">{{ turn.result.scriptTrigger.mode === 'semantic' ? '看意思命中' : '關鍵字命中' }}</span>
                   </div>
-                  <p class="pg-script-name">會啟動自動回應：<strong>{{ turn.result.scriptTrigger.name }}</strong></p>
-                  <p class="text-muted">實際 LINE 對話會由這條自動回應接手（AI 不會介入）。這裡不模擬後續的多輪問答，請到「自動回應」頁編輯。</p>
+                  <!-- `D-173`：直接畫出客人會先收到什麼（⛔ 以前只講「會啟動哪一條」，改了自動回應來這裡也試不到） -->
+                  <template v-if="turn.result.scriptTrigger.reply">
+                    <p class="pg-script-name">由自動回應「<strong>{{ turn.result.scriptTrigger.name }}</strong>」回，AI 不介入。客人會先收到：</p>
+                    <PlaygroundReplyPreview :reply="turn.result.scriptTrigger.reply" />
+                  </template>
+                  <template v-else>
+                    <p class="pg-script-name">會啟動自動回應：<strong>{{ turn.result.scriptTrigger.name }}</strong></p>
+                    <p class="text-muted">實際 LINE 對話會由這條自動回應接手（AI 不會介入）。這次沒能把它要送的內容抓回來，請到「自動回應」頁看。</p>
+                  </template>
                 </div>
 
                 <template v-else>
@@ -277,6 +324,15 @@
             >
               新對話
             </el-button>
+            <!-- `D-173`：歡迎訊息以前試不到（要真的加好友）；不跑 AI、不花錢 -->
+            <el-button
+              plain
+              data-testid="pg-try-follow"
+              :disabled="running"
+              @click="tryFollow"
+            >
+              客人加好友時收到什麼
+            </el-button>
           </div>
         </div>
       </div>
@@ -296,6 +352,8 @@ import type { StoreProfileDoc } from '~~/shared/types/store-profile'
 import { storeBizWording } from '~~/shared/store-profile-biz'
 import { splitProducts } from '~~/shared/store-profile-drafts'
 import { LANDING_FROM_BUILD, markPlaygroundTried } from '~/utils/onboarding-landing'
+import type { FollowWelcomePreview, ScriptReplyPreview } from '~~/shared/types/playground-preview'
+import { BIRTHDAY_ASK_NOTE, BIRTHDAY_BUTTON_LABEL, birthdayAppendWarning, birthdayAskText } from '~~/shared/birthday'
 import { useOnboardingEvents } from '~/composables/useOnboardingEvents'
 
 definePageMeta({ middleware: ['auth', 'ai-feature'], layout: 'default' })
@@ -384,12 +442,17 @@ function goDrafts() {
 
 type AiResult = AiAnswerResult & {
   debugPrompt?: string
-  /** 有值代表這句在正式 LINE 會觸發腳本、不跑 AI */
-  scriptTrigger?: { name: string; mode: 'keyword' | 'semantic' }
+  /**
+   * 有值代表這句在正式 LINE 會觸發腳本、不跑 AI。
+   * `reply`＝客人會先收到什麼（`D-173`）；null＝這次沒能組出來（只講會啟動哪一條）
+   */
+  scriptTrigger?: { name: string; mode: 'keyword' | 'semantic'; reply?: ScriptReplyPreview | null }
 }
 type UserTurn = { role: 'user'; text: string }
 type AiTurn = { role: 'ai'; result: AiResult; expanded: boolean }
-type Turn = UserTurn | AiTurn
+/** 模擬「客人加你好友」（`D-173`）：⛔ 不算對話的一句，不進 AI 的對話脈絡 */
+type FollowTurn = { role: 'follow'; follow: FollowWelcomePreview }
+type Turn = UserTurn | AiTurn | FollowTurn
 
 const query = ref('')
 const running = ref(false)
@@ -448,7 +511,8 @@ async function scrollToBottom() {
 /** 把目前畫面上的對話轉成 answerWithAi 吃的 history（最近 6 則、要有文字）。 */
 function buildHistoryPayload(): Array<{ role: 'user' | 'bot'; text: string }> {
   return history.value
-    .map((t: Turn) => t.role === 'user'
+    .filter((t: Turn): t is UserTurn | AiTurn => t.role !== 'follow')
+    .map((t: UserTurn | AiTurn) => t.role === 'user'
       ? { role: 'user' as const, text: t.text }
       : {
           role: 'bot' as const,
@@ -545,6 +609,31 @@ const exampleQuestions = ['退費要多久才會收到？', '你們的營業時�
 async function tryExample(q: string) {
   if (running.value) return
   await send(q)
+}
+
+/**
+ * 「客人加好友時收到什麼」（`D-173`，John 哥：「不管在哪一區換了服裝換了武器，我就是到測試區去練」）。
+ * 歡迎訊息以前只能真的加一次好友才看得到；這裡照加好友那條路組一次（伺服器只讀、不跑 AI）。
+ */
+async function tryFollow() {
+  if (running.value) return
+  running.value = true
+  try {
+    const r = await apiFetch<{ follow: FollowWelcomePreview }>('/api/ai/playground', { method: 'POST', body: { follow: true } })
+    history.value.push({ role: 'follow', follow: r.follow })
+  }
+  catch (err: any) {
+    showToast(err?.statusMessage || err?.message || '這次沒能把加好友會收到的內容抓回來，再按一次試試', 'error')
+  }
+  finally {
+    running.value = false
+    await scrollToBottom()
+  }
+}
+
+/** 生日卡上那一句（卡片本身的替代文字就是它，跟送出去的同一份） */
+function followBirthdayText(f: FollowWelcomePreview): string {
+  return String((f.birthdayMessages[0] as { altText?: string } | undefined)?.altText ?? '') || birthdayAskText('')
 }
 
 async function pickOption(title: string) {

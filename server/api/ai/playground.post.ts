@@ -5,6 +5,7 @@ import { usageFromCalls, withAiCallMeter, type AiCallUsage } from '~~/server/uti
 import { loadActiveScripts } from '~~/server/utils/ai-scripts'
 import { messageScripts, pickScriptByKeyword, routeCandidates } from '~~/server/utils/script-match'
 import { tryScriptRoute } from '~~/server/utils/script-try'
+import { previewFollowWelcome, previewScriptReply } from '~~/server/utils/handler'
 import type { ScriptDoc, ScriptTriggerNode } from '~~/shared/types/ai-script'
 
 /**
@@ -13,7 +14,9 @@ import type { ScriptDoc, ScriptTriggerNode } from '~~/shared/types/ai-script'
  *
  * 跟正式回答客人走同一條答題流程，但帶 debug=true：會多回傳 debugPrompt 給管理員看到實際送給 LLM 的 prompt。
  * 並且**先模擬正式 LINE 的腳本觸發**：若這句會命中某條腳本，回報 scriptTrigger 且不跑 AI
- *   （正式對話中腳本優先於 AI 保底）。playground 不模擬腳本後續的多輪問答、也不含自動回覆規則。
+ *   （正式對話中腳本優先於 AI 保底）。`D-173` 起連它**第一步會送出什麼**一起回（`reply`）；
+ *   後續的多輪問答（客人回答之後）仍不模擬。
+ * `{ follow: true }`＝「客人加好友時會收到什麼」（歡迎訊息＋生日卡），不跑 AI。
  * history 讓 playground 跟正式 LINE 一樣支援多輪追問（追問補救檢索 + 脈絡帶入 prompt）。
  * skipDisambiguation / isFollowup 讓前端模擬「客人點按鈕後的下一輪」— 避免再次觸發反問澄清。
  * 不影響正式對話（不寫 conversation 紀錄）。用量記在「後台自用」（test*），⛔ 不扣客人的則數、也不受則數額度擋。
@@ -21,6 +24,8 @@ import type { ScriptDoc, ScriptTriggerNode } from '~~/shared/types/ai-script'
 export default defineEventHandler(async (event) => {
   const { workspaceId } = await requireCapability(event, 'playground.use')
   const body = await readBody(event)
+  // 「客人加好友時會收到什麼」（`D-173`）：不是客人的一句話——不跑 AI、不花錢，只照加好友那條路組一次（只讀）
+  if (body?.follow === true) return { follow: await previewFollowWelcome(workspaceId) }
   const query = String(body?.query ?? '').trim()
   if (!query) throw createError({ statusCode: 400, statusMessage: '請輸入 query' })
 
@@ -57,6 +62,8 @@ export default defineEventHandler(async (event) => {
   }
   if (triggered) {
     const root = triggered.nodes.find(n => n.id === triggered!.rootNodeId) as ScriptTriggerNode | undefined
+    // `D-173`：客人會先收到什麼（照真的送出那條路組）；組不出來＝只講會啟動哪一條（⛔ 不畫成空白）
+    const reply = await previewScriptReply(workspaceId, triggered).catch(() => null)
     return {
       decision: 'skipped' as const,
       answer: '',
@@ -66,6 +73,7 @@ export default defineEventHandler(async (event) => {
       scriptTrigger: {
         name: triggered.name,
         mode: (root?.matchMode ?? 'keyword') as 'keyword' | 'semantic',
+        reply,
       },
     }
   }

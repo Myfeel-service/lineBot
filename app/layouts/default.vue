@@ -43,6 +43,23 @@
              .nav-group 自己也是 flex 直欄、gap 跟 .sidebar-nav 同值，所以列距與縮排跟包之前一樣。 -->
         <!-- `nav-main`：落地導覽第 1 步框整個選單、再標亮他剛做的那幾列（`C-250`②；一步只挖得出一個洞） -->
         <nav class="sidebar-nav" data-tour="nav-main">
+          <!-- 測試對話自己一段、放最上面（`D-173`，John 哥 11-04：「我會建議把測試獨立成一個抬頭。不管我在哪一區
+               做了什麼、換了服裝換了武器，我就是到測試區去練」「甚至我會把測試對話放在最上面」）。
+               小標跟第一段同一個講法：講「什麼時候來」不講主題。⛔ 它不再出現在「AI 客服」那一段（同一頁兩個入口）。
+               測試對話會花 token → 客服以上才看得到（`playground.use`），看不到就整段不出現 -->
+          <div v-if="testNavItem" class="nav-group" data-tour="nav-group-test">
+            <div class="nav-section-label">改完來這試</div>
+            <NuxtLink
+              :to="testNavItem.to"
+              class="nav-item"
+              data-tour="nav-playground"
+              :class="{ active: route.path.startsWith(testNavItem.to) }"
+            >
+              <el-icon class="nav-icon"><Monitor /></el-icon>
+              <span>{{ testNavItem.label }}</span>
+            </NuxtLink>
+          </div>
+
           <!-- ⛔ 第一段的小標是 2026-09-04 補的，不要再拿掉：拉出「好友經營」之後，
                沒有小標的那一段會變成四段裡唯一沒標題的一段，看起來像漏做的。
                這一段的標題刻意講「多久用一次」不講主題——它裝的就是天天要開的那幾頁。 -->
@@ -339,15 +356,22 @@ const aiNavItems = computed(() => {
   const items = [
     // ⛔ 客服腳本不在這裡：它就是上一組的「自動回應」。
     // 這裡再放一個入口＝同一件事兩個進入點，會讓「該用哪一邊」的問題重新長回來。
-    // 順序照**日常動線**排（看 → 補 → 驗 → 調），不是照第一次設定的動線：
-    // 設定只做一次，看表現天天做。表現頁說「這幾題答不出來」→ 去知識庫補 → 回測試對話驗。
+    // 順序照**日常動線**排（看 → 補 → 調），不是照第一次設定的動線：
+    // 設定只做一次，看表現天天做。表現頁說「這幾題答不出來」→ 去知識庫補 → 回最上面的測試對話驗。
     // 新帳號落在空頁也不成問題——AI 未啟用時這頁的狀態列本身就是「去啟用」的入口。
+    // ⛔ 測試對話 2026-11-06 搬到側欄最上面自己一段（`D-173`，見 testNavItem），這裡不再放第二個入口。
     { cap: 'ai.read' as const, to: `/admin/${wid}/ai-usage`, icon: TrendCharts, label: 'AI 表現' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/knowledge/sources`, icon: Reading, label: '知識庫', tour: 'nav-knowledge' },
-    { cap: 'playground.use' as const, to: `/admin/${wid}/ai-playground`, icon: Monitor, label: '測試對話' },
     { cap: 'ai.read' as const, to: `/admin/${wid}/ai-settings`, icon: Setting, label: 'AI 設定', tour: 'nav-ai-settings' },
   ]
   return items.filter(item => can(item.cap)).map(({ cap: _cap, ...rest }) => rest)
+})
+
+/** 側欄最上面那一段（`D-173`）：測試對話。會花 token → `playground.use`（客服以上），沒有就整段不出現 */
+const testNavItem = computed(() => {
+  const wid = workspaceId.value
+  if (!wid || !can('playground.use')) return null
+  return { to: `/admin/${wid}/ai-playground`, label: '測試對話' }
 })
 
 // 「設定」段逐項看**那一頁的端點**用的能力（`G-109`）：成員列表 members.read、LINE 通知 notify.self、

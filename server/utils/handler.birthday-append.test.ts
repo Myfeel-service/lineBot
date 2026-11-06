@@ -38,9 +38,10 @@ vi.mock('./ai-scripts', async (importOriginal) => {
   return { ...real, loadActiveScripts: vi.fn(async () => []) }
 })
 
-const { followWelcomeAppendBlock } = await import('./handler')
+const { followWelcomeAppendBlock, previewFollowWelcome, previewScriptReply } = await import('./handler')
 const { getDb } = await import('./firebase')
 const { loadActiveScripts } = await import('./ai-scripts')
+const { getAiSettings } = await import('./ai-settings')
 
 const WS = 'ws1'
 /** 模組文件（null＝被刪了） */
@@ -128,5 +129,87 @@ describe('加好友時生日卡附不附得上（followWelcomeAppendBlock）', (
     expect(await followWelcomeAppendBlock(WS)).toEqual({ kind: 'quickReply', where: 'module' })
     const cols = db.collection.mock.calls.map(c => c[0])
     expect(cols.every(c => c === 'flows' || c === 'richMessages')).toBe(true)
+  })
+})
+
+/**
+ * `D-173`：測試對話「客人會先收到什麼」。同一套真的引擎、真的組訊息；只假掉資料來源。
+ */
+describe('測試對話的預覽（previewScriptReply／previewFollowWelcome）', () => {
+  const script = (first: Record<string, any>, extra: Record<string, any>[] = []) => {
+    const s = followScript(first, extra)
+    s.nodes[0] = { ...s.nodes[0], triggerEvent: 'message', keywords: ['營業'] }
+    return s
+  }
+
+  it('回一句字＋連結按鈕：畫的就是送出去的那兩則（文字、按鈕範本），送完不等', async () => {
+    const r = await previewScriptReply(WS, script({ id: 'r', type: 'reply', text: '每天 9 點開', thenHandoff: false, linkUrl: 'https://example.com', linkLabel: '看地圖' }))
+    expect(r.lineMessages.map(m => m.type)).toEqual(['text', 'template'])
+    expect((r.lineMessages[0] as any).text).toBe('每天 9 點開')
+    expect((r.lineMessages[1] as any).template.actions[0].label).toBe('看地圖')
+    expect(r).toMatchObject({ waits: false, handoff: false })
+  })
+
+  it('第一步是選項題＝那一題＋快速回覆、停在等客人回答', async () => {
+    const r = await previewScriptReply(WS, script(
+      { id: 'q', type: 'quickReply', question: '想了解什麼？', expireMs: 60_000, options: [{ label: '價格', next: 'r' }, { label: '地址', next: 'r' }] },
+      [{ id: 'r', type: 'reply', text: 'ok', thenHandoff: false }],
+    ))
+    expect((r.lineMessages[0] as any).text).toBe('想了解什麼？')
+    expect((r.lineMessages[0] as any).quickReply.items.map((i: any) => i.action.label)).toEqual(['價格', '地址'])
+    expect(r.waits).toBe(true)
+  })
+
+  it('回完就轉真人要講', async () => {
+    const r = await previewScriptReply(WS, script({ id: 'r', type: 'reply', text: '幫你找真人', thenHandoff: true }))
+    expect(r).toMatchObject({ waits: false, handoff: true })
+  })
+
+  it('送模組＝回模組 id 與名字；模組被刪＝moduleMissing（⛔ 不畫成空白）', async () => {
+    flowMessages = [text('嗨')]
+    expect(await previewScriptReply(WS, script({ id: 'm', type: 'module', moduleId: 'pv-mod' })))
+      .toMatchObject({ moduleId: 'pv-mod', moduleName: '歡迎模組', lineMessages: [] })
+    flowMessages = null
+    expect(await previewScriptReply(WS, script({ id: 'm', type: 'module', moduleId: 'pv-gone' })))
+      .toMatchObject({ moduleId: 'pv-gone', moduleMissing: true })
+  })
+
+  it('加好友：沒有歡迎訊息、生日沒開＝什麼都沒有', async () => {
+    expect(await previewFollowWelcome(WS)).toEqual({ scriptName: null, reply: null, birthday: 'off', birthdayMessages: [] })
+  })
+
+  it('加好友：沒有歡迎訊息但生日開著＝生日卡自己送', async () => {
+    vi.mocked(getAiSettings).mockResolvedValueOnce({ birthday: { enabled: true, gift: '' } } as any)
+    const f = await previewFollowWelcome(WS)
+    expect(f.birthday).toBe('alone')
+    expect(f.birthdayMessages[0]).toMatchObject({ type: 'flex' })
+  })
+
+  it('加好友：歡迎訊息回一句字＋生日開著＝附在後面', async () => {
+    vi.mocked(loadActiveScripts).mockResolvedValue([followScript({ id: 'r', type: 'reply', text: '歡迎！', thenHandoff: false })])
+    vi.mocked(getAiSettings).mockResolvedValueOnce({ birthday: { enabled: true, gift: '' } } as any)
+    const f = await previewFollowWelcome(WS)
+    expect(f.scriptName).toBe('加好友歡迎')
+    expect((f.reply!.lineMessages[0] as any).text).toBe('歡迎！')
+    expect(f.birthday).toBe('appended')
+  })
+
+  it('加好友：歡迎訊息第一步是選項題＝生日附不上（同生日設定框那一支判斷）', async () => {
+    vi.mocked(loadActiveScripts).mockResolvedValue([followScript(
+      { id: 'q', type: 'quickReply', question: '想了解什麼？', expireMs: 60_000, options: [{ label: '價格', next: 'r' }] },
+      [{ id: 'r', type: 'reply', text: 'ok', thenHandoff: false }],
+    )])
+    vi.mocked(getAiSettings).mockResolvedValueOnce({ birthday: { enabled: true, gift: '' } } as any)
+    const f = await previewFollowWelcome(WS)
+    expect(f).toMatchObject({ birthday: 'blocked', birthdayBlock: { kind: 'quickReply', where: 'script' } })
+  })
+
+  it('加好友：歡迎送的模組被刪＝生日卡自己送（同 runFollowWelcomeScript）', async () => {
+    vi.mocked(loadActiveScripts).mockResolvedValue([followScript({ id: 'm', type: 'module', moduleId: 'pv-follow-gone' })])
+    vi.mocked(getAiSettings).mockResolvedValueOnce({ birthday: { enabled: true, gift: '' } } as any)
+    flowMessages = null
+    const f = await previewFollowWelcome(WS)
+    expect(f.reply?.moduleMissing).toBe(true)
+    expect(f.birthday).toBe('alone')
   })
 })

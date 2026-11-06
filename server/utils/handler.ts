@@ -86,7 +86,8 @@ import { tryConsumeMemberLineBindCode } from './member-line-bind'
 import { syncNotifyRecipientFollowState } from './line-notify-delivery'
 import { detectSensitiveTopic, DEFAULT_DND_REPLY, type AiConversationMeta, type HandoffReason } from '~~/shared/types/ai-knowledge'
 import { appendServiceHoursLine, isServiceHoursDnd, nextServiceStartMs, taipeiDate, taipeiMdwHm } from '~~/shared/time'
-import { HUMAN_REQUEST_TEXTS, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState } from '~~/shared/types/ai-script'
+import { HUMAN_REQUEST_TEXTS, scriptCooldownMs, scriptTriggerEvent, type ActiveScriptState, type ScriptDoc } from '~~/shared/types/ai-script'
+import type { FollowWelcomePreview, ScriptReplyPreview } from '~~/shared/types/playground-preview'
 import { pickScriptByKeyword, routeCandidates } from './script-match'
 import type { UserDoc as SharedUserDoc } from '~~/shared/types/firestore-docs'
 import { advanceScript, loadActiveScripts, previewScriptStart, startScript, type ScriptOffHours } from './ai-scripts'
@@ -3863,6 +3864,56 @@ export async function followWelcomeAppendBlock(workspaceId: string): Promise<Bir
   }
   const kind = appendBlockedKind(buildScriptReplyMessages(result.replyText, result.quickReplies, result.link), card)
   return kind ? { kind, where: 'script' } : null
+}
+
+/**
+ * 一條自動回應「客人會先收到什麼」（`D-173`：測試對話要試得到自動回應，⛔ 不再只講「會啟動哪一條」）。
+ * ⛔ 照真的送出那條路組：第一步＝`previewScriptStart`（`startScript` 走的同一條、但什麼都不寫），
+ *    送字＝`buildScriptReplyMessages`（`sendScriptReply` 用的那支），送模組＝回模組 id 讓畫面照模組頁的預覽畫。
+ * ⚠️ 沒照到的：下班時間併在前面那句（看當下幾點）、客人資料代進變數（試答沒有客人）。
+ * ⚠️ 只讀：那一個模組（看還在不在、叫什麼）。
+ */
+export async function previewScriptReply(workspaceId: string, script: ScriptDoc & { id: string }): Promise<ScriptReplyPreview> {
+  const result = previewScriptStart(script)
+  const base = { waits: !result.finished, handoff: result.finished && result.thenHandoff }
+  if (result.moduleId) {
+    const flow = await getFlowByModuleId(result.moduleId, workspaceId)
+    return flow
+      ? { ...base, lineMessages: [], moduleId: result.moduleId, moduleName: String(flow.name ?? '') }
+      : { ...base, lineMessages: [], moduleId: result.moduleId, moduleMissing: true }
+  }
+  return { ...base, lineMessages: buildScriptReplyMessages(result.replyText, result.quickReplies, result.link) as unknown as Record<string, unknown>[] }
+}
+
+/**
+ * 客人加好友那一刻會收到什麼（`D-173`）：照 `runFollowWelcomeScript` 那條路講。
+ * - 有加好友那一支自動回應 → 它的第一步（同 `previewScriptReply`）
+ * - 開了「加好友時問生日」→ 生日卡附在後面／附不上（`followWelcomeAppendBlock` 同一支判斷）／沒有歡迎訊息就自己送
+ * ⚠️ 留過生日的客人不會再收到生日卡；LINE 官方帳號後台自己的那則歡迎訊息我們看不到（畫面上講）。
+ */
+export async function previewFollowWelcome(workspaceId: string): Promise<FollowWelcomePreview> {
+  const [scripts, settings] = await Promise.all([
+    loadActiveScripts(workspaceId).catch(() => []),
+    getAiSettings(workspaceId).catch(() => null),
+  ])
+  const matched = scripts.find(s => scriptTriggerEvent(s) === 'follow') ?? null
+  const bdOn = settings?.birthday?.enabled === true
+  const card = bdOn ? [buildBirthdayAskMessage(settings!.birthday!.gift, taipeiDate())] as Record<string, unknown>[] : []
+  if (!matched) {
+    return { scriptName: null, reply: null, birthday: bdOn ? 'alone' : 'off', birthdayMessages: card }
+  }
+  const reply = await previewScriptReply(workspaceId, matched)
+  if (!bdOn) return { scriptName: String(matched.name ?? ''), reply, birthday: 'off', birthdayMessages: [] }
+  // 模組被刪＝歡迎訊息什麼都沒送、生日卡自己送（同 runFollowWelcomeScript）
+  if (reply.moduleMissing) return { scriptName: String(matched.name ?? ''), reply, birthday: 'alone', birthdayMessages: card }
+  const block = await followWelcomeAppendBlock(workspaceId).catch(() => null)
+  return {
+    scriptName: String(matched.name ?? ''),
+    reply,
+    birthday: block ? 'blocked' : 'appended',
+    ...(block ? { birthdayBlock: block } : {}),
+    birthdayMessages: card,
+  }
 }
 
 // HUMAN_REQUEST_TEXTS 已移到 shared/types/ai-script.ts(AI 層攔截、腳本逃生門、試跑面板共用同一份)

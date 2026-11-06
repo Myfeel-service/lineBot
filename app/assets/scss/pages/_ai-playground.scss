@@ -353,6 +353,99 @@
 
 .pg-composer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+
+  // Element 相鄰按鈕自帶 margin-left，間距交給 gap
+  .el-button + .el-button { margin-left: 0; }
 }
+
+// ─ 自動回應／加好友「客人會先收到什麼」（`D-173`）──────────────
+// ⚠️ 泡泡本身是 pre-wrap（AI 回答要保留換行）；裡面畫的是 LINE 預覽，要回到一般排版
+.pg-rp {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  white-space: normal;
+
+  /* 預覽元件本來是模組頁的側欄面板：寬 372px、白底、左邊線，而且窄螢幕整片收起（`_flow-preview.scss`）。
+     嵌在泡泡裡要退掉這些——⛔ 尤其「窄螢幕收起」：手機上看會只剩「客人會先收到：」後面什麼都沒有 */
+  .fmp {
+    display: flex;
+    width: 100%;
+    max-width: 340px;
+    padding: 0;
+    border-left: 0;
+    background: transparent;
+  }
+}
+
+.pg-rp__warn,
+.pg-follow__warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-color-warning-light-9);
+  color: var(--el-color-warning-dark-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pg-rp__note,
+.pg-follow__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
+}
+
+.pg-rp__qr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pg-rp__qr-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+// 快速回覆：LINE 上那一排圓角框（跟預覽元件的按鈕同一種綠框）
+.pg-rp__qr-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--el-color-primary-light-5);
+  border-radius: 999px;
+  background: var(--el-bg-color);
+  font-size: 12px;
+  color: var(--el-color-primary);
+}
+
+.pg-follow {
+  display: grid;
+  gap: 6px;
+  white-space: normal;
+
+  .pg-bubble { white-space: normal; }
+  .pg-script-name { margin: 0 0 4px; }
+}
+
+// 「（模擬：客人加你好友）」：跟對話日期分隔線同一種置中小字，⛔ 不是誰講的一句話
+.pg-follow__event {
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+// 生日卡借生日設定框那一套樣子（`.birthday__phone`＝LINE 聊天底色）：收在一張手機寬，⛔ 不撐滿整個泡泡
+.pg-follow__bday {
+  margin: 4px 0;
+  max-width: 320px;
+}
+
+.pg-follow__note { margin-top: 6px; }

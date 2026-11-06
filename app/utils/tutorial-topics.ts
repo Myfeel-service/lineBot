@@ -224,6 +224,17 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
     route: wid => `/admin/${wid}/conversations`,
     steps: [
       {
+        // `D-173`（John 哥 11-04「不管在哪一區換了服裝換了武器，我就是到測試區去練」）：測試對話獨立在側欄最上面，
+        // 地圖也從它講起（照側欄由上而下）。客服以下的角色沒有這一段（`playground.use`）
+        target: '[data-tour="nav-group-test"]',
+        title: '改了什麼，都先來這裡試',
+        description:
+          '在<strong>測試對話</strong>問一句，看 AI 或自動回應會怎麼回；也看得到客人加你好友時會收到什麼。'
+          + '<strong>這裡的回答不會送給客人</strong>。',
+        placement: 'right',
+        requires: 'playground.use',
+      },
+      {
         target: '[data-tour="nav-group-daily"]',
         // 短螢幕上整段比側欄看得到的範圍還高：太高就退去指這一段的小標
         // （2026-09-04 起這一段也有小標了，跟其他三段同一種退法）
@@ -252,9 +263,10 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         // 太高就退去指這一段的小標，說明講的還是整段
         targetTooTallFallback: '.nav-group[data-tour="nav-group-ai"] .nav-section-label',
         title: '教 AI 回答客人的一切',
+        // ⛔ 測試對話不在這一段了（`D-173` 搬到側欄最上面，上面第一步講）
         description:
           '先把商品、規則這些資料放進<strong>知識庫</strong>，AI 才有東西可以答；'
-          + '在<strong>測試對話</strong>可以先問問看它會怎麼回，<strong>那裡的回答不會送給客人</strong>。',
+          + '<strong>AI 表現</strong>看它答得好不好，<strong>AI 設定</strong>決定它怎麼說話。',
         placement: 'right',
       },
       {
@@ -429,8 +441,8 @@ export const TUTORIAL_TOPICS: TutorialTopic[] = [
         title: 'AI 講話的口吻與禁則',
         description:
           '這一段是<strong>給 AI 的指示</strong>：講話口吻、不能說什麼、特殊狀況怎麼處理。'
-          + '不知道怎麼寫就先按上面的<strong>範本</strong>（親切活潑／專業簡潔／溫暖體貼）再改。'
-          + '⚠️ 套範本會<strong>整段換掉</strong>你原本寫的。',
+          + '不知道怎麼寫就先在上面選<strong>像誰說話</strong>（例如隔壁店長、新聞主播），下面會示範它怎麼回客人。'
+          + '選了只換「說話的口氣」那一行；⚠️ 你自己寫、沒有那一行的，會先問過你才<strong>整段換掉</strong>。',
         placement: 'right',
       },
       // （原本這裡有一步「設定轉真人通知」，2026-09-27 `C-270` 那一區搬到「設定 → LINE 通知」，
