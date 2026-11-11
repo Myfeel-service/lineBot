@@ -181,13 +181,16 @@ export default defineNuxtConfig({
      * ⚠️ 三個都要設齊才會真的寄信（見 isEmailConfigured）：
      *   - EMAIL_FROM：寄件人（**必須是 SES 已驗證的網域／信箱**，否則 SES 會拒寄），
      *     可帶顯示名稱，例：`MYFEEL <noreply@yourdomain.com>`
-     *   - AWS_SES_REGION：SES 所在區域（例 ap-northeast-1）
+     *   - SES_REGION：SES 所在區域（正式＝ap-northeast-1，寄件身分 lineminime.com 只在東京驗證過、也只有東京開了正式寄送）
+     *     ⛔ 不能用 AWS_SES_REGION：Amplify 主控台擋掉 "AWS" 開頭的變數名，設不進去（舊名照收、本機 .env 用）
+     *     ⛔ 沒設就退回 AWS_REGION＝**主機所在的區域**——`A-22` 主機搬到俄亥俄（us-east-2）時會變成去俄亥俄寄，
+     *        那裡是沙盒、沒有任何寄件身分 ⇒ 每封都被退、畫面不報錯。所以正式站一定要設 SES_REGION。
      *   憑證由 Amplify 執行角色 / 環境自動解析（SDK 預設鏈），不放這裡。
      *   未設定 → 全部寄信變 no-op（只 log），金流／排程流程照常不受影響。
      */
     emailFrom: process.env.EMAIL_FROM ?? '',
     emailReplyTo: process.env.EMAIL_REPLY_TO ?? '',
-    awsSesRegion: process.env.AWS_SES_REGION ?? process.env.AWS_REGION ?? '',
+    awsSesRegion: process.env.SES_REGION || process.env.AWS_SES_REGION || process.env.AWS_REGION || '',
     // 超管成本頁讀 AWS 帳單用（唯讀 ce:GetCostAndUsage）。
     // ⛔ 環境變數不能用 AWS 開頭：Amplify 主控台整個擋掉 "AWS" 前綴（reserved prefix，
     //    存檔直接報錯），Lambda 又會自動蓋掉 AWS_ACCESS_KEY_ID 那三個保留名。

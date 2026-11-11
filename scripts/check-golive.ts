@@ -140,10 +140,10 @@ async function checkSite() {
 function checkEmail() {
   const from = String(process.env.EMAIL_FROM || '').trim()
   if (!from) return report(FAIL, '寄信設定', '沒設 EMAIL_FROM → 收據、扣款失敗、續扣提醒一封都寄不出去，而且金流照常、畫面不會報錯')
-  const region = String(process.env.AWS_SES_REGION || process.env.AWS_REGION || '').trim()
+  const region = String(process.env.SES_REGION || process.env.AWS_SES_REGION || process.env.AWS_REGION || '').trim()
   report(PASS, `寄信設定（寄件人 ${from}）`, region
     ? `區域 ${region}。真的寄不寄得出去，看後台「異常總覽 → 帳務信」或按「寄一封測試信給我」`
-    : '這份設定檔沒寫區域；線上主機會自帶 AWS_REGION（程式有退路）。真的寄不寄得出去，看後台「異常總覽 → 帳務信」')
+    : '這份設定檔沒寫區域；線上主機要設 SES_REGION＝ap-northeast-1（沒設會退回主機所在區域，主機不在東京就寄不出去）。真的寄不寄得出去，看後台「異常總覽 → 帳務信」')
 }
 
 console.log('上線前健檢（唯讀：不動錢、不開發票、不發訊息）')
