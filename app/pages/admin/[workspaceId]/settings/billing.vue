@@ -4,7 +4,7 @@
       <AdminSoloPageHeading
         field-label="設定"
         title="訂閱與付款"
-        caption="查看目前方案與付款紀錄,或升級／續訂方案(付款由統一金流 PAYUNi 處理)。"
+        caption="查看目前方案與付款紀錄,或升級／續訂方案(信用卡付款,由統一金流 PAYUNi 處理)。"
       />
       <div class="flex gap-2 admin-header-actions">
         <el-button :loading="loading" @click="reloadAll">重新載入</el-button>
