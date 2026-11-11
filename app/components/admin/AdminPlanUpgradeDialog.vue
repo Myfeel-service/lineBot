@@ -123,7 +123,10 @@
           <div><dt>席次</dt><dd>{{ p.seats == null ? '不限' : `${p.seats} 席` }}</dd></div>
           <div><dt>推播</dt><dd :class="{ 'pu-no': p.broadcast === 'none' }">{{ broadcastCell(p) }}</dd></div>
         </dl>
-        <div class="pu-card__act">
+        <!-- 沒有東西可按就不留這一列：表格裡那一格會寫「免費」「使用中」是因為空格看起來像壞掉，
+             但卡片不用填滿格子——免費那張卡會變成「免費」出現兩次（月費一次、按鈕位置一次），
+             而「使用中」跟上面那顆「目前」標籤講的是同一件事。 -->
+        <div v-if="canCheckout(p) || p.custom" class="pu-card__act">
           <AdminPlanActionCell
             :can-checkout="canCheckout(p)"
             :action="planAction(p)"

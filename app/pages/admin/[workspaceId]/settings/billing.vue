@@ -126,7 +126,7 @@
                 </el-tooltip>
               </p>
               <p class="text-xs text-muted">
-                <!-- `C-477`：「怎麼解決」那半句跟三個匯入畫面、後端擋下來那句同一組詞 -->
+                <!-- `C-478`：「怎麼解決」那半句跟三個匯入畫面、後端擋下來那句同一組詞 -->
                 滿了之後<strong>加不進新的知識</strong>，AI 照常用已有的回答；{{ knowledgeFullRemedy() }}就能再加。
               </p>
             </div>

@@ -76,7 +76,7 @@
           <div v-if="r.quotaShort" class="kb-site-warnings">
             <!-- ⚠️ 不能叫他「一批裡再放一次」：內容一模一樣的在一次好幾份裡會被跳過。
                  `C-319`：補齊的路改講資料頁那顆「上傳新版」（以前叫他單獨再放一次、選擇換掉原本那一份） -->
-            <!-- `C-477`：「怎麼解決」那半句跟加入視窗、網站草稿、後端擋下來那句同一組詞 -->
+            <!-- `C-478`：「怎麼解決」那半句跟加入視窗、網站草稿、後端擋下來那句同一組詞 -->
             ⚠︎ AI 知識量不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（{{ knowledgeFullRemedy() }}後，在那一份按「上傳新版」再傳一次就能補齊）
           </div>
           <div v-if="r.warningTexts.length" class="kb-site-warnings">

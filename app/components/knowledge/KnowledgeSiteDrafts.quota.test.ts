@@ -29,7 +29,7 @@ describe('等你看過：空間講法', () => {
   })
 
   it('② 收不下時指向「知識庫裡用不到的知識」與升級，⛔ 不叫他刪這一區的', () => {
-    // `C-477`（2026-11-11）：那半句搬到 shared/billing/usage-units.ts，這一頁要的是**講明知識庫裡的**
+    // `C-478`（2026-11-11）：那半句搬到 shared/billing/usage-units.ts，這一頁要的是**講明知識庫裡的**
     // 那一版（`'library'`）——旁邊就擺著可以刪的草稿，而草稿還沒佔額度、刪了空不出位子。
     // ⛔ 別改回比字面：字現在只有一個出處，比字面會讓這支測試擋住以後的用字修正。
     expect(TEMPLATE).toMatch(/knowledgeRemedyDelete\('library'\)/)

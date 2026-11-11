@@ -127,7 +127,7 @@
            `D-131`④（2026-10-19）：名稱從「知識空間」改成跟官網、條款、方案頁同一個——「AI 知識量」，單位「條」 -->
       <p v-if="quota && quota.limit != null && !addBlock" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
         <template v-if="roomLeft === 0">
-          <!-- `C-477`：開頭那一格數字與「怎麼解決」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞 -->
+          <!-- `C-478`：開頭那一格數字與「怎麼解決」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞 -->
           {{ knowledgeFullLead(quota.used, quota.limit) }}：新的資料整理完會放不進去，先{{ knowledgeRemedyDelete() }}<template v-if="billingLink">，或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>。
         </template>
         <template v-else>

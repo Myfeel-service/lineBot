@@ -609,7 +609,7 @@ export function planLimitMessage(
   limit: number,
   planName: string,
   unit = '',
-  // `C-477`：「怎麼解決」那半句可以換成該項目自己的說法——知識量要跟三個匯入畫面講同一組詞
+  // `C-478`：「怎麼解決」那半句可以換成該項目自己的說法——知識量要跟三個匯入畫面講同一組詞
   // （`knowledgeFullRemedy()`）。⛔ 呼叫端別自己造句，從 shared/billing/usage-units.ts 拿。
   remedy = '刪掉不需要的，或升級方案以取得更多額度',
 ): string {

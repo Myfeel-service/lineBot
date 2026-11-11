@@ -27,7 +27,7 @@
       <p v-if="roomLeft !== null && roomLeft > 0 && total > roomLeft" class="kb-drafts__warn">
         AI 知識量還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——{{ knowledgeRemedyDelete('library') }}<template v-if="billingLink">、或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>就收得下。
       </p>
-      <!-- `C-477`：開頭那一格數字與「刪掉⋯」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞。
+      <!-- `C-478`：開頭那一格數字與「刪掉⋯」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞。
            這裡用 `'library'` 版（講明「知識庫裡的」）——這一頁旁邊就擺著可以刪的草稿，而草稿還沒佔額度、
            刪了空不出位子（`C-308`⑨ 踩過）。`?? 0` 永遠用不到：roomLeft === 0 就代表 quota 讀得到。 -->
       <p v-else-if="roomLeft === 0 && total" class="kb-drafts__warn">

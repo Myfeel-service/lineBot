@@ -161,7 +161,7 @@ export async function assertKnowledgeChunkQuota(
 
   throw createError({
     statusCode: 403,
-    // `C-477`：「怎麼解決」那半句跟三個匯入畫面同一組詞（knowledgeFullRemedy），⛔ 別在這裡另外造句
+    // `C-478`：「怎麼解決」那半句跟三個匯入畫面同一組詞（knowledgeFullRemedy），⛔ 別在這裡另外造句
     statusMessage: adding === 1
       ? planLimitMessage('AI 知識量', status.used, status.limit, status.planName, '條', knowledgeFullRemedy())
       : `AI 知識量不夠了：目前 ${status.used} 條，這批要再加 ${adding} 條，`
