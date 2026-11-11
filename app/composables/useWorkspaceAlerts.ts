@@ -14,6 +14,7 @@ import { AlarmClock, Bell, ChatDotRound, CreditCard, Guide, Link, MagicStick, Od
 import { ALERT_LABELS, ALERT_SEVERITY, SYSTEM_OWNED_ALERTS, severityOf } from '~~/shared/types/alerts'
 import { AI_CALL_CEILING_REMEDY } from '~~/shared/billing/call-ceiling'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { knowledgeFullRemedy, knowledgeRemedyDelete } from '~~/shared/billing/usage-units'
 import type { AlertSeverity, WorkspaceAlertId, WorkspaceAlertItem, WorkspaceAlertScope, WorkspaceAlertState, WorkspaceAlertsResponse } from '~~/shared/types/alerts'
 import type { AlertFixOpId } from '~~/shared/types/alert-fix'
 import type { Capability } from '~~/shared/permissions'
@@ -335,16 +336,16 @@ const ALERTS: AlertDefinition[] = [
     cta: '去看用量與方案',
     requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
-    anchor: { selector: '[data-tour="bill-knowledge"]', note: '這一區是 AI 知識量；到知識庫刪掉不需要的，或按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+    anchor: { selector: '[data-tour="bill-knowledge"]', note: `這一區是 AI 知識量；${knowledgeRemedyDelete('library')}，或按這張卡右上角的「升級 / 續訂」換更大的方案。` },
   },
   {
     id: 'knowledgeQuotaRunningOut',
     icon: Reading,
-    impact: '滿了之後新的知識就加不進去。趁還沒滿，刪掉不需要的或升級方案。',
+    impact: `滿了之後新的知識就加不進去。趁還沒滿，${knowledgeFullRemedy()}。`,
     cta: '去看用量與方案',
     requires: 'billing.manage',
     route: wid => `/admin/${wid}/settings/billing`,
-    anchor: { selector: '[data-tour="bill-knowledge"]', note: '這一區是 AI 知識量；到知識庫刪掉不需要的，或按這張卡右上角的「升級 / 續訂」換更大的方案。' },
+    anchor: { selector: '[data-tour="bill-knowledge"]', note: `這一區是 AI 知識量；${knowledgeRemedyDelete('library')}，或按這張卡右上角的「升級 / 續訂」換更大的方案。` },
   },
   {
     // `D-146`：LINE 官方帳號的訊息則數（不是 AI 回覆則數）。後果那句跟登入後第一頁那一條、每一頁紅條同一句（shared/line-quota.ts）；

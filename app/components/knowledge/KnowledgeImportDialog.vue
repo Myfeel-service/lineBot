@@ -127,7 +127,8 @@
            `D-131`④（2026-10-19）：名稱從「知識空間」改成跟官網、條款、方案頁同一個——「AI 知識量」，單位「條」 -->
       <p v-if="quota && quota.limit != null && !addBlock" class="kb-quota-line" :class="{ 'is-full': roomLeft === 0 }">
         <template v-if="roomLeft === 0">
-          AI 知識量滿了（{{ quota.used }}／{{ quota.limit }} 條）：新的資料整理完會放不進去，先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+          <!-- `C-477`：開頭那一格數字與「怎麼解決」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞 -->
+          {{ knowledgeFullLead(quota.used, quota.limit) }}：新的資料整理完會放不進去，先{{ knowledgeRemedyDelete() }}<template v-if="billingLink">，或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>。
         </template>
         <template v-else>
           AI 知識量：已用 {{ quota.used }}／{{ quota.limit }} 條，還能放 {{ roomLeft }} 條
@@ -788,10 +789,10 @@
         <!-- 放不下時收到滿為止（`C-296`）：按之前就講會收幾條、幾條不收，按鈕跟著改口 -->
         <p v-if="overQuotaBy > 0" class="kb-preview-summary__warn">
           <template v-if="fitChunkCount > 0">
-            AI 知識量只剩 {{ roomLeft }} 條：這次會先收前 {{ fitChunkCount }} 條，其餘 {{ overQuotaBy }} 條先不收——刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就放得下。
+            AI 知識量只剩 {{ roomLeft }} 條：這次會先收前 {{ fitChunkCount }} 條，其餘 {{ overQuotaBy }} 條先不收——{{ knowledgeRemedyDelete() }}<template v-if="billingLink">、或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>就放得下。
           </template>
           <template v-else>
-            AI 知識量滿了，這 {{ overQuotaBy }} 條放不進去——先刪掉用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>。
+            AI 知識量滿了，這 {{ overQuotaBy }} 條放不進去——先{{ knowledgeRemedyDelete() }}<template v-if="billingLink">，或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>。
           </template>
         </p>
         <div class="kb-preview-summary__actions">
@@ -1205,7 +1206,7 @@
       <!-- 沒收進去的要說得出來（`C-296` 收到滿為止）：只報收了幾條，等於讓人以為整份都進去了 -->
       <!-- 補齊的路照來源講：試算表每小時自己同步，空間一空出來就會補上，不用他動手（叫他「再傳一次」是錯的） -->
       <p v-if="quotaSkipped > 0" class="kb-quota-line is-full">
-        還有 <strong>{{ quotaSkipped }}</strong> 條因為 AI 知識量不夠沒收進去。刪掉用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>之後，{{ quotaRefillHint }}
+        還有 <strong>{{ quotaSkipped }}</strong> 條因為 AI 知識量不夠沒收進去。{{ knowledgeRemedyDelete() }}<template v-if="billingLink">、或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>之後，{{ quotaRefillHint }}
       </p>
 
       <!--
@@ -1321,6 +1322,7 @@ import { ElMessageBox } from 'element-plus'
 import { Document as IconFile, EditPen as IconPen, Grid as IconSheet, Link as IconWeb, QuestionFilled } from '@element-plus/icons-vue'
 import { canReplaceSource, detectImportKind, detectSheetAmongUrls, detectUrlList, GSHEET_PATTERN, HTTP_URL_PATTERN, sheetLinkOf } from '~~/shared/knowledge-import-detect'
 import { GSHEET_PROBE_READABLE } from '~~/shared/gsheet-probe-status'
+import { KNOWLEDGE_REMEDY_UPGRADE, knowledgeFullLead, knowledgeFullRemedy, knowledgeRemedyDelete } from '~~/shared/billing/usage-units'
 import type { DriveShareFailure } from '~~/shared/google-drive-share'
 import { PRODUCT_SHEET, useGoogleDrivePicker, type PickedSheet, type PickOutcome } from '~/composables/useGoogleDrivePicker'
 import {
@@ -3025,10 +3027,11 @@ const addBlock = computed<{ kind: 'budget' | 'full', title: string, body: string
     kind: 'full',
     title: `AI 知識量滿了（${q.used}／${limit} 條）`,
     body: upgrade
-      ? '先刪掉用不到的知識，或升級方案，才能再加新的資料。'
+      ? `先${knowledgeFullRemedy()}，才能再加新的資料。`
       : biggerPlan
-        ? '先刪掉用不到的知識，或請負責人升級方案，才能再加新的資料。'
-        : '先刪掉用不到的知識，才能再加新的資料。',
+        // 看得到方案、但自己不能改（`G-103`）：動作一樣，只是要找負責人
+        ? `先${knowledgeRemedyDelete()}，或請負責人${KNOWLEDGE_REMEDY_UPGRADE}，才能再加新的資料。`
+        : `先${knowledgeRemedyDelete()}，才能再加新的資料。`,
     upgrade,
   }
 })
@@ -4035,7 +4038,7 @@ async function runImport() {
   if (!selected.length) {
     return showToast(
       overQuotaBy.value > 0
-        ? 'AI 知識量已經滿了：先刪掉用不到的知識，或升級方案'
+        ? `AI 知識量已經滿了：先${knowledgeFullRemedy()}`
         : includedCount.value > 0 ? '新版的每一條都跟你改過、要帶過去的同名——原本那一份不用更新' : '請至少選一條',
       'error',
     )

@@ -582,7 +582,7 @@
             表格上有 {{ selectedSource.quotaSkippedCount }} 列還沒收進知識庫
           </template>
           <div>
-            AI 知識量已經用滿，這幾列先沒有新增。刪掉用不到的知識或升級方案之後，{{ gsheetRefillWhen }}，不用重新匯入。
+            AI 知識量已經用滿，這幾列先沒有新增。{{ knowledgeFullRemedy() }}之後，{{ gsheetRefillWhen }}，不用重新匯入。
           </div>
         </el-alert>
 
@@ -1031,7 +1031,7 @@
       -->
       <p v-if="diffRoom" class="kb-quota-line" :class="{ 'is-full': diffRoom.over > 0 }">
         <template v-if="diffRoom.over > 0">
-          AI 知識量只剩 {{ diffRoom.room }} 條：勾了新增的 {{ diffRoom.adds }} 條裡，{{ diffRoom.over }} 條這次放不下、先不加。刪掉用不到的知識或升級方案就放得下。
+          AI 知識量只剩 {{ diffRoom.room }} 條：勾了新增的 {{ diffRoom.adds }} 條裡，{{ diffRoom.over }} 條這次放不下、先不加。{{ knowledgeFullRemedy() }}就放得下。
         </template>
         <template v-else>AI 知識量還能放 {{ diffRoom.room }} 條。</template>
       </p>
@@ -1602,6 +1602,7 @@ import { PREVIEW_JOB_CANCELLED, PREVIEW_JOB_DEADLINE } from '~/composables/usePr
 import { formatFileSize } from '~/utils/knowledge-upload'
 import { apiErrorStatus, apiErrorText, isRetryableError } from '~/utils/api-error-text'
 import { KNOWLEDGE_FILE_ACCEPT } from '~~/shared/knowledge-file-types'
+import { knowledgeFullRemedy } from '~~/shared/billing/usage-units'
 import type { AddOneCreated } from '~/utils/kb-add-one'
 import { exampleQuestionsFromChunks, type AskExamples } from '~/utils/kb-ask-examples'
 import { normalizeProductName } from '~~/shared/product-name-similarity'
@@ -2293,7 +2294,7 @@ const outdatedCopy = computed(() => {
     case 'shrink': return { title: '這次抓到的網頁少了一大半', body: '可能是網頁壞了或暫時抓不到，為了不刪錯知識先不動。網頁恢復後會自己更新；確定是網頁改版了，按上方「立即更新」。' }
     case 'unclaimed': return { title: `網頁改了 ${n} 行，系統對不到是哪條知識`, body: open }
     // ⛔ 不講「下一次更新會補上」：網頁沒再改的話排程不會再試，要他按一下才補得上
-    case 'quota': return { title: `網頁多了新的內容，還有 ${n} 條沒加進來`, body: 'AI 知識量滿了。刪掉用不到的知識或升級方案後，按上方「立即更新」就會補上。' }
+    case 'quota': return { title: `網頁多了新的內容，還有 ${n} 條沒加進來`, body: `AI 知識量滿了。${knowledgeFullRemedy()}後，按上方「立即更新」就會補上。` }
     case 'disabled': return { title: `網頁改了，動到 ${n} 條停用中的知識`, body: `停用中的不會自動換。${open}` }
     case 'ask': return { title: `網頁改了 ${n} 行`, body: `這份設定成每次都先問你。${open}` }
     default: return { title: '網頁內容有變', body: open }
@@ -3255,7 +3256,7 @@ const todoItems = computed<TodoItem[]>(() => {
       id: 'quotaSkippedSheets',
       tone: 'warning',
       title: `${quotaSkippedSheets.value.length} 份試算表有 ${rows} 列因為 AI 知識量滿了還沒收`,
-      why: '表格上新加的那幾列 AI 還答不出來。刪掉用不到的知識或升級方案之後，同步時就會補上。',
+      why: `表格上新加的那幾列 AI 還答不出來。${knowledgeFullRemedy()}之後，同步時就會補上。`,
       cta: '查看',
       action: singleOrList(quotaSkippedSheets.value, 'source', 'quotaSkippedSheets'),
     })

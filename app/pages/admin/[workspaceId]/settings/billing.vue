@@ -126,7 +126,8 @@
                 </el-tooltip>
               </p>
               <p class="text-xs text-muted">
-                滿了之後<strong>加不進新的知識</strong>，AI 照常用已有的回答；刪掉不需要的或升級方案就能再加。
+                <!-- `C-477`：「怎麼解決」那半句跟三個匯入畫面、後端擋下來那句同一組詞 -->
+                滿了之後<strong>加不進新的知識</strong>，AI 照常用已有的回答；{{ knowledgeFullRemedy() }}就能再加。
               </p>
             </div>
 
@@ -520,7 +521,7 @@
 <script setup lang="ts">
 import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
-import { KNOWLEDGE_UNIT_TIP, REPLY_UNIT_TIP } from '~~/shared/billing/usage-units'
+import { KNOWLEDGE_UNIT_TIP, REPLY_UNIT_TIP, knowledgeFullRemedy } from '~~/shared/billing/usage-units'
 import { deriveUsageState } from '~~/shared/billing/plan-state'
 import { aiCallPausedText } from '~/utils/quota-banner-text'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'

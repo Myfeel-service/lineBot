@@ -603,9 +603,18 @@ export function planAllowsScripting(plan: BillingPlan): boolean {
  * 撞到上限時給客人看的話。**要講三件事**：現在幾個、上限幾個、怎麼解決。
  * 只寫「已達上限」的話客人只能來問客服（`C-94` 那次的教訓：沒說清楚就等於沒說）。
  */
-export function planLimitMessage(what: string, used: number, limit: number, planName: string, unit = ''): string {
+export function planLimitMessage(
+  what: string,
+  used: number,
+  limit: number,
+  planName: string,
+  unit = '',
+  // `C-477`：「怎麼解決」那半句可以換成該項目自己的說法——知識量要跟三個匯入畫面講同一組詞
+  // （`knowledgeFullRemedy()`）。⛔ 呼叫端別自己造句，從 shared/billing/usage-units.ts 拿。
+  remedy = '刪掉不需要的，或升級方案以取得更多額度',
+): string {
   // 量詞要帶上（「50／50 條」）：知識量一次加一條撞上限時，跟一批撞上限那句（「目前 50 條…上限 50 條」）講同一種話
-  return `${what}已達${planName}方案上限（${used}／${limit}${unit ? ` ${unit}` : ''}）。刪掉不需要的，或升級方案以取得更多額度。`
+  return `${what}已達${planName}方案上限（${used}／${limit}${unit ? ` ${unit}` : ''}）。${remedy}。`
 }
 
 // dev 自我檢查：BILLING_PLAN_ORDER 必須剛好涵蓋 BILLING_PLANS 的所有 key。

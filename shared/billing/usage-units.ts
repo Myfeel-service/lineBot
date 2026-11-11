@@ -72,3 +72,36 @@ export const CALL_UNIT_TIP = '1 次＝AI 被叫起來一次：客人每來一則
 
 /** 額度／計費的期間單位。⛔ 是訂閱錨定週期，不是日曆月（見 shared/time.ts）。 */
 export const QUOTA_PERIOD_LABEL = '本期'
+
+// ── 「AI 知識量放滿了」的共用零件（`C-477`，2026-11-11）──────────────────────────
+//
+// ⛔ **整句不要共用**：加入視窗門口要講「新的資料整理完會放不進去」、一次傳好幾份要講「收了前 N 條、
+//    還有 M 條沒收」、網站草稿要講「這裡的還沒算進去，刪掉它們空不出位子」——那些只有那一頁成立，
+//    併成一句就是把最有用的半句換成廢話。
+// 共用的是**零件**：開頭那一格數字、以及「怎麼解決」那半句。以前四處各寫各的，同一件事講成
+// 「刪掉用不到的知識」「刪掉知識庫裡用不到的知識」「刪掉不需要的」三種，客戶讀起來像三個人在講話。
+
+/** 「AI 知識量滿了（已用／上限 條）」——前端三處與後端擋下來那句同一種寫法。 */
+export function knowledgeFullLead(used: number, limit: number): string {
+  return `AI 知識量滿了（${used}／${limit} 條）`
+}
+
+/**
+ * 「刪掉⋯」那半句。
+ *
+ * `'library'` 用在**畫面上同時擺著可以刪的東西**的地方（網站草稿、一次傳好幾份的清單）：那裡的「刪掉」
+ * 刪的是還沒採用的草稿，而草稿根本還沒佔額度、刪了空不出位子，所以非講明「知識庫裡的」不可
+ * （`C-308`⑨ 踩過：叫他刪，他刪了旁邊那些，回來還是放不下）。
+ * `'plain'` 用在畫面上沒有別的東西可刪的地方（加入視窗門口、後端擋下來那句），講短的就好。
+ */
+export function knowledgeRemedyDelete(where: 'plain' | 'library' = 'plain'): string {
+  return where === 'library' ? '刪掉知識庫裡用不到的知識' : '刪掉用不到的知識'
+}
+
+/** 「升級方案」：有連結可放的地方把這幾個字包進 `<NuxtLink>`，沒有的地方直接接在後面。 */
+export const KNOWLEDGE_REMEDY_UPGRADE = '升級方案'
+
+/** 沒有連結可放時的完整一句（後端擋下來那句、純文字提示用）。 */
+export function knowledgeFullRemedy(where: 'plain' | 'library' = 'plain'): string {
+  return `${knowledgeRemedyDelete(where)}，或${KNOWLEDGE_REMEDY_UPGRADE}`
+}

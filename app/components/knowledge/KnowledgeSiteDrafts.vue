@@ -25,10 +25,13 @@
            看起來放得下，按下去才說只收 25 張；收不下時叫他「刪掉用不到的卡」，但旁邊的「刪掉」刪的是這裡的，
            這裡的本來就沒佔空間，刪了也空不出位子。要刪的是知識庫裡**已經上線**、用不到的。 -->
       <p v-if="roomLeft !== null && roomLeft > 0 && total > roomLeft" class="kb-drafts__warn">
-        AI 知識量還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——刪掉知識庫裡用不到的知識<template v-if="billingLink">、或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>就收得下。
+        AI 知識量還能放 {{ roomLeft }} 條：全收的話先收前 {{ roomLeft }} 條，其餘 {{ total - roomLeft }} 條先留在這裡——{{ knowledgeRemedyDelete('library') }}<template v-if="billingLink">、或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>就收得下。
       </p>
+      <!-- `C-477`：開頭那一格數字與「刪掉⋯」那半句跟另外兩個匯入畫面、後端擋下來那句同一組詞。
+           這裡用 `'library'` 版（講明「知識庫裡的」）——這一頁旁邊就擺著可以刪的草稿，而草稿還沒佔額度、
+           刪了空不出位子（`C-308`⑨ 踩過）。`?? 0` 永遠用不到：roomLeft === 0 就代表 quota 讀得到。 -->
       <p v-else-if="roomLeft === 0 && total" class="kb-drafts__warn">
-        AI 知識量滿了（{{ quota?.used }}／{{ quota?.limit }} 條），這裡的先採用不了：刪掉知識庫裡用不到的知識<template v-if="billingLink">，或<NuxtLink :to="billingLink">升級方案</NuxtLink></template>，就能採用（這裡的還沒算進去，刪掉它們空不出位子）。
+        {{ knowledgeFullLead(quota?.used ?? 0, quota?.limit ?? 0) }}，這裡的先採用不了：{{ knowledgeRemedyDelete('library') }}<template v-if="billingLink">，或<NuxtLink :to="billingLink">{{ KNOWLEDGE_REMEDY_UPGRADE }}</NuxtLink></template>，就能採用（這裡的還沒算進去，刪掉它們空不出位子）。
       </p>
       <p v-if="stillWorking" class="kb-drafts__working">
         <span class="kb-drafts__spin" aria-hidden="true" />
@@ -104,6 +107,8 @@
  * 整理還沒做完就由這裡往前推（`POST …/drafts/advance`，一步最多 2 頁）——
  * 排程每 10 分鐘也會補推，但他人就在這一頁時不該讓他等 10 分鐘。
  */
+import { KNOWLEDGE_REMEDY_UPGRADE, knowledgeFullLead, knowledgeRemedyDelete } from '~~/shared/billing/usage-units'
+
 const props = defineProps<{ canEdit: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 

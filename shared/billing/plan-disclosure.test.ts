@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { KNOWLEDGE_UNIT_SHORT, KNOWLEDGE_UNIT_TIP, REPLY_UNIT_SHORT, REPLY_UNIT_TIP } from './usage-units'
+import { KNOWLEDGE_UNIT_SHORT, KNOWLEDGE_UNIT_TIP, REPLY_UNIT_SHORT, REPLY_UNIT_TIP, knowledgeFullLead, knowledgeFullRemedy, knowledgeRemedyDelete } from './usage-units'
 
 const ROOT = join(__dirname, '..', '..')
 const src = (p: string) => readFileSync(join(ROOT, p), 'utf8')
@@ -87,11 +87,54 @@ describe('「AI 知識量的一條是什麼」買之前三處同一句（C-476�
     expect(src('app/components/admin/AdminPlanUpgradeDialog.vue')).toContain('{{ KNOWLEDGE_UNIT_SHORT }}')
   })
 
-  it('⛔ 條款不再出現「知識卡」——對客戶一律只講「條」', () => {
+  it('⛔ 條款不再出現「知識卡」——對客戶一律只講「條」（C-476）', () => {
     // 比的是**客戶看得到的字**，所以先把 HTML 註解拿掉：註解裡講「原本寫『知識卡』」是必要的沿革，
     // 不該讓守門員紅（⛔ 別反過來把註解裡的字改掉來遷就測試，那會讓後人不知道為什麼改）。
     const terms = src('app/pages/terms.vue').replace(/<!--[\s\S]*?-->/g, '')
     expect(terms).not.toContain('知識卡')
     expect(terms).toContain('一條就是 AI 記住的一件事')
+  })
+})
+
+/**
+ * 「AI 知識量放滿了」怎麼解決，四處講同一組詞（`C-477`，2026-11-11）。
+ *
+ * 改之前同一件事有三種說法：加入視窗與一次傳好幾份講「刪掉用不到的知識」、網站草稿講
+ * 「刪掉知識庫裡用不到的知識」、後端擋下來那句講「刪掉不需要的」。⛔ 整句不共用是刻意的
+ * （每一頁都有只有自己成立的半句），共用的是**零件**——這組測試守的就是「零件只有一個出處」。
+ */
+describe('「AI 知識量放滿了」的零件只有一個出處（C-477）', () => {
+  const USERS = [
+    'app/components/knowledge/KnowledgeImportDialog.vue',
+    'app/components/knowledge/KnowledgeFileBatch.vue',
+    'app/components/knowledge/KnowledgeSiteDrafts.vue',
+    'app/pages/admin/[workspaceId]/knowledge/sources/index.vue',
+    'app/pages/admin/[workspaceId]/settings/billing.vue',
+    'app/composables/useWorkspaceAlerts.ts',
+    'server/utils/ai-knowledge-quota.ts',
+  ]
+
+  it('每一處都從 usage-units 拿字', () => {
+    for (const f of USERS) {
+      expect(src(f), f).toMatch(/knowledgeFullRemedy|knowledgeRemedyDelete|knowledgeFullLead/)
+    }
+  })
+
+  it('⛔ 沒有任何一處把那半句寫死（寫死就是下次漂開的起點）', () => {
+    for (const f of USERS) {
+      expect(src(f), f).not.toContain('刪掉用不到的知識')
+      expect(src(f), f).not.toContain('刪掉知識庫裡用不到的知識')
+    }
+    // 唯一的出處
+    const units = src('shared/billing/usage-units.ts')
+    expect(units).toContain('刪掉用不到的知識')
+    expect(units).toContain('刪掉知識庫裡用不到的知識')
+  })
+
+  it('兩種「刪掉」分得開：旁邊擺著草稿的畫面要講明是刪知識庫裡的（C-308⑨ 踩過）', () => {
+    expect(knowledgeRemedyDelete()).toBe('刪掉用不到的知識')
+    expect(knowledgeRemedyDelete('library')).toBe('刪掉知識庫裡用不到的知識')
+    expect(knowledgeFullRemedy()).toContain('或升級方案')
+    expect(knowledgeFullLead(50, 50)).toBe('AI 知識量滿了（50／50 條）')
   })
 })

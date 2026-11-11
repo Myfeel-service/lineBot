@@ -76,7 +76,8 @@
           <div v-if="r.quotaShort" class="kb-site-warnings">
             <!-- ⚠️ 不能叫他「一批裡再放一次」：內容一模一樣的在一次好幾份裡會被跳過。
                  `C-319`：補齊的路改講資料頁那顆「上傳新版」（以前叫他單獨再放一次、選擇換掉原本那一份） -->
-            ⚠︎ AI 知識量不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（刪掉用不到的知識或升級方案後，在那一份按「上傳新版」再傳一次就能補齊）
+            <!-- `C-477`：「怎麼解決」那半句跟加入視窗、網站草稿、後端擋下來那句同一組詞 -->
+            ⚠︎ AI 知識量不夠：收了前 {{ r.cards }} 條，還有 {{ r.quotaShort }} 條沒收進去（{{ knowledgeFullRemedy() }}後，在那一份按「上傳新版」再傳一次就能補齊）
           </div>
           <div v-if="r.warningTexts.length" class="kb-site-warnings">
             <div v-for="(w, i) in r.warningTexts" :key="i">⚠︎ {{ w }}</div>
@@ -148,6 +149,7 @@ import {
   writeMayHaveLanded,
 } from '~~/shared/knowledge-import-group'
 import { KNOWLEDGE_FILE_KIND_LABEL, knowledgeFileKind } from '~~/shared/knowledge-file-types'
+import { knowledgeFullLead, knowledgeFullRemedy } from '~~/shared/billing/usage-units'
 import { PREVIEW_JOB_DEADLINE } from '~/composables/usePreviewJobPoll'
 import { batchKindLabel, batchRejectReasons, type FileBatchSnapshot, type FileBatchSummary } from '~/utils/kb-file-batch'
 import { formatFileSize } from '~/utils/knowledge-upload'
@@ -160,7 +162,7 @@ const PREPARED_TTL_MS = 50 * 60 * 1000
  * ⛔ 以前寫「刪掉⋯後，可以再按一次重試」：空間滿了重試鈕是鎖住的，而要刪知識就得關掉這個視窗——
  *    一關，跑過的這一批就清空了（2026-10-12 文字審視）。照做得到的講：騰出空間後把這份再放一次。
  */
-const ROOM_FULL_MSG = 'AI 知識量滿了，這份沒收進去（刪掉用不到的知識或升級方案之後，把這份再放一次）'
+const ROOM_FULL_MSG = `AI 知識量滿了，這份沒收進去（${knowledgeFullRemedy()}之後，把這份再放一次）`
 /** 匯入遇到閘道逾時後，等多久再用同一包重送（見 bulkCreate） */
 const BULK_RETRY_WAIT_MS = 3000
 
@@ -353,7 +355,7 @@ const hasUnsure = computed(() => rows.value.some(r => r.unsure && r.status !== '
 const UNSURE_MSG = '連線逾時，不確定這份加進去了沒有；按「重試」會跟伺服器確認（不會重複建立）'
 const quotaLine = computed(() => {
   if (busy.value || roomBefore.value == null || !pendingCount.value) return ''
-  if (roomFull.value) return `AI 知識量滿了（${props.quota!.used}／${props.quota!.limit} 條）：先刪掉用不到的知識或升級方案，再回來加入`
+  if (roomFull.value) return `${knowledgeFullLead(props.quota!.used, props.quota!.limit!)}：先${knowledgeFullRemedy()}，再回來加入`
   return `AI 知識量：還能放 ${roomBefore.value} 條；放不下的那一份會收到滿為止`
 })
 
@@ -640,7 +642,7 @@ async function run() {
           // 空間已經滿了就不上傳、不整理（⛔ 不要付了 AI 的錢才發現放不進去）
           if (room !== Number.POSITIVE_INFINITY && room <= 0) {
             r.status = 'failed'
-            r.error = 'AI 知識量滿了，這份沒有整理（刪掉用不到的知識或升級方案之後，把這份再放一次）'
+            r.error = `AI 知識量滿了，這份沒有整理（${knowledgeFullRemedy()}之後，把這份再放一次）`
             continue
           }
           r.stage = '上傳中'

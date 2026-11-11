@@ -17,6 +17,7 @@ import { getDb } from './firebase'
 import { getWorkspacePlan } from './billing'
 import { KNOWLEDGE_CHUNKS_COLLECTION } from './ai-knowledge-chunks'
 import { planLimitMessage } from '~~/shared/billing/plans'
+import { knowledgeFullRemedy } from '~~/shared/billing/usage-units'
 import { can } from '~~/shared/permissions'
 import type { WorkspaceMemberRole } from '~~/shared/types/organization'
 
@@ -160,10 +161,11 @@ export async function assertKnowledgeChunkQuota(
 
   throw createError({
     statusCode: 403,
+    // `C-477`：「怎麼解決」那半句跟三個匯入畫面同一組詞（knowledgeFullRemedy），⛔ 別在這裡另外造句
     statusMessage: adding === 1
-      ? planLimitMessage('AI 知識量', status.used, status.limit, status.planName, '條')
+      ? planLimitMessage('AI 知識量', status.used, status.limit, status.planName, '條', knowledgeFullRemedy())
       : `AI 知識量不夠了：目前 ${status.used} 條，這批要再加 ${adding} 條，`
-        + `超過${status.planName}方案上限 ${status.limit} 條。刪掉不需要的，或升級方案以取得更多額度。`,
+        + `超過${status.planName}方案上限 ${status.limit} 條。${knowledgeFullRemedy()}。`,
   })
 }
 
