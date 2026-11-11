@@ -93,6 +93,10 @@
                 用完之後，<strong>需要 AI 回答的問題會改成轉給真人客服</strong>，自動回應不受影響；
                 升級方案後立刻恢復。
               </p>
+              <!-- `D-180`：**已經用完**時才補「什麼時候會自己好」。頁頂那條橫幅在這一頁刻意不顯示，
+                   不在這裡講的話，走到這一頁的人只看得到「升級就恢復」，會以為不升級就永遠停。
+                   ⚠️ 跟橫幅吃同一支純函式（quotaResetNotice），⛔ 別在這裡自己造句。 -->
+              <p v-if="quotaResetLine" class="text-xs text-muted">{{ quotaResetLine }}</p>
               <!-- `C-8`：則數還沒用完、AI 卻因為這個月被叫太多次先停了。頁頂橫幅在這一頁不顯示，
                    不在這裡講的話，人看到「12 / 50 則」會以為還在答、或以為壞掉了。說法跟橫幅同一份 -->
               <el-alert
@@ -523,7 +527,7 @@ import { InfoFilled } from '@element-plus/icons-vue'
 import { BILLING_PLANS } from '~~/shared/billing/plans'
 import { KNOWLEDGE_UNIT_TIP, REPLY_UNIT_TIP, knowledgeFullRemedy } from '~~/shared/billing/usage-units'
 import { deriveUsageState } from '~~/shared/billing/plan-state'
-import { aiCallPausedText } from '~/utils/quota-banner-text'
+import { aiCallPausedText, quotaResetNotice } from '~/utils/quota-banner-text'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import type { PaymentOrderStatus } from '~~/shared/types/payment'
@@ -539,6 +543,16 @@ const route = useRoute()
 const { apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
 const { plan: planView, state: planState, callCeiling: planCallCeiling, pausedByCalls: planPausedByCalls, load: loadPlanSummary } = usePlanSummary()
+
+/**
+ * 「不升級的話 X 月 X 日 會自動恢復」（`D-180`）。只在則數真的用完時出現。
+ * ⛔ 被叫太多次而停（`C-8`）不走這句：那個的恢復時間是下個月 1 號，不是期別重置，
+ *    兩句掛在一起等於同一條橫幅上出現兩種恢復時間。
+ */
+const quotaResetLine = computed(() =>
+  !planPausedByCalls.value && planState.value.state === 'over'
+    ? quotaResetNotice(planView.value?.currentPeriodEnd)
+    : '')
 
 const config = useRuntimeConfig()
 const invoiceEnabled = Boolean(config.public.invoiceEnabled)

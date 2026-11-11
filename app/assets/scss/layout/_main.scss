@@ -66,6 +66,16 @@
   color: var(--text-secondary);
 }
 
+/**
+ * 「不升級的話 X 月 X 日 會自動恢復」（`D-180`）。
+ * 比說明再淡一階：它是給「這次不會買」的人看的安心話，⛔ 不該跟升級鈕搶注意力。
+ */
+.quota-banner__reset {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
 .quota-banner__actions {
   display: flex;
   align-items: center;

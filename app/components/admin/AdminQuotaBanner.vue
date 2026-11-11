@@ -7,6 +7,9 @@
       <!-- 重點是「用完會怎樣」，不是剩幾則。「剩 40 則」對客戶沒有意義，
            「用完後 AI 就不再自動回覆、客人全部轉給真人」才會讓人想升級。 -->
       <p class="quota-banner__desc">{{ desc }}</p>
+      <!-- `D-180`：已經停了的時候補一句「什麼時候會自己好」。放小字、排在升級鈕前面——
+           它是給「這次不會買」的人看的，不該搶走主按鈕的位置。 -->
+      <p v-if="resetNotice" class="quota-banner__reset">{{ resetNotice }}</p>
     </div>
 
     <div class="quota-banner__actions">
@@ -23,7 +26,8 @@
 
 <script setup lang="ts">
 import { CircleCloseFilled, WarningFilled } from '@element-plus/icons-vue'
-import { quotaBannerDesc } from '~/utils/quota-banner-text'
+import { daysUntilQuotaOut, quotaBannerDesc, quotaBannerTitle, quotaResetNotice } from '~/utils/quota-banner-text'
+import { taipeiDate } from '~~/shared/time'
 /**
  * 額度快用完 / 已用完的升級提示。
  *
@@ -72,11 +76,34 @@ const show = computed(() => {
   return tone.value === 'near' && !dismissed.value
 })
 
-const title = computed(() => {
-  if (tone.value === 'over') return 'AI 已停止自動回覆'
-  // `D-146`：「AI 回覆」講明是哪一種則數（LINE 訊息那條也會出現在同一個位置）
-  return `AI 回覆本期只剩 ${state.value.remaining?.toLocaleString() ?? 0} 則`
-})
+/**
+ * 照這一期到現在的速度，大約再幾天用完（`D-180`）。算不出來回 null，標題就不接那半句。
+ * ⛔ 純函式放 utils 才測得到（元件裡的 computed 沒有測試守著）。
+ */
+const daysLeft = computed(() => daysUntilQuotaOut({
+  used: state.value.used,
+  limit: state.value.limit,
+  periodStart: plan.value?.currentPeriodStart,
+  today: taipeiDate(),
+}))
+
+// `D-146`：「AI 回覆」講明是哪一種則數（LINE 訊息那條也會出現在同一個位置）
+const title = computed(() => quotaBannerTitle({
+  state: state.value.state,
+  pausedByCalls: pausedByCalls.value,
+  remaining: state.value.remaining,
+  daysLeft: daysLeft.value,
+}))
+
+/**
+ * 「不升級的話 X 月 X 日 會自動恢復」（`D-180`）。
+ * ⛔ 只在**則數用完**時講。被叫太多次而停（`C-8`）的恢復條件不是期別重置而是下個月 1 號，
+ *    而且那段話自己已經講了怎麼辦——掛同一句會變成兩種恢復時間同時出現在同一條橫幅上。
+ */
+const resetNotice = computed(() =>
+  !pausedByCalls.value && state.value.state === 'over'
+    ? quotaResetNotice(plan.value?.currentPeriodEnd)
+    : '')
 
 function goUnanswered() {
   void navigateTo(`/admin/${workspaceId.value}/ai-usage`)

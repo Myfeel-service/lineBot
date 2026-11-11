@@ -182,6 +182,20 @@ async function seedGatewayReturn({ plan, fid }, target, needles) {
   tracked.length = 0
   return gotoStable(target, needles)
 }
+/**
+ * 把橫幅那一條截下來（`CHECK_SHOT_DIR` 有設才截）。
+ * ⚠️ 截圖前等 600ms：Element 的淡入動畫沒跑完就截，截到的是半透明的（記憶 `reference_headless_admin_harness_traps`）。
+ */
+async function shotBanner(name) {
+  const dir = process.env.CHECK_SHOT_DIR
+  if (!dir) return
+  await new Promise(r => setTimeout(r, 600))
+  const el = await page.$('.quota-banner')
+  if (!el) return
+  await el.screenshot({ path: `${dir}/quota-banner-${name}.png` })
+  console.log(`  📷 ${dir}/quota-banner-${name}.png`)
+}
+
 const clickButton = (text, exact = true) => page.evaluate((t, ex) => {
   const b = [...document.querySelectorAll('button')].find(x => (ex ? x.textContent?.trim() === t : x.textContent?.includes(t)) && !x.disabled)
   if (!b) return false
@@ -212,6 +226,20 @@ else {
   else if (seen.props.from !== 'quota_banner') fail(`from 是「${seen.props.from}」，應該是 quota_banner`)
   else pass(`billing_wall_seen：state=near、plan=${seen.props.plan}、from=${seen.props.from}`)
 
+  // ⭐ `D-180`①：橫幅上新加的兩句要**真的出現在畫面上**（純函式測試驗得到字串，驗不到有沒有被用到）。
+  // ⛔ 一定要在下面那段換頁**之前**讀：帳單頁刻意不顯示這條橫幅，換過去再讀永遠是空字串（這支自己踩過）。
+  const nearBody = await page.evaluate(() => document.querySelector('.quota-banner')?.innerText ?? '')
+  // 「約 N 天後用完」：11-01 起、用掉 45 則 → 每天約 4 則，剩 5 則 ≈ 2 天
+  if (!/約 \d+ 天後用完/.test(nearBody)) fail(`黃色橫幅沒有「約 N 天後用完」：${nearBody.replace(/\n/g, ' / ')}`)
+  else pass(`黃色橫幅標題有講還剩幾天：「${nearBody.split('\n')[0]}」`)
+  if (!nearBody.includes('本期 AI 已經幫你處理了 45 次客人提問')) fail(`黃色橫幅沒有先講他賺到什麼：${nearBody.replace(/\n/g, ' / ')}`)
+  else pass('黃色橫幅先講「本期 AI 已經幫你處理了 45 次客人提問」再講後果')
+  // ⛔ 對照組：還沒用完的時候不該出現「會自動恢復」（那是給已經停了的人看的）
+  if (nearBody.includes('自動恢復')) fail('還沒用完就講「會自動恢復」＝講早了')
+  else pass('對照組：還沒用完時不講「會自動恢復」')
+
+  await shotBanner('near')
+
   // ⛔ 同一場只能記一次：橫幅掛在外殼上、換頁不會重新掛載，重複記會讓分母失真
   const before = tracked.filter(t => t.event === 'billing_wall_seen').length
   const wasAt = page.url()
@@ -227,7 +255,27 @@ else {
     else pass(`換頁到 ${page.url().replace(BASE, '')} 沒有重複記（同一場只算一次）`)
   }
 }
+// ═══ ⓪b 已經用完的紅色橫幅 ═══════════════════════════════════════
+console.log('\n── ⓪b 已經用完（50/50）：要講「什麼時候會自己好」──')
+fakePlanSummary = freePlan(50)
+const over = await gotoStable(`${BASE}/admin/${WORKSPACE_ID}/ai-usage`, ['AI 已停止自動回覆'])
+if (!over) {
+  fail('假造成 50/50 則了，但紅色橫幅沒有出現')
+}
+else {
+  const body = await page.evaluate(() => document.querySelector('.quota-banner')?.innerText ?? '')
+  if (!body.includes('不升級的話，本期結束（12 月 1 日）後會自動恢復。')) fail(`紅色橫幅沒有講本期結束那天：${body.replace(/\n/g, ' / ')}`)
+  else pass('紅色橫幅有「不升級的話，本期結束（12 月 1 日）後會自動恢復」')
+  // ⛔ 已經停了就不講「還剩幾天」（那是快用完時才有意義的話）
+  if (/約 \d+ 天後用完/.test(body)) fail('已經停了還在講「約 N 天後用完」')
+  else pass('對照組：已經停了不再講「約 N 天後用完」')
+  await shotBanner('over')
+}
+
 fakePlanSummary = null // 後面幾關要看真的方案
+// ⛔ 等上一關排隊中的那批先飛出去再清：事件是 1.5 秒一批，太早清的話它會晚一步落進
+//    下一關的紀錄裡，把下一關的對照組冤枉成「還沒按就有事件」（這支自己踩過）。
+await new Promise(r => setTimeout(r, 2500))
 tracked.length = 0
 
 // ═══ ① 打開方案表 ═══════════════════════════════════════════════
