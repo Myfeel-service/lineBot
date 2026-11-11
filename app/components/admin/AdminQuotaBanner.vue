@@ -17,7 +17,7 @@
       <el-button v-if="tone === 'near'" size="small" text @click="dismiss">稍後再說</el-button>
     </div>
 
-    <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="plan?.id ?? null" />
+    <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="plan?.id ?? null" source="quota_banner" />
   </div>
 </template>
 
@@ -91,6 +91,27 @@ const desc = computed(() => quotaBannerDesc({
   pausedByCalls: pausedByCalls.value,
   calls: callCeiling.value?.calls ?? null,
 }))
+
+/**
+ * 付款漏斗第一格（`D-180`）：他**看到**這條橫幅了。
+ *
+ * ⛔ 同一場只記一次。這條橫幅掛在外殼（layout）上、換頁不會重新掛載，
+ * 不去重的話他每點一次側欄就多記一筆，分母整個失真。
+ * 鍵帶上期別與份量：下一期重新出現、黃色變紅色，都算新的一次「看到」。
+ */
+const { track: trackBilling } = useBillingFunnel('quota_banner')
+const seenWalls = new Set<string>()
+watch([show, tone], ([visible, t]) => {
+  if (!visible) return
+  const key = `${workspaceId.value}:${plan.value?.currentPeriodStart ?? ''}:${t}`
+  if (seenWalls.has(key)) return
+  seenWalls.add(key)
+  trackBilling('billing_wall_seen', {
+    state: String(t),
+    plan: plan.value?.id ?? '',
+    pausedByCalls: pausedByCalls.value,
+  })
+}, { immediate: true })
 
 function dismiss() {
   dismissed.value = true

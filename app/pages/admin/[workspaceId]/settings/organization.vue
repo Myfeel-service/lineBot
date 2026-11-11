@@ -75,7 +75,7 @@
               客製額度，無固定則數上限。 · <NuxtLink :to="usageLink" class="ar-link">查看用量</NuxtLink>
             </p>
           </div>
-          <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="planView.id" />
+          <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="planView.id" source="organization" />
         </div>
 
         <div class="message-card ar-section-card">

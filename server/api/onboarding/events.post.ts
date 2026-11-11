@@ -1,13 +1,15 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { getDb } from '~~/server/utils/firebase'
 import { requireAuth, requireCapability } from '~~/server/utils/workspace-auth'
-import { isOnboardingEvent, sanitizeEventProps } from '~~/shared/onboarding-events'
+import { eventFlow, isOnboardingEvent, sanitizeEventProps } from '~~/shared/onboarding-events'
 import { createRateLimiter } from '~~/server/utils/rate-limit'
 
 /**
  * POST /api/onboarding/events  body: { sessionId, flow, workspaceId?, events: [{ event, props?, at? }] }
  *
  * 開通步驟紀錄（`C-250`③，`D-100` C-1）。只寫不讀（看的畫面之後再做）。
+ * `D-180`（2026-11-11）起也收付款那一段（`flow: 'billing'`，一次嘗試最多 5 筆），
+ * 走同一支端點、同一張事件表——⛔ 不另開一支，省得兩條管線各自漂移。
  * - 打造那一趟前幾格**還沒有帳號**（workspaceId 空）：只驗登入
  * - 有帶 workspaceId：驗他看得到這個帳號（⛔ 不讓人往別家帳號底下塞紀錄）
  * - 事件名稱照 `shared/onboarding-events.ts` 那張表收；⛔ 不認得的丟掉，但**記一筆丟了幾個**
@@ -37,7 +39,8 @@ export default defineEventHandler(async (event) => {
   const workspaceId = claimed ? ((ctx as { workspaceId?: string }).workspaceId || claimed) : ''
 
   const sessionId = String(body?.sessionId ?? '').slice(0, 40)
-  const flow = body?.flow === 'line' ? 'line' : body?.flow === 'build' ? 'build' : 'other'
+  // ⛔ 照白名單收（`eventFlow`），不認得的算 `other`——⛔ 別讓 body 上的任意字串流進紀錄
+  const flow = eventFlow(body?.flow)
   const list = Array.isArray(body?.events) ? body.events.slice(0, MAX_EVENTS) : []
   const tooMany = Array.isArray(body?.events) ? Math.max(0, body.events.length - MAX_EVENTS) : 0
 

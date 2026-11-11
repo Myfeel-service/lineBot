@@ -232,6 +232,7 @@
             v-model="upgradeOpen"
             :current-plan-id="planView.id"
             :has-mandate="planView.hasMandate"
+            source="billing_page"
             @changed="loadPlanSummary"
           />
         </div>
@@ -244,7 +245,7 @@
             <p class="text-sm">此帳號尚未開通付費方案。</p>
             <div><el-button type="primary" @click="upgradeOpen = true">查看方案</el-button></div>
           </div>
-          <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="null" />
+          <AdminPlanUpgradeDialog v-model="upgradeOpen" :current-plan-id="null" source="billing_page" />
         </div>
 
         <div class="message-card ar-section-card">
@@ -549,6 +550,14 @@ const statementNotice = computed(() => cardStatementNotice({
 
 const upgradeOpen = ref(false)
 const loading = ref(false)
+
+/**
+ * 付款漏斗最後一格（`D-180`）：他從 PAYUNi 回來了，畫面上顯示的是什麼。
+ * ⛔ 這一筆不是「付款成功」的憑據（那以帳務為準）——它只回答「送出去的人有沒有回來、
+ * 回來看到的是成功還是失敗」，以及最有價值的那一種：**在金流頁按返回**。
+ * 這一頁另外兩條也會去金流（繼續付款、換一張卡），所以 `markLeftForGateway` 要一起掛。
+ */
+const { track: trackBilling, markLeftForGateway, takeGatewayReturn } = useBillingFunnel('billing_page')
 
 /**
  * AI 知識量（`D-131`⑤）：用了幾條／上限幾條。讀知識庫自己那支（`/api/ai/knowledge/quota`，跟加入視窗同一個數）。
@@ -956,6 +965,7 @@ async function resumePayment(row: OrderRow) {
       body: { planId: row.planId, workspaceId: route.params.workspaceId, termsAccepted: true },
     })
     if (!res.action) throw new Error('金流尚未設定')
+    markLeftForGateway(row.planId) // ⛔ 要在導走之前（含 flush），見 useBillingFunnel.ts
     submitToGateway(res.action, res.fields)
     // 送出後瀏覽器即導向付款頁；overlay 保持到頁面離開為止
   }
@@ -1058,6 +1068,7 @@ async function updatePaymentMethod() {
       body: { planId: pv.id, workspaceId: route.params.workspaceId, termsAccepted: true },
     })
     if (!res.action) throw new Error('金流尚未設定')
+    markLeftForGateway(pv.id) // ⛔ 要在導走之前（含 flush），見 useBillingFunnel.ts
     submitToGateway(res.action, res.fields)
   }
   catch (e: any) {
@@ -1135,10 +1146,31 @@ function scrollToInvoice() {
 }
 watch(() => route.hash, scrollToInvoice)
 
+/**
+ * 剛從 PAYUNi 回來的話，記一筆「回來那一刻畫面上顯示什麼」（`D-180` 漏斗最後一格）。
+ *
+ * ⛔ **一定要在 `reloadAll()` 之後叫**：訂單清單還沒回來時每一筆都會被記成查無此單。
+ * ⛔ **不是付款成功的憑據**——開通只信 server→server 的 notify，導回可能比它早到，
+ *    所以這裡記的是「他看到的」，不是「錢到了沒」。要查收入看 `orders`，不要查這張表。
+ * ⚠️ 記號由 `takeGatewayReturn()` 讀完即清，否則之後每次打開帳單頁都會多一筆假的回訪。
+ */
+function trackGatewayReturn() {
+  const { planId, fid } = takeGatewayReturn()
+  if (!planId) return // 不是從金流回來的，就是正常逛到這一頁
+  const no = String(route.query.order || '').trim()
+  // 沒帶 `?order=` ＝ 他在 PAYUNi 付款頁按了「返回商店」（建單時帶的 BackURL），一毛錢都還沒付。
+  // ⭐ 這是整條漏斗最有價值的一格：他已經走到付款頁、看到要刷卡了，然後掉頭。
+  const shown = no
+    ? (orders.value.find(r => r.merchantOrderNo === no)?.status ?? 'notlisted')
+    : 'back'
+  trackBilling('billing_gateway_back', { fid, plan: planId, shown })
+}
+
 onMounted(async () => {
   scrollToInvoice() // 發票卡的 v-if 只看靜態設定，不用等資料回來就能捲
   await reloadAll()
   scrollToInvoice() // 資料回來後上方卡片會長高、位置跑掉，再對正一次
+  trackGatewayReturn()
   pollReturnedOrder()
 })
 onUnmounted(stopPoll)

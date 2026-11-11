@@ -9,8 +9,12 @@
  *   - **事件名稱只能用這張表裡的**（伺服器照表收，打錯字的直接丟、而且要記一筆被丟了什麼）
  *   - 附帶的資料只收小東西（字串 ≤ 60 字、數字、真假），⛔ 不收客人講的話、不收他打的答案原文
  *     （這張表是看「行為」的，不是看內容的；內容本來就存在輪廓與草稿裡）
- *   - 「之後」那幾項（第一位真客人的訊息、第一次 AI 自動回覆、第 7 天有沒有回來、升級付費）
- *     **不在這裡記**：現有的對話、用量、帳務資料就算得出來，另記一份就是兩本帳
+ *   - 「之後」那幾項（第一位真客人的訊息、第一次 AI 自動回覆、第 7 天有沒有回來）
+ *     **不在這裡記**：現有的對話、用量資料就算得出來，另記一份就是兩本帳
+ *   - **付款也照同一條規矩**（`D-180`，2026-11-11）：「誰付成功了」一律以帳務（`orders`／
+ *     訂閱）為準，⛔ 這裡不記；這裡記的是帳務**看不到**的那幾格——看到橫幅沒、打開方案表沒、
+ *     按了哪個方案、在確認框縮手沒、從金流頁回來時畫面上顯示什麼。
+ *     ⭐ 沒有這幾格，開賣後只答得出「有幾個人付了」，答不出「其他人停在哪一格」。
  */
 
 export const ONBOARDING_EVENTS = {
@@ -43,9 +47,31 @@ export const ONBOARDING_EVENTS = {
   phone_wait: '用手機測試的結果（等了多久、按過幾次不是我）',
   birthday_ask: '成績單之前問「要不要順便問生日」（打開／先不要、存成了沒；`C-468`）',
   line_done: '走到接 LINE 的成績單',
+  // ── 付款那一段（`D-180`，2026-11-11）──
+  // ⚠️ 這五個都帶 `fid`（同一次付款嘗試的識別碼，見 app/composables/useBillingFunnel.ts）：
+  //    中間會整頁離開去 PAYUNi 再回來，沒有它就串不起同一個人的同一次嘗試。
+  billing_wall_seen: '看到額度橫幅（快用完 near／已停止回覆 over）',
+  billing_plans_open: '打開方案表（從哪個畫面按的）',
+  billing_plan_click: '在方案表上按了某個方案（升級／續訂／降級／期末降級）',
+  billing_checkout: '確認框按下去了沒、訂單建起來了沒（⛔ 不代表付款成功）',
+  billing_gateway_back: '從金流頁回到我們這邊，畫面上顯示的是什麼（含「在金流頁按返回」）',
   // ── 兩趟都有 ──
   wizard_leave: '中途按頁首的「之後再說」（停在第幾格）',
 } as const
+
+/**
+ * 這一筆屬於哪一趟。⛔ 不認得的一律算 `other`（同 `lineFlowEntry` 的規矩：
+ * 不讓前端送來的任意字串流進紀錄）。前後端共用這一支，別各自寫一串三元運算。
+ */
+export const EVENT_FLOWS = ['build', 'line', 'billing', 'other'] as const
+export type EventFlow = typeof EVENT_FLOWS[number]
+export function eventFlow(raw: unknown): EventFlow {
+  // ⛔ 先驗型別再比對：不可以用 `String(raw)` 比完就把 `raw` 原封不動回傳——
+  //    那樣一個 `{ toString: () => 'billing' }` 會讓物件本人被當成 flow 寫進資料庫。
+  return typeof raw === 'string' && (EVENT_FLOWS as readonly string[]).includes(raw)
+    ? raw as EventFlow
+    : 'other'
+}
 
 /**
  * 從哪個入口進接 LINE 那一趟（`?entry=`，`D-100` C-1：「第 2 段從哪個入口進來」）。

@@ -184,6 +184,7 @@ import { KNOWLEDGE_UNIT_SHORT, REPLY_UNIT_SHORT } from '~~/shared/billing/usage-
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import { checkoutInvoiceLine, describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'
+import type { BillingFunnelSource } from '~/composables/useBillingFunnel'
 
 /**
  * 「每月則數」欄位旁那顆 ⓘ 的說明（`D-9`，2026-08-22 拍板）。
@@ -204,6 +205,11 @@ const props = defineProps<{
    * 已付的剩餘天數）；沒有的話降級就是「下次自己買便宜的方案」= 立即付款一期。
    */
   hasMandate?: boolean
+  /**
+   * 這張表是從哪個畫面打開的（`D-180` 埋點用，不影響任何行為）。
+   * ⛔ 預設 `other`＝有人新接了一個入口卻忘了標，查漏斗時看得出來。
+   */
+  source?: BillingFunnelSource
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; changed: [] }>()
 
@@ -236,6 +242,12 @@ function planAction(p: BillingPlan): '續訂' | '升級' | '降級' {
 
 const { getBearer, workspaceId, apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
+
+/**
+ * 付款漏斗第二～四格（`D-180`）：打開方案表、按了哪個方案、確認框按下去了沒。
+ * ⛔ 只記行為，不記「付款成功」——那一件以帳務為準（理由見 useBillingFunnel.ts）。
+ */
+const { track: trackBilling, markLeftForGateway } = useBillingFunnel(props.source ?? 'other')
 
 const config = useRuntimeConfig()
 /** PAYUNi 金鑰都設好才允許結帳；否則按下去只會拿到 500「金流尚未設定」。 */
@@ -344,6 +356,8 @@ watch(() => props.modelValue, (open) => {
   b2bForm.buyerName = ''
   b2bForm.buyerEmail = ''
   loadInvoiceProfile() // 每次開啟都重抓：中途去改過發票資訊，回來要看到新的
+  // 看到橫幅 → 打開方案表，是漏斗裡掉最多人的那一格（看到了但沒點＝沒感覺或還不急）
+  trackBilling('billing_plans_open', { current: props.currentPlanId ?? 'free' })
 }, { immediate: true })
 
 interface CreateOrderResponse { action: string; method: string; fields: Record<string, string> }
@@ -392,7 +406,15 @@ async function scheduleDowngrade(p: BillingPlan) {
 
 async function checkout(p: BillingPlan) {
   if (!workspaceId.value) return
+  // 他挑了方案、按下去了（`D-180`）。⚠️ 記在最前面：下面每一條 return 都是一種「沒買成」，
+  // 要分得出來是停在哪一格，這一筆就得先存在。
+  trackBilling('billing_plan_click', {
+    plan: p.id,
+    action: isScheduledDowngrade(p) ? '期末降級' : planAction(p),
+    price: p.priceMonthly ?? 0,
+  })
   // 期末降級不經過金流,所以不需要 paymentEnabled 也不需要同意條款（沒有新的一筆交易）
+  // ⛔ 它不會再有 billing_checkout／billing_gateway_back：那條路本來就沒有付款這一段。
   if (isScheduledDowngrade(p)) return scheduleDowngrade(p)
   if (!paymentEnabled || !agreed.value || !invoiceReady.value) return
 
@@ -439,6 +461,9 @@ async function checkout(p: BillingPlan) {
     )
   }
   catch {
+    // 在確認框縮手：這一格看到的是價格、續扣條款、帳單上的名字、會開什麼發票——
+    // 掉在這裡跟掉在方案表上，要調的東西完全不同，所以一定要分得出來。
+    trackBilling('billing_checkout', { plan: p.id, confirmed: false })
     return // 使用者取消
   }
 
@@ -455,6 +480,7 @@ async function checkout(p: BillingPlan) {
       effectiveInvoice.value = r.profile // 存成功→就地表單收合成「會開出：公司發票…」摘要
     }
     catch (e: any) {
+      trackBilling('billing_checkout', { plan: p.id, confirmed: true, created: false, reason: 'invoice_save' })
       showToast(e?.data?.statusMessage || e?.data?.message || '發票資訊儲存失敗，請再試一次', 'error')
       return
     }
@@ -474,10 +500,15 @@ async function checkout(p: BillingPlan) {
       body: { planId: p.id, workspaceId: workspaceId.value, termsAccepted: true },
     })
     if (!res.action) throw new Error('金流尚未設定')
+    trackBilling('billing_checkout', { plan: p.id, confirmed: true, created: true })
+    // ⛔ 一定要在 submitToGateway **之前**：下一行就整頁導走，排隊中的事件（1.5 秒才送）
+    //    會來不及。markLeftForGateway 自己會 flush，而且留下記號讓回來那一刻接得上。
+    markLeftForGateway(p.id)
     submitToGateway(res.action, res.fields)
     // 送出後瀏覽器即導向 PAYUNi 付款頁；overlay 保持到頁面離開為止
   }
   catch (e: any) {
+    trackBilling('billing_checkout', { plan: p.id, confirmed: true, created: false, reason: 'create_order' })
     overlay.close()
     showToast(e?.data?.statusMessage || e?.data?.message || e?.message || '建立訂單失敗', 'error')
     checkoutLoading.value = ''

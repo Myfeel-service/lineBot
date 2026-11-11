@@ -5,12 +5,12 @@
  * - ⛔ 送失敗不講、不重試、不擋任何事：這是紀錄，不是功能——紀錄壞掉不可以讓精靈卡住
  * ⚠️ 要在元件 setup 裡呼叫（要拿登入狀態、要掛卸載時的收尾）
  */
-import type { OnboardingEventName, OnboardingEventProps } from '~~/shared/onboarding-events'
+import type { EventFlow, OnboardingEventName, OnboardingEventProps } from '~~/shared/onboarding-events'
 
 const FLUSH_MS = 1500
 const MAX_BATCH = 30
 
-export function useOnboardingEvents(ctx: { workspaceId: () => string, flow: () => 'build' | 'line' | 'other' }) {
+export function useOnboardingEvents(ctx: { workspaceId: () => string, flow: () => EventFlow }) {
   // 跟 `useWorkspaceApiFetch` 同一個來源（⛔ 不用 `useAuth().user`：那是 useState 包過的 reactive 代理）
   const { $auth } = useNuxtApp()
   /** 同一次打開精靈＝同一場（換頁、重新整理就是新的一場） */

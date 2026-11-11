@@ -17,6 +17,7 @@
     v-if="canManageBilling"
     v-model="dialogOpen"
     :current-plan-id="plan?.id ?? null"
+    source="broadcast_lock"
     append-to-body
   />
 </template>

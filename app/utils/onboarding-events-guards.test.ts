@@ -20,12 +20,16 @@ const SOURCES = {
   tutorial: read('components/TutorialAgent.vue'),
   playground: read('pages/admin/[workspaceId]/ai-playground.vue'),
   drafts: read('components/knowledge/KnowledgeSiteDrafts.vue'),
+  // `D-180`（2026-11-11）付款那一段：走同一張事件表、同一支端點，所以同一份守門一起看
+  quotaBanner: read('components/admin/AdminQuotaBanner.vue'),
+  upgradeDialog: read('components/admin/AdminPlanUpgradeDialog.vue'),
+  billingPage: read('pages/admin/[workspaceId]/settings/billing.vue'),
 }
 
-/** 每一處 `track('名字', { … })`／`trackOnboarding(…)`：名字＋那一包附帶資料的原文 */
+/** 每一處 `track('名字', { … })`／`trackOnboarding(…)`／`trackBilling(…)`：名字＋那一包附帶資料的原文 */
 function trackCalls(src: string): Array<{ name: string, props: string }> {
   const out: Array<{ name: string, props: string }> = []
-  const re = /\b(?:track|trackOnboarding)\('([a-z_]+)'(?:,\s*(\{[\s\S]*?\}))?\)/g
+  const re = /\b(?:track|trackOnboarding|trackBilling)\('([a-z_]+)'(?:,\s*(\{[\s\S]*?\}))?\)/g
   for (const m of codeOnly(src).matchAll(re)) out.push({ name: m[1]!, props: m[2] ?? '' })
   return out
 }
@@ -56,6 +60,13 @@ describe('開通步驟紀錄：記的地方', () => {
     expect([...byFile.tutorial!]).toContain('landing_tour')
     expect([...byFile.playground!]).toContain('playground_sent')
     expect([...byFile.drafts!]).toContain('kb_draft_decision')
+  })
+
+  it('付款那一段五格各自記在該記的畫面（`D-180`）', () => {
+    const byFile = Object.fromEntries(Object.entries(SOURCES).map(([k, s]) => [k, new Set(trackCalls(s).map(c => c.name))]))
+    expect([...byFile.quotaBanner!]).toContain('billing_wall_seen')
+    expect([...byFile.upgradeDialog!]).toEqual(expect.arrayContaining(['billing_plans_open', 'billing_plan_click', 'billing_checkout']))
+    expect([...byFile.billingPage!]).toContain('billing_gateway_back')
   })
 
   it('離開精靈（頁首「之後再說」、整頁卸載）當下就送出，不等 1.5 秒那一批', () => {

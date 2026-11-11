@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ONBOARDING_EVENTS, isOnboardingEvent, lineFlowEntry, sanitizeEventProps } from './onboarding-events'
+import { ONBOARDING_EVENTS, eventFlow, isOnboardingEvent, lineFlowEntry, sanitizeEventProps } from './onboarding-events'
 
 /**
  * 開通步驟紀錄的規矩（`C-250`③）：事件名稱照表收、附帶資料只收小東西、入口不認得的一律算 direct。
@@ -19,6 +19,32 @@ describe('開通步驟紀錄：事件表', () => {
       expect(name).toMatch(/^[a-z][a-z_]+$/)
       expect(desc.length).toBeGreaterThan(3)
     }
+  })
+
+  /**
+   * `D-180`（2026-11-11）：付款那一段五格。釘住名字是因為**打錯字不會報錯**——
+   * 伺服器照表收，不認得的直接丟（只在 log 留一行），而這五筆漏掉任何一格，
+   * 漏斗就只剩「有幾個人付了」這個帳務本來就答得出來的數字。
+   */
+  it('付款那一段五格都在表裡', () => {
+    for (const name of ['billing_wall_seen', 'billing_plans_open', 'billing_plan_click', 'billing_checkout', 'billing_gateway_back'])
+      expect(isOnboardingEvent(name)).toBe(true)
+  })
+
+  it('⛔ 沒有「付款成功」這種事件——那一件以帳務為準，記在這裡就是第二本帳', () => {
+    const names = Object.keys(ONBOARDING_EVENTS)
+    expect(names.filter(n => /paid|success|purchase/.test(n))).toEqual([])
+  })
+
+  it('哪一趟只認三種，其他（含 body 上亂填的）一律 other', () => {
+    expect(eventFlow('build')).toBe('build')
+    expect(eventFlow('line')).toBe('line')
+    expect(eventFlow('billing')).toBe('billing')
+    expect(eventFlow('other')).toBe('other')
+    expect(eventFlow('')).toBe('other')
+    expect(eventFlow('<script>')).toBe('other')
+    expect(eventFlow(undefined)).toBe('other')
+    expect(eventFlow({ toString: () => 'billing' })).toBe('other') // 物件不算
   })
 
   it('入口只認四種，其他（含網址上亂填的）一律 direct', () => {

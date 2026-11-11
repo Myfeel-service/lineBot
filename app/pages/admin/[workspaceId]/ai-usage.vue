@@ -405,7 +405,7 @@
             </div>
           </div>
 
-          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" />
+          <AdminPlanUpgradeDialog v-model="upgradeDialogOpen" :current-plan-id="planQuota.id" source="ai_usage" />
         </template>
 
         <!-- ── 每月趨勢：讓「監控」看得出變好還變差，不只是單月快照 ── -->
