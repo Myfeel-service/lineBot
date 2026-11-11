@@ -121,6 +121,11 @@ export function rollSubscriptionToCurrentPeriod(
     sub = { ...sub, currentPeriodStart: p.start, currentPeriodEnd: p.end }
     changed = true
 
+    // 免費方案的「第一個月加量」只算第一期：期別一往前滾就失效（`D-180`）。
+    // ⭐ 清在這裡＝**不靠排程**：每次讀訂閱都會重算週期，就算排程沒跑，
+    //    第二個月照樣回到一般免費額度（同這支函式「週期就地推算」的設計）。
+    if (sub.freeTrial) sub = { ...sub, freeTrial: false }
+
     if (!isSelfServePaidPlan(sub.planId)) continue // 免費 / 企業 / 內部：純續期
 
     // 「有自動續訂」必須**真的有扣款憑證**才算。`autoRenew` 只是一個旗標,而 past_due

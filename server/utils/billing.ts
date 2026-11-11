@@ -46,9 +46,18 @@ export function invalidateWorkspaceSubscriptionCache(workspaceId?: string) {
 /**
  * 新建帳號（OA）的預設訂閱：免費層,錨定日 = 建立當天。
  * 之後每個月的同一天補回免費額度（不是每月 1 號）。
+ *
+ * `firstMonthTrial`：第一個月給加量額度（`D-180`，見 `FREE_TRIAL_ANSWERED_QUOTA`）。
+ * ⛔ **只有「真的在開新帳號」的那三支端點才傳 true**。這支同時也被當成
+ *    「這個 workspace 沒掛訂閱」的補洞用（見下面 getWorkspaceSubscription），
+ *    那條路傳 true 的話，**既有的老帳號會在被讀到的那一刻拿到首月加量**。
  */
-export function defaultFreeSubscription(today: string = taipeiDate()): WorkspaceSubscription {
-  return newSubscription(DEFAULT_BILLING_PLAN_ID, today)
+export function defaultFreeSubscription(
+  today: string = taipeiDate(),
+  opts?: { firstMonthTrial?: boolean },
+): WorkspaceSubscription {
+  const sub = newSubscription(DEFAULT_BILLING_PLAN_ID, today)
+  return opts?.firstMonthTrial ? { ...sub, freeTrial: true } : sub
 }
 
 /**
@@ -58,7 +67,8 @@ export function defaultFreeSubscription(today: string = taipeiDate()): Workspace
 export function effectivePlanOf(sub: WorkspaceSubscription): { plan: BillingPlan; quota: number | null } {
   const canceled = sub.status === 'canceled'
   const plan = getBillingPlan(canceled ? DEFAULT_BILLING_PLAN_ID : sub.planId)
-  return { plan, quota: effectiveAnsweredQuota(plan, canceled ? null : sub.quotaOverride) }
+  // 已解約＝回到免費層，首月加量連同 quotaOverride 一起失效（他已經不是新開的帳號了）
+  return { plan, quota: effectiveAnsweredQuota(plan, canceled ? null : sub.quotaOverride, !canceled && sub.freeTrial) }
 }
 
 /** 由訂閱組出「對前端顯示用」的方案視圖。 */

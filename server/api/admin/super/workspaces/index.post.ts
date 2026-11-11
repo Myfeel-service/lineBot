@@ -43,7 +43,8 @@ export default defineEventHandler(async (event) => {
     name: String(name).trim(),
     organizationId: organizationId ?? null,
     // 新帳號預設掛免費訂閱 → 立即可見額度、可被計量；super admin 之後可改指派付費方案。
-    subscription: defaultFreeSubscription(),
+    // `firstMonthTrial`：第一個月加量（`D-180`），只有真的在開新帳號的地方才給。
+    subscription: defaultFreeSubscription(undefined, { firstMonthTrial: true }),
     updatedAt: FieldValue.serverTimestamp(),
   }
   if (channelAccessToken) {

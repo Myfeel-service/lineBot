@@ -5,6 +5,7 @@ import {
   BILLING_PLAN_ORDER,
   DEFAULT_BILLING_PLAN_ID,
   FEATURED_PLAN_IDS,
+  FREE_TRIAL_ANSWERED_QUOTA,
   OVERAGE_PER_REPLY_TWD,
   effectiveAnsweredQuota,
   getBillingPlan,
@@ -109,6 +110,31 @@ describe('effectiveAnsweredQuota', () => {
 
   it('企業無 override 時不設額度上限（null）', () => {
     expect(effectiveAnsweredQuota(BILLING_PLANS.enterprise)).toBeNull()
+  })
+
+  /**
+   * 首月加量（`D-180`，2026-11-11 老闆拍板）。釘住三件會悄悄出事的：
+   *   ① 只有免費方案吃得到（付費方案帶著旗標也不該被降成 200）
+   *   ② `quotaOverride` 永遠最大——特批 1,000 則的新帳號不可以被我們降成 200
+   *   ③ 沒帶旗標＝一般免費額度（既有帳號不會回溯拿到）
+   */
+  it('免費方案第一個月給加量額度', () => {
+    expect(effectiveAnsweredQuota(BILLING_PLANS.free, null, true)).toBe(FREE_TRIAL_ANSWERED_QUOTA)
+    expect(FREE_TRIAL_ANSWERED_QUOTA).toBeGreaterThan(BILLING_PLANS.free.answeredQuota!)
+  })
+
+  it('⛔ 沒帶旗標＝一般免費額度（既有帳號不會回溯拿到）', () => {
+    expect(effectiveAnsweredQuota(BILLING_PLANS.free)).toBe(BILLING_PLANS.free.answeredQuota)
+    expect(effectiveAnsweredQuota(BILLING_PLANS.free, null, false)).toBe(BILLING_PLANS.free.answeredQuota)
+  })
+
+  it('⛔ 只有免費方案吃得到（付費方案帶著旗標也不會被降成 200）', () => {
+    expect(effectiveAnsweredQuota(BILLING_PLANS.lite, null, true)).toBe(BILLING_PLANS.lite.answeredQuota)
+    expect(effectiveAnsweredQuota(BILLING_PLANS.growth, null, true)).toBe(BILLING_PLANS.growth.answeredQuota)
+  })
+
+  it('🔴 quotaOverride 永遠贏過首月加量（特批 1,000 則的新帳號不可以被降成 200）', () => {
+    expect(effectiveAnsweredQuota(BILLING_PLANS.free, 1_000, true)).toBe(1_000)
   })
 })
 

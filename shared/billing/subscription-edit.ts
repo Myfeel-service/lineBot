@@ -108,7 +108,12 @@ export interface SuperEditPreview {
 function quotaOf(sub: WorkspaceSubscription | null | undefined): number | null {
   if (!sub) return getBillingPlan(DEFAULT_BILLING_PLAN_ID).answeredQuota
   const canceled = sub.status === 'canceled'
-  return effectiveAnsweredQuota(getBillingPlan(canceled ? DEFAULT_BILLING_PLAN_ID : sub.planId), canceled ? null : sub.quotaOverride)
+  // 首月加量也要算進來（`D-180`）：不算的話超管在改方案時看到的「現在幾則」跟實際擋的數字對不上
+  return effectiveAnsweredQuota(
+    getBillingPlan(canceled ? DEFAULT_BILLING_PLAN_ID : sub.planId),
+    canceled ? null : sub.quotaOverride,
+    !canceled && sub.freeTrial,
+  )
 }
 
 function quotaText(q: number | null): string {

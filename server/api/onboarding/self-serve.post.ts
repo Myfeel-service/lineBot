@@ -81,7 +81,8 @@ export default defineEventHandler(async (event) => {
   batch.set(db.collection('workspaces').doc(workspaceId), {
     name: workspaceName,
     organizationId: orgId,
-    subscription: defaultFreeSubscription(),
+    // `firstMonthTrial`：第一個月加量（`D-180`），只有真的在開新帳號的地方才給
+    subscription: defaultFreeSubscription(undefined, { firstMonthTrial: true }),
     updatedAt: FieldValue.serverTimestamp(),
   })
 

@@ -51,6 +51,28 @@ describe('rollSubscriptionToCurrentPeriod — 讀取時就地推算當期', () =
     expect(r.sub.currentPeriodEnd).toBe('2026-09-27')
   })
 
+  /**
+   * 首月加量（`D-180`）：第一期還在就留著，期別一往前滾就失效。
+   * ⭐ 清在這支純函式裡＝**不靠排程**：就算排程沒跑，第二個月照樣回到一般免費額度。
+   */
+  it('還在第一期 → 首月加量留著', () => {
+    const r = rollSubscriptionToCurrentPeriod(sub({ planId: 'free', freeTrial: true }), '2026-08-10')
+    expect(r.sub.freeTrial).toBe(true)
+    expect(r.changed).toBe(false)
+  })
+
+  it('🔴 滾到第二期 → 首月加量失效（不然免費帳號永遠拿 200 則）', () => {
+    const r = rollSubscriptionToCurrentPeriod(sub({ planId: 'free', freeTrial: true }), '2026-08-30')
+    expect(r.sub.freeTrial).toBe(false)
+    expect(r.changed).toBe(true)
+    expect(r.sub.currentPeriodStart).toBe('2026-08-28')
+  })
+
+  it('一次滾過好幾期（很久沒人登入）也一樣失效', () => {
+    const r = rollSubscriptionToCurrentPeriod(sub({ planId: 'free', freeTrial: true }), '2026-12-30')
+    expect(r.sub.freeTrial).toBe(false)
+  })
+
   it('付費方案到期沒續費 → 降回免費層', () => {
     const r = rollSubscriptionToCurrentPeriod(sub({ planId: 'pro' }), '2026-08-30')
     expect(r.downgraded).toBe(true)

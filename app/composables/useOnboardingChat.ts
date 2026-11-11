@@ -12,7 +12,7 @@
 import type { AgentChoice, AgentMsg, DraftTagChip, DraftTagIdea } from '~~/shared/types/agent-messages'
 import { escapeHtml } from '~~/shared/types/agent-messages'
 import type { SetupCapabilityId, SetupItemStatus, SetupStatusResponse } from '~~/shared/types/setup'
-import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { BILLING_PLANS, FREE_TRIAL_ANSWERED_QUOTA } from '~~/shared/billing/plans'
 import { type LineWebhookCause, diagnoseLineWebhook } from '~~/shared/line-webhook-diagnosis'
 import { ONBOARDING_CAROUSELS } from '~/utils/onboarding-shots'
 import type { AgentAskResult, AgentScriptStep } from '~/composables/useAgentScriptRunner'
@@ -287,6 +287,17 @@ export function useOnboardingChat() {
 
   const freePlanName = BILLING_PLANS.free.name
   const freeQuota = BILLING_PLANS.free.answeredQuota
+  /**
+   * 剛開好的帳號**第一個月**是加量額度（`D-180`，`defaultFreeSubscription` 給的）。
+   * ⛔ 這裡不能寫 `freeQuota`：精靈走完的那一刻他的額度就是 200，寫 50 等於一開口就說錯。
+   */
+  const trialQuota = FREE_TRIAL_ANSWERED_QUOTA
+  /**
+   * 把「則」翻成他看得懂的量（`D-180`①）。
+   * 200 則 ÷ 30 天 ≈ 每天 6～7 次；50 則 ÷ 30 天 ≈ 每天 1～2 次。
+   * ⛔ 數字對店家沒有意義——「用兩天就要錢」的被騙感來自**意外**，不是來自價格。
+   */
+  const trialQuotaPace = '大約是每天 6～7 個客人來問問題'
 
   async function stepWelcomeFresh(): Promise<boolean> {
     flow.value = 'build'
@@ -2606,7 +2617,13 @@ export function useOnboardingChat() {
         // 方案／額度／綁卡從「剛取完名字」搬來這裡（2026-09-02）：那一刻他只想知道
         // 下一步，計費資訊會讓人停下來想「我是不是要付錢」；擺在成績單上才是他
         // 「做完了、接下來呢」會想知道的事
-        { label: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆`, done: true, note: '不需綁卡' },
+        // `D-180`：講**第一個月**的量（他現在拿到的就是這個），而且把「則」翻成客人數，
+        // 再講第二個月起變多少——⛔ 只講 200 不講之後，撞牆那天就變成「怎麼突然縮水」。
+        {
+          label: `${freePlanName}方案，第一個月 ${trialQuota} 則 AI 回覆`,
+          done: true,
+          note: `不需綁卡・${trialQuotaPace}；第二個月起每月 ${freeQuota} 則`,
+        },
       ],
     })
     // 結尾刻意一個字都不提知識庫／AI（2026-08-19 拍板二修：AI 的事完全不進開通，
@@ -2800,7 +2817,8 @@ export function useOnboardingChat() {
       ],
       ...(welcomeBuilt ? { preview: { caption: '接上 LINE 後，客人加你好友會收到這則', text: builtWelcomeText } } : {}),
       // 方案／額度留在成績單（2026-09-02 搬來的理由見接 LINE 那一趟的成績單），收成最下面一行小字
-      footnote: `${freePlanName}方案，每月 ${freeQuota} 則 AI 回覆，不需綁卡`,
+      // `D-180`：同上一趟的成績單，講第一個月的量＋翻成客人數＋第二個月起多少
+      footnote: `${freePlanName}方案，第一個月 ${trialQuota} 則 AI 回覆（${trialQuotaPace}），第二個月起每月 ${freeQuota} 則，不需綁卡`,
     })
     // ⭐ `C-250`②：建成的那幾樣記下來——落地導覽第 1 步、小幫手「開帳那一趟建了什麼」、
     //    「看看你剛剛做的東西」三處都吃這一份（⛔ 沒建成的不記：列了就得解釋「它其實沒建」）

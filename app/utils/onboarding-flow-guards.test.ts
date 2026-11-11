@@ -370,3 +370,39 @@ describe('接完 LINE 提醒 AI 自動回覆還沒開（`C-472`）', () => {
     expect(agent).toMatch(/liveTourSteps\(\{[^}]*aiOff \}\)/)
   })
 })
+
+/**
+ * 成績單上的額度那一行（`D-180`，2026-11-11 老闆拍板「首月加量」＋「把則數翻成看得懂的量」）。
+ *
+ * 守三件事，每一件漏掉都會讓第一印象變成「被騙」：
+ *   ① 講的是**第一個月**的量（他走完精靈那一刻拿到的就是加量額度）——
+ *      寫一般免費額度等於一開口就說錯。
+ *   ② 同一行要講**第二個月起變多少**：只講 200 不講之後，撞牆那天就變成「怎麼突然縮水」。
+ *   ③ 把「則」翻成他看得懂的量：數字對店家沒有意義，
+ *      「用兩天就要錢」的被騙感來自**意外**，不是來自價格。
+ * ⚠️ 兩趟的成績單（打造完、接完 LINE）都要有，⛔ 不可以只改一處。
+ */
+describe('成績單講清楚「第一個月幾則、之後幾則」（`D-180`）', () => {
+  const code = codeOnly(chat)
+
+  it('額度寫的是第一個月的加量，⛔ 不是一般免費額度', () => {
+    expect(code).toContain('const trialQuota = FREE_TRIAL_ANSWERED_QUOTA')
+    expect(code).toContain('第一個月 ${trialQuota} 則 AI 回覆')
+    // ⛔ 舊寫法（直接寫一般免費額度）不可以回來
+    expect(code).not.toContain('每月 ${freeQuota} 則 AI 回覆')
+  })
+
+  it('同一行也講第二個月起變多少（⛔ 不然撞牆那天像突然縮水）', () => {
+    expect(code).toContain('第二個月起每月 ${freeQuota} 則')
+  })
+
+  it('把「則」翻成客人數（⛔ 數字本身對店家沒有意義）', () => {
+    expect(code).toMatch(/trialQuotaPace = '大約是每天 \d+～\d+ 個客人來問問題'/)
+    expect(code).toContain('${trialQuotaPace}')
+  })
+
+  it('兩趟的成績單都講（打造完一次、接完 LINE 一次）', () => {
+    const hits = code.split('trialQuota').length - 1
+    expect(hits, '至少要在兩處成績單各出現一次').toBeGreaterThanOrEqual(3) // 宣告 1 + 兩處各 1
+  })
+})

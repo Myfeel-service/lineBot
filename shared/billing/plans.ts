@@ -296,6 +296,17 @@ export interface WorkspaceSubscription {
    */
   anchorDay?: number
   /**
+   * 這一期還在「免費方案第一個月加量」裡（`D-180`，2026-11-11 老闆拍板「首月加量」）。
+   *
+   * 只有**新建帳號**那一刻會被設成 true（`defaultFreeSubscription({ firstMonthTrial: true })`），
+   * 期別一往前滾就被 `rollSubscriptionToCurrentPeriod` 清掉 → 第二個月自動回到一般免費額度。
+   *
+   * ⛔ **沒有這個欄位＝沒有加量**，所以既有帳號不會回溯拿到（本來就不該）。
+   * ⛔ 讀取失敗時補的那份預設訂閱（`billing.ts` 的 fallback）**不帶**這個旗標：
+   *    那是「這個帳號沒掛訂閱」的補洞，不是新開帳。
+   */
+  freeTrial?: boolean
+  /**
    * @deprecated 藍新定期定額的委託單號（PeriodNo）。**藍新定期定額程式已於 2026-07-30 移除**
    * （它從未真正開通:`recurringEnabled` 一律 false + 金鑰未設 → 不存在真實委託）。
    * 欄位保留只為讓萬一存在的歷史文件仍能通過型別檢查,**不要在新程式碼裡讀寫它**。
@@ -422,11 +433,34 @@ export function getBillingPlan(id: string | null | undefined): BillingPlan {
 }
 
 /**
- * 本方案實際生效的月額度：優先用訂閱層 quotaOverride（例外 / 企業客製），
- * 否則用方案預設；兩者皆無（客製未設）回 null = 不設額度上限。
+ * 免費方案**第一個月**的則數（`D-180`，2026-11-11 老闆拍板「首月加量」）。
+ *
+ * 為什麼是 200（＝輕量方案的量）：MYFEEL 自己 10 月用掉 751 則＝每天 25 則，
+ * 一般免費額度 50 則撐 2 天、小店 1～2 週。新店家前兩週知識庫還在長、AI 還不準，
+ * 用 50 則撞牆那天他看到的是「一個還會答錯的 AI 要我付錢」；給他一個月，
+ * 撞牆那天看到的是「它已經幫我處理了 180 次客人提問」。**同一面牆，第二種才賣得動。**
+ *
+ * ⛔ **只加「則數」，不加「AI 知識量」**：則數每期重置，加量到期自然回復；
+ *    知識量是**存著的東西**，先給 200 條再砍回 50 等於要他刪掉自己建好的卡——
+ *    那不是加量，那是先給再拿走。
  */
-export function effectiveAnsweredQuota(plan: BillingPlan, quotaOverride?: number | null): number | null {
+export const FREE_TRIAL_ANSWERED_QUOTA = 200
+
+/**
+ * 本方案實際生效的月額度：優先用訂閱層 quotaOverride（例外 / 企業客製），
+ * 其次是免費方案第一個月的加量，否則用方案預設；
+ * 皆無（客製未設）回 null = 不設額度上限。
+ *
+ * ⛔ 順序不能換：`quotaOverride` 是業務／超管特批的數字，**永遠最大**——
+ *    首月加量蓋過它的話，特批 1,000 則的新帳號會被我們降成 200。
+ */
+export function effectiveAnsweredQuota(
+  plan: BillingPlan,
+  quotaOverride?: number | null,
+  freeTrial?: boolean,
+): number | null {
   if (quotaOverride != null) return quotaOverride
+  if (freeTrial && plan.id === DEFAULT_BILLING_PLAN_ID) return FREE_TRIAL_ANSWERED_QUOTA
   return plan.answeredQuota
 }
 

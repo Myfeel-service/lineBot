@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Firestore } from 'firebase-admin/firestore'
 import type { SubscriptionStatus, WorkspaceSubscription } from '~~/shared/billing/plans'
-import { BILLING_PLANS } from '~~/shared/billing/plans'
+import { BILLING_PLANS, FREE_TRIAL_ANSWERED_QUOTA } from '~~/shared/billing/plans'
 
 // ⛔ 額度數字不寫死在斷言裡：2026-09-07 調整方案額度時這一整批測試全紅，
 //    但沒有一條是真的壞掉——那種紅燈只會訓練人忽略紅燈。
@@ -143,6 +143,29 @@ describe('defaultFreeSubscription — 新建帳號預設訂閱', () => {
     const r = await resolveAnsweredQuota('ws_new', db, TODAY)
     expect(r.quota).toBe(FREE_QUOTA)
     expect(r.planId).toBe('free')
+  })
+
+  /**
+   * 首月加量（`D-180`）。這裡釘的是**最容易悄悄出事的那一條**：
+   * 這支同時也被當成「這個 workspace 沒掛訂閱」的補洞用——那條路要是也給加量，
+   * **既有的老帳號會在被讀到的那一刻拿到 200 則**，而且沒有任何地方會報錯。
+   */
+  it('只有真的在開新帳號時才給首月加量', () => {
+    expect(defaultFreeSubscription('2026-07-28').freeTrial).toBeUndefined()
+    expect(defaultFreeSubscription('2026-07-28', { firstMonthTrial: true }).freeTrial).toBe(true)
+  })
+
+  it('新帳號第一期 → 真的擋在加量額度上', async () => {
+    const db = fakeDb({ ws_trial: defaultFreeSubscription(TODAY, { firstMonthTrial: true }) })
+    const r = await resolveAnsweredQuota('ws_trial', db, TODAY)
+    expect(r.quota).toBe(FREE_TRIAL_ANSWERED_QUOTA)
+    expect(r.planId).toBe('free')
+  })
+
+  it('🔴 沒掛訂閱的老帳號（補洞走的那條）拿到的是一般免費額度，⛔ 不是加量', async () => {
+    const db = fakeDb({ ws_legacy: undefined })
+    const r = await resolveAnsweredQuota('ws_legacy', db, TODAY)
+    expect(r.quota).toBe(FREE_QUOTA)
   })
 })
 
