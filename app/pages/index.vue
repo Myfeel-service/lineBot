@@ -1343,13 +1343,13 @@
               <!-- 2026-09-08 新增（使用者「是否有些文案可以放在其他頁面」拍板）：這題的換算原本
                    是定價區圖說的後半句，搬過來才有空間把「條」講清楚。放左欄第 4 題＝緊接
                    「會不會爆帳單」，兩題都在回答「額度／規模怎麼算」，而網格是先讀完左欄。
-                   ⚠️ 這裡沒寫超過上限會發生什麼：當初（09-08）`knowledgeChunks` 還沒有程式擋；
-                      `G-49`（2026-09-07 拍板、之後落地）起已經真的上鎖（滿了就加不進去、要刪或升級），
-                      要補一句的話照後端 planLimitMessage 的說法寫。⛔ 也不要再多舉一個換算數字：30～60 條是既有已審過的說法，
-                      「一頁官網約幾條」我們沒有量過。 -->
+                   `C-476`（2026-11-11）：這段字搬進 shared/billing/usage-units.ts 的 `KNOWLEDGE_UNIT_SHORT`——
+                   以前只有這一題寫了換算，/product-info 連提都沒提、付款彈窗那一欄只有數字，條款又自己寫成
+                   「知識卡條數」（全站只有那裡出現「知識卡」）。⛔ 別在這裡改字，四處同一句。
+                   同時補上「放滿了會怎樣」：`G-49` 起真的上鎖（滿了就加不進去、要刪或升級），原本這題沒寫。 -->
               <details class="lp-q lp-reveal">
                 <summary>AI 知識量的「一條」是什麼？<span class="plus" v-html="plusIcon" /></summary>
-                <div class="a">一條就是 AI 記住的一件事——一題問答、一個價目、一項規則。你給的菜單、官網或價目表會自動被切成這些小條，一份菜單大約會變成 30～60 條。所以方案上寫「AI 知識量 200 條」，就是它能記住 200 件事。</div>
+                <div class="a">{{ KNOWLEDGE_UNIT_SHORT }}</div>
               </details>
             </div>
             <div>
@@ -1457,7 +1457,7 @@
 import type { BubbleTyping } from '~/utils/bubble-typing'
 import { prepareBubbleTyping } from '~/utils/bubble-typing'
 import { BILLING_PLAN_ORDER, BILLING_PLANS, FEATURED_PLAN_IDS, broadcastTierSpec } from '~~/shared/billing/plans'
-import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
+import { KNOWLEDGE_UNIT_SHORT, REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
 // 註冊入口（`/login?intent=start`）：五顆 CTA ＋導覽列「免費註冊」共用同一個常數。
 // ⛔ 別改回字面 `/login`——登入頁靠這個參數換成註冊口吻、零帳號的人才會被直接送進開通引導。
 import { SIGNUP_ENTRY_PATH } from '~~/shared/signup-entry'

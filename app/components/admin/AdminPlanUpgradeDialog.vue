@@ -41,7 +41,19 @@
         <!-- AI 知識量：官網定價區有這一列、這張表沒有＝又一次 2026-08-17 的兩邊不一致
              （那次是付款彈窗仍列著官網已經拿掉的方案）。凡是對客戶展示的方案權益，
              兩邊必須列同一組欄位。 -->
-        <el-table-column label="AI 知識量" min-width="82">
+        <!-- `C-476`（2026-11-11）：這一欄以前只有數字、沒有一個地方解釋「條」是什麼（「則」早就有 ⓘ）。
+             字跟官網常見問答、/product-info 同一句（KNOWLEDGE_UNIT_SHORT），⛔ 別在這裡改字。
+             96：欄名 5 個字＋ⓘ＋格子內距（同「每月則數」那欄的量法）。 -->
+        <el-table-column min-width="96">
+          <template #header>
+            AI 知識量
+            <el-tooltip placement="top" popper-class="pu-hint-popper">
+              <template #content>
+                <p>{{ KNOWLEDGE_UNIT_SHORT }}</p>
+              </template>
+              <span class="pu-hint" role="img" aria-label="AI 知識量的一條是什麼">ⓘ</span>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">{{ row.knowledgeChunks == null ? '不限' : `${row.knowledgeChunks.toLocaleString()} 條` }}</template>
         </el-table-column>
         <!-- ⛔ 2026-09-26「流程」欄拿掉：老闆拍板**所有方案都開放腳本／流程**（plans.ts `scripting` 全為 true），
@@ -168,7 +180,7 @@ import {
   type BillingPlan,
   type BillingPlanId,
 } from '~~/shared/billing/plans'
-import { REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
+import { KNOWLEDGE_UNIT_SHORT, REPLY_UNIT_SHORT } from '~~/shared/billing/usage-units'
 import { CHECKOUT_CONSENT_TEXT, POLICY_LINKS } from '~~/shared/legal'
 import { cardStatementNotice } from '~~/shared/billing/statement'
 import { checkoutInvoiceLine, describeInvoiceProfile, hasInvoiceProfile, type InvoiceProfile } from '~~/shared/types/organization'

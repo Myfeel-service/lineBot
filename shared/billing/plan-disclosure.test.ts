@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { REPLY_UNIT_SHORT, REPLY_UNIT_TIP } from './usage-units'
+import { KNOWLEDGE_UNIT_SHORT, KNOWLEDGE_UNIT_TIP, REPLY_UNIT_SHORT, REPLY_UNIT_TIP } from './usage-units'
 
 const ROOT = join(__dirname, '..', '..')
 const src = (p: string) => readFileSync(join(ROOT, p), 'utf8')
@@ -56,5 +56,42 @@ describe('推播分級寫在方案表上（D-131①）', () => {
 describe('條款「什麼算一則」補上草稿模式（D-131③）', () => {
   it('條款寫了草稿模式也算一則', () => {
     expect(src('app/pages/terms.vue')).toContain('草稿模式下 AI 擬好回覆給客服參考，也算一則')
+  })
+})
+
+/**
+ * 「條」跟「則」走同一套（`C-476`，2026-11-11）。
+ *
+ * 改之前四處各說各的：官網常見問答手寫（唯一有換算的一處）、`/product-info` 連提都沒提、
+ * 付款彈窗那一欄只有數字沒有 ⓘ、條款自己寫成「知識卡條數」。這組測試讀頁面原始碼守住，
+ * 哪一面改回自己造句、或條款又冒出「知識卡」，就紅。
+ */
+describe('「AI 知識量的一條是什麼」買之前三處同一句（C-476）', () => {
+  it('講齊三件事：一條是什麼、換算成一份菜單幾條、放滿了會怎樣', () => {
+    expect(KNOWLEDGE_UNIT_SHORT).toContain('AI 記住的一件事')
+    expect(KNOWLEDGE_UNIT_SHORT).toContain('一份菜單大約會變成 30～60 條')
+    // 「加不進去」＝滿了不是多收錢（買之前最常問的誤解），⛔ 刪掉這半句這一題就只剩定義
+    expect(KNOWLEDGE_UNIT_SHORT).toContain('加不進去')
+  })
+
+  it('字跟後台那版同源（同一組詞，不另外造句）', () => {
+    for (const phrase of ['一條就是 AI 記住的一件事', '一題問答、一個價目、一項規則']) {
+      expect(KNOWLEDGE_UNIT_TIP, phrase).toContain(phrase)
+      expect(KNOWLEDGE_UNIT_SHORT, phrase).toContain(phrase)
+    }
+  })
+
+  it('官網常見問答、/product-info、付款彈窗都畫這一句', () => {
+    expect(src('app/pages/index.vue')).toContain('{{ KNOWLEDGE_UNIT_SHORT }}')
+    expect(src('app/pages/product-info.vue')).toContain('{{ KNOWLEDGE_UNIT_SHORT }}')
+    expect(src('app/components/admin/AdminPlanUpgradeDialog.vue')).toContain('{{ KNOWLEDGE_UNIT_SHORT }}')
+  })
+
+  it('⛔ 條款不再出現「知識卡」——對客戶一律只講「條」', () => {
+    // 比的是**客戶看得到的字**，所以先把 HTML 註解拿掉：註解裡講「原本寫『知識卡』」是必要的沿革，
+    // 不該讓守門員紅（⛔ 別反過來把註解裡的字改掉來遷就測試，那會讓後人不知道為什麼改）。
+    const terms = src('app/pages/terms.vue').replace(/<!--[\s\S]*?-->/g, '')
+    expect(terms).not.toContain('知識卡')
+    expect(terms).toContain('一條就是 AI 記住的一件事')
   })
 })
