@@ -59,6 +59,93 @@
   p + p { margin-top: 6px; }
 }
 
+/* ── 手機（≤720px）的方案卡（`B-55`，2026-11-11）──────────────────────────────
+   為什麼有這一套：那張比較表七欄的最小寬度加起來 650px，手機上對話框只有約 340px 寬，
+   畫面上只看得到前四欄——**月費與那顆按鈕都落在畫面外**，要用手指往左滑才找得到。
+   改成一個方案一張卡，四項規格一項不少，只是改成直的排。
+   ⛔ 規格的順序與用詞跟桌機那張表一致（每月則數／AI 知識量／席次／推播）。 */
+.pu-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.pu-card {
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+
+  /* 目前用的那一張淡淡標色（跟桌機那張表的「目前方案」列同一個色） */
+  &.is-current {
+    background: rgba(15, 123, 84, 0.06);
+    border-color: rgba(15, 123, 84, 0.25);
+  }
+}
+
+.pu-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+
+  .pu-name {
+    font-weight: 700;
+    font-size: 1.05rem;
+  }
+}
+
+/* 月費靠右：挑方案時眼睛掃的就是這個數字，四張卡要對得齊（等寬數字） */
+.pu-card__price {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pu-card__specs {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 4px;
+  font-size: 0.86rem;
+
+  > div {
+    display: flex;
+    gap: 8px;
+  }
+
+  dt {
+    flex: 0 0 76px; /* 「AI 知識量」那一行最長，四行標籤照它對齊 */
+    color: var(--text-secondary);
+  }
+
+  dd {
+    margin: 0;
+    min-width: 0; /* 「全部好友＋分眾」要能換行，不是把卡片撐寬 */
+    color: var(--text-primary);
+  }
+
+  .pu-no {
+    color: #cbd5e1;
+  }
+}
+
+.pu-card__act {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 桌機那三顆 ⓘ 的字，手機上直接寫出來（tooltip 在手機上形同消失） */
+.pu-cards__note {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+
+  p { margin: 0; }
+  p + p { margin-top: 6px; }
+  b { color: var(--text-primary); }
+}
+
 /* 結帳前的條款同意 + 計價小字。
    同意勾選是付款的前置條件（沒勾 → 付款鈕 disabled），所以給它一塊底色框起來，
    不要讓它看起來像可略過的註腳。 */

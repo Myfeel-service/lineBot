@@ -7,7 +7,7 @@
   >
     <!-- 方案比較表：方案為列、規格為欄，橫向對齊好比較「升級到底多拿到什麼」。
          窄螢幕時整張表可左右捲動（see .plan-compare-scroll），不擠壓欄位。 -->
-    <div class="plan-compare-scroll">
+    <div v-if="!isPhone" class="plan-compare-scroll">
       <el-table :data="plans" size="small" class="plan-compare-table" :row-class-name="rowClass">
         <el-table-column label="方案" min-width="104" fixed>
           <template #default="{ row }">
@@ -78,39 +78,74 @@
         <el-table-column label="月費" min-width="92" align="right">
           <template #default="{ row }">{{ priceLabel(row) }}</template>
         </el-table-column>
+        <!-- `B-55`：按鈕本體搬到 `AdminPlanActionCell`，手機那一版的卡片用同一顆（⛔ 別在兩邊各寫一份） -->
         <el-table-column label="" min-width="88" align="right">
           <template #default="{ row }">
-            <el-tooltip
-              v-if="canCheckout(row)"
-              :disabled="paymentEnabled && agreed && invoiceReady"
-              :content="checkoutBlockReason"
-              placement="top"
-            >
-              <!-- disabled 的按鈕不會觸發 tooltip，需外層 span 承接 hover -->
-              <span>
-                <el-button
-                  :type="planAction(row) === '降級' ? 'info' : 'primary'"
-                  :plain="planAction(row) === '降級'"
-                  size="small"
-                  :disabled="!isScheduledDowngrade(row) && (!paymentEnabled || !agreed || !invoiceReady)"
-                  :loading="checkoutLoading === row.id"
-                  @click="checkout(row)"
-                >
-                  <!-- 期末降級沒有新的一筆交易 → 不需勾同意、也不受金流未設定影響,
-                       而且按鈕要講清楚是「期末」生效,別讓人以為按下去就馬上降。 -->
-                  {{ isScheduledDowngrade(row) ? '期末降級' : planAction(row) }}
-                </el-button>
-              </span>
-            </el-tooltip>
-            <template v-else-if="row.custom">
-              <el-button v-if="contactHref" size="small" @click="contactUs">聯繫我們</el-button>
-              <span v-else class="text-xs text-muted">請洽窗口</span>
-            </template>
-            <!-- 免費層：不需結帳，但也不要留空白格（會像壞掉） -->
-            <span v-else class="text-xs text-muted">{{ row.id === currentPlanId ? '使用中' : '免費' }}</span>
+            <AdminPlanActionCell
+              :can-checkout="canCheckout(row)"
+              :action="planAction(row)"
+              :scheduled="isScheduledDowngrade(row)"
+              :ready="paymentEnabled && agreed && invoiceReady"
+              :block-reason="checkoutBlockReason"
+              :loading="checkoutLoading === row.id"
+              :custom="!!row.custom"
+              :contact-href="contactHref"
+              :is-current="row.id === currentPlanId"
+              @checkout="checkout(row)"
+              @contact="contactUs"
+            />
           </template>
         </el-table-column>
       </el-table>
+    </div>
+
+    <!-- ── 手機（≤720px）：一個方案一張卡（`B-55`，2026-11-11）──────────────────────
+         為什麼不沿用那張表：七欄的最小寬度加起來 650px、手機上視窗只有約 340px，
+         畫面上只看得到前四欄——**月費與那顆按鈕都在畫面外**，要用手指往左滑才找得到。
+         挑方案時最關鍵的就是月費跟那顆鈕，不該要人先發現「這裡可以滑」。
+         ⛔ 不是把欄位藏起來：四項規格一項不少，只是改成直的排。
+         ⚠️ 規格的順序刻意跟桌機那張表同一組、同一個順序（老闆對一致性敏感）。 -->
+    <div v-else class="pu-cards">
+      <div
+        v-for="p in plans"
+        :key="p.id"
+        class="pu-card"
+        :class="{ 'is-current': p.id === currentPlanId }"
+      >
+        <div class="pu-card__head">
+          <span class="pu-name">{{ p.name }}</span>
+          <el-tag v-if="p.id === currentPlanId" size="small" type="success" effect="plain">目前</el-tag>
+          <span class="pu-card__price">{{ priceLabel(p) }}</span>
+        </div>
+        <dl class="pu-card__specs">
+          <div><dt>每月則數</dt><dd>{{ quotaLabel(p) }}</dd></div>
+          <div><dt>AI 知識量</dt><dd>{{ p.knowledgeChunks == null ? '不限' : `${p.knowledgeChunks.toLocaleString()} 條` }}</dd></div>
+          <div><dt>席次</dt><dd>{{ p.seats == null ? '不限' : `${p.seats} 席` }}</dd></div>
+          <div><dt>推播</dt><dd :class="{ 'pu-no': p.broadcast === 'none' }">{{ broadcastCell(p) }}</dd></div>
+        </dl>
+        <div class="pu-card__act">
+          <AdminPlanActionCell
+            :can-checkout="canCheckout(p)"
+            :action="planAction(p)"
+            :scheduled="isScheduledDowngrade(p)"
+            :ready="paymentEnabled && agreed && invoiceReady"
+            :block-reason="checkoutBlockReason"
+            :loading="checkoutLoading === p.id"
+            :custom="!!p.custom"
+            :contact-href="contactHref"
+            :is-current="p.id === currentPlanId"
+            @checkout="checkout(p)"
+            @contact="contactUs"
+          />
+        </div>
+      </div>
+      <!-- 手機上沒有「滑過去看」這回事：桌機那三顆 ⓘ 的字在這裡直接寫出來。
+           ⛔ 別改成 tooltip——手機上點了常常只閃一下，等於這三個定義在手機上消失。 -->
+      <div class="pu-cards__note">
+        <p><b>每月則數</b>：{{ REPLY_UNIT_SHORT }} {{ QUOTA_PERIOD_HINT }}</p>
+        <p><b>AI 知識量</b>：{{ KNOWLEDGE_UNIT_SHORT }}</p>
+        <p><b>推播</b>：{{ BROADCAST_SEGMENT_HINT }}</p>
+      </div>
     </div>
     <div class="plan-upgrade-foot">
       <!-- 條款同意：勾了才能按付款。這不是裝飾——「不適用七日猶豫期」的法律前提就是
@@ -239,6 +274,12 @@ function planAction(p: BillingPlan): '續訂' | '升級' | '降級' {
   const cur = BILLING_PLAN_ORDER.indexOf((props.currentPlanId ?? 'free') as BillingPlanId)
   return BILLING_PLAN_ORDER.indexOf(p.id) > cur ? '升級' : '降級'
 }
+
+/**
+ * 手機版面（≤720px）就把那張比較表換成一個方案一張卡（`B-55`）。
+ * ⛔ 用全站同一支 `usePhoneLayout()`，別自己另訂一個斷點——兩套斷點會在某個寬度之間打架。
+ */
+const isPhone = usePhoneLayout()
 
 const { getBearer, workspaceId, apiFetch } = useWorkspace()
 const { showToast } = useAdminToast()
